@@ -75,7 +75,8 @@ test('Amazonians in TIDES project raw RACE fields into Quint-style civilization 
   assert.equal(fieldKeys.has('buildnever'), false);
   assert.equal(fieldKeys.has('flavors'), false);
 
-  assert.equal(getField(civ, 'civilopediaentry').value, 'RACE_AMAZONIANS');
+  assert.equal(civ.civilopediaKey, 'RACE_AMAZONIANS');
+  assert.equal(getField(civ, 'civilopediaentry').value, 'RACE_Amazonians');
   assert.equal(getField(civ, 'civilopediaentry').editable, false);
   assert.equal(getField(civ, 'leadername').value, 'Kerigan');
   assert.equal(getField(civ, 'leadertitle').value, 'Lady');

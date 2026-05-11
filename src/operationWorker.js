@@ -1,7 +1,37 @@
 const { parentPort, workerData } = require('node:worker_threads');
+const path = require('node:path');
 
 const { saveBundle, createScenario, deleteScenario } = require('./configCore');
 const { auditBundle } = require('./bundleAudit');
+const log = require('./log');
+
+function resolveCiv3RootPath(civ3Path) {
+  if (!civ3Path) return '';
+  const base = path.basename(civ3Path).toLowerCase();
+  if (base === 'conquests' || base === 'civ3ptw') {
+    return path.dirname(civ3Path);
+  }
+  return civ3Path;
+}
+
+function getStandardGameBiqPath(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  return root ? path.join(root, 'Conquests', 'conquests.biq') : '';
+}
+
+function configureLogging(payload) {
+  const logConfig = workerData && workerData.logConfig ? workerData.logConfig : {};
+  log.configureFileLogging({
+    enabled: logConfig.enabled !== false,
+    folder: logConfig.folder || ''
+  });
+  log.setCiv3Root(payload && payload.civ3Path || '');
+  const mode = payload && payload.mode || 'global';
+  const biqPath = mode === 'scenario'
+    ? (payload && payload.scenarioPath || '')
+    : getStandardGameBiqPath(payload && payload.civ3Path || '');
+  log.setContext({ mode, biqPath });
+}
 
 function postMessage(type, payload = {}) {
   if (!parentPort) return;
@@ -12,6 +42,7 @@ function run() {
   if (!parentPort) return;
   const task = String(workerData && workerData.task || '').trim();
   const payload = workerData && workerData.payload ? workerData.payload : {};
+  configureLogging(payload);
   const onProgress = (entry) => {
     postMessage('progress', { entry });
   };

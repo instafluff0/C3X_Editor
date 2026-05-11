@@ -8,6 +8,8 @@ const iconv = require('iconv-lite');
 const {
   detectTextFileEncodingFromBuffer,
   readTextFileWithEncodingInfoIfExists,
+  loadBundle,
+  saveBundle,
   buildScenarioCivilopediaEditResult,
   buildScenarioDiplomacyEditResult
 } = require('../src/configCore');
@@ -117,4 +119,57 @@ test('buildScenarioDiplomacyEditResult preserves UTF-8 BOM when rewriting text',
   assert.equal(result.buffer[0], 0xef);
   assert.equal(result.buffer[1], 0xbb);
   assert.equal(result.buffer[2], 0xbf);
+});
+
+test('loadBundle decodes localized district configs with text-file encoding auto-detection', () => {
+  const c3xPath = mkTmpDir();
+  fs.writeFileSync(path.join(c3xPath, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  writeEncoded(
+    path.join(c3xPath, 'default.districts_config.txt'),
+    '#District\nname = 灌溉区\ndisplay_name = 农业枢纽\ntooltip = 提供粮食\n',
+    'gbk'
+  );
+  fs.writeFileSync(path.join(c3xPath, 'default.districts_wonders_config.txt'), '#Wonder\nname = Wonder\n', 'utf8');
+  fs.writeFileSync(path.join(c3xPath, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = Natural\n', 'utf8');
+  fs.writeFileSync(path.join(c3xPath, 'default.tile_animations.txt'), '#Animation\nname = Anim\n', 'utf8');
+
+  const bundle = loadBundle({ mode: 'global', c3xPath, civ3Path: '', scenarioPath: '', textFileEncoding: 'auto' });
+  const fields = bundle.tabs.districts.model.sections[0].fields;
+  assert.equal(fields.find((field) => field.key === 'name').value, '灌溉区');
+  assert.equal(fields.find((field) => field.key === 'display_name').value, '农业枢纽');
+  assert.equal(bundle.tabs.districts.sourceDetails.activeEncoding, 'gbk');
+});
+
+test('saveBundle preserves localized district config encoding', () => {
+  const c3xPath = mkTmpDir();
+  const userPath = path.join(c3xPath, 'user.districts_config.txt');
+  fs.writeFileSync(path.join(c3xPath, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  writeEncoded(
+    path.join(c3xPath, 'default.districts_config.txt'),
+    '#District\nname = 灌溉区\ndisplay_name = 农业枢纽\ntooltip = 提供粮食\n',
+    'gbk'
+  );
+  fs.writeFileSync(path.join(c3xPath, 'default.districts_wonders_config.txt'), '#Wonder\nname = Wonder\n', 'utf8');
+  fs.writeFileSync(path.join(c3xPath, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = Natural\n', 'utf8');
+  fs.writeFileSync(path.join(c3xPath, 'default.tile_animations.txt'), '#Animation\nname = Anim\n', 'utf8');
+
+  const bundle = loadBundle({ mode: 'global', c3xPath, civ3Path: '', scenarioPath: '', textFileEncoding: 'auto' });
+  const display = bundle.tabs.districts.model.sections[0].fields.find((field) => field.key === 'display_name');
+  display.value = '农业中心';
+
+  const result = saveBundle({
+    mode: 'global',
+    c3xPath,
+    civ3Path: '',
+    scenarioPath: '',
+    textFileEncoding: 'auto',
+    dirtyTabs: ['districts'],
+    tabs: bundle.tabs
+  });
+
+  assert.equal(result.ok, true);
+  const info = readTextFileWithEncodingInfoIfExists(userPath, { preferredEncoding: 'auto' });
+  assert.ok(info);
+  assert.equal(info.encoding, 'gbk');
+  assert.match(info.text, /display_name\s*=\s*"农业中心"/);
 });

@@ -4540,6 +4540,40 @@ details > summary:focus-visible {
   line-height: 1.2;
 }
 
+.unit-list-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.unit-list-remove-all-btn {
+  border: 1px solid rgba(116, 68, 68, 0.2);
+  background: rgba(255, 255, 255, 0.92);
+  color: #7a3f3f;
+  border-radius: 7px;
+  padding: 3px 7px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.unit-list-remove-all-btn:not(:disabled):hover {
+  border-color: rgba(141, 67, 67, 0.38);
+  background: rgba(255, 244, 241, 0.96);
+  color: #693333;
+  transform: none;
+  box-shadow: none;
+}
+
+.unit-list-remove-all-btn:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
 .unit-list-panel-body {
   display: grid;
   gap: 6px;
@@ -7377,6 +7411,38 @@ button.unit-ini-delete-btn:disabled {
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
+}
+
+.pedia-link-case-warning {
+  color: #b42318;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #d92d20;
+  text-decoration-thickness: 1.5px;
+}
+
+.pedia-link-case-fix {
+  appearance: none;
+  border: 1px solid rgba(180, 35, 24, 0.28);
+  border-radius: 8px;
+  background: #fff4ed;
+  color: #9f1f14;
+  cursor: pointer;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.15;
+  margin: 0 2px 0 4px;
+  max-width: min(260px, 70vw);
+  overflow-wrap: anywhere;
+  padding: 3px 6px;
+  vertical-align: 0.14em;
+}
+
+.pedia-link-case-fix:hover,
+.pedia-link-case-fix:focus-visible {
+  background: #ffe6dc;
+  border-color: rgba(180, 35, 24, 0.5);
+  outline: none;
 }
 
 .pedia-link-preview {

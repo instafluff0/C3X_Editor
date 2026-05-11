@@ -18,9 +18,15 @@
 
 const path = require('node:path');
 const os = require('node:os');
+const fs = require('node:fs');
 
 let _civ3Root = '';
 let _forwarder = null;
+let _fileLoggingEnabled = false;
+let _logFolder = '';
+let _fileLoggingWarned = false;
+let _contextMode = '';
+let _contextBiqPath = '';
 
 // Set the Civ3 root path used by rel() for path sanitization.
 // Call this whenever civ3Path is known (settings load, bundle load, etc.).
@@ -32,6 +38,19 @@ function setCiv3Root(root) {
 // Used by main.js to push log messages to the renderer's in-app debug log panel.
 function setForwarder(fn) {
   _forwarder = typeof fn === 'function' ? fn : null;
+}
+
+function configureFileLogging(options) {
+  const next = options || {};
+  _fileLoggingEnabled = next.enabled !== false;
+  _logFolder = String(next.folder || '').trim();
+  _fileLoggingWarned = false;
+}
+
+function setContext(context) {
+  const next = context || {};
+  _contextMode = String(next.mode || '').trim();
+  _contextBiqPath = String(next.biqPath || next.scenarioPath || '').trim();
 }
 
 // Returns a privacy-safe representation of an absolute path for logging:
@@ -74,19 +93,55 @@ function _stamp() {
   return new Date().toISOString().slice(0, 23).replace('T', ' ');
 }
 
+function _localDateStamp() {
+  const d = new Date();
+  const yyyy = String(d.getFullYear()).padStart(4, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function _contextPrefix() {
+  const parts = [];
+  if (_contextMode) {
+    parts.push(`mode=${_contextMode === 'global' ? 'Standard Game' : _contextMode}`);
+  }
+  if (_contextBiqPath) {
+    parts.push(`biq=${path.basename(_contextBiqPath)}`);
+  }
+  return parts.length ? `[${parts.join('][')}]` : '';
+}
+
 function _fmt(level, category, msg) {
-  return `[C3X][${_stamp()}][${level}][${category}] ${msg}`;
+  return `[C3X][${_stamp()}][${level}]${_contextPrefix()}[${category}] ${msg}`;
 }
 
 const _inTest = !!process.env.NODE_TEST_CONTEXT;
 
+function _writeFileLine(formatted) {
+  if (_inTest || !_fileLoggingEnabled || !_logFolder) return;
+  try {
+    fs.mkdirSync(_logFolder, { recursive: true });
+    const filePath = path.join(_logFolder, `c3x-config-manager-${_localDateStamp()}.log`);
+    fs.appendFileSync(filePath, `${formatted}${os.EOL}`, 'utf8');
+  } catch (err) {
+    if (!_fileLoggingWarned) {
+      _fileLoggingWarned = true;
+      try {
+        console.warn(`[C3X][${_stamp()}][WRN][log] File logging failed: ${err && err.message ? err.message : err}`);
+      } catch (_) {}
+    }
+  }
+}
+
 function _dispatch(level, category, msg) {
+  const formatted = _fmt(level, category, msg);
   if (!_inTest) {
-    const formatted = _fmt(level, category, msg);
     if (level === 'WRN') console.warn(formatted);
     else if (level === 'ERR') console.error(formatted);
     else console.log(formatted);
   }
+  _writeFileLine(formatted);
   if (_forwarder) {
     try { _forwarder(level, category, msg); } catch (_) {}
   }
@@ -97,4 +152,15 @@ function info(category, msg)  { _dispatch('INF', category, msg); }
 function warn(category, msg)  { _dispatch('WRN', category, msg); }
 function error(category, msg) { _dispatch('ERR', category, msg); }
 
-module.exports = { debug, info, warn, error, rel, relList, setCiv3Root, setForwarder };
+module.exports = {
+  debug,
+  info,
+  warn,
+  error,
+  rel,
+  relList,
+  setCiv3Root,
+  setForwarder,
+  configureFileLogging,
+  setContext
+};

@@ -64,7 +64,8 @@ test('Academy in TIDES projects raw BLDG fields into Quint-style improvement UI 
   assert.equal(fieldKeys.has('small_wonder_characteristics'), false);
   assert.equal(fieldKeys.has('wonder_characteristics'), false);
 
-  assert.equal(getField(academy, 'civilopediaentry').value, 'BLDG_LIBRARY');
+  assert.equal(academy.civilopediaKey, 'BLDG_LIBRARY');
+  assert.equal(getField(academy, 'civilopediaentry').value, 'BLDG_Library');
   assert.equal(getField(academy, 'civilopediaentry').editable, false);
   assert.equal(getField(academy, 'reqadvance').value, '55');
   assert.equal(getField(academy, 'reqresource1').value, '31');

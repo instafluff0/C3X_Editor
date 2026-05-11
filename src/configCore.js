@@ -3751,6 +3751,7 @@ function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
   const index = Number(record && record.index);
   const name = cleanDisplayText(record && record.name || '') || `Unit ${Number.isFinite(index) ? index + 1 : '?'}`;
   const civilopediaEntry = cleanDisplayText(getRecordFieldValue(record, 'PRTO', 'civilopediaentry'));
+  const lookupCivilopediaEntry = civilopediaEntry.toUpperCase();
   const rawRecordFields = getRecordFieldsForSection(record, 'PRTO');
   const rawBiqFields = rawRecordFields
     .filter((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() !== 'civilopediaentry')
@@ -3765,7 +3766,12 @@ function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
     }));
   return {
     id: `biq-prto-${Number.isFinite(index) ? index : name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-    civilopediaKey: civilopediaEntry || '',
+    civilopediaKey: lookupCivilopediaEntry || '',
+    displayCivilopediaKey: civilopediaEntry || '',
+    lookupCivilopediaKey: lookupCivilopediaEntry || '',
+    rawCivilopediaKey: civilopediaEntry || '',
+    rawBiqCivilopediaKey: civilopediaEntry || '',
+    linkCivilopediaKey: civilopediaEntry || '',
     biqIndex: Number.isFinite(index) ? index : null,
     name,
     civilopediaSection1: '',
@@ -3859,6 +3865,38 @@ function parseImprovementKindsFromPediaIconsBlocks(blocks) {
   return kinds;
 }
 
+function parseBuildingIconBlockLines(lines) {
+  const rawLines = Array.isArray(lines) ? lines.map((line) => String(line || '').trim()).filter(Boolean) : [];
+  const pathLines = rawLines.filter((line) => /[\\/]/.test(line) || /\.(pcx|flc|ini)$/i.test(line));
+  const kind = rawLines.find((line) => /^[A-Za-z_]+$/.test(line) && !/[\\/]/.test(line)) || '';
+  const iconIndex = rawLines.find((line) => /^-?\d+$/.test(line)) || '';
+  return {
+    kind,
+    iconIndex,
+    iconPaths: pathLines.map((line) => normalizeRelativePath(line)).filter(Boolean)
+  };
+}
+
+function findFirstPathLine(lines) {
+  const rawLines = Array.isArray(lines) ? lines : [];
+  const line = rawLines.find((value) => {
+    const text = String(value || '').trim();
+    return !!text && (/[\\/]/.test(text) || /\.(pcx|flc|ini)$/i.test(text));
+  });
+  return line ? normalizeRelativePath(line) : '';
+}
+
+function buildBuildingIconLines(entry, iconPaths) {
+  const paths = normalizePediaPathList(iconPaths);
+  const kind = String(entry && entry.buildingIconKind || '').trim() || 'SINGLE';
+  const iconIndex = String(entry && entry.buildingIconIndex || '').trim();
+  const lines = [kind];
+  if (iconIndex) lines.push(iconIndex);
+  if (paths[0]) lines.push(paths[0]);
+  if (paths[1]) lines.push(paths[1]);
+  return lines;
+}
+
 function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   const collectIconLines = (upperKey) => {
     const iconKey = `ICON_${upperKey}`;
@@ -3870,7 +3908,10 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   };
 
   const upperKey = civilopediaKey.toUpperCase();
-  const usableLines = collectIconLines(upperKey);
+  const buildingIconBlock = upperKey.startsWith('BLDG_')
+    ? parseBuildingIconBlockLines((pediaBlocks[`ICON_${upperKey}`] && pediaBlocks[`ICON_${upperKey}`].value) || [])
+    : null;
+  const usableLines = buildingIconBlock ? buildingIconBlock.iconPaths : collectIconLines(upperKey);
   const raceIconKey = `ICON_RACE_${upperKey.replace(/^RACE_/, '')}`;
   const raceIconBlock = (pediaBlocks[raceIconKey] && pediaBlocks[raceIconKey].value) || [];
   const raceUsable = raceIconBlock.filter((line) => /[\\/]/.test(line) || /\.(pcx|flc|ini)$/i.test(line));
@@ -3912,11 +3953,17 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
 
   const raceBlock = (pediaBlocks[civilopediaKey.toUpperCase()] && pediaBlocks[civilopediaKey.toUpperCase()].value) || [];
   const racePaths = raceBlock.map((line) => normalizeRelativePath(line)).filter(Boolean);
+  const wonderSplashPath = upperKey.startsWith('BLDG_')
+    ? findFirstPathLine((pediaBlocks[`WON_SPLASH_${upperKey}`] && pediaBlocks[`WON_SPLASH_${upperKey}`].value) || [])
+    : '';
 
   return {
     iconPaths,
     animationName: animName,
-    racePaths: dedupeStrings(racePaths)
+    racePaths: dedupeStrings(racePaths),
+    buildingIconKind: buildingIconBlock ? buildingIconBlock.kind : '',
+    buildingIconIndex: buildingIconBlock ? buildingIconBlock.iconIndex : '',
+    wonderSplashPath
   };
 }
 
@@ -4018,26 +4065,38 @@ function buildReferenceTabs(civ3Path, options = {}) {
     if (hasOrderedBiqSeeds) {
       biqRecordsInOrder.forEach((record) => {
         const idx = Number(record && record.index);
-        const civilopediaKey = String(getRecordFieldValue(record, biqSectionCode, 'civilopediaentry') || '').toUpperCase();
+        const rawCivilopediaKey = String(getRecordFieldValue(record, biqSectionCode, 'civilopediaentry') || '').trim();
+        const lookupCivilopediaKey = rawCivilopediaKey.toUpperCase();
         entrySeeds.push({
-          civilopediaKey,
+          civilopediaKey: lookupCivilopediaKey,
+          lookupCivilopediaKey,
+          rawCivilopediaKey,
+          rawBiqCivilopediaKey: rawCivilopediaKey,
           biqRecord: record,
           biqIndex: Number.isFinite(idx) ? idx : null
         });
       });
       const allowedKeys = biqKeySets && biqKeySets[tabSpec.key] instanceof Set ? biqKeySets[tabSpec.key] : null;
       if (allowedKeys && allowedKeys.size > 0) {
-        const seenExactKeys = new Set(entrySeeds.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
+        const seenExactKeys = new Set(entrySeeds.map((entry) => String(entry && (entry.lookupCivilopediaKey || entry.civilopediaKey) || '').toUpperCase()).filter(Boolean));
         const maybeAppendPediaSeed = (candidateKey) => {
-          const civilopediaKey = String(candidateKey || '').toUpperCase();
-          if (!civilopediaKey || seenExactKeys.has(civilopediaKey)) return;
-          if (!allowedKeys.has(civilopediaKey)) {
-            if (!(tabSpec.key === 'units' && civilopediaKey.startsWith('PRTO_') && civilopediaKey.includes('_ERAS_') && allowedKeys.has(civilopediaKey.split('_ERAS_')[0]))) {
+          const rawCivilopediaKey = String(candidateKey || '').trim();
+          const lookupCivilopediaKey = rawCivilopediaKey.toUpperCase();
+          if (!lookupCivilopediaKey || seenExactKeys.has(lookupCivilopediaKey)) return;
+          if (!allowedKeys.has(lookupCivilopediaKey)) {
+            if (!(tabSpec.key === 'units' && lookupCivilopediaKey.startsWith('PRTO_') && lookupCivilopediaKey.includes('_ERAS_') && allowedKeys.has(lookupCivilopediaKey.split('_ERAS_')[0]))) {
               return;
             }
           }
-          seenExactKeys.add(civilopediaKey);
-          entrySeeds.push({ civilopediaKey, biqRecord: null, biqIndex: null });
+          seenExactKeys.add(lookupCivilopediaKey);
+          entrySeeds.push({
+            civilopediaKey: lookupCivilopediaKey,
+            lookupCivilopediaKey,
+            rawCivilopediaKey,
+            rawBiqCivilopediaKey: '',
+            biqRecord: null,
+            biqIndex: null
+          });
         };
         Object.keys(civilopediaSections)
           .filter((key) => key.startsWith(canonicalPrefix))
@@ -4045,11 +4104,15 @@ function buildReferenceTabs(civ3Path, options = {}) {
         Object.keys(pediaBlocks)
           .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`)
             || key.startsWith(`ANIMNAME_${canonicalPrefix}`)
+            || (canonicalPrefix === 'BLDG_' && key.startsWith('WON_SPLASH_BLDG_'))
             || key.startsWith(`ICON_RACE_`)
             || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix))
             || (tabSpec.key === 'technologies' && key.startsWith(canonicalPrefix)))
           .forEach((key) => {
             let civilopediaKey = key.startsWith('ICON_') ? key.slice(5) : key.startsWith('ANIMNAME_') ? key.slice(9) : key;
+            if (canonicalPrefix === 'BLDG_' && key.startsWith('WON_SPLASH_BLDG_')) {
+              civilopediaKey = `BLDG_${key.slice('WON_SPLASH_BLDG_'.length)}`;
+            }
             if (canonicalPrefix === 'RACE_' && key.startsWith('ICON_RACE_')) {
               civilopediaKey = `RACE_${key.slice('ICON_RACE_'.length)}`;
             }
@@ -4063,16 +4126,25 @@ function buildReferenceTabs(civ3Path, options = {}) {
       const entriesByKey = new Map();
       Object.keys(civilopediaSections)
         .filter((key) => key.startsWith(canonicalPrefix))
-        .forEach((civilopediaKey) => entriesByKey.set(civilopediaKey, { civilopediaKey }));
+        .forEach((civilopediaKey) => entriesByKey.set(civilopediaKey, {
+          civilopediaKey,
+          lookupCivilopediaKey: civilopediaKey,
+          rawCivilopediaKey: (civilopediaSections[civilopediaKey] && civilopediaSections[civilopediaKey].rawKey) || civilopediaKey,
+          rawBiqCivilopediaKey: ''
+        }));
 
       Object.keys(pediaBlocks)
         .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`)
           || key.startsWith(`ANIMNAME_${canonicalPrefix}`)
+          || (canonicalPrefix === 'BLDG_' && key.startsWith('WON_SPLASH_BLDG_'))
           || key.startsWith(`ICON_RACE_`)
           || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix))
           || (tabSpec.key === 'technologies' && key.startsWith(canonicalPrefix)))
         .forEach((key) => {
           let civilopediaKey = key.startsWith('ICON_') ? key.slice(5) : key.startsWith('ANIMNAME_') ? key.slice(9) : key;
+          if (canonicalPrefix === 'BLDG_' && key.startsWith('WON_SPLASH_BLDG_')) {
+            civilopediaKey = `BLDG_${key.slice('WON_SPLASH_BLDG_'.length)}`;
+          }
           if (canonicalPrefix === 'RACE_' && key.startsWith('ICON_RACE_')) {
             civilopediaKey = `RACE_${key.slice('ICON_RACE_'.length)}`;
           }
@@ -4080,7 +4152,12 @@ function buildReferenceTabs(civ3Path, options = {}) {
             civilopediaKey = civilopediaKey.slice(0, -6);
           }
           if (civilopediaKey.startsWith(canonicalPrefix)) {
-            entriesByKey.set(civilopediaKey, { civilopediaKey });
+            entriesByKey.set(civilopediaKey, {
+              civilopediaKey,
+              lookupCivilopediaKey: civilopediaKey,
+              rawCivilopediaKey: (pediaBlocks[civilopediaKey] && pediaBlocks[civilopediaKey].rawKey) || civilopediaKey,
+              rawBiqCivilopediaKey: ''
+            });
           }
         });
       entrySeeds.push(...Array.from(entriesByKey.values()));
@@ -4088,12 +4165,12 @@ function buildReferenceTabs(civ3Path, options = {}) {
 
     let entries = entrySeeds
       .map((entry) => {
-        const civilopediaKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-        const civilopediaSection = (civilopediaKey && civilopediaSections[civilopediaKey] && civilopediaSections[civilopediaKey].value) || null;
-        const descSection = (civilopediaKey && civilopediaSections[`DESC_${civilopediaKey}`] && civilopediaSections[`DESC_${civilopediaKey}`].value) || null;
-        const shortKey = civilopediaKey.startsWith(prefix) ? civilopediaKey.slice(prefix.length) : '';
+        const lookupCivilopediaKey = String(entry && (entry.lookupCivilopediaKey || entry.civilopediaKey) || '').trim().toUpperCase();
+        const civilopediaSection = (lookupCivilopediaKey && civilopediaSections[lookupCivilopediaKey] && civilopediaSections[lookupCivilopediaKey].value) || null;
+        const descSection = (lookupCivilopediaKey && civilopediaSections[`DESC_${lookupCivilopediaKey}`] && civilopediaSections[`DESC_${lookupCivilopediaKey}`].value) || null;
+        const shortKey = lookupCivilopediaKey.startsWith(prefix) ? lookupCivilopediaKey.slice(prefix.length) : '';
         const inferredDisplayName = inferDisplayNameFromKey(shortKey);
-        const pedia = civilopediaKey ? mapPediaIconsForKey(pediaBlocks, civilopediaKey) : { iconPaths: [], animationName: '', racePaths: [] };
+        const pedia = lookupCivilopediaKey ? mapPediaIconsForKey(pediaBlocks, lookupCivilopediaKey) : { iconPaths: [], animationName: '', racePaths: [] };
         const section1Lines = parseBodyFromCivilopediaSection(civilopediaSection, { displayName: inferredDisplayName });
         const section2Lines = parseBodyFromCivilopediaSection(descSection, { displayName: inferredDisplayName });
         const section1RawText = (civilopediaSection && Array.isArray(civilopediaSection.rawLines))
@@ -4102,39 +4179,47 @@ function buildReferenceTabs(civ3Path, options = {}) {
         const section2RawText = (descSection && Array.isArray(descSection.rawLines))
           ? descSection.rawLines.join('\n')
           : '';
+        const rawCivilopediaKey = String(
+          (civilopediaSections[lookupCivilopediaKey] && civilopediaSections[lookupCivilopediaKey].rawKey)
+          || (entry && entry.rawCivilopediaKey)
+          || lookupCivilopediaKey
+        ).trim();
+        const rawBiqCivilopediaKey = String((entry && entry.rawBiqCivilopediaKey) || '').trim();
+        const displayCivilopediaKey = rawBiqCivilopediaKey || rawCivilopediaKey || String(entry && entry.civilopediaKey || '').trim() || lookupCivilopediaKey;
         const thumbPath =
           tabSpec.key === 'civilizations'
             ? (pedia.iconPaths[0] || pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
             : (pedia.iconPaths[pedia.iconPaths.length - 1] || pedia.iconPaths[0] || '');
 
-        const section1SourcePath = civilopediaKey
-          ? findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, civilopediaKey, layerOrder)
+        const section1SourcePath = lookupCivilopediaKey
+          ? findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, lookupCivilopediaKey, layerOrder)
           : '';
-        const section2SourcePath = civilopediaKey
+        const section2SourcePath = lookupCivilopediaKey
           ? (
-            findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, `DESC_${civilopediaKey}`, layerOrder)
+            findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, `DESC_${lookupCivilopediaKey}`, layerOrder)
             || section1SourcePath
           )
           : '';
-        const iconBlockSourcePath = civilopediaKey
+        const iconBlockSourcePath = lookupCivilopediaKey
           ? (
-            findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_${civilopediaKey}`, layerOrder)
-            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, civilopediaKey, layerOrder)
-            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `${civilopediaKey}_LARGE`, layerOrder)
-            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_RACE_${civilopediaKey.replace(/^RACE_/, '')}`, layerOrder)
+            findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_${lookupCivilopediaKey}`, layerOrder)
+            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `WON_SPLASH_${lookupCivilopediaKey}`, layerOrder)
+            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, lookupCivilopediaKey, layerOrder)
+            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `${lookupCivilopediaKey}_LARGE`, layerOrder)
+            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_RACE_${lookupCivilopediaKey.replace(/^RACE_/, '')}`, layerOrder)
           )
           : '';
-        const eraAnimFallbackKey = civilopediaKey.includes('_ERAS_')
-          ? `ANIMNAME_${String(civilopediaKey || '').split('_ERAS_')[0]}`
+        const eraAnimFallbackKey = lookupCivilopediaKey.includes('_ERAS_')
+          ? `ANIMNAME_${String(lookupCivilopediaKey || '').split('_ERAS_')[0]}`
           : '';
-        const animSourcePath = civilopediaKey
-          ? findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ANIMNAME_${civilopediaKey}`, layerOrder)
+        const animSourcePath = lookupCivilopediaKey
+          ? findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ANIMNAME_${lookupCivilopediaKey}`, layerOrder)
           || (eraAnimFallbackKey ? findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, eraAnimFallbackKey, layerOrder) : '')
           || iconBlockSourcePath
           : '';
         const biqRecord = entry && entry.biqRecord
           ? entry.biqRecord
-          : biqRecordByCivilopediaKey.get(civilopediaKey);
+          : biqRecordByCivilopediaKey.get(lookupCivilopediaKey);
         const rawBiqFields = (biqRecord && Array.isArray(biqRecord.fields))
           ? biqRecord.fields.filter((f) => String(f.key || '').toLowerCase() !== 'civilopediaentry').map((f) => ({
             key: f.key,
@@ -4150,36 +4235,36 @@ function buildReferenceTabs(civ3Path, options = {}) {
         if (tabSpec.key === 'improvements') {
           biqFields = projectImprovementBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: civilopediaKey,
+            civilopediaEntry: displayCivilopediaKey,
             flavorCount
           });
         } else if (tabSpec.key === 'resources') {
           biqFields = projectResourceBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: civilopediaKey
+            civilopediaEntry: displayCivilopediaKey
           });
         } else if (tabSpec.key === 'civilizations') {
           biqFields = projectCivilizationBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: civilopediaKey,
+            civilopediaEntry: displayCivilopediaKey,
             flavorCount
           });
         } else if (tabSpec.key === 'governments') {
           biqFields = projectGovernmentBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: civilopediaKey,
+            civilopediaEntry: displayCivilopediaKey,
             governmentNames
           });
         } else if (tabSpec.key === 'technologies') {
           biqFields = projectTechnologyBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: civilopediaKey,
+            civilopediaEntry: displayCivilopediaKey,
             flavorCount
           });
         } else if (tabSpec.key === 'units') {
           biqFields = projectUnitBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: civilopediaKey
+            civilopediaEntry: displayCivilopediaKey
           });
         }
         const preferredNameBaseKey = tabSpec.key === 'civilizations' ? 'civilizationname' : 'name';
@@ -4200,8 +4285,13 @@ function buildReferenceTabs(civ3Path, options = {}) {
         return {
           id: Number.isFinite(entry && entry.biqIndex)
             ? `biq-${String(biqSectionCode || '').toLowerCase()}-${Number(entry.biqIndex)}`
-            : (civilopediaKey || `${tabSpec.key}-${entrySeeds.indexOf(entry)}`),
-          civilopediaKey,
+            : (lookupCivilopediaKey || `${tabSpec.key}-${entrySeeds.indexOf(entry)}`),
+          civilopediaKey: lookupCivilopediaKey,
+          lookupCivilopediaKey,
+          displayCivilopediaKey,
+          rawCivilopediaKey,
+          rawBiqCivilopediaKey,
+          linkCivilopediaKey: rawCivilopediaKey || displayCivilopediaKey,
           biqIndex: Number.isFinite(entry && entry.biqIndex)
             ? Number(entry.biqIndex)
             : (biqRecord ? Number(biqRecord.index) : null),
@@ -4211,9 +4301,15 @@ function buildReferenceTabs(civ3Path, options = {}) {
           civilopediaSection2: section2RawText,
           originalCivilopediaSection2: section2RawText,
           techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(section1Lines),
-          improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[entry.civilopediaKey] || 'normal') : null,
+          improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[lookupCivilopediaKey] || 'normal') : null,
           iconPaths: pedia.iconPaths,
           originalIconPaths: [...pedia.iconPaths],
+          buildingIconKind: tabSpec.key === 'improvements' ? (pedia.buildingIconKind || '') : '',
+          originalBuildingIconKind: tabSpec.key === 'improvements' ? (pedia.buildingIconKind || '') : '',
+          buildingIconIndex: tabSpec.key === 'improvements' ? (pedia.buildingIconIndex || '') : '',
+          originalBuildingIconIndex: tabSpec.key === 'improvements' ? (pedia.buildingIconIndex || '') : '',
+          wonderSplashPath: tabSpec.key === 'improvements' ? (pedia.wonderSplashPath || '') : '',
+          originalWonderSplashPath: tabSpec.key === 'improvements' ? (pedia.wonderSplashPath || '') : '',
           racePaths: pedia.racePaths,
           originalRacePaths: [...pedia.racePaths],
           thumbPath,
@@ -4246,7 +4342,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
     if (!hasOrderedBiqSeeds && biqKeySets && biqKeySets[tabSpec.key] instanceof Set && biqKeySets[tabSpec.key].size > 0) {
       const allowedKeys = biqKeySets[tabSpec.key];
       entries = entries.filter((entry) => {
-        const key = String(entry.civilopediaKey || '').toUpperCase();
+        const key = String(entry.lookupCivilopediaKey || entry.civilopediaKey || '').toUpperCase();
         if (allowedKeys.has(key)) return true;
         if (tabSpec.key === 'units' && key.startsWith('PRTO_') && key.includes('_ERAS_')) {
           const baseKey = key.split('_ERAS_')[0];
@@ -4267,13 +4363,14 @@ function buildReferenceTabs(civ3Path, options = {}) {
           .map((entry) => (Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : NaN))
           .filter((n) => Number.isFinite(n))
       );
-      const seenSyntheticKeys = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
+      const seenSyntheticKeys = new Set(entries.map((entry) => String(entry && (entry.lookupCivilopediaKey || entry.civilopediaKey) || '').toUpperCase()).filter(Boolean));
       syntheticRecords.forEach((record) => {
         const idx = Number(record && record.index);
         if (!Number.isFinite(idx) || seenSyntheticIndexes.has(idx)) return;
-        const civilopediaEntry = String(getRecordFieldValue(record, syntheticSectionCode, 'civilopediaentry') || '').toUpperCase();
-        if (syntheticSectionCode === 'RACE' && civilopediaEntry === 'RACE_BARBARIANS') return;
-        if (civilopediaEntry && seenSyntheticKeys.has(civilopediaEntry)) return;
+        const civilopediaEntry = String(getRecordFieldValue(record, syntheticSectionCode, 'civilopediaentry') || '').trim();
+        const lookupCivilopediaEntry = civilopediaEntry.toUpperCase();
+        if (syntheticSectionCode === 'RACE' && lookupCivilopediaEntry === 'RACE_BARBARIANS') return;
+        if (lookupCivilopediaEntry && seenSyntheticKeys.has(lookupCivilopediaEntry)) return;
         const recordName = cleanDisplayText(record && record.name || '') || `${syntheticSectionCode} ${Number.isFinite(idx) ? idx + 1 : '?'}`;
         // Prefer the enriched record (section.records) if available — it has display-formatted fields.
         // fullRecords have raw english text; section.records have fields processed by enrichBridgeSections.
@@ -4296,6 +4393,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           }));
         const biqSourcePath = (options.biqTab && options.biqTab.sourcePath) || '';
         const fallbackCivilopediaEntry = civilopediaEntry || `${syntheticSectionCode}_${recordName.replace(/\s+/g, '_')}`;
+        const lookupFallbackCivilopediaEntry = fallbackCivilopediaEntry.toUpperCase();
         let biqFields = rawBiqFields;
         if (tabSpec.key === 'civilizations') {
           biqFields = projectCivilizationBiqFields({ rawFields: rawBiqFields, civilopediaEntry: fallbackCivilopediaEntry, flavorCount });
@@ -4306,13 +4404,18 @@ function buildReferenceTabs(civ3Path, options = {}) {
         const biqNameField = biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === preferredNameBaseKey)
           || biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
         const displayName = (biqNameField && biqNameField.value) ? String(biqNameField.value).trim() : recordName;
-        const syntheticPedia = mapPediaIconsForKey(pediaBlocks, fallbackCivilopediaEntry);
+        const syntheticPedia = mapPediaIconsForKey(pediaBlocks, lookupFallbackCivilopediaEntry);
         const syntheticThumbPath = tabSpec.key === 'civilizations'
           ? (syntheticPedia.iconPaths[0] || syntheticPedia.racePaths[0] || syntheticPedia.iconPaths[syntheticPedia.iconPaths.length - 1] || '')
           : (syntheticPedia.iconPaths[syntheticPedia.iconPaths.length - 1] || syntheticPedia.iconPaths[0] || '');
         entries.push({
           id: `biq-${syntheticSectionCode.toLowerCase()}-${Number.isFinite(idx) ? idx : displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-          civilopediaKey: civilopediaEntry || '',
+          civilopediaKey: lookupCivilopediaEntry || '',
+          displayCivilopediaKey: civilopediaEntry || '',
+          lookupCivilopediaKey: lookupCivilopediaEntry || '',
+          rawCivilopediaKey: (civilopediaSections[lookupCivilopediaEntry] && civilopediaSections[lookupCivilopediaEntry].rawKey) || civilopediaEntry || '',
+          rawBiqCivilopediaKey: civilopediaEntry || '',
+          linkCivilopediaKey: (civilopediaSections[lookupCivilopediaEntry] && civilopediaSections[lookupCivilopediaEntry].rawKey) || civilopediaEntry || '',
           biqIndex: Number.isFinite(idx) ? idx : null,
           name: displayName,
           civilopediaSection1: '',
@@ -4323,6 +4426,12 @@ function buildReferenceTabs(civ3Path, options = {}) {
           improvementKind: null,
           iconPaths: syntheticPedia.iconPaths,
           originalIconPaths: [...syntheticPedia.iconPaths],
+          buildingIconKind: '',
+          originalBuildingIconKind: '',
+          buildingIconIndex: '',
+          originalBuildingIconIndex: '',
+          wonderSplashPath: '',
+          originalWonderSplashPath: '',
           racePaths: syntheticPedia.racePaths,
           originalRacePaths: [...syntheticPedia.racePaths],
           thumbPath: syntheticThumbPath,
@@ -4344,7 +4453,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           syntheticBiqOnly: true
         });
         seenSyntheticIndexes.add(idx);
-        if (civilopediaEntry) seenSyntheticKeys.add(civilopediaEntry);
+        if (lookupCivilopediaEntry) seenSyntheticKeys.add(lookupCivilopediaEntry);
       });
       entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
     }
@@ -4359,16 +4468,17 @@ function buildReferenceTabs(civ3Path, options = {}) {
           .map((entry) => (Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : NaN))
           .filter((n) => Number.isFinite(n))
       );
-      const seenCivilopediaKeys = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
+      const seenCivilopediaKeys = new Set(entries.map((entry) => String(entry && (entry.lookupCivilopediaKey || entry.civilopediaKey) || '').toUpperCase()).filter(Boolean));
       prtoRecords.forEach((record) => {
         const idx = Number(record && record.index);
         if (!Number.isFinite(idx) || seenIndexes.has(idx)) return;
         if (isPrtoStrategyMapRecord(record)) return;
-        const civilopediaEntry = String(getRecordFieldValue(record, 'PRTO', 'civilopediaentry') || '').toUpperCase();
-        if (civilopediaEntry && seenCivilopediaKeys.has(civilopediaEntry)) return;
+        const civilopediaEntry = String(getRecordFieldValue(record, 'PRTO', 'civilopediaentry') || '').trim();
+        const lookupCivilopediaEntry = civilopediaEntry.toUpperCase();
+        if (lookupCivilopediaEntry && seenCivilopediaKeys.has(lookupCivilopediaEntry)) return;
         entries.push(buildSyntheticUnitReferenceEntry(record, (options.biqTab && options.biqTab.sourcePath) || '', mode));
         seenIndexes.add(idx);
-        if (civilopediaEntry) seenCivilopediaKeys.add(civilopediaEntry);
+        if (lookupCivilopediaEntry) seenCivilopediaKeys.add(lookupCivilopediaEntry);
       });
       entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
     }
@@ -5275,10 +5385,12 @@ function loadBundle(payload) {
 
     for (const kind of ['districts', 'wonders', 'naturalWonders', 'animations']) {
       const spec = FILE_SPECS[kind];
-      const defaultText = readTextIfExists(filePaths[kind].defaultPath) || '';
-      const targetText = readTextIfExists(filePaths[kind].targetPath);
-      const fallbackText = readTextIfExists(filePaths[kind].effectivePath) || '';
-      const text = targetText ?? fallbackText;
+      const defaultInfo = readTextFileWithEncodingInfoIfExists(filePaths[kind].defaultPath, { preferredEncoding: textFileEncoding });
+      const targetInfo = readTextFileWithEncodingInfoIfExists(filePaths[kind].targetPath, { preferredEncoding: textFileEncoding });
+      const fallbackInfo = readTextFileWithEncodingInfoIfExists(filePaths[kind].effectivePath, { preferredEncoding: textFileEncoding });
+      const defaultText = defaultInfo ? defaultInfo.text : '';
+      const textInfo = targetInfo || fallbackInfo;
+      const text = textInfo ? textInfo.text : '';
       const defaultPath = filePaths[kind].defaultPath || '';
       const userPath = filePaths[kind].userPath || '';
       const scenarioFilePath = filePaths[kind].scenarioPath || '';
@@ -5300,7 +5412,15 @@ function loadBundle(payload) {
           targetPath,
           hasDefault: !!(defaultPath && fs.existsSync(defaultPath)),
           hasUser: !!(userPath && fs.existsSync(userPath)),
-          hasScenario: !!(scenarioFilePath && fs.existsSync(scenarioFilePath))
+          hasScenario: !!(scenarioFilePath && fs.existsSync(scenarioFilePath)),
+          defaultEncoding: defaultInfo ? defaultInfo.encoding : '',
+          defaultBom: !!(defaultInfo && defaultInfo.bom),
+          effectiveEncoding: fallbackInfo ? fallbackInfo.encoding : '',
+          effectiveBom: !!(fallbackInfo && fallbackInfo.bom),
+          targetEncoding: targetInfo ? targetInfo.encoding : '',
+          targetBom: !!(targetInfo && targetInfo.bom),
+          activeEncoding: textInfo ? textInfo.encoding : '',
+          activeBom: !!(textInfo && textInfo.bom)
         }
       };
     }
@@ -5339,7 +5459,11 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
       const prevLines = normalizePediaIconsLines(doc.blocks[blockKey] || []);
       if (JSON.stringify(prevLines) === JSON.stringify(nextLines)) return;
       doc.blocks[blockKey] = nextLines;
-      if (!doc.order.includes(blockKey)) doc.order.push(blockKey);
+      if (!doc.order.includes(blockKey)) {
+        const markerIdx = doc.order.findIndex((key) => String(key || '').trim().toUpperCase() === 'END CIVILOPEDIA ART');
+        if (markerIdx >= 0) doc.order.splice(markerIdx, 0, blockKey);
+        else doc.order.push(blockKey);
+      }
       if (!doc.headers) doc.headers = {};
       if (!doc.headers[blockKey]) doc.headers[blockKey] = blockKey;
       applied += 1;
@@ -5420,26 +5544,43 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = ''
       const nextNorm = normalizeCivilopediaTextValue(nextLines.join('\n'));
       if (prevNorm === nextNorm) return;
       const existingSection = targetItem || {};
+      const requestedHeaderRaw = String(edit && edit.headerKey || '').trim();
       const existingHeaderRaw = Object.prototype.hasOwnProperty.call(existingSection, 'headerKey')
         ? String(existingSection.headerKey)
         : String(sectionKey);
-      const headerKey = existingHeaderRaw.length > 0 ? existingHeaderRaw : String(sectionKey);
+      const headerKey = existingHeaderRaw.length > 0 ? existingHeaderRaw : (requestedHeaderRaw || String(sectionKey));
       if (items.length > 0) {
         if (targetItem) {
           targetItem.key = sectionKey;
           targetItem.headerKey = headerKey;
           targetItem.rawLines = nextLines;
         } else {
-          items.push({ key: sectionKey, headerKey, rawLines: nextLines });
+          const markerIdx = items.findIndex((item) => String(item && item.key || '').trim().toUpperCase() === 'EOF');
+          const nextItem = { key: sectionKey, headerKey: requestedHeaderRaw || headerKey, rawLines: nextLines };
+          if (markerIdx >= 0) items.splice(markerIdx, 0, nextItem);
+          else items.push(nextItem);
         }
       } else {
-        doc.sections[sectionKey] = { key: sectionKey, headerKey, rawLines: nextLines };
-        if (!doc.order.includes(sectionKey)) doc.order.push(sectionKey);
+        doc.sections[sectionKey] = { key: sectionKey, headerKey: requestedHeaderRaw || headerKey, rawLines: nextLines };
+        if (!doc.order.includes(sectionKey)) {
+          const markerIdx = doc.order.findIndex((key) => String(key || '').trim().toUpperCase() === 'EOF');
+          if (markerIdx >= 0) doc.order.splice(markerIdx, 0, sectionKey);
+          else doc.order.push(sectionKey);
+        }
       }
       applied += 1;
     });
     if (applied === 0) return { ok: true, applied: 0, buffer: null };
     if (items.length > 0) {
+      const eofItems = [];
+      for (let i = items.length - 1; i >= 0; i -= 1) {
+        if (String(items[i] && items[i].key || '').trim().toUpperCase() === 'EOF') {
+          eofItems.unshift(items.splice(i, 1)[0]);
+        }
+      }
+      if (eofItems.length > 0) {
+        items.push(eofItems[eofItems.length - 1]);
+      }
       doc.items = items;
       doc.sections = {};
       doc.order = [];
@@ -5950,6 +6091,9 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
         if (!relPath) continue;
         addFileCopy(resolveArtFileFromRoots(relPath, sourceRoots), relPath);
       }
+      if (sectionCode === 'BLDG' && entry.wonderSplashPath) {
+        addFileCopy(resolveArtFileFromRoots(entry.wonderSplashPath, sourceRoots), entry.wonderSplashPath);
+      }
 
       // Copy race/civ PCX icon files
       for (const relPath of (Array.isArray(entry.racePaths) ? entry.racePaths : [])) {
@@ -6099,11 +6243,20 @@ function buildSavePlan(payload) {
       includeComments: targetExists,
       includeManagedHeader: !targetExists
     });
+    const sourceDetails = tab.sourceDetails || {};
+    const resolvedEncoding = resolveScenarioTextWriteEncoding({
+      targetPath,
+      sourcePath: String(sourceDetails.effectivePath || ''),
+      explicitEncoding: '',
+      preferredEncoding: textFileEncoding,
+      fallbackEncoding: 'windows-1252'
+    });
     plannedWrites.push({
       kind,
       path: targetPath,
-      data: serialized,
-      encoding: 'utf8'
+      data: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: resolvedEncoding.bom }),
+      encoding: resolvedEncoding.encoding,
+      bom: resolvedEncoding.bom
     });
     saveReport.push({ kind, path: targetPath });
   }
@@ -6708,10 +6861,10 @@ function getBiqRecordListForSection(biqTab, sectionCode) {
 function getBiqRecordCivilopediaKey(record) {
   if (!record) return '';
   const direct = cleanDisplayText(record.civilopediaEntry);
-  if (direct) return direct.toUpperCase();
+  if (direct) return direct;
   const fields = Array.isArray(record.fields) ? record.fields : [];
   const match = fields.find((field) => getFieldCanonicalKey(field) === 'civilopediaentry');
-  return cleanDisplayText(match && match.value).toUpperCase();
+  return cleanDisplayText(match && match.value);
 }
 
 function getBiqRecordDisplayName(record, fallback = 'Record') {
@@ -6749,7 +6902,7 @@ function getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef) {
   }
   for (const record of records) {
     const civKey = getBiqRecordCivilopediaKey(record);
-    if (civKey !== targetRef) continue;
+    if (String(civKey || '').trim().toUpperCase() !== targetRef) continue;
     const idx = Number(record && record.index);
     return {
       index: Number.isFinite(idx) ? idx : -1,
@@ -7103,7 +7256,7 @@ function collectBiqReferenceRecordOps(tabs) {
     tab.recordOps.forEach((op) => {
       const kind = String(op && op.op || '').toLowerCase();
       if (kind === 'add') {
-        const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+        const newRecordRef = String(op.newRecordRef || '').trim();
         if (!newRecordRef) return;
         const copyFromRef = String(op.copyFromRef || '').trim().toUpperCase();
         const sourceRef = String(op.sourceRef || '').trim().toUpperCase();
@@ -7126,7 +7279,7 @@ function collectBiqReferenceRecordOps(tabs) {
       }
       if (kind === 'copy') {
         const sourceRef = String(op.sourceRef || '').trim().toUpperCase();
-        const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+        const newRecordRef = String(op.newRecordRef || '').trim();
         if (!sourceRef || !newRecordRef) return;
         ops.push({
           op: 'copy',
@@ -7414,7 +7567,7 @@ function collectCivilopediaReferenceEdits(tabs) {
   const edits = [];
   const deleted = new Set();
   const forcedUpserts = new Set();
-  const upsert = (sectionKey, value) => {
+  const upsert = (sectionKey, value, headerKey = '') => {
     const key = String(sectionKey || '').trim().toUpperCase();
     if (!key) return;
     if (deleted.has(key)) return;
@@ -7423,9 +7576,10 @@ function collectCivilopediaReferenceEdits(tabs) {
     if (existing) {
       existing.op = 'upsert';
       existing.value = normalizedValue;
+      if (headerKey) existing.headerKey = String(headerKey).trim();
       return;
     }
-    edits.push({ op: 'upsert', sectionKey: key, value: normalizedValue });
+    edits.push({ op: 'upsert', sectionKey: key, headerKey: String(headerKey || sectionKey).trim() || key, value: normalizedValue });
   };
   const del = (sectionKey) => {
     const key = String(sectionKey || '').trim().toUpperCase();
@@ -7465,17 +7619,18 @@ function collectCivilopediaReferenceEdits(tabs) {
       });
     }
     tab.entries.forEach((entry) => {
-      const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      const key = String(entry && (entry.lookupCivilopediaKey || entry.civilopediaKey) || '').trim().toUpperCase();
       if (!key) return;
+      const headerKey = String(entry && (entry.rawCivilopediaKey || entry.linkCivilopediaKey || entry.civilopediaKey) || key).trim();
       const section1 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection1);
       const originalSection1 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection1);
       if (section1 !== originalSection1 || forcedUpserts.has(key)) {
-        upsert(key, section1);
+        upsert(key, section1, headerKey);
       }
       const section2 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection2);
       const originalSection2 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection2);
       if (section2 !== originalSection2 || forcedUpserts.has(`DESC_${key}`)) {
-        upsert(`DESC_${key}`, section2);
+        upsert(`DESC_${key}`, section2, `DESC_${headerKey}`);
       }
     });
   }
@@ -7488,17 +7643,18 @@ function collectCivilopediaReferenceEdits(tabs) {
   nestedTabs.forEach((tab) => {
     if (!Array.isArray(tab.entries)) return;
     tab.entries.forEach((entry) => {
-      const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      const key = String(entry && (entry.lookupCivilopediaKey || entry.civilopediaKey) || '').trim().toUpperCase();
       if (!key) return;
+      const headerKey = String(entry && (entry.rawCivilopediaKey || entry.linkCivilopediaKey || entry.civilopediaKey) || key).trim();
       const section1 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection1);
       const originalSection1 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection1);
       if (section1 !== originalSection1) {
-        upsert(key, section1);
+        upsert(key, section1, headerKey);
       }
       const section2 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection2);
       const originalSection2 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection2);
       if (section2 !== originalSection2) {
-        upsert(`DESC_${key}`, section2);
+        upsert(`DESC_${key}`, section2, `DESC_${headerKey}`);
       }
     });
   });
@@ -7572,13 +7728,25 @@ function collectPediaIconsReferenceEdits(tabs) {
         if (key.startsWith('PRTO_')) {
           blank(`ANIMNAME_${key}`);
         }
+        if (key.startsWith('BLDG_')) {
+          blank(`WON_SPLASH_${key}`);
+        }
       });
     }
     if (!Array.isArray(tab.entries)) continue;
     tab.entries.forEach((entry) => {
-      const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-      if (!key) return;
-      const shortKey = key.replace(/^(RACE_|TECH_|GOOD_|BLDG_|GOVT_|PRTO_)/, '');
+      const key = String(
+        entry && (
+          entry.rawBiqCivilopediaKey
+          || entry.displayCivilopediaKey
+          || entry.linkCivilopediaKey
+          || entry.rawCivilopediaKey
+          || entry.civilopediaKey
+        ) || ''
+      ).trim();
+      const lookupKey = String(entry && (entry.lookupCivilopediaKey || entry.civilopediaKey) || key).trim().toUpperCase();
+      if (!key || !lookupKey) return;
+      const shortKey = lookupKey.replace(/^(RACE_|TECH_|GOOD_|BLDG_|GOVT_|PRTO_)/, '');
       const importedFromScenario = !!String(entry && entry._importScenarioPath || '').trim();
       const shouldForceImportedPedia = importedFromScenario && !!(entry && entry.isNew);
       const nextIconPaths = normalizePediaPathList(entry && entry.iconPaths);
@@ -7586,13 +7754,33 @@ function collectPediaIconsReferenceEdits(tabs) {
         ? []
         : normalizePediaPathList(entry && entry.originalIconPaths);
       if (JSON.stringify(nextIconPaths) !== JSON.stringify(prevIconPaths)) {
-        if (key.startsWith('TECH_')) {
+        if (lookupKey.startsWith('TECH_')) {
           const small = nextIconPaths[0] || '';
           const large = nextIconPaths[1] || nextIconPaths[0] || '';
           edits.push({ blockKey: key, lines: small ? [small] : [] });
           edits.push({ blockKey: `${key}_LARGE`, lines: large ? [large] : [] });
+        } else if (lookupKey.startsWith('BLDG_')) {
+          edits.push({ blockKey: `ICON_${key}`, lines: buildBuildingIconLines(entry, nextIconPaths) });
         } else {
           edits.push({ blockKey: `ICON_${key}`, lines: nextIconPaths });
+        }
+      }
+
+      if (lookupKey.startsWith('BLDG_')) {
+        const nextKind = String(entry && entry.buildingIconKind || '').trim();
+        const prevKind = String(entry && entry.originalBuildingIconKind || '').trim();
+        const nextIndex = String(entry && entry.buildingIconIndex || '').trim();
+        const prevIndex = String(entry && entry.originalBuildingIconIndex || '').trim();
+        if ((nextKind !== prevKind || nextIndex !== prevIndex) && JSON.stringify(nextIconPaths) === JSON.stringify(prevIconPaths)) {
+          edits.push({ blockKey: `ICON_${key}`, lines: buildBuildingIconLines(entry, nextIconPaths) });
+        }
+        const nextSplash = normalizeAssetReferencePath(entry && entry.wonderSplashPath);
+        const prevSplash = shouldForceImportedPedia
+          ? ''
+          : normalizeAssetReferencePath(entry && entry.originalWonderSplashPath);
+        if (nextSplash !== prevSplash) {
+          if (nextSplash) edits.push({ blockKey: `WON_SPLASH_${key}`, lines: [nextSplash] });
+          else edits.push({ op: 'delete', blockKey: `WON_SPLASH_${key}` });
         }
       }
 
@@ -7600,7 +7788,7 @@ function collectPediaIconsReferenceEdits(tabs) {
       const prevRacePaths = shouldForceImportedPedia
         ? []
         : normalizePediaPathList(entry && entry.originalRacePaths);
-      if (JSON.stringify(nextRacePaths) !== JSON.stringify(prevRacePaths) && key.startsWith('RACE_')) {
+      if (JSON.stringify(nextRacePaths) !== JSON.stringify(prevRacePaths) && lookupKey.startsWith('RACE_')) {
         edits.push({ blockKey: key, lines: nextRacePaths });
       }
 
@@ -7608,7 +7796,7 @@ function collectPediaIconsReferenceEdits(tabs) {
       const prevAnim = shouldForceImportedPedia
         ? ''
         : normalizeAssetReferencePath(entry && entry.originalAnimationName);
-      if (nextAnim !== prevAnim && key.startsWith('PRTO_')) {
+      if (nextAnim !== prevAnim && lookupKey.startsWith('PRTO_')) {
         edits.push({ blockKey: `ANIMNAME_${key}`, lines: nextAnim ? [nextAnim] : [] });
       }
     });
@@ -7620,7 +7808,7 @@ function collectPediaIconsReferenceEdits(tabs) {
     const op = String(edit.op || 'upsert').trim().toLowerCase();
     merged.set(k, op === 'delete'
       ? { op: 'delete', blockKey: k }
-      : { blockKey: k, lines: normalizePediaIconsLines(edit.lines) });
+      : { blockKey: String(edit.blockKey || '').trim(), lines: normalizePediaIconsLines(edit.lines) });
   });
   return Array.from(merged.values());
 }

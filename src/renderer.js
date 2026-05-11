@@ -199,6 +199,7 @@ const state = {
   settingsPersistTimer: null,
   performanceMenuUnsubscribe: null,
   qualityChecksMenuUnsubscribe: null,
+  logSettingsMenuUnsubscribe: null,
   textFileEncodingMenuUnsubscribe: null,
   startupPerformanceMode: 'high',
   sectionValidationError: '',
@@ -441,6 +442,7 @@ const el = {
   dirtyIndicator: document.getElementById('dirty-indicator'),
   debugLog: document.getElementById('debug-log'),
   copyDebugLog: document.getElementById('copy-debug-log'),
+  openLogFolder: document.getElementById('open-log-folder'),
   clearDebugLog: document.getElementById('clear-debug-log'),
   aboutBtn: document.getElementById('about-btn'),
   aboutModalOverlay: document.getElementById('about-modal-overlay'),
@@ -671,6 +673,7 @@ const BASE_STRUCTURED_LIST_FIELDS = new Set([
   'production_perfume',
   'perfume_specs',
   'technology_perfume',
+  'resource_perfume',
   'government_perfume',
   'building_prereqs_for_units',
   'buildings_generating_resources',
@@ -780,8 +783,8 @@ const SECTION_SCHEMAS = {
       { key: 'vary_img_by_era', label: 'Vary Art By Era', desc: 'Use era-specific rows in art.', type: 'bool' },
       { key: 'vary_img_by_culture', label: 'Vary Art By Culture', desc: 'Use culture-variant image set.', type: 'bool' },
       { key: 'draw_over_resources', label: 'Draw Over Resources', desc: 'Draw district art above map resources.', type: 'bool', minRelease: 'R27' },
-      { key: 'impassible', label: 'Impassible', desc: 'Disallow movement through the completed district tile.', type: 'bool', minRelease: 'R27' },
-      { key: 'impassible_to_wheeled', label: 'Impassible To Wheeled', desc: 'Disallow wheeled movement unless connected by road.', type: 'bool', minRelease: 'R27' },
+      { key: 'Impassable', label: 'Impassable', desc: 'Disallow movement through the completed district tile.', type: 'bool', minRelease: 'R27' },
+      { key: 'Impassable_to_wheeled', label: 'Impassable To Wheeled', desc: 'Disallow wheeled movement unless connected by road.', type: 'bool', minRelease: 'R27' },
       { key: 'allow_irrigation_from', label: 'Allow Irrigation From', desc: 'Allow this district to act as an irrigation source.', type: 'bool', minRelease: 'R27' },
       { key: 'heal_units_in_one_turn', label: 'Heal Units In One Turn', desc: 'Fully heal friendly units that end their turn here.', type: 'bool', minRelease: 'R27' },
       { key: 'defense_bonus_percent', label: 'Defense Bonus', desc: 'Base defense % plus optional per-building/terrain modifiers.', type: 'bonus' },
@@ -853,8 +856,8 @@ const SECTION_SCHEMAS = {
       { key: 'gold_bonus', label: 'Gold Bonus', desc: 'Worked-tile gold bonus.', type: 'number' },
       { key: 'shield_bonus', label: 'Shield Bonus', desc: 'Worked-tile shield bonus.', type: 'number' },
       { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Worked-tile happiness bonus.', type: 'number', minRelease: 'R27' },
-      { key: 'impassible', label: 'Impassible', desc: 'Disallow movement through tile.', type: 'bool', minRelease: 'R27' },
-      { key: 'impassible_to_wheeled', label: 'Impassible To Wheeled', desc: 'Disallow wheeled movement unless connected.', type: 'bool', minRelease: 'R27' },
+      { key: 'Impassable', label: 'Impassable', desc: 'Disallow movement through tile.', type: 'bool', minRelease: 'R27' },
+      { key: 'Impassable_to_wheeled', label: 'Impassable To Wheeled', desc: 'Disallow wheeled movement unless connected.', type: 'bool', minRelease: 'R27' },
       { key: 'animation', label: 'Animation Item', desc: 'Natural wonder animation spec string.', type: 'text', multi: true, minRelease: 'R28' }
     ],
     template: {
@@ -1308,6 +1311,9 @@ function collectPendingWritePathsFromDirtyTabs() {
       const changedCivilopediaSection1 = !isEqual(String(entry && entry.civilopediaSection1 || ''), String(cleanEntry && cleanEntry.civilopediaSection1 || ''));
       const changedCivilopediaSection2 = !isEqual(String(entry && entry.civilopediaSection2 || ''), String(cleanEntry && cleanEntry.civilopediaSection2 || ''));
       const changedIconPaths = !isEqual(normalizeRefList(entry && entry.iconPaths), normalizeRefList(cleanEntry && cleanEntry.iconPaths));
+      const changedBuildingIconKind = !isEqual(String(entry && entry.buildingIconKind || ''), String(cleanEntry && cleanEntry.buildingIconKind || ''));
+      const changedBuildingIconIndex = !isEqual(String(entry && entry.buildingIconIndex || ''), String(cleanEntry && cleanEntry.buildingIconIndex || ''));
+      const changedWonderSplashPath = !isEqual(String(entry && entry.wonderSplashPath || ''), String(cleanEntry && cleanEntry.wonderSplashPath || ''));
       const changedAnimationName = !isEqual(String(entry && entry.animationName || ''), String(cleanEntry && cleanEntry.animationName || ''));
       const changedRacePaths = !isEqual(normalizeRefList(entry && entry.racePaths), normalizeRefList(cleanEntry && cleanEntry.racePaths));
       const changedBiq = !isEqual(normalizeBiqFields(entry && entry.biqFields), normalizeBiqFields(cleanEntry && cleanEntry.biqFields));
@@ -1316,7 +1322,7 @@ function collectPendingWritePathsFromDirtyTabs() {
         addPath((meta && meta.civilopediaSection1 && meta.civilopediaSection1.writePath) || scenarioCivilopediaFallback);
         addPath((meta && meta.civilopediaSection2 && meta.civilopediaSection2.writePath) || scenarioCivilopediaFallback);
       }
-      if (changedIconPaths || changedAnimationName || changedRacePaths) {
+      if (changedIconPaths || changedBuildingIconKind || changedBuildingIconIndex || changedWonderSplashPath || changedAnimationName || changedRacePaths) {
         addPath((meta && meta.iconPaths && meta.iconPaths.writePath) || scenarioPediaIconsFallback);
         addPath((meta && meta.animationName && meta.animationName.writePath) || scenarioPediaIconsFallback);
       }
@@ -6258,10 +6264,11 @@ function makeInputForBaseRow(row, onChange, options = {}) {
     return wrap;
   }
 
-  if (row.key === 'production_perfume' || row.key === 'perfume_specs' || row.key === 'technology_perfume' || row.key === 'government_perfume') {
+  if (row.key === 'production_perfume' || row.key === 'perfume_specs' || row.key === 'technology_perfume' || row.key === 'resource_perfume' || row.key === 'government_perfume') {
     const improvementOptions = getNamedReferenceOptionsForTab('improvements');
     const unitOptions = getNamedReferenceOptionsForTab('units');
     const techOptions = getNamedReferenceOptionsForTab('technologies');
+    const resourceOptions = getNamedReferenceOptionsForTab('resources');
     const govOptions = getNamedReferenceOptionsForTab('governments');
     const inferProductionKind = (name) => {
       const n = String(name || '').trim();
@@ -6313,6 +6320,8 @@ function makeInputForBaseRow(row, onChange, options = {}) {
     let items = parseNameAmountItems(row.value).map((item) => {
       const kind = row.key === 'technology_perfume'
         ? 'technologies'
+        : row.key === 'resource_perfume'
+          ? 'resources'
         : row.key === 'government_perfume'
           ? 'governments'
           : inferProductionKind(item.name);
@@ -6324,6 +6333,8 @@ function makeInputForBaseRow(row, onChange, options = {}) {
       createDefaultItem: () => {
         return row.key === 'technology_perfume'
           ? { name: '', amount: '', kind: 'technologies' }
+          : row.key === 'resource_perfume'
+            ? { name: '', amount: '', kind: 'resources' }
           : row.key === 'government_perfume'
             ? { name: '', amount: '', kind: 'governments' }
             : { name: '', amount: '', kind: inferProductionKind('') };
@@ -6338,6 +6349,8 @@ function makeInputForBaseRow(row, onChange, options = {}) {
         rowTop.className = 'kv-row';
         const targetKind = row.key === 'technology_perfume'
           ? 'technologies'
+          : row.key === 'resource_perfume'
+            ? 'resources'
           : row.key === 'government_perfume'
             ? 'governments'
             : (item.kind || inferProductionKind(item.name));
@@ -6345,6 +6358,8 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           ? buildCombinedProductionOptions(item.name)
           : targetKind === 'technologies'
             ? techOptions
+            : targetKind === 'resources'
+              ? resourceOptions
             : targetKind === 'governments'
               ? govOptions
               : targetKind === 'units'
@@ -11634,7 +11649,7 @@ const UNIT_RULE_FRIENDLY_LABELS = Object.freeze({
   airdefence: 'Air Defence',
   hitpointbonus: 'Hit Point Bonus',
   operationalrange: 'Operational Range',
-  capacity: 'Capacity',
+  capacity: 'Transport Capacity',
   populationcost: 'Population Cost',
   shieldcost: 'Shield Cost',
   workerstrengthfloat: 'Worker Strength',
@@ -14194,10 +14209,6 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
   rows.forEach((cfg) => {
     const panel = document.createElement('div');
     panel.className = 'unit-list-panel';
-    const label = document.createElement('div');
-    label.className = 'unit-list-panel-title';
-    label.textContent = cfg.label;
-    panel.appendChild(label);
     const controlWrap = document.createElement('div');
     controlWrap.className = 'unit-list-panel-body';
     const stealthState = getUnitListFieldState(entry, ['stealth_target', 'stealthtarget'], 'stealth_target');
@@ -14207,6 +14218,46 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
     const civOptions = getCivilizationBitmaskOptions();
     const civNameByIdx = new Map(civOptions.map((opt) => [Number.parseInt(String(opt.value), 10), String(opt.label || '')]));
     const availableField = getBiqFieldByBaseKey(entry, 'availableto');
+    const labelRow = document.createElement('div');
+    labelRow.className = 'unit-list-panel-head';
+    const label = document.createElement('div');
+    label.className = 'unit-list-panel-title';
+    label.textContent = cfg.label;
+    labelRow.appendChild(label);
+    if (referenceEditable && ['abilities', 'availableTo', 'stealthTargets'].includes(cfg.kind)) {
+      const removeAllBtn = document.createElement('button');
+      removeAllBtn.type = 'button';
+      removeAllBtn.className = 'unit-list-remove-all-btn';
+      removeAllBtn.textContent = 'Remove All';
+      let hasValues = false;
+      if (cfg.kind === 'abilities') hasValues = getUnitAbilitySelections(entry).length > 0;
+      else if (cfg.kind === 'availableTo') hasValues = decodeAvailableToIndices(availableField && availableField.value).length > 0;
+      else if (cfg.kind === 'stealthTargets') hasValues = stealthState.values.length > 0;
+      removeAllBtn.disabled = !hasValues;
+      removeAllBtn.title = hasValues ? `Remove all ${cfg.label.toLowerCase()}` : `No ${cfg.label.toLowerCase()} to remove`;
+      removeAllBtn.addEventListener('click', () => {
+        if (removeAllBtn.disabled) return;
+        rememberUndoSnapshot();
+        if (cfg.kind === 'abilities') {
+          setUnitAbilitySelections(entry, []);
+        } else if (cfg.kind === 'availableTo') {
+          let field = availableField;
+          if (!field) {
+            if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+            field = { key: 'availableto', baseKey: 'availableto', label: 'Available To', value: '0', originalValue: '0', editable: true };
+            entry.biqFields.push(field);
+          }
+          field.value = encodeAvailableToFromIndices([]);
+        } else if (cfg.kind === 'stealthTargets') {
+          setUnitListFieldValues(entry, stealthState.key, []);
+        }
+        setDirty(true);
+        renderActiveTab({ preserveTabScroll: true });
+        setStatus(`Removed all ${cfg.label.toLowerCase()}.`);
+      });
+      labelRow.appendChild(removeAllBtn);
+    }
+    panel.appendChild(labelRow);
     if (!referenceEditable) {
       const text = document.createElement('div');
       text.className = 'field-meta unit-list-panel-text';
@@ -14424,7 +14475,7 @@ function enableWideDetailsToggle(details, { ignoreSelectors = '' } = {}) {
   });
 }
 
-function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable) {
+function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex = null) {
   const groupCard = document.createElement('div');
   groupCard.className = 'rule-group-card unit-matrix-card';
   const groupTitle = document.createElement('div');
@@ -14434,7 +14485,14 @@ function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, reference
 
   const grid = document.createElement('div');
   grid.className = 'unit-boolean-matrix';
+  const boolFields = [];
+  const valueFields = [];
   (Array.isArray(fields) ? fields : []).forEach((field) => {
+    const spec = getRuleFieldSpec(tabKey, field) || {};
+    if (spec.control === 'bool' || (!spec.control && isLikelyBooleanField(field))) boolFields.push(field);
+    else valueFields.push(field);
+  });
+  boolFields.forEach((field) => {
     const spec = getRuleFieldSpec(tabKey, field) || {};
     const displayLabel = getRuleFieldDisplayLabel(tabKey, field, spec);
     const item = document.createElement(referenceEditable ? 'label' : 'div');
@@ -14463,7 +14521,17 @@ function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, reference
     grid.appendChild(item);
   });
 
-  groupCard.appendChild(grid);
+  if (grid.childElementCount > 0) groupCard.appendChild(grid);
+  if (valueFields.length > 0) {
+    appendRuleFieldsToGroupCard({
+      groupCard,
+      fields: valueFields,
+      entry,
+      tabKey,
+      selectedBaseIndex,
+      referenceEditable
+    });
+  }
   return groupCard;
 }
 
@@ -14679,13 +14747,13 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
   ].forEach((groupName) => {
     const fields = groupedFields.get(groupName);
     if (!fields || fields.length === 0) return;
-    middleCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable));
+    middleCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex));
     groupedFields.delete(groupName);
   });
 
   const specialOrderFields = groupedFields.get('Special Orders');
   if (specialOrderFields && specialOrderFields.length > 0) {
-    middleCol.appendChild(renderUnitBooleanMatrixCard('Special Orders', specialOrderFields, entry, tabKey, referenceEditable));
+    middleCol.appendChild(renderUnitBooleanMatrixCard('Special Orders', specialOrderFields, entry, tabKey, referenceEditable, selectedBaseIndex));
     groupedFields.delete('Special Orders');
   }
 
@@ -14696,7 +14764,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
   ].forEach((groupName) => {
     const fields = groupedFields.get(groupName);
     if (!fields || fields.length === 0) return;
-    rightCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable));
+    rightCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex));
     groupedFields.delete(groupName);
   });
 
@@ -18169,7 +18237,7 @@ function navigateToCivilopediaKey(civilopediaKey) {
   if (!Array.isArray(state.bundle.tabs[tabKey].entries)) return false;
   const target = String(civilopediaKey || '').toUpperCase();
   const entries = state.bundle.tabs[tabKey].entries;
-  const idx = entries.findIndex((entry) => String(entry.civilopediaKey || '').toUpperCase() === target);
+  const idx = entries.findIndex((entry) => String((entry.lookupCivilopediaKey || entry.civilopediaKey) || '').toUpperCase() === target);
   if (idx < 0) return false;
   const targetEntry = entries[idx];
   const needle = String(state.referenceFilter[tabKey] || '').trim().toLowerCase();
@@ -18203,16 +18271,16 @@ function getCivilopediaEntryForKey(civilopediaKey) {
     if (!pedia) return null;
     if (key.startsWith('TFRM_')) {
       const entries = (pedia.workerActions && pedia.workerActions.entries) || [];
-      const entry = entries.find((item) => String(item && item.civilopediaKey || '').toUpperCase() === key) || null;
+      const entry = entries.find((item) => String(item && (item.lookupCivilopediaKey || item.civilopediaKey) || '').toUpperCase() === key) || null;
       return entry ? { tabKey: 'workerActions', entry } : null;
     }
     const entries = (pedia.terrain && pedia.terrain.entries) || [];
-    const entry = entries.find((item) => String(item && item.civilopediaKey || '').toUpperCase() === key) || null;
+    const entry = entries.find((item) => String(item && (item.lookupCivilopediaKey || item.civilopediaKey) || '').toUpperCase() === key) || null;
     return entry ? { tabKey: 'terrainPedia', entry } : null;
   }
   const tab = state.bundle.tabs[tabKey];
   if (!tab || !Array.isArray(tab.entries)) return null;
-  const entry = tab.entries.find((item) => String(item && item.civilopediaKey || '').toUpperCase() === key) || null;
+  const entry = tab.entries.find((item) => String(item && (item.lookupCivilopediaKey || item.civilopediaKey) || '').toUpperCase() === key) || null;
   return entry ? { tabKey, entry } : null;
 }
 
@@ -18224,6 +18292,14 @@ function joinCivilopediaFields(section1, section2, civilopediaKey) {
   if (!b) return a;
   const marker = civilopediaKey ? `#DESC_${civilopediaKey}` : '#DESC_UNKNOWN';
   return `${a}\n${marker}\n${b}`;
+}
+
+function getEntryCivilopediaHeaderKey(entry) {
+  return String(entry && (entry.linkCivilopediaKey || entry.rawCivilopediaKey || entry.civilopediaKey) || '').trim();
+}
+
+function getEntryCivilopediaDisplayKey(entry) {
+  return String(entry && (entry.displayCivilopediaKey || entry.rawBiqCivilopediaKey || entry.rawCivilopediaKey || entry.civilopediaKey) || '').trim();
 }
 
 function splitCivilopediaAtMarker(combined) {
@@ -18248,7 +18324,7 @@ function plainCivilopediaText(raw) {
 
 function getCivilopediaPreviewSnippet(entry) {
   if (!entry) return '';
-  const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey);
+  const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.linkCivilopediaKey || entry.rawCivilopediaKey || entry.civilopediaKey);
   const plain = plainCivilopediaText(combined.replace(PEDIA_MORE_MARKER_RE, ' '));
   if (!plain) return 'No Civilopedia preview text available.';
   return plain.length > 220 ? `${plain.slice(0, 217)}...` : plain;
@@ -18365,7 +18441,35 @@ function showPediaLinkPreview(anchor, civilopediaKey, fallbackLabel = '') {
 
 const CIVILOPEDIA_LINK_PATTERN = /\$LINK<([^=<>]+)=([^<>]+)>/g;
 
-function appendCivilopediaInlineNodes(container, value) {
+function replaceFirstCivilopediaLinkTarget(text, badTarget, goodTarget) {
+  const source = String(text || '');
+  const bad = String(badTarget || '').trim();
+  const good = String(goodTarget || '').trim();
+  if (!source || !bad || !good || bad === good) return source;
+  let replaced = false;
+  return source.replace(CIVILOPEDIA_LINK_PATTERN, (full, label, target) => {
+    if (replaced || String(target || '').trim() !== bad) return full;
+    replaced = true;
+    return `$LINK<${label}=${good}>`;
+  });
+}
+
+function getCivilopediaActualLinkKey(targetKey) {
+  const target = String(targetKey || '').trim();
+  if (!target) return '';
+  const hit = getCivilopediaEntryForKey(target);
+  if (!hit || !hit.entry) return '';
+  return String(
+    hit.entry.rawCivilopediaKey
+    || hit.entry.linkCivilopediaKey
+    || hit.entry.rawBiqCivilopediaKey
+    || hit.entry.displayCivilopediaKey
+    || hit.entry.civilopediaKey
+    || ''
+  ).trim();
+}
+
+function appendCivilopediaInlineNodes(container, value, options = {}) {
   const cleaned = String(value || '').replace(/\[([^\]]+)\]/g, '$1');
   let pos = 0;
   for (const match of cleaned.matchAll(CIVILOPEDIA_LINK_PATTERN)) {
@@ -18379,6 +18483,12 @@ function appendCivilopediaInlineNodes(container, value) {
     a.href = '#';
     a.className = 'pedia-link';
     a.textContent = label;
+    const actualKey = getCivilopediaActualLinkKey(key);
+    const hasCaseMismatch = !!actualKey && actualKey.toUpperCase() === key.toUpperCase() && actualKey !== key;
+    if (hasCaseMismatch) {
+      a.classList.add('pedia-link-case-warning');
+      a.title = `Civ3 link target casing mismatch: ${key} should be ${actualKey}.`;
+    }
     a.addEventListener('mouseenter', () => {
       showPediaLinkPreview(a, key, label);
     });
@@ -18398,6 +18508,19 @@ function appendCivilopediaInlineNodes(container, value) {
       }
     });
     container.appendChild(a);
+    if (hasCaseMismatch && typeof options.onFixLinkCase === 'function') {
+      const fixBtn = document.createElement('button');
+      fixBtn.type = 'button';
+      fixBtn.className = 'pedia-link-case-fix';
+      fixBtn.textContent = `Use ${actualKey}`;
+      fixBtn.title = `Change only this link target from ${key} to ${actualKey}.`;
+      fixBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        options.onFixLinkCase({ target: key, actual: actualKey, label });
+      });
+      container.appendChild(fixBtn);
+    }
     pos = index + match[0].length;
   }
   if (pos < cleaned.length) {
@@ -18405,20 +18528,20 @@ function appendCivilopediaInlineNodes(container, value) {
   }
 }
 
-function renderCivilopediaRichText(container, text) {
+function renderCivilopediaRichText(container, text, options = {}) {
   const rawText = String(text || '');
   const moreMatch = PEDIA_MORE_MARKER_RE.exec(rawText);
   if (moreMatch) {
     const beforeText = rawText.slice(0, moreMatch.index);
     const afterText = rawText.slice(moreMatch.index + moreMatch[0].length);
-    if (beforeText.trim()) renderCivilopediaRichText(container, beforeText);
+    if (beforeText.trim()) renderCivilopediaRichText(container, beforeText, options);
     const divider = document.createElement('div');
     divider.className = 'pedia-more-divider';
     const label = document.createElement('span');
     label.textContent = '· More ·';
     divider.appendChild(label);
     container.appendChild(divider);
-    if (afterText.trim()) renderCivilopediaRichText(container, afterText);
+    if (afterText.trim()) renderCivilopediaRichText(container, afterText, options);
     return;
   }
   const blocks = CIVILOPEDIA_TEXT_UTILS && typeof CIVILOPEDIA_TEXT_UTILS.toReadBlocks === 'function'
@@ -18443,10 +18566,10 @@ function renderCivilopediaRichText(container, text) {
           statRow.className = 'pedia-stat-row';
           const label = document.createElement('div');
           label.className = 'pedia-stat-label';
-          appendCivilopediaInlineNodes(label, row.label);
+          appendCivilopediaInlineNodes(label, row.label, options);
           const value = document.createElement('div');
           value.className = 'pedia-stat-value';
-          appendCivilopediaInlineNodes(value, row.value);
+          appendCivilopediaInlineNodes(value, row.value, options);
           statRow.appendChild(label);
           statRow.appendChild(value);
           table.appendChild(statRow);
@@ -18454,7 +18577,7 @@ function renderCivilopediaRichText(container, text) {
         }
         const full = document.createElement('div');
         full.className = row.type === 'heading' ? 'pedia-stat-heading' : 'pedia-stat-note';
-        appendCivilopediaInlineNodes(full, row.text || '');
+        appendCivilopediaInlineNodes(full, row.text || '', options);
         table.appendChild(full);
       });
       container.appendChild(table);
@@ -18462,7 +18585,7 @@ function renderCivilopediaRichText(container, text) {
     }
     const p = document.createElement('p');
     p.className = 'pedia-paragraph';
-    appendCivilopediaInlineNodes(p, block && block.text ? block.text : '');
+    appendCivilopediaInlineNodes(p, block && block.text ? block.text : '', options);
     container.appendChild(p);
   });
 }
@@ -18472,6 +18595,23 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   const setVal = setValue || ((v) => { entry[fieldKey] = v; });
   const editorKey = `${String(entry && entry.civilopediaKey || '').toUpperCase()}:${fieldKey}`;
   const isEditing = !!state.civilopediaEditorOpen[editorKey];
+  let editor = null;
+  let livePreview = null;
+  const fixCivilopediaLinkCase = ({ target, actual }) => {
+    const current = String(getVal() || '');
+    const next = replaceFirstCivilopediaLinkTarget(current, target, actual);
+    if (next === current) return;
+    rememberUndoSnapshot();
+    setVal(next);
+    if (editor) editor.value = next;
+    setDirty(true);
+    if (livePreview) {
+      livePreview.innerHTML = '';
+      renderCivilopediaRichText(livePreview, next, { onFixLinkCase: fixCivilopediaLinkCase });
+    } else {
+      renderActiveTab({ preserveTabScroll: true });
+    }
+  };
   const beginEditSession = () => {
     state.civilopediaEditSessionByKey[editorKey] = {
       snapshot: snapshotTabs(),
@@ -18515,7 +18655,7 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   if (!isEditing) {
     const value = getVal().trim();
     if (value) {
-      renderCivilopediaRichText(block, value);
+      renderCivilopediaRichText(block, value, { onFixLinkCase: fixCivilopediaLinkCase });
     } else {
       const hint = document.createElement('p');
       hint.className = 'hint';
@@ -18560,18 +18700,17 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   linkPanel.appendChild(linkList);
   block.appendChild(linkPanel);
 
-  const editor = document.createElement('textarea');
+  editor = document.createElement('textarea');
   editor.className = 'civilopedia-editor';
   editor.rows = 7;
   editor.placeholder = emptyText || '';
   editor.value = getVal();
-  let livePreview = null;
   let livePreviewTimer = null;
   const refreshLivePreview = () => {
     livePreviewTimer = null;
     if (!livePreview) return;
     livePreview.innerHTML = '';
-    renderCivilopediaRichText(livePreview, getVal());
+    renderCivilopediaRichText(livePreview, getVal(), { onFixLinkCase: fixCivilopediaLinkCase });
   };
   const scheduleLivePreviewRefresh = () => {
     if (!livePreview) return;
@@ -18600,7 +18739,7 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
     tab.entries.forEach((candidate) => {
       tokenOptions.push({
         label: String(candidate.name || ''),
-        key: String(candidate.civilopediaKey || ''),
+        key: String(candidate.linkCivilopediaKey || candidate.rawCivilopediaKey || candidate.civilopediaKey || ''),
         tabKey,
         entry: candidate
       });
@@ -18926,6 +19065,13 @@ function buildReferenceArtSlots(tabKey, entry, options = {}) {
     const label = i === 0 ? 'Civilopedia Large' : i === 1 ? 'Civilopedia Small' : `Icon ${i + 1}`;
     slots.push({ group: 'iconPaths', index: i, label, path: String(icons[i] || '') });
   }
+  if (tabKey === 'improvements') {
+    const kind = String(entry && entry.improvementKind || '').trim().toLowerCase();
+    const splash = String(entry && entry.wonderSplashPath || '').trim();
+    if (splash || kind === 'wonder' || kind === 'small_wonder') {
+      slots.push({ group: 'wonderSplashPath', index: 0, label: 'Wonder Splash', path: splash });
+    }
+  }
   if (tabKey === 'civilizations') {
     const race = Array.isArray(entry && entry.racePaths) ? entry.racePaths : [];
     const raceCount = Math.max(2, race.length);
@@ -18940,6 +19086,10 @@ function buildReferenceArtSlots(tabKey, entry, options = {}) {
 function setReferenceArtSlotPath(entry, slot, nextPathRaw) {
   if (!entry || !slot) return;
   const nextPath = normalizeAssetReferencePath(toPediaRelativeAssetPath(nextPathRaw || ''));
+  if (slot.group === 'wonderSplashPath') {
+    entry.wonderSplashPath = nextPath;
+    return;
+  }
   const key = slot.group === 'racePaths' ? 'racePaths' : 'iconPaths';
   const arr = Array.isArray(entry[key]) ? [...entry[key]] : [];
   arr[slot.index] = nextPath;
@@ -19855,22 +20005,23 @@ function buildBiqStructureRecordFromSource({ section, sourceRecord, mode, newRec
   return record;
 }
 
-function normalizeReferenceKeyToken(raw) {
-  return String(raw || '')
+function normalizeReferenceKeyToken(raw, { preserveCase = false } = {}) {
+  const token = String(raw || '')
     .trim()
     .replace(/\s+/g, '_')
     .replace(/[^A-Za-z0-9_]/g, '')
     .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase();
+    .replace(/^_+|_+$/g, '');
+  return preserveCase ? token : token.toUpperCase();
 }
 
 function stripReferencePrefixToken(token) {
-  const upper = String(token || '').toUpperCase();
+  const text = String(token || '');
+  const upper = text.toUpperCase();
   for (const prefix of ALL_REFERENCE_PREFIXES) {
-    if (upper.startsWith(prefix)) return upper.slice(prefix.length);
+    if (upper.startsWith(prefix)) return text.slice(prefix.length);
   }
-  return upper;
+  return text;
 }
 
 function inferReferenceNameFromKey(civilopediaKey, tabKey) {
@@ -19884,7 +20035,7 @@ function inferReferenceNameFromKey(civilopediaKey, tabKey) {
     .trim() || 'New Entry';
 }
 
-function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName, excludeKey = '') {
+function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName, excludeKey = '', options = {}) {
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
   const entries = (tab && Array.isArray(tab.entries)) ? tab.entries : [];
   const exclude = String(excludeKey || '').toUpperCase();
@@ -19893,12 +20044,12 @@ function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName, excludeKey 
       .map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase())
       .filter((key) => key && key !== exclude)
   );
-  let token = normalizeReferenceKeyToken(desiredName);
+  let token = normalizeReferenceKeyToken(desiredName, options);
   if (prefix) token = stripReferencePrefixToken(token);
   if (!token) token = `NEW_${Date.now()}`;
   let key = prefix ? `${prefix}${token}` : token;
   let i = 2;
-  while (existing.has(key)) {
+  while (existing.has(key.toUpperCase())) {
     key = prefix ? `${prefix}${token}_${i}` : `${token}_${i}`;
     i += 1;
   }
@@ -19934,10 +20085,16 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   const name = String(displayName || '').trim() || inferred;
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
   const shortId = prefix && civilopediaKey.startsWith(prefix) ? civilopediaKey.slice(prefix.length) : civilopediaKey;
+  const lookupCivilopediaKey = String(civilopediaKey || '').trim().toUpperCase();
   const entry = {
     ...src,
     id: shortId,
-    civilopediaKey,
+    civilopediaKey: lookupCivilopediaKey,
+    displayCivilopediaKey: civilopediaKey,
+    rawCivilopediaKey: civilopediaKey,
+    rawBiqCivilopediaKey: civilopediaKey,
+    linkCivilopediaKey: civilopediaKey,
+    lookupCivilopediaKey,
     biqIndex: null,
     name,
     isNew: true
@@ -19951,6 +20108,9 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     entry.civilopediaSection2 = '';
     entry.iconPaths = [];
     entry.racePaths = [];
+    entry.buildingIconKind = '';
+    entry.buildingIconIndex = '';
+    entry.wonderSplashPath = '';
     entry.animationName = '';
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
@@ -19975,6 +20135,14 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
       originalValue: String(field && field.value || '')
     }));
   }
+  entry.biqFields = entry.biqFields.map((field) => {
+    if (String(field && (field.baseKey || field.key) || '').toLowerCase() !== 'civilopediaentry') return field;
+    return {
+      ...field,
+      value: civilopediaKey,
+      originalValue: mode === 'copy' ? civilopediaKey : ''
+    };
+  });
   entry.originalCivilopediaSection1 = '';
   entry.originalCivilopediaSection2 = '';
   // For import mode: keep icon/race/animation originals in sync with current values so they are
@@ -19984,10 +20152,16 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   if (mode === 'import') {
     entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
     entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
+    entry.originalBuildingIconKind = String(entry.buildingIconKind || '');
+    entry.originalBuildingIconIndex = String(entry.buildingIconIndex || '');
+    entry.originalWonderSplashPath = String(entry.wonderSplashPath || '');
     entry.originalAnimationName = String(entry.animationName || '');
   } else {
     entry.originalIconPaths = [];
     entry.originalRacePaths = [];
+    entry.originalBuildingIconKind = '';
+    entry.originalBuildingIconIndex = '';
+    entry.originalWonderSplashPath = '';
     entry.originalAnimationName = '';
   }
   // Clear inherited write paths from source — they point to the wrong file context.
@@ -20015,11 +20189,18 @@ function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExist
   if (!tab || !entry) return false;
   if (!allowExisting && !entry.isNew) return false;
   const oldKey = String(entry.civilopediaKey || '').toUpperCase();
-  const nextKey = makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredKeyRaw, oldKey);
-  if (!nextKey || nextKey === oldKey) return false;
-  entry.civilopediaKey = nextKey;
+  const oldDisplayKey = getEntryCivilopediaDisplayKey(entry);
+  const nextKey = makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredKeyRaw, oldKey, { preserveCase: true });
+  const nextLookupKey = String(nextKey || '').trim().toUpperCase();
+  if (!nextKey || (nextLookupKey === oldKey && nextKey === oldDisplayKey)) return false;
+  entry.civilopediaKey = nextLookupKey;
+  entry.lookupCivilopediaKey = nextLookupKey;
+  entry.displayCivilopediaKey = nextKey;
+  entry.rawCivilopediaKey = nextKey;
+  entry.rawBiqCivilopediaKey = nextKey;
+  entry.linkCivilopediaKey = nextKey;
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
-  entry.id = prefix && nextKey.startsWith(prefix) ? nextKey.slice(prefix.length) : nextKey;
+  entry.id = prefix && nextLookupKey.startsWith(prefix) ? nextLookupKey.slice(prefix.length) : nextLookupKey;
   const civField = Array.isArray(entry.biqFields) && entry.biqFields.find((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'civilopediaentry');
   if (civField) civField.value = nextKey;
   const ops = ensureReferenceRecordOps(tab);
@@ -20041,7 +20222,7 @@ function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExist
   const set = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab[tabKey];
   if (set) {
     const oldIdentity = getReferenceEntryIdentity(tabKey, { civilopediaKey: oldKey, biqIndex: entry && entry.biqIndex }, NaN);
-    const nextIdentity = getReferenceEntryIdentity(tabKey, { civilopediaKey: nextKey, biqIndex: entry && entry.biqIndex }, NaN);
+    const nextIdentity = getReferenceEntryIdentity(tabKey, { civilopediaKey: nextLookupKey, biqIndex: entry && entry.biqIndex }, NaN);
     if (oldIdentity && set.has(oldIdentity)) {
       set.delete(oldIdentity);
       if (nextIdentity) set.add(nextIdentity);
@@ -20834,7 +21015,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   const getConfirmEnabled = () => {
     const mode = modeSelect.value;
     const rawKey = String(keyInput.value || '').trim();
-    const normalizedToken = normalizeReferenceKeyToken(rawKey);
+    const normalizedToken = normalizeReferenceKeyToken(rawKey, { preserveCase: true });
     const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
     const strippedToken = prefix ? stripReferencePrefixToken(normalizedToken) : normalizedToken;
     const fullKey = prefix ? (strippedToken ? `${prefix}${strippedToken}` : '') : normalizedToken;
@@ -20903,7 +21084,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     const onConfirm = () => {
       const name = String(nameInput.value || '').trim();
       const mode = String(modeSelect.value || 'blank');
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, keyInput.value || name || `NEW_${Date.now()}`);
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, keyInput.value || name || `NEW_${Date.now()}`, '', { preserveCase: true });
       appendDebugLog('ref-create:confirm', {
         tabKey,
         mode,
@@ -21688,8 +21869,8 @@ function renderReferenceTab(tab, tabKey) {
           if (tabKey === 'gameConcepts') {
             const renamed = renameReferenceEntryKey(tab, tabKey, entry, next, { allowExisting: true });
             if (renamed) {
-              if (editableKeyInput) editableKeyInput.value = String(entry.civilopediaKey || '');
-              if (inlineKeyChip) inlineKeyChip.textContent = String(entry.civilopediaKey || '(none)');
+              if (editableKeyInput) editableKeyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
+              if (inlineKeyChip) inlineKeyChip.textContent = getEntryCivilopediaDisplayKey(entry) || '(none)';
             }
           } else {
             const nameField = ensureBiqFieldByBaseKey(entry, 'name', 'Name', next);
@@ -21710,14 +21891,14 @@ function renderReferenceTab(tab, tabKey) {
         keyInput.type = 'text';
         keyInput.className = 'key-input-inline';
         if (tabKey === 'improvements') keyInput.classList.add('improvement-key-input-inline');
-        keyInput.value = String(entry.civilopediaKey || '');
+        keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
         keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
         keyInput.title = 'Record key (editable for new entries)';
         keyInput.addEventListener('change', () => {
           rememberUndoSnapshot();
           const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
           if (!changed) {
-            keyInput.value = String(entry.civilopediaKey || '');
+            keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
             return;
           }
           setDirty(true);
@@ -21728,7 +21909,7 @@ function renderReferenceTab(tab, tabKey) {
       } else {
         const inlineKey = document.createElement('span');
         inlineKey.className = 'key-display-chip';
-        inlineKey.textContent = String(entry.civilopediaKey || '(none)');
+        inlineKey.textContent = getEntryCivilopediaDisplayKey(entry) || '(none)';
         inlineKey.title = 'Existing record keys are currently locked.';
         inlineKeyChip = inlineKey;
         nameControl.appendChild(inlineKey);
@@ -21752,13 +21933,13 @@ function renderReferenceTab(tab, tabKey) {
         const keyInput = document.createElement('input');
         keyInput.type = 'text';
         keyInput.className = 'key-input-inline';
-        keyInput.value = String(entry.civilopediaKey || '');
+        keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
         keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
         keyInput.addEventListener('change', () => {
           rememberUndoSnapshot();
           const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
           if (!changed) {
-            keyInput.value = String(entry.civilopediaKey || '');
+            keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
             return;
           }
           setDirty(true);
@@ -21768,7 +21949,7 @@ function renderReferenceTab(tab, tabKey) {
       } else {
         const keyDisplay = document.createElement('span');
         keyDisplay.className = 'key-display-chip';
-        keyDisplay.textContent = String(entry.civilopediaKey || '(none)');
+        keyDisplay.textContent = getEntryCivilopediaDisplayKey(entry) || '(none)';
         keyDisplay.title = 'Existing record keys are currently locked.';
         keyControl.appendChild(keyDisplay);
       }
@@ -21951,7 +22132,7 @@ function renderReferenceTab(tab, tabKey) {
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
         emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey),
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
         setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       });
       editorBlock.classList.remove('section-card', 'source-section');
@@ -22036,7 +22217,7 @@ function renderReferenceTab(tab, tabKey) {
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
         emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey),
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
         setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       });
       editorBlock.classList.remove('section-card', 'source-section');
@@ -22052,6 +22233,35 @@ function renderReferenceTab(tab, tabKey) {
         ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
       });
       utilityStack.appendChild(pediaDetails);
+      if (secondaryArtSlots.length > 0) {
+        const otherArtDetails = document.createElement('details');
+        otherArtDetails.className = 'reference-art-collapse unit-compact-collapse';
+        const otherArtOpenKey = 'improvements:other-art';
+        otherArtDetails.open = !!state.unitUtilitySectionOpenByKey[otherArtOpenKey];
+        const otherArtSummary = document.createElement('summary');
+        otherArtSummary.textContent = `Building Icons (${secondaryArtSlots.length})`;
+        otherArtDetails.appendChild(otherArtSummary);
+        otherArtDetails.addEventListener('toggle', () => {
+          state.unitUtilitySectionOpenByKey[otherArtOpenKey] = !!otherArtDetails.open;
+        });
+        const otherArtBody = document.createElement('div');
+        otherArtBody.className = 'unit-collapsible-body';
+        const artSlotsWrap = document.createElement('div');
+        artSlotsWrap.className = 'art-slot-grid';
+        secondaryArtSlots.forEach((slot) => {
+          const cardSlot = makeArtSlotCard({
+            tabKey,
+            entry,
+            slot,
+            editable: referenceEditable,
+            onChanged: () => renderActiveTab({ preserveTabScroll: true })
+          });
+          artSlotsWrap.appendChild(cardSlot);
+        });
+        otherArtBody.appendChild(artSlotsWrap);
+        otherArtDetails.appendChild(otherArtBody);
+        utilityStack.appendChild(otherArtDetails);
+      }
       improvementUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'technologies') {
       const utilityStack = document.createElement('div');
@@ -22075,7 +22285,7 @@ function renderReferenceTab(tab, tabKey) {
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
         emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey),
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
         setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       });
       editorBlock.classList.remove('section-card', 'source-section');
@@ -22114,7 +22324,7 @@ function renderReferenceTab(tab, tabKey) {
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
         emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey),
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
         setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       });
       editorBlock.classList.remove('section-card', 'source-section');
@@ -22182,7 +22392,7 @@ function renderReferenceTab(tab, tabKey) {
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
         emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey),
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
         setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       });
       editorBlock.classList.remove('section-card', 'source-section');
@@ -22356,7 +22566,7 @@ function renderReferenceTab(tab, tabKey) {
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
         emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey),
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
         setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       }));
     } else if (tabKey !== 'units' && tabKey !== 'resources') {
@@ -22370,7 +22580,7 @@ function renderReferenceTab(tab, tabKey) {
       descTitle.appendChild(descLeft);
       attachRichTooltip(descTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
       textBlock.appendChild(descTitle);
-      const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey);
+      const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry));
       renderCivilopediaRichText(textBlock, combined || '(No Civilopedia text found)');
       textCol.appendChild(textBlock);
     }
@@ -23086,7 +23296,7 @@ function renderBiqTab(tab) {
           titleText: 'Civilopedia',
           sourceMeta: terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.civilopediaSection1,
           emptyText: 'Civilopedia text',
-          getValue: () => joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2, terrainPediaEntry.civilopediaKey),
+          getValue: () => joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2, getEntryCivilopediaHeaderKey(terrainPediaEntry)),
           setValue: (v) => { const parts = splitCivilopediaAtMarker(v); terrainPediaEntry.civilopediaSection1 = parts.section1; terrainPediaEntry.civilopediaSection2 = parts.section2; }
         }));
       } else {
@@ -23100,7 +23310,7 @@ function renderBiqTab(tab) {
         descTitle.appendChild(descLeft);
         attachRichTooltip(descTitle, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.civilopediaSection1, 'Civilopedia'));
         textBlock.appendChild(descTitle);
-        const terrainCombined = joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2, terrainPediaEntry.civilopediaKey);
+        const terrainCombined = joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2, getEntryCivilopediaHeaderKey(terrainPediaEntry));
         renderCivilopediaRichText(textBlock, terrainCombined || '(No Civilopedia text found)');
         textCol.appendChild(textBlock);
       }
@@ -32996,6 +33206,9 @@ function markReferenceTabEntryOriginals(tab) {
     entry.originalCivilopediaSection1 = String(entry.civilopediaSection1 || '');
     entry.originalCivilopediaSection2 = String(entry.civilopediaSection2 || '');
     entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
+    entry.originalBuildingIconKind = String(entry.buildingIconKind || '');
+    entry.originalBuildingIconIndex = String(entry.buildingIconIndex || '');
+    entry.originalWonderSplashPath = String(entry.wonderSplashPath || '');
     entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
     entry.originalAnimationName = String(entry.animationName || '');
     entry.unitAnimationEdited = false;
@@ -33362,6 +33575,9 @@ async function init() {
   if (typeof state.settings.runQualityChecks !== 'boolean') {
     state.settings.runQualityChecks = true;
   }
+  if (typeof state.settings.writeLogFiles !== 'boolean') {
+    state.settings.writeLogFiles = true;
+  }
   state.settings.textFileEncoding = normalizeTextFileEncoding(state.settings.textFileEncoding);
   state.startupPerformanceMode = String(state.settings.performanceMode || DEFAULT_PERFORMANCE_MODE);
   applyPerformanceModeRuntime(state.settings.performanceMode, { clearCaches: false });
@@ -33492,6 +33708,24 @@ async function init() {
       if (state.textFileEncodingMenuUnsubscribe) {
         state.textFileEncodingMenuUnsubscribe();
         state.textFileEncodingMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onLogSettingsMenuSelect === 'function') {
+    state.logSettingsMenuUnsubscribe = window.c3xManager.onLogSettingsMenuSelect((settings) => {
+      if (!state.settings) return;
+      if (settings && typeof settings.enabled === 'boolean') {
+        state.settings.writeLogFiles = settings.enabled;
+      }
+      if (settings && typeof settings.folder === 'string') {
+        state.settings.logFolder = settings.folder;
+      }
+      setStatus(state.settings.writeLogFiles ? 'Debug file logging enabled.' : 'Debug file logging disabled.');
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.logSettingsMenuUnsubscribe) {
+        state.logSettingsMenuUnsubscribe();
+        state.logSettingsMenuUnsubscribe = null;
       }
     }, { once: true });
   }
@@ -33693,6 +33927,20 @@ async function init() {
         setStatus('Debug log copied.');
       } catch (_err) {
         setStatus('Could not copy debug log.', true);
+      }
+    });
+  }
+  if (el.openLogFolder && window.c3xManager && typeof window.c3xManager.openLogFolder === 'function') {
+    el.openLogFolder.addEventListener('click', async () => {
+      try {
+        const res = await window.c3xManager.openLogFolder();
+        if (res && res.ok) {
+          setStatus('Opened log folder.');
+        } else {
+          setStatus(res && res.error ? res.error : 'Could not open log folder.', true);
+        }
+      } catch (_err) {
+        setStatus('Could not open log folder.', true);
       }
     });
   }

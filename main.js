@@ -64,6 +64,46 @@ function readStartupTextFileEncoding() {
   }
 }
 
+function getDefaultLogFolderUnsafe() {
+  try {
+    return path.join(app.getPath('userData'), 'logs');
+  } catch (_err) {
+    return '';
+  }
+}
+
+function normalizeWriteLogFiles(value) {
+  return value !== false;
+}
+
+function normalizeLogFolder(value) {
+  const raw = String(value || '').trim();
+  if (raw) return path.resolve(raw);
+  return getDefaultLogFolderUnsafe();
+}
+
+function readStartupWriteLogFiles() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeWriteLogFiles(raw && raw.writeLogFiles);
+  } catch (_err) {
+    return true;
+  }
+}
+
+function readStartupLogFolder() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return getDefaultLogFolderUnsafe();
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeLogFolder(raw && raw.logFolder);
+  } catch (_err) {
+    return getDefaultLogFolderUnsafe();
+  }
+}
+
 function normalizePerformanceMode(value) {
   return String(value || 'high').toLowerCase() === 'safe' ? 'safe' : 'high';
 }
@@ -100,9 +140,14 @@ function normalizeTextFileEncoding(value) {
 const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
 const startupTextFileEncoding = readStartupTextFileEncoding();
+const startupWriteLogFiles = readStartupWriteLogFiles();
+const startupLogFolder = readStartupLogFolder();
 let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentTextFileEncoding = startupTextFileEncoding;
+let currentWriteLogFiles = startupWriteLogFiles;
+let currentLogFolder = startupLogFolder;
+log.configureFileLogging({ enabled: currentWriteLogFiles, folder: currentLogFolder });
 // Prevent frequent macOS IOSurface allocation crashes in canvas-heavy screens.
 if (process.platform === 'darwin' && startupPerformanceMode === 'safe' && process.env.C3X_MANAGER_FORCE_GPU !== '1') {
   app.disableHardwareAcceleration();
@@ -230,6 +275,53 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
 }
 
+function getStandardGameBiqPath(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  return root ? path.join(root, 'Conquests', 'conquests.biq') : '';
+}
+
+function applyLogContextFromPayload(payload) {
+  const mode = (payload && payload.mode) || 'global';
+  const biqPath = mode === 'scenario'
+    ? (payload && payload.scenarioPath || '')
+    : getStandardGameBiqPath(payload && payload.civ3Path || '');
+  log.setContext({ mode, biqPath });
+}
+
+function getCurrentLogConfig() {
+  return {
+    enabled: currentWriteLogFiles,
+    folder: currentLogFolder || getDefaultLogFolderUnsafe()
+  };
+}
+
+function persistSettingsPatch(patch) {
+  const settingsPath = getSettingsPath();
+  const existing = readJsonIfExists(settingsPath, {});
+  writeJson(settingsPath, {
+    ...(existing || {}),
+    ...(patch || {})
+  });
+}
+
+async function openLogFolder() {
+  const folder = currentLogFolder || getDefaultLogFolderUnsafe();
+  if (!folder) return { ok: false, error: 'No log folder is configured.' };
+  try {
+    fs.mkdirSync(folder, { recursive: true });
+    const openErr = await shell.openPath(folder);
+    if (openErr) {
+      log.warn('openLogFolder', `Shell error: ${openErr}`);
+      return { ok: false, error: openErr };
+    }
+    log.info('openLogFolder', `Opened: ${log.rel(folder)}`);
+    return { ok: true, folder };
+  } catch (err) {
+    log.error('openLogFolder', err && err.message ? err.message : 'Could not open log folder.');
+    return { ok: false, error: err && err.message ? err.message : 'Could not open log folder.' };
+  }
+}
+
 function createWindow() {
   const windowIcon = fs.existsSync(DEV_APP_ICON_PATH) ? DEV_APP_ICON_PATH : undefined;
   const win = new BrowserWindow({
@@ -318,7 +410,8 @@ function runWorkerTask(task, payload, options = {}) {
     const worker = new Worker(path.join(__dirname, 'src', 'operationWorker.js'), {
       workerData: {
         task,
-        payload: payload || {}
+        payload: payload || {},
+        logConfig: getCurrentLogConfig()
       }
     });
     let settled = false;
@@ -414,6 +507,80 @@ function sendTextFileEncodingSelection(value) {
   target.webContents.send('manager:text-file-encoding-selected', currentTextFileEncoding);
 }
 
+function sendWriteLogFilesSelection(enabled) {
+  currentWriteLogFiles = normalizeWriteLogFiles(enabled);
+  log.configureFileLogging(getCurrentLogConfig());
+  try {
+    persistSettingsPatch({ writeLogFiles: currentWriteLogFiles, logFolder: currentLogFolder });
+  } catch (_err) {
+    // Best effort: renderer event below still applies mode for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:log-settings-selected', getCurrentLogConfig());
+}
+
+async function chooseLogFolder() {
+  const result = await dialog.showOpenDialog({
+    title: 'Choose Log Folder',
+    defaultPath: currentLogFolder || getDefaultLogFolderUnsafe(),
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return;
+  }
+  currentLogFolder = normalizeLogFolder(result.filePaths[0]);
+  log.configureFileLogging(getCurrentLogConfig());
+  try {
+    persistSettingsPatch({ writeLogFiles: currentWriteLogFiles, logFolder: currentLogFolder });
+  } catch (_err) {
+    // Best effort: renderer event below still applies folder for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:log-settings-selected', getCurrentLogConfig());
+}
+
+function resetLogFolder() {
+  currentLogFolder = getDefaultLogFolderUnsafe();
+  log.configureFileLogging(getCurrentLogConfig());
+  try {
+    persistSettingsPatch({ writeLogFiles: currentWriteLogFiles, logFolder: currentLogFolder });
+  } catch (_err) {
+    // Best effort: renderer event below still applies folder for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:log-settings-selected', getCurrentLogConfig());
+}
+
+function buildLogMenuItems() {
+  return [
+    {
+      label: 'Write Debug Logs to Files',
+      type: 'checkbox',
+      checked: currentWriteLogFiles,
+      click: (item) => sendWriteLogFilesSelection(item && item.checked)
+    },
+    { type: 'separator' },
+    {
+      label: 'Open Log Folder',
+      click: () => { openLogFolder().catch((err) => log.error('openLogFolder', err && err.message)); }
+    },
+    {
+      label: 'Choose Log Folder...',
+      click: () => { chooseLogFolder().catch((err) => log.error('chooseLogFolder', err && err.message)); }
+    },
+    {
+      label: 'Reset Log Folder to Default',
+      click: resetLogFolder
+    }
+  ];
+}
+
 function buildAppMenu() {
   const fileMenu = {
     label: 'File',
@@ -427,6 +594,11 @@ function buildAppMenu() {
             checked: currentRunQualityChecks,
             click: (item) => sendQualityChecksSelection(item && item.checked)
           },
+          {
+            label: 'Logging',
+            submenu: buildLogMenuItems()
+          },
+          { type: 'separator' },
           {
             label: 'Performance',
             submenu: [
@@ -459,7 +631,6 @@ function buildAppMenu() {
           }
         ]
       },
-      { type: 'separator' },
       process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }
     ]
   };
@@ -520,6 +691,8 @@ ipcMain.handle('manager:get-settings', async () => {
     textFileEncoding: 'auto',
     performanceMode: 'high',
     runQualityChecks: true,
+    writeLogFiles: true,
+    logFolder: getDefaultLogFolderUnsafe(),
     uiFontScale: 1,
     uiStateByContext: {},
     c3xVersion: 'R27'
@@ -529,19 +702,27 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
+  merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
+  merged.logFolder = normalizeLogFolder(merged.logFolder);
   const parseReleaseNum = (v) => { const n = parseInt(String(v || '').replace(/^R/i, ''), 10); return isNaN(n) ? 0 : n; };
   if (parseReleaseNum(merged.c3xVersion) < parseReleaseNum(defaults.c3xVersion)) merged.c3xVersion = defaults.c3xVersion;
   const inferred = inferDefaultPaths(merged);
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
+  inferred.writeLogFiles = normalizeWriteLogFiles(inferred.writeLogFiles);
+  inferred.logFolder = normalizeLogFolder(inferred.logFolder);
   currentPerformanceMode = inferred.performanceMode;
   currentRunQualityChecks = inferred.runQualityChecks;
   currentTextFileEncoding = inferred.textFileEncoding;
+  currentWriteLogFiles = inferred.writeLogFiles;
+  currentLogFolder = inferred.logFolder;
+  log.configureFileLogging(getCurrentLogConfig());
   buildAppMenu();
 
   // Update log root so subsequent rel() calls use the right base
   log.setCiv3Root(inferred.civ3Path || '');
+  applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
   log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}`);
@@ -562,9 +743,13 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     ...(settings || {}),
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode),
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
-    textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding)
+    textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
+    writeLogFiles: normalizeWriteLogFiles(settings && settings.writeLogFiles),
+    logFolder: normalizeLogFolder(settings && settings.logFolder)
   };
   log.setCiv3Root(normalized.civ3Path || '');
+  applyLogContextFromPayload(normalized);
+  log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
   log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
@@ -582,6 +767,12 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentTextFileEncoding !== normalized.textFileEncoding) {
     currentTextFileEncoding = normalized.textFileEncoding;
+    buildAppMenu();
+  }
+  if (currentWriteLogFiles !== normalized.writeLogFiles || currentLogFolder !== normalized.logFolder) {
+    currentWriteLogFiles = normalized.writeLogFiles;
+    currentLogFolder = normalized.logFolder;
+    log.configureFileLogging(getCurrentLogConfig());
     buildAppMenu();
   }
   return { ok: true };
@@ -633,6 +824,10 @@ ipcMain.handle('manager:open-file-path', async (_event, filePath) => {
     log.error('openFilePath', `${log.rel(target)}: ${err && err.message}`);
     return { ok: false, error: err && err.message ? err.message : 'Could not open file.' };
   }
+});
+
+ipcMain.handle('manager:open-log-folder', async () => {
+  return openLogFolder();
 });
 
 ipcMain.handle('manager:path-exists', async (_event, dirPath) => {
@@ -704,6 +899,7 @@ ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
 });
 
 ipcMain.handle('manager:create-scenario', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
   log.info('createScenario', `template=${payload && payload.template}, name="${payload && payload.scenarioName}"`);
   const result = await runWorkerTask('createScenario', payload || {}, {
     onProgress: payload && payload.dryRun
@@ -722,6 +918,7 @@ ipcMain.handle('manager:create-scenario', async (_event, payload) => {
 });
 
 ipcMain.handle('manager:delete-scenario', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
   log.info('deleteScenario', `scenario=${log.rel(payload && payload.scenarioPath)}`);
   const result = await runWorkerTask('deleteScenario', payload || {}, {
     onProgress: payload && payload.dryRun
@@ -752,6 +949,7 @@ ipcMain.handle('manager:relaunch', async () => {
 ipcMain.handle('manager:load-bundle', async (_event, payload) => {
   const mode = (payload && payload.mode) || 'global';
   log.setCiv3Root(payload && payload.civ3Path || '');
+  applyLogContextFromPayload(payload || {});
   log.info('loadBundle', `mode=${mode}, c3x=${log.rel(payload && payload.c3xPath)}, civ3=${log.rel(payload && payload.civ3Path)}`);
   if (mode === 'scenario') {
     log.info('loadBundle', `scenario=${log.rel(payload && payload.scenarioPath)}`);
@@ -770,6 +968,7 @@ ipcMain.handle('manager:load-bundle', async (_event, payload) => {
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
   const mode = (payload && payload.mode) || 'global';
   log.setCiv3Root(payload && payload.civ3Path || '');
+  applyLogContextFromPayload(payload || {});
   const dirtyTabs = Array.isArray(payload && payload.dirtyTabs) ? payload.dirtyTabs : [];
   log.info('saveBundle', `mode=${mode}, dirtyTabs=[${dirtyTabs.join(', ')}]`);
   const result = await runWorkerTask('saveBundle', payload || {}, {
@@ -794,6 +993,7 @@ ipcMain.handle('manager:save-bundle', async (_event, payload) => {
 ipcMain.handle('manager:validate-bundle', async (_event, payload) => {
   const mode = (payload && payload.mode) || 'global';
   log.setCiv3Root(payload && payload.civ3Path || '');
+  applyLogContextFromPayload(payload || {});
   log.info('validateBundle', `mode=${mode}, c3x=${log.rel(payload && payload.c3xPath)}, civ3=${log.rel(payload && payload.civ3Path)}`);
   if (mode === 'scenario') {
     log.info('validateBundle', `scenario=${log.rel(payload && payload.scenarioPath)}`);
@@ -804,6 +1004,7 @@ ipcMain.handle('manager:validate-bundle', async (_event, payload) => {
 });
 
 ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
   const result = previewSavePlan(payload || {});
   if (result && result.ok && Array.isArray(result.writes)) {
     log.debug('previewSavePlan', `${result.writes.length} pending write(s): [${result.writes.map((w) => log.rel(w.path)).join(', ')}]`);
@@ -814,10 +1015,12 @@ ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {
 });
 
 ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
   return previewFileDiff(payload || {});
 });
 
 ipcMain.handle('manager:get-preview', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
   const kind = payload && payload.kind;
   try {
     const result = getPreview(payload || {});

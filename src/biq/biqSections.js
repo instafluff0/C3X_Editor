@@ -3918,7 +3918,8 @@ function applyEdits(buf, edits, options = {}) {
     const section = sectionByCode.get(code);
 
     if (op === 'add' || op === 'copy') {
-      const newRef = String(edit.newRecordRef || '').trim().toUpperCase();
+      const newRef = String(edit.newRecordRef || '').trim();
+      const newRefLookup = newRef.toUpperCase();
       const sourceRef = String(edit.sourceRef || edit.copyFromRef || '').trim().toUpperCase();
       const externalRecord = edit && typeof edit.externalRecord === 'object' ? edit.externalRecord : null;
       if (!newRef) {
@@ -3936,8 +3937,8 @@ function applyEdits(buf, edits, options = {}) {
 
       // Check for duplicate
       const existing = section.records.find((r) =>
-        String(r.civilopediaEntry || '').trim().toUpperCase() === newRef ||
-        String(r.newRecordRef || '').trim().toUpperCase() === newRef
+        String(r.civilopediaEntry || '').trim().toUpperCase() === newRefLookup ||
+        String(r.newRecordRef || '').trim().toUpperCase() === newRefLookup
       );
       if (existing) {
         skipped++;

@@ -6,6 +6,9 @@ const os = require('node:os');
 
 const {
   saveBundle,
+  buildReferenceTabs,
+  buildScenarioCivilopediaEditResult,
+  buildScenarioPediaIconsEditResult,
   parseCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder
 } = require('../src/configCore');
@@ -110,6 +113,8 @@ function setupScenarioTextFiles() {
     'art\\civilopedia\\icons\\resources\\resource-small.pcx',
     '',
     '#ICON_BLDG_TEST_IMPROVEMENT',
+    'SINGLE',
+    '121',
     'art\\civilopedia\\icons\\buildings\\impr-large.pcx',
     'art\\civilopedia\\icons\\buildings\\impr-small.pcx',
     '',
@@ -236,7 +241,11 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
           originalIconPaths: [
             'art\\civilopedia\\icons\\buildings\\impr-large.pcx',
             'art\\civilopedia\\icons\\buildings\\impr-small.pcx'
-          ]
+          ],
+          buildingIconKind: 'SINGLE',
+          originalBuildingIconKind: 'SINGLE',
+          buildingIconIndex: '121',
+          originalBuildingIconIndex: '121'
         })
       ]
     },
@@ -349,6 +358,8 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
     'art/civilopedia/icons/resources/new-resource-small.pcx'
   ]);
   assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_TEST_IMPROVEMENT), [
+    'SINGLE',
+    '121',
     'art/civilopedia/icons/buildings/new-impr-large.pcx',
     'art/civilopedia/icons/buildings/new-impr-small.pcx'
   ]);
@@ -431,6 +442,252 @@ test('large Civilopedia file: single-entry edit keeps all other entries parseabl
   assert.equal(docTextByKey(doc, 'DESC_GCON_BULK_111'), 'Description 111 edited');
   assert.equal(docTextByKey(doc, 'GCON_BULK_219'), 'Overview 219');
   assert.equal(docTextByKey(doc, 'DESC_GCON_BULK_219'), 'Description 219');
+});
+
+test('new Civilopedia and PediaIcons entries insert before terminal markers', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+
+  fs.writeFileSync(civilopediaPath, [
+    '#GCON_EXISTING',
+    'Existing text.',
+    '#EOF',
+    '#GCON_AFTER_EOF',
+    'Legacy accidental trailing text.',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(pediaIconsPath, [
+    '#ICON_BLDG_EXISTING',
+    'SINGLE',
+    '10',
+    'Art\\Civilopedia\\Icons\\Buildings\\ExistingL.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\ExistingS.pcx',
+    '#END CIVILOPEDIA ART',
+    '#ICON_BLDG_AFTER_END',
+    'Art\\Civilopedia\\Icons\\Buildings\\AfterEndL.pcx',
+    ''
+  ].join('\n'), 'latin1');
+
+  const civResult = buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [{ sectionKey: 'BLDG_RESIN_SHOP', value: 'Resin Shop\n^New entry.' }]
+  });
+  assert.equal(civResult.ok, true, String(civResult.error || 'civilopedia edit failed'));
+  const civSaved = civResult.buffer.toString('latin1');
+  assert.equal((civSaved.match(/^#EOF$/gm) || []).length, 1);
+  assert.ok(civSaved.indexOf('#BLDG_RESIN_SHOP') < civSaved.indexOf('#EOF'));
+  assert.ok(civSaved.indexOf('#GCON_AFTER_EOF') < civSaved.indexOf('#EOF'));
+  assert.ok(civSaved.trimEnd().endsWith('#EOF'));
+
+  const pediaResult = buildScenarioPediaIconsEditResult({
+    targetPath: pediaIconsPath,
+    edits: [{
+      blockKey: 'ICON_BLDG_RESIN_SHOP',
+      lines: ['SINGLE', '243', 'Art/Civilopedia/Icons/Buildings/ResinShopL.pcx', 'Art/Civilopedia/Icons/Buildings/ResinShopS.pcx']
+    }]
+  });
+  assert.equal(pediaResult.ok, true, String(pediaResult.error || 'pedia edit failed'));
+  const pediaSaved = pediaResult.buffer.toString('latin1');
+  assert.equal((pediaSaved.match(/^#END CIVILOPEDIA ART$/gm) || []).length, 1);
+  assert.ok(pediaSaved.indexOf('#ICON_BLDG_RESIN_SHOP') < pediaSaved.indexOf('#END CIVILOPEDIA ART'));
+  assert.ok(pediaSaved.indexOf('#ICON_BLDG_AFTER_END') > pediaSaved.indexOf('#END CIVILOPEDIA ART'));
+});
+
+test('new mixed-case Civilopedia section keeps user-entered header and terminal EOF', () => {
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  fs.writeFileSync(civilopediaPath, [
+    '#GCON_EXISTING',
+    'Existing text.',
+    '#EOF',
+    ''
+  ].join('\n'), 'latin1');
+
+  const result = buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [{
+      sectionKey: 'BLDG_RESIN_SHOP',
+      headerKey: 'BLDG_Resin_Shop',
+      value: 'Here is the Resin shop.'
+    }]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'civilopedia edit failed'));
+  const saved = result.buffer.toString('latin1');
+  assert.equal(saved.includes('#BLDG_Resin_Shop\nHere is the Resin shop.'), true);
+  assert.equal(saved.includes('#BLDG_RESIN_SHOP\nHere is the Resin shop.'), false);
+  assert.equal((saved.match(/^#EOF$/gm) || []).length, 1);
+  assert.ok(saved.indexOf('#BLDG_Resin_Shop') < saved.indexOf('#EOF'));
+  assert.ok(saved.trimEnd().endsWith('#EOF'));
+});
+
+test('building PediaIcons structured blocks load metadata and save complete Resin Shop small wonder art', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(path.join(textDir, 'Civilopedia.txt'), [
+    '; Small Wonders',
+    '#BLDG_RESIN_SHOP',
+    'Resin Shop',
+    '^Can be purchased from $LINK<Resin Shop=BLDG_RESIN_SHOP>',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(pediaIconsPath, [
+    '#ICON_BLDG_RESIN_SHOP',
+    'SINGLE',
+    '243',
+    'Art\\Civilopedia\\Icons\\Buildings\\ResinShopL.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\TinctureShopS.pcx',
+    '#WON_SPLASH_BLDG_RESIN_SHOP',
+    'Art\\Civilopedia\\Icons\\Buildings\\w_ResinShop.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\n'), 'latin1');
+
+  const tabs = buildReferenceTabs(root, { mode: 'scenario', civ3Path: root, scenarioPath: scenario });
+  const resin = tabs.improvements.entries.find((entry) => entry.civilopediaKey === 'BLDG_RESIN_SHOP');
+  assert.ok(resin, 'expected Resin Shop improvement entry');
+  assert.deepEqual(resin.iconPaths, [
+    'Art/Civilopedia/Icons/Buildings/ResinShopL.pcx',
+    'Art/Civilopedia/Icons/Buildings/TinctureShopS.pcx'
+  ]);
+  assert.equal(resin.buildingIconKind, 'SINGLE');
+  assert.equal(resin.buildingIconIndex, '243');
+  assert.equal(resin.wonderSplashPath, 'Art/Civilopedia/Icons/Buildings/w_ResinShop.pcx');
+
+  const unchanged = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: { sourceDetails: { pediaIconsScenarioWrite: pediaIconsPath } },
+      improvements: { entries: [resin] }
+    }
+  });
+  assert.equal(unchanged.ok, true, String(unchanged.error || 'unchanged save failed'));
+  assert.equal((unchanged.saveReport || []).some((row) => /PediaIcons\.txt$/i.test(String(row.path || ''))), false);
+
+  const edited = {
+    ...JSON.parse(JSON.stringify(resin)),
+    iconPaths: [
+      'Art/Civilopedia/Icons/Buildings/ResinShopL.pcx',
+      'Art/Civilopedia/Icons/Buildings/ResinShopS.pcx'
+    ],
+    originalIconPaths: [
+      'Art/Civilopedia/Icons/Buildings/ResinShopL.pcx',
+      'Art/Civilopedia/Icons/Buildings/TinctureShopS.pcx'
+    ],
+    wonderSplashPath: 'Art/Civilopedia/Icons/Buildings/w_ResinShopNew.pcx',
+    originalWonderSplashPath: 'Art/Civilopedia/Icons/Buildings/w_ResinShop.pcx'
+  };
+  const changed = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: { sourceDetails: { pediaIconsScenarioWrite: pediaIconsPath } },
+      improvements: { entries: [edited] }
+    }
+  });
+  assert.equal(changed.ok, true, String(changed.error || 'changed save failed'));
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  const pediaDoc = parsePediaIconsDocumentWithOrder(saved);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_RESIN_SHOP), [
+    'SINGLE',
+    '243',
+    'Art/Civilopedia/Icons/Buildings/ResinShopL.pcx',
+    'Art/Civilopedia/Icons/Buildings/ResinShopS.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.WON_SPLASH_BLDG_RESIN_SHOP), [
+    'Art/Civilopedia/Icons/Buildings/w_ResinShopNew.pcx'
+  ]);
+
+  const reloaded = buildReferenceTabs(root, { mode: 'scenario', civ3Path: root, scenarioPath: scenario });
+  const reloadedResin = reloaded.improvements.entries.find((entry) => entry.civilopediaKey === 'BLDG_RESIN_SHOP');
+  assert.deepEqual(reloadedResin.iconPaths, [
+    'Art/Civilopedia/Icons/Buildings/ResinShopL.pcx',
+    'Art/Civilopedia/Icons/Buildings/ResinShopS.pcx'
+  ]);
+});
+
+test('buildReferenceTabs preserves raw mixed-case Civilopedia keys for link validation', () => {
+  const root = mkTmpDir();
+  const textDir = path.join(root, 'Conquests', 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  fs.writeFileSync(path.join(textDir, 'Civilopedia.txt'), [
+    '#TECH_The_Wheel',
+    'The Wheel',
+    '',
+    '#GOOD_Horses',
+    'Horses',
+    '^Requires $LINK<The Wheel=TECH_The_Wheel>.',
+    '',
+    '#TERR_Grassland',
+    'Grassland',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(path.join(textDir, 'PediaIcons.txt'), '', 'latin1');
+
+  const tabs = buildReferenceTabs(root, { mode: 'global', civ3Path: root });
+  const wheel = tabs.technologies.entries.find((entry) => entry.lookupCivilopediaKey === 'TECH_THE_WHEEL');
+  const horses = tabs.resources.entries.find((entry) => entry.lookupCivilopediaKey === 'GOOD_HORSES');
+  const grassland = tabs.terrainPedia.entries.find((entry) => entry.lookupCivilopediaKey === 'TERR_GRASSLAND');
+
+  assert.equal(wheel.civilopediaKey, 'TECH_THE_WHEEL');
+  assert.equal(wheel.displayCivilopediaKey, 'TECH_The_Wheel');
+  assert.equal(wheel.rawCivilopediaKey, 'TECH_The_Wheel');
+  assert.equal(wheel.linkCivilopediaKey, 'TECH_The_Wheel');
+  assert.equal(horses.civilopediaKey, 'GOOD_HORSES');
+  assert.equal(horses.displayCivilopediaKey, 'GOOD_Horses');
+  assert.equal(horses.rawCivilopediaKey, 'GOOD_Horses');
+  assert.equal(grassland.rawCivilopediaKey, 'TERR_Grassland');
+});
+
+test('buildReferenceTabs displays and projects raw BIQ Civilopedia entry casing', () => {
+  const root = mkTmpDir();
+  const textDir = path.join(root, 'Conquests', 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  fs.writeFileSync(path.join(textDir, 'Civilopedia.txt'), [
+    '#TECH_The_Wheel',
+    'The Wheel',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(path.join(textDir, 'PediaIcons.txt'), '', 'latin1');
+
+  const tabs = buildReferenceTabs(root, {
+    mode: 'global',
+    civ3Path: root,
+    biqTab: {
+      sections: [{
+        code: 'TECH',
+        records: [{
+          index: 3,
+          fields: [
+            { key: 'civilopediaentry', value: 'TECH_The_Wheel' },
+            { key: 'name', value: 'The Wheel' }
+          ]
+        }]
+      }]
+    }
+  });
+
+  const wheel = tabs.technologies.entries.find((entry) => entry.lookupCivilopediaKey === 'TECH_THE_WHEEL');
+  assert.ok(wheel, 'expected The Wheel technology entry');
+  assert.equal(wheel.civilopediaKey, 'TECH_THE_WHEEL');
+  assert.equal(wheel.displayCivilopediaKey, 'TECH_The_Wheel');
+  assert.equal(wheel.rawBiqCivilopediaKey, 'TECH_The_Wheel');
+  assert.equal(wheel.rawCivilopediaKey, 'TECH_The_Wheel');
+  assert.equal(wheel.biqFields.find((field) => field.baseKey === 'civilopediaentry').value, 'TECH_The_Wheel');
 });
 
 test('scenario save rewrites imported tech icon paths to scenario-root-relative Windows paths', () => {

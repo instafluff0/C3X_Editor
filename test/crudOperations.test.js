@@ -321,6 +321,41 @@ function simulateRendererImport(targetBundle, sourceBundle, tabKey, sourceEntry,
   });
 }
 
+test('copying a reference resets raw/display/link keys to the user-entered key', () => {
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers({ tabs: {} });
+  const copied = buildNewReferenceEntryFromTemplate({
+    tabKey: 'improvements',
+    sourceEntry: {
+      id: 'TINCTURE_SHOP',
+      civilopediaKey: 'BLDG_TINCTURE_SHOP',
+      lookupCivilopediaKey: 'BLDG_TINCTURE_SHOP',
+      displayCivilopediaKey: 'BLDG_Tincture_Shop',
+      rawCivilopediaKey: 'BLDG_Tincture_Shop',
+      rawBiqCivilopediaKey: 'BLDG_Tincture_Shop',
+      linkCivilopediaKey: 'BLDG_Tincture_Shop',
+      name: 'Tincture Shop',
+      civilopediaSection1: 'Tincture text.',
+      originalCivilopediaSection1: 'Tincture text.',
+      biqFields: [
+        { key: 'civilopediaentry', baseKey: 'civilopediaentry', value: 'BLDG_Tincture_Shop', originalValue: 'BLDG_Tincture_Shop' },
+        { key: 'name', baseKey: 'name', value: 'Tincture Shop', originalValue: 'Tincture Shop' }
+      ]
+    },
+    civilopediaKey: 'BLDG_Resin_Shop',
+    mode: 'copy',
+    displayName: 'Resin Shop'
+  });
+
+  assert.equal(copied.civilopediaKey, 'BLDG_RESIN_SHOP');
+  assert.equal(copied.lookupCivilopediaKey, 'BLDG_RESIN_SHOP');
+  assert.equal(copied.displayCivilopediaKey, 'BLDG_Resin_Shop');
+  assert.equal(copied.rawCivilopediaKey, 'BLDG_Resin_Shop');
+  assert.equal(copied.rawBiqCivilopediaKey, 'BLDG_Resin_Shop');
+  assert.equal(copied.linkCivilopediaKey, 'BLDG_Resin_Shop');
+  assert.equal(copied.originalCivilopediaSection1, '');
+  assert.equal(copied.biqFields.find((field) => field.baseKey === 'civilopediaentry').value, 'BLDG_Resin_Shop');
+});
+
 function computeDirtyReferenceIdentitySet(tabKey, currentEntries, cleanEntries) {
   const current = Array.isArray(currentEntries) ? currentEntries : [];
   const clean = Array.isArray(cleanEntries) ? cleanEntries : [];

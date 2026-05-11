@@ -117,7 +117,8 @@ test('Barrage in TIDES projects raw PRTO fields into Quint-style unit UI fields'
   assert.equal(fieldKeys.has('ptwspecialactions'), false);
   assert.equal(fieldKeys.has('ptwairmissions'), false);
 
-  assert.equal(getField(barrage, 'civilopediaentry').value, 'PRTO_BARRAGE');
+  assert.equal(barrage.civilopediaKey, 'PRTO_BARRAGE');
+  assert.equal(getField(barrage, 'civilopediaentry').value, 'PRTO_Barrage');
   assert.equal(getField(barrage, 'civilopediaentry').editable, false);
   assert.equal(getField(barrage, 'requiredtech').value, 'Theory (164)');
   assert.equal(getField(barrage, 'requiredresource1').value, 'Gaja Stone (22)');

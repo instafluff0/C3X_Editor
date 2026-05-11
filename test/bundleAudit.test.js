@@ -308,6 +308,169 @@ test('auditLoadedBundle skips reference art warnings when files exist on disk', 
   assert.equal(result.tabs.units, undefined);
 });
 
+test('auditLoadedBundle reports Civilopedia link target case mismatches only for target keys', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [
+          {
+            name: 'Resin Shop',
+            civilopediaKey: 'BLDG_RESIN_SHOP',
+            iconPaths: [],
+            civilopediaSection1: 'Exact $LINK<any label=BLDG_RESIN_SHOP> and bad $LINK<resin shop=BLDG_Resin_Shop>.',
+            civilopediaSection2: ''
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  assert.match(
+    result.tabs.improvements.sections['0'][0].message,
+    /Civilopedia link target "BLDG_Resin_Shop" differs in case from actual key "BLDG_RESIN_SHOP"/
+  );
+});
+
+test('auditLoadedBundle accepts links matching raw mixed-case Civilopedia keys', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      resources: {
+        entries: [
+          {
+            name: 'Horses',
+            civilopediaKey: 'GOOD_HORSES',
+            rawCivilopediaKey: 'GOOD_Horses',
+            iconPaths: [],
+            civilopediaSection1: 'Horses require $LINK<The Wheel=TECH_The_Wheel> and appear on $LINK<Grassland=TERR_Grassland>.',
+            civilopediaSection2: ''
+          }
+        ]
+      },
+      technologies: {
+        entries: [{ name: 'The Wheel', civilopediaKey: 'TECH_THE_WHEEL', rawCivilopediaKey: 'TECH_The_Wheel', iconPaths: [] }]
+      },
+      terrain: {
+        civilopedia: {
+          terrain: {
+            entries: [{ name: 'Grassland', civilopediaKey: 'TERR_GRASSLAND', rawCivilopediaKey: 'TERR_Grassland' }]
+          },
+          workerActions: { entries: [] }
+        }
+      },
+      civilizations: { entries: [] },
+      improvements: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
+test('auditLoadedBundle still reports links differing from raw mixed-case keys', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      resources: {
+        entries: [
+          {
+            name: 'Horses',
+            civilopediaKey: 'GOOD_HORSES',
+            rawCivilopediaKey: 'GOOD_Horses',
+            iconPaths: [],
+            civilopediaSection1: 'Bad link: $LINK<The Wheel=TECH_THE_WHEEL>.',
+            civilopediaSection2: ''
+          }
+        ]
+      },
+      technologies: {
+        entries: [{ name: 'The Wheel', civilopediaKey: 'TECH_THE_WHEEL', rawCivilopediaKey: 'TECH_The_Wheel', iconPaths: [] }]
+      },
+      civilizations: { entries: [] },
+      improvements: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  assert.match(result.tabs.resources.sections['0'][0].message, /actual key "TECH_The_Wheel"/);
+});
+
+test('auditLoadedBundle includes improvement wonder splash art in missing-art checks', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [
+          {
+            name: 'Resin Shop',
+            civilopediaKey: 'BLDG_RESIN_SHOP',
+            iconPaths: [],
+            wonderSplashPath: 'Art/Civilopedia/Icons/Buildings/w_ResinShop.pcx'
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  assert.match(result.tabs.improvements.sections['0'][0].message, /w_ResinShop\.pcx/);
+});
+
 test('auditLoadedBundle resolves reference art from civ3Path rather than c3xPath', () => {
   const civ3Root = mkTmpDir();
   const c3xRoot = mkTmpDir();

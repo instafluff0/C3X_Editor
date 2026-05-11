@@ -57,6 +57,7 @@ test('C3X base string families serialize and reload with explicit audited syntax
     pinned_season_for_seasonal_cycle: 'winter',
     production_perfume: '["Temple": 20, "Warrior": -50%]',
     ptw_like_artillery_targeting: '["Catapult" "Artillery"]',
+    resource_perfume: '["Coal": 20, "Iron": -50%]',
     sea_retreat_rules: 'if-not-slower',
     seasonal_cycle_mode: 'specified',
     special_defensive_bombard_rules: '[lethal aerial]',

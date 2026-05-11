@@ -219,8 +219,8 @@ const SECTION_LINT_SPECS = {
       ['vary_img_by_era', { type: 'bool' }],
       ['vary_img_by_culture', { type: 'bool' }],
       ['draw_over_resources', { type: 'bool' }],
-      ['impassible', { type: 'bool' }],
-      ['impassible_to_wheeled', { type: 'bool' }],
+      ['Impassable', { type: 'bool' }],
+      ['Impassable_to_wheeled', { type: 'bool' }],
       ['allow_irrigation_from', { type: 'bool' }],
       ['heal_units_in_one_turn', { type: 'bool' }],
       ['defense_bonus_percent', { type: 'text' }],
@@ -274,8 +274,8 @@ const SECTION_LINT_SPECS = {
       ['gold_bonus', { type: 'number' }],
       ['shield_bonus', { type: 'number' }],
       ['happiness_bonus', { type: 'number' }],
-      ['impassible', { type: 'bool' }],
-      ['impassible_to_wheeled', { type: 'bool' }],
+      ['Impassable', { type: 'bool' }],
+      ['Impassable_to_wheeled', { type: 'bool' }],
       ['animation', { type: 'text' }]
     ])
   }
@@ -857,6 +857,9 @@ function getReferenceEntryAssetPaths(tabKey, entry) {
     assetPaths.push({ group, path: normalized });
   };
   (Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : []).forEach((value) => add('icon', value));
+  if (String(tabKey || '').trim() === 'improvements' && entry && entry.wonderSplashPath) {
+    add('icon', entry.wonderSplashPath);
+  }
   if (String(tabKey || '').trim() === 'civilizations') {
     (Array.isArray(entry && entry.racePaths) ? entry.racePaths : []).forEach((value) => add('race', value));
   }
@@ -901,6 +904,54 @@ function auditReferenceArt(bundle, result) {
   });
 }
 
+const CIVILOPEDIA_LINK_PATTERN = /\$LINK<([^=<>]+)=([^<>]+)>/g;
+
+function collectCanonicalCivilopediaKeys(bundle) {
+  const keys = new Map();
+  Object.values(((bundle || {}).tabs || {})).forEach((tab) => {
+    if (tab && Array.isArray(tab.entries)) {
+      tab.entries.forEach((entry) => {
+        const key = String(entry && entry.civilopediaKey || '').trim();
+        const actualKey = String(entry && entry.rawCivilopediaKey || key).trim();
+        if (key) keys.set(key.toUpperCase(), actualKey || key);
+      });
+    }
+    const pedia = tab && tab.civilopedia;
+    [pedia && pedia.terrain, pedia && pedia.workerActions].filter(Boolean).forEach((nested) => {
+      (Array.isArray(nested && nested.entries) ? nested.entries : []).forEach((entry) => {
+        const key = String(entry && entry.civilopediaKey || '').trim();
+        const actualKey = String(entry && entry.rawCivilopediaKey || key).trim();
+        if (key) keys.set(key.toUpperCase(), actualKey || key);
+      });
+    });
+  });
+  return keys;
+}
+
+function auditCivilopediaLinkCase(bundle, result) {
+  const canonicalKeys = collectCanonicalCivilopediaKeys(bundle);
+  if (canonicalKeys.size <= 0) return;
+  Object.entries(((bundle || {}).tabs || {})).forEach(([tabKey, tab]) => {
+    if (!tab || !Array.isArray(tab.entries)) return;
+    tab.entries.forEach((entry, index) => {
+      const label = getReferenceEntryDisplayName(tabKey, entry) || `${tabKey} ${index + 1}`;
+      const text = `${String(entry && entry.civilopediaSection1 || '')}\n${String(entry && entry.civilopediaSection2 || '')}`;
+      for (const match of text.matchAll(CIVILOPEDIA_LINK_PATTERN)) {
+        const target = String(match[2] || '').trim();
+        const canonical = canonicalKeys.get(target.toUpperCase());
+        if (!target || !canonical || target === canonical) continue;
+        addSectionIssue(
+          result,
+          tabKey,
+          index,
+          `${label}: Civilopedia link target "${target}" differs in case from actual key "${canonical}". Civ3 links are case-sensitive.`,
+          'civilopedia-link-case-mismatch'
+        );
+      }
+    });
+  });
+}
+
 function auditLoadedBundle(bundle) {
   const result = createAuditAccumulator();
   if (!bundle || !bundle.tabs) return result;
@@ -913,6 +964,7 @@ function auditLoadedBundle(bundle) {
   auditCurrentNaturalWonderArt(bundle, result);
   auditDayNightAssets(bundle, result);
   auditReferenceArt(bundle, result);
+  auditCivilopediaLinkCase(bundle, result);
   return result;
 }
 

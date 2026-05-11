@@ -60,7 +60,8 @@ test('Writing in TIDES projects raw TECH flags into Quint-style technology UI fi
   assert.equal(fieldKeys.has('flags'), false);
   assert.equal(fieldKeys.has('flavors'), false);
 
-  assert.equal(getField(writing, 'civilopediaentry').value, 'TECH_WRITING');
+  assert.equal(writing.civilopediaKey, 'TECH_WRITING');
+  assert.equal(getField(writing, 'civilopediaentry').value, 'TECH_Writing');
   assert.equal(getField(writing, 'questionmark').value, '1');
   assert.equal(getField(writing, 'enablesdiplomats').value, 'true');
   assert.equal(getField(writing, 'disablesfloodplaindisease').value, 'true');

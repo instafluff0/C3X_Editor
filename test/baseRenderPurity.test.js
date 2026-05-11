@@ -296,7 +296,7 @@ test('long-list C3X base editors avoid full local rerenders on add/remove', () =
       end: "if (row.key === 'civ_aliases_by_era') {"
     },
     {
-      start: "if (row.key === 'production_perfume' || row.key === 'perfume_specs' || row.key === 'technology_perfume' || row.key === 'government_perfume') {",
+      start: "if (row.key === 'production_perfume' || row.key === 'perfume_specs' || row.key === 'technology_perfume' || row.key === 'resource_perfume' || row.key === 'government_perfume') {",
       end: "if (row.key === 'work_area_improvements') {"
     },
     {

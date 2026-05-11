@@ -37,6 +37,8 @@ test('C3X base manifest explicitly covers every shipped default key', () => {
   const missing = keys.filter((key) => !manifestSet.has(key));
 
   assert.deepEqual(missing, [], `Missing manifest coverage for: ${missing.join(', ')}`);
+  assert.ok(manifestSet.has('great_wall_districts_impassable_by_others'));
+  assert.equal(manifestSet.has('great_wall_districts_Impassable_by_others'), false);
 });
 
 test('C3X base manifest extras are limited to explicit forward-compat keys', () => {
@@ -119,6 +121,7 @@ test('C3X base manifest string families stay explicit and audited', () => {
     pinned_season_for_seasonal_cycle: 'plain_string',
     production_perfume: 'name_amount_list',
     ptw_like_artillery_targeting: 'quoted_reference_list',
+    resource_perfume: 'name_amount_list',
     sea_retreat_rules: 'segmented_enum',
     seasonal_cycle_mode: 'segmented_enum',
     special_defensive_bombard_rules: 'bitfield_list',
@@ -216,6 +219,8 @@ test('C3X base rows use manifest-driven types for shipped keys', () => {
     ? bundle.tabs.base.rows
     : [];
   const rowByKey = new Map(rows.map((row) => [String(row && row.key || ''), row]));
+
+  assert.equal(bundle.tabs.base.sectionByKey.great_wall_districts_impassable_by_others, 'DISTRICTS');
 
   [
     'measure_turn_times',

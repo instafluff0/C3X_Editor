@@ -56,7 +56,8 @@ test('Iron in TIDES projects GOOD fields into canonical resource UI fields with 
   assert.ok(fieldKeys.has('shieldsbonus'));
   assert.ok(fieldKeys.has('commercebonus'));
 
-  assert.equal(getField(iron, 'civilopediaentry').value, 'GOOD_IRON');
+  assert.equal(iron.civilopediaKey, 'GOOD_IRON');
+  assert.equal(getField(iron, 'civilopediaentry').value, 'GOOD_Iron');
   assert.equal(getField(iron, 'civilopediaentry').editable, false);
   assert.equal(getField(iron, 'type').value, 'Strategic (2)');
   assert.equal(getField(iron, 'appearanceratio').value, '175');

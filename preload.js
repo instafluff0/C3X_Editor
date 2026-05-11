@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   pickDirectory: () => ipcRenderer.invoke('manager:pick-directory'),
   pickFile: (options) => ipcRenderer.invoke('manager:pick-file', options),
   openFilePath: (filePath) => ipcRenderer.invoke('manager:open-file-path', filePath),
+  openLogFolder: () => ipcRenderer.invoke('manager:open-log-folder'),
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
   getPathAccess: (paths) => ipcRenderer.invoke('manager:get-path-access', paths),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
@@ -40,6 +41,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
     ipcRenderer.on('manager:text-file-encoding-selected', listener);
     return () => {
       ipcRenderer.removeListener('manager:text-file-encoding-selected', listener);
+    };
+  },
+  onLogSettingsMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, settings) => handler(settings);
+    ipcRenderer.on('manager:log-settings-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:log-settings-selected', listener);
     };
   },
   onLog: (handler) => {
