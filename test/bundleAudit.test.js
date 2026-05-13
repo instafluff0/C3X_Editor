@@ -93,6 +93,46 @@ test('auditLoadedBundle reports missing current district-family art', () => {
   assert.match(result.tabs.naturalWonders.sections['0'][0].message, /Missing natural wonder art "NaturalWonders\.pcx"/);
 });
 
+test('auditLoadedBundle resolves district-family art from scenario Art paths and C3X fallback art', () => {
+  const c3xRoot = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  touch(path.join(scenarioRoot, 'Art', 'Districts', '1200', 'WondersCustom.PCX'));
+  touch(path.join(c3xRoot, 'Art', 'Districts', '1200', 'Wonders.pcx'));
+  touch(path.join(c3xRoot, 'Art', 'Districts', '1200', 'NaturalWonders.pcx'));
+
+  const bundle = makeBundle(c3xRoot, {
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      wonders: {
+        model: {
+          sections: [
+            makeSection({ name: 'The Statue of Liberty', img_path: 'Art/Districts/1200/WondersCustom.PCX' }),
+            makeSection({ name: 'The Pyramids', img_path: 'Art/Wonders.pcx' })
+          ]
+        }
+      },
+      naturalWonders: {
+        model: {
+          sections: [
+            makeSection({ name: 'Grand Canyon', img_path: 'Art/NaturalWonders.pcx' })
+          ]
+        }
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+  assert.equal(result.tabs.wonders, undefined);
+  assert.equal(result.tabs.naturalWonders, undefined);
+});
+
 test('auditLoadedBundle skips day-night checks when cycle mode is off', () => {
   const c3xRoot = mkTmpDir();
   touch(path.join(c3xRoot, 'Art', 'Districts', '1200', 'Market.pcx'));

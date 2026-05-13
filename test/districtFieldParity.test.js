@@ -214,6 +214,37 @@ test('serializeSectionedConfig canonicalizes district field formats for C3X-comp
   assert.doesNotMatch(serialized, /generated_resource\s*=\s*.*,\s*(local|yields|no-tech-req)/);
 });
 
+test('district and wonder image paths serialize as filenames instead of full file paths', () => {
+  const districts = parseSectionedConfig([
+    '#District',
+    'name = Market',
+    'img_paths = "C:\\Games\\Civ3\\Conquests\\Scenarios\\MyScenario\\Art\\Districts\\Market Amer.pcx", /tmp/imports/Market Euro.pcx'
+  ].join('\n'), '#District');
+  const wonders = parseSectionedConfig([
+    '#Wonder',
+    'name = Great Library',
+    'img_path = C:\\Games\\Civ3\\Conquests\\Scenarios\\MyScenario\\Art\\Wonders\\Great Library.pcx'
+  ].join('\n'), '#Wonder');
+  const naturalWonders = parseSectionedConfig([
+    '#Wonder',
+    'name = Grand Canyon',
+    'img_path = NaturalWonders.pcx'
+  ].join('\n'), '#Wonder');
+
+  assert.match(
+    serializeSectionedConfig(districts, '#District', { kind: 'districts' }),
+    /img_paths\s*=\s*"Market Amer\.pcx", "Market Euro\.pcx"/
+  );
+  assert.match(
+    serializeSectionedConfig(wonders, '#Wonder', { kind: 'wonders' }),
+    /img_path\s*=\s*"Great Library\.pcx"/
+  );
+  assert.match(
+    serializeSectionedConfig(naturalWonders, '#Wonder', { kind: 'naturalWonders' }),
+    /img_path\s*=\s*"NaturalWonders\.pcx"/
+  );
+});
+
 test('district save and reload preserves all configured district field values and edge cases', () => {
   const c3xPath = mkTmpDir();
   const scenarioPath = mkTmpDir();

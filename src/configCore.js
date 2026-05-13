@@ -3,7 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const iconv = require('iconv-lite');
-const { resolveUnitIniPath, decodePcx, encodePcx } = require('./artPreview');
+const { resolveUnitIniPath, decodePcx, encodePcx, encodeRgbaToPcx } = require('./artPreview');
 const log = require('./log');
 const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
@@ -1932,6 +1932,19 @@ function normalizeAssetReferencePath(raw) {
   if (!value) return '';
   if (isAbsoluteFilesystemPath(value)) return value;
   return value.replace(/^\.?[\\/]+/, '');
+}
+
+function normalizeScenarioArtRelativePath(raw) {
+  const normalized = normalizeAssetReferencePath(raw);
+  if (!normalized) return '';
+  return path.basename(normalized);
+}
+
+function isSectionArtImagePathField(kind, key) {
+  const kindKey = String(kind || '');
+  const keyLower = String(key || '').trim().toLowerCase();
+  return (kindKey === 'districts' && keyLower === 'img_paths')
+    || ((kindKey === 'wonders' || kindKey === 'naturalWonders') && keyLower === 'img_path');
 }
 
 function resolveCiv3RootPath(civ3Path) {
@@ -5111,10 +5124,11 @@ function normalizeSectionFieldValueForWrite(kind, key, value) {
   const rawValue = String(value == null ? '' : value).trim();
   const quotedKeys = SECTION_QUOTED_VALUE_KEYS_BY_KIND[kindKey];
   if (!quotedKeys || !quotedKeys.has(rawKey) || !rawValue) return rawValue;
+  const normalizeArtPath = isSectionArtImagePathField(kindKey, rawKey);
   const tokens = tokenizeSectionListPreservingQuotes(rawValue).map((token) => {
     const clean = String(token || '').trim();
     if (!clean) return '';
-    return quoteSectionToken(clean);
+    return quoteSectionToken(normalizeArtPath ? normalizeScenarioArtRelativePath(clean) : clean);
   }).filter(Boolean);
   if (tokens.length > 1 || rawValue.includes(',')) {
     return tokens.join(', ');
@@ -7822,9 +7836,6 @@ function collectPediaIconsReferenceEdits(tabs) {
 
 function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1, originalPath, sourcePath, targetContentRoot }) {
   const normalizedOriginal = normalizeAssetReferencePath(originalPath);
-  if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
-    return normalizeRelativePath(normalizedOriginal);
-  }
   const absSource = String(sourcePath || '').trim();
   const absRoot = String(targetContentRoot || '').trim();
   if (absSource && absRoot) {
@@ -7835,6 +7846,14 @@ function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1,
   }
   const baseName = path.basename(absSource || normalizedOriginal || '');
   if (!baseName) return '';
+  if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
+    const originalDir = normalizeRelativePath(path.posix.dirname(normalizedOriginal));
+    const shouldPreserveOriginalDir = originalDir && originalDir !== '.' &&
+      !(tabKey === 'improvements' && (group === 'wonderSplashPath' || group === 'iconPaths'));
+    if (shouldPreserveOriginalDir) {
+      return normalizeRelativePath(path.posix.join(originalDir, baseName));
+    }
+  }
   if (tabKey === 'civilizations' && group === 'iconPaths') {
     return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Races', baseName));
   }
@@ -7844,7 +7863,10 @@ function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1,
     }
     return normalizeRelativePath(path.join('Art', 'Advisors', baseName));
   }
-  if (tabKey === 'improvements' && (group === 'iconPaths' || group === 'wonderSplashPath')) {
+  if (tabKey === 'improvements' && group === 'wonderSplashPath') {
+    return normalizeRelativePath(path.join('Art', 'Wonder Splash', baseName));
+  }
+  if (tabKey === 'improvements' && group === 'iconPaths') {
     return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Buildings', baseName));
   }
   if (tabKey === 'technologies' && group === 'iconPaths') {
@@ -7895,6 +7917,173 @@ function normalizeScenarioRelativeArtReferencePath(rawPath, entry, targetContent
   return stripScenarioFolderPrefixFromRelativeArtPath(normalized, candidates);
 }
 
+function getPendingReferenceArtSource(entry, group, index = 0) {
+  if (!entry || !entry.pendingArtSources || typeof entry.pendingArtSources !== 'object') return '';
+  const key = `${String(group || '').trim()}:${Number.isFinite(Number(index)) ? Number(index) : 0}`;
+  return normalizeAssetReferencePath(entry.pendingArtSources[key]);
+}
+
+function getPendingReferenceArtConversion(entry, group, index = 0) {
+  if (!entry || !entry.pendingArtConversions || typeof entry.pendingArtConversions !== 'object') return null;
+  const key = `${String(group || '').trim()}:${Number.isFinite(Number(index)) ? Number(index) : 0}`;
+  const conversion = entry.pendingArtConversions[key];
+  return conversion && typeof conversion === 'object' ? conversion : null;
+}
+
+function buildPendingReferenceArtConversionBuffer(conversion, targetSize = null) {
+  if (!conversion) return null;
+  const sourcePath = normalizeAssetReferencePath(conversion.sourcePath);
+  if (/\.pcx$/i.test(sourcePath)) {
+    try {
+      const decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [] });
+      const targetWidth = Number(targetSize && targetSize.width);
+      const targetHeight = Number(targetSize && targetSize.height);
+      const matchesTarget = Number.isFinite(targetWidth) && Number.isFinite(targetHeight) &&
+        Number(decoded.width) === targetWidth &&
+        Number(decoded.height) === targetHeight;
+      if (matchesTarget && !decoded.trueColor) {
+        return fs.readFileSync(sourcePath);
+      }
+    } catch (_err) {
+      // Fall back to the staged conversion buffer below.
+    }
+  }
+  if (conversion.pcxBase64) return Buffer.from(String(conversion.pcxBase64), 'base64');
+  if (conversion.rgbaBase64) {
+    return encodeRgbaToPcx(
+      Buffer.from(String(conversion.rgbaBase64), 'base64'),
+      Number(conversion.width),
+      Number(conversion.height)
+    );
+  }
+  return null;
+}
+
+function resizeRgbaContain(sourceRgba, sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const sw = Math.max(1, Number(sourceWidth) | 0);
+  const sh = Math.max(1, Number(sourceHeight) | 0);
+  const tw = Math.max(1, Number(targetWidth) | 0);
+  const th = Math.max(1, Number(targetHeight) | 0);
+  const out = new Uint8Array(tw * th * 4);
+  for (let i = 0; i < tw * th; i += 1) {
+    out[i * 4] = 255;
+    out[i * 4 + 1] = 255;
+    out[i * 4 + 2] = 255;
+    out[i * 4 + 3] = 255;
+  }
+  const scale = Math.min(tw / sw, th / sh);
+  const dw = Math.max(1, Math.round(sw * scale));
+  const dh = Math.max(1, Math.round(sh * scale));
+  const ox = Math.floor((tw - dw) / 2);
+  const oy = Math.floor((th - dh) / 2);
+  const useArea = dw < sw || dh < sh;
+  for (let y = 0; y < dh; y += 1) {
+    for (let x = 0; x < dw; x += 1) {
+      const dstOff = ((oy + y) * tw + (ox + x)) * 4;
+      if (useArea) {
+        const x0 = x / scale;
+        const x1 = (x + 1) / scale;
+        const y0 = y / scale;
+        const y1 = (y + 1) / scale;
+        const ix0 = Math.max(0, Math.floor(x0));
+        const ix1 = Math.min(sw, Math.ceil(x1));
+        const iy0 = Math.max(0, Math.floor(y0));
+        const iy1 = Math.min(sh, Math.ceil(y1));
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let a = 0;
+        let weight = 0;
+        for (let sy = iy0; sy < iy1; sy += 1) {
+          const wy = Math.max(0, Math.min(y1, sy + 1) - Math.max(y0, sy));
+          if (wy <= 0) continue;
+          for (let sx = ix0; sx < ix1; sx += 1) {
+            const wx = Math.max(0, Math.min(x1, sx + 1) - Math.max(x0, sx));
+            const w = wx * wy;
+            if (w <= 0) continue;
+            const srcOff = (sy * sw + sx) * 4;
+            r += sourceRgba[srcOff] * w;
+            g += sourceRgba[srcOff + 1] * w;
+            b += sourceRgba[srcOff + 2] * w;
+            a += sourceRgba[srcOff + 3] * w;
+            weight += w;
+          }
+        }
+        const inv = weight > 0 ? 1 / weight : 0;
+        out[dstOff] = Math.round(r * inv);
+        out[dstOff + 1] = Math.round(g * inv);
+        out[dstOff + 2] = Math.round(b * inv);
+        out[dstOff + 3] = Math.round(a * inv);
+      } else {
+        const sxFloat = Math.min(sw - 1, Math.max(0, ((x + 0.5) / scale) - 0.5));
+        const syFloat = Math.min(sh - 1, Math.max(0, ((y + 0.5) / scale) - 0.5));
+        const x0 = Math.floor(sxFloat);
+        const y0 = Math.floor(syFloat);
+        const x1 = Math.min(sw - 1, x0 + 1);
+        const y1 = Math.min(sh - 1, y0 + 1);
+        const fx = sxFloat - x0;
+        const fy = syFloat - y0;
+        for (let c = 0; c < 4; c += 1) {
+          const p00 = sourceRgba[(y0 * sw + x0) * 4 + c];
+          const p10 = sourceRgba[(y0 * sw + x1) * 4 + c];
+          const p01 = sourceRgba[(y1 * sw + x0) * 4 + c];
+          const p11 = sourceRgba[(y1 * sw + x1) * 4 + c];
+          const top = p00 + ((p10 - p00) * fx);
+          const bottom = p01 + ((p11 - p01) * fx);
+          out[dstOff + c] = Math.round(top + ((bottom - top) * fy));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function getImprovementArtRowCountForSave(entry) {
+  const kind = String(entry && entry.buildingIconKind || '').trim().toUpperCase();
+  if (kind === 'ERA') return 4;
+  if (kind === 'CULTURE') return 5;
+  return 1;
+}
+
+function getReferenceArtTargetSizeForSave({ tabKey, group, index = 0, entry }) {
+  if (group === 'wonderSplashPath') return { width: 320, height: 320 };
+  if (group === 'iconPaths') {
+    if (tabKey === 'improvements' && Number(index) >= getImprovementArtRowCountForSave(entry)) {
+      return { width: 32, height: 32 };
+    }
+    if (tabKey !== 'improvements' && Number(index) === 1) {
+      return { width: 32, height: 32 };
+    }
+  }
+  return { width: 128, height: 128 };
+}
+
+function buildLocalizedArtBufferFromSource(sourcePath, targetSize = null) {
+  if (/\.pcx$/i.test(String(sourcePath || ''))) {
+    try {
+      const decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [] });
+      const targetWidth = Number(targetSize && targetSize.width);
+      const targetHeight = Number(targetSize && targetSize.height);
+      const shouldResize = Number.isFinite(targetWidth) && Number.isFinite(targetHeight) &&
+        (Number(decoded.width) !== targetWidth || Number(decoded.height) !== targetHeight);
+      if (decoded && (decoded.trueColor || shouldResize)) {
+        const rgba = shouldResize
+          ? resizeRgbaContain(decoded.rgba, decoded.width, decoded.height, targetWidth, targetHeight)
+          : decoded.rgba;
+        return encodeRgbaToPcx(
+          rgba,
+          shouldResize ? targetWidth : decoded.width,
+          shouldResize ? targetHeight : decoded.height
+        );
+      }
+    } catch (_err) {
+      // Preserve legacy behavior for placeholder or externally managed PCX files:
+      // copy unreadable PCX bytes instead of blocking unrelated save flows.
+    }
+  }
+  return fs.readFileSync(sourcePath);
+}
+
 function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWrites, saveReport }) {
   if (!targetContentRoot || !tabs) return { ok: true };
   const queued = new Map();
@@ -7916,8 +8105,75 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
         const originalValues = Array.isArray(entry && entry[originalFieldKey]) ? entry[originalFieldKey] : [];
         let changed = false;
         sourceValues.forEach((rawValue, index) => {
+          const pendingConversion = getPendingReferenceArtConversion(entry, fieldKey, index);
+          const pendingSource = getPendingReferenceArtSource(entry, fieldKey, index);
           const normalized = normalizeScenarioRelativeArtReferencePath(rawValue, entry, targetContentRoot);
           if (!normalized) return;
+          if (pendingConversion) {
+            const targetSize = getReferenceArtTargetSizeForSave({
+              tabKey: spec.key,
+              group: fieldKey,
+              index,
+              entry
+            });
+            const relTarget = !isAbsoluteFilesystemPath(normalized)
+              ? normalizeRelativePath(normalized)
+              : pickScenarioReferenceArtTargetRelativePath({
+                tabKey: spec.key,
+                group: fieldKey,
+                index,
+                originalPath: originalValues[index],
+                sourcePath: String(pendingConversion.sourcePath || pendingSource || ''),
+                targetContentRoot
+              });
+            const data = buildPendingReferenceArtConversionBuffer(pendingConversion, targetSize);
+            if (!relTarget || !data) {
+              throw new Error(`Could not convert referenced art file: ${String(pendingConversion.sourcePath || pendingSource || rawValue)}`);
+            }
+            const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+            queueFileWrite(targetPath, data);
+            if (sourceValues[index] !== relTarget) {
+              sourceValues[index] = relTarget;
+              changed = true;
+            }
+            return;
+          }
+          if (pendingSource && isAbsoluteFilesystemPath(pendingSource)) {
+            let stats = null;
+            try {
+              stats = fs.statSync(pendingSource);
+            } catch (_err) {
+              stats = null;
+            }
+            if (!stats || !stats.isFile()) {
+              throw new Error(`Referenced art file does not exist: ${pendingSource}`);
+            }
+            const relTarget = !isAbsoluteFilesystemPath(normalized)
+              ? normalizeRelativePath(normalized)
+              : pickScenarioReferenceArtTargetRelativePath({
+                tabKey: spec.key,
+                group: fieldKey,
+                index,
+                originalPath: originalValues[index],
+                sourcePath: pendingSource,
+                targetContentRoot
+              });
+            if (!relTarget) {
+              throw new Error(`Could not determine scenario-relative target for art file: ${pendingSource}`);
+            }
+            const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+            queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(pendingSource, getReferenceArtTargetSizeForSave({
+              tabKey: spec.key,
+              group: fieldKey,
+              index,
+              entry
+            })));
+            if (sourceValues[index] !== relTarget) {
+              sourceValues[index] = relTarget;
+              changed = true;
+            }
+            return;
+          }
           if (!isAbsoluteFilesystemPath(normalized)) {
             const currentValue = normalizeAssetReferencePath(rawValue);
             if (normalized !== currentValue) {
@@ -7947,7 +8203,12 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             throw new Error(`Could not determine scenario-relative target for art file: ${normalized}`);
           }
           const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
-          queueFileWrite(targetPath, fs.readFileSync(normalized));
+          queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(normalized, getReferenceArtTargetSizeForSave({
+            tabKey: spec.key,
+            group: fieldKey,
+            index,
+            entry
+          })));
           sourceValues[index] = relTarget;
           changed = true;
         });
@@ -7958,8 +8219,63 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
       });
       if (spec.key === 'improvements') {
         const rawSplash = String(entry && entry.wonderSplashPath || '').trim();
+        const pendingSplashConversion = getPendingReferenceArtConversion(entry, 'wonderSplashPath', 0);
+        const pendingSplashSource = getPendingReferenceArtSource(entry, 'wonderSplashPath', 0);
         const normalizedSplash = normalizeScenarioRelativeArtReferencePath(rawSplash, entry, targetContentRoot);
-        if (normalizedSplash && isAbsoluteFilesystemPath(normalizedSplash)) {
+        if (pendingSplashConversion) {
+          const targetSize = getReferenceArtTargetSizeForSave({
+            tabKey: spec.key,
+            group: 'wonderSplashPath',
+            index: 0,
+            entry
+          });
+          const relTarget = normalizedSplash && !isAbsoluteFilesystemPath(normalizedSplash)
+            ? normalizeRelativePath(normalizedSplash)
+            : pickScenarioReferenceArtTargetRelativePath({
+              tabKey: spec.key,
+              group: 'wonderSplashPath',
+              originalPath: entry && entry.originalWonderSplashPath,
+              sourcePath: String(pendingSplashConversion.sourcePath || pendingSplashSource || ''),
+              targetContentRoot
+            });
+          const data = buildPendingReferenceArtConversionBuffer(pendingSplashConversion, targetSize);
+          if (!relTarget || !data) {
+            throw new Error(`Could not convert referenced art file: ${String(pendingSplashConversion.sourcePath || pendingSplashSource || rawSplash)}`);
+          }
+          const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+          queueFileWrite(targetPath, data);
+          entry.wonderSplashPath = relTarget;
+        } else if (pendingSplashSource && isAbsoluteFilesystemPath(pendingSplashSource)) {
+          let stats = null;
+          try {
+            stats = fs.statSync(pendingSplashSource);
+          } catch (_err) {
+            stats = null;
+          }
+          if (!stats || !stats.isFile()) {
+            throw new Error(`Referenced art file does not exist: ${pendingSplashSource}`);
+          }
+          const relTarget = normalizedSplash && !isAbsoluteFilesystemPath(normalizedSplash)
+            ? normalizeRelativePath(normalizedSplash)
+            : pickScenarioReferenceArtTargetRelativePath({
+              tabKey: spec.key,
+              group: 'wonderSplashPath',
+              originalPath: entry && entry.originalWonderSplashPath,
+              sourcePath: pendingSplashSource,
+              targetContentRoot
+            });
+          if (!relTarget) {
+            throw new Error(`Could not determine scenario-relative target for art file: ${pendingSplashSource}`);
+          }
+          const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+          queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(pendingSplashSource, getReferenceArtTargetSizeForSave({
+            tabKey: spec.key,
+            group: 'wonderSplashPath',
+            index: 0,
+            entry
+          })));
+          entry.wonderSplashPath = relTarget;
+        } else if (normalizedSplash && isAbsoluteFilesystemPath(normalizedSplash)) {
           let stats = null;
           try {
             stats = fs.statSync(normalizedSplash);
@@ -7980,7 +8296,12 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             throw new Error(`Could not determine scenario-relative target for art file: ${normalizedSplash}`);
           }
           const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
-          queueFileWrite(targetPath, fs.readFileSync(normalizedSplash));
+          queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(normalizedSplash, getReferenceArtTargetSizeForSave({
+            tabKey: spec.key,
+            group: 'wonderSplashPath',
+            index: 0,
+            entry
+          })));
           entry.wonderSplashPath = relTarget;
         } else if (normalizedSplash && normalizedSplash !== normalizeAssetReferencePath(rawSplash)) {
           entry.wonderSplashPath = normalizedSplash;
@@ -8380,6 +8701,7 @@ module.exports = {
   buildScenarioPediaIconsEditResult,
   buildScenarioDiplomacyEditResult,
   collectPediaIconsReferenceEdits,
+  pickScenarioReferenceArtTargetRelativePath,
   parseDiplomacyDocumentWithOrder,
   serializeDiplomacyDocumentWithOrder,
   parseDiplomacySlotOptions,

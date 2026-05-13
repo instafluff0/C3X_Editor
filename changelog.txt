@@ -1,4 +1,15 @@
 * RELEASE 27.6
+- Fixed district, wonder district, and natural wonder image path edits and quality checks so saved values are district-art filenames instead of full paths, while existing scenario/C3X art no longer reports false missing-art warnings.
+- Fixed Scenario-mode PCX art replacement so correctly sized indexed PCX files are copied byte-for-byte even if stale staged conversion data exists.
+- Fixed Scenario-mode replacement paths for nonstandard PediaIcons art lines so civ leaderhead/advisor entries keep their original art folders while improvement building and wonder splash art still use their fixed target folders.
+- Fixed Scenario-mode Wonder Splash replacement so uploaded splash art is staged under `Art\Wonder Splash\` instead of the Civilopedia building icon folder.
+- Improved PCX resize quality by using area averaging when downscaling and bilinear sampling when upscaling staged scenario art.
+- Fixed drag-and-drop art replacement under Electron context isolation by resolving dropped file paths through the preload bridge.
+- Fixed Scenario-mode PCX staging so selected PCX files are resized to the target art slot dimensions when needed instead of being copied at the wrong size.
+- Fixed Civilopedia art preview and save handling for 24-bit three-plane PCX files from tools like GIMP by previewing them correctly and converting them to Civ3-compatible indexed PCX files on scenario save.
+- Added Scenario-mode image conversion for structured art replacement so PNG/BMP/JPEG/WebP selections are resized to the expected Civ3 art dimensions and saved as PCX files.
+- Fixed Scenario-mode art replacement so newly chosen PCX files immediately display the scenario-local destination path, preview from the pending source before save, and still copy the selected source file into the scenario on save.
+- Added hover help for Improvements fields, including BLDG production bonus, requirements, veteran unit, trade, happiness, food, science, and category tooltips.
 - Added a structured Improvements `Building Art` editor with explicit `SINGLE`, `ERA`, and `CULTURE` modes, city icon index editing, mode-aware large/small art slots, and wonder splash editing while preserving the large sidebar Civilopedia art preview.
 - Added a structured Technologies `Technology Icons` editor that labels the Civ3 `#TECH_*_LARGE` and `#TECH_*` PediaIcons targets explicitly while keeping the large sidebar tech art preview.
 - Added a structured Units `Unit Art and Animations` editor that puts large/small Civilopedia icons and the existing `units_32` icon index preview above the unit animation controls.
@@ -16,7 +27,7 @@
 
 * RELEASE 27.5
 - Added optional daily debug log files, enabled by default, with grouped File menu controls for toggling logging, choosing/resetting the log folder, and opening the log folder directly.
-- Renamed the Units `Capacity` statistic label to `Transport Capacity` to match Quint's unit editor wording.
+- Renamed the Units `Capacity` statistic label to `Transport Capacity`.
 - Added compact `Remove All` actions to Units list editors for Unit Abilities, Available To, and Stealth Attack Targets.
 - Added C3X base manifest coverage for newly shipped default keys, including expanded unit stat display toggles, resource perfume, battle-created-unit spawning, impassable-tile barbarian placement, preplaced scenario leader initialization, and the corrected Great Wall impassable key spelling.
 - Fixed the Units rules layout so non-checkbox Special Orders fields render with their proper editors, restoring the `Enslave Results In` unit picker and `Telepad Range` numeric field.

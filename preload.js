@@ -1,10 +1,18 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('c3xManager', {
   getSettings: () => ipcRenderer.invoke('manager:get-settings'),
   setSettings: (settings) => ipcRenderer.invoke('manager:set-settings', settings),
   pickDirectory: () => ipcRenderer.invoke('manager:pick-directory'),
   pickFile: (options) => ipcRenderer.invoke('manager:pick-file', options),
+  getPathForFile: (file) => {
+    if (!file || !webUtils || typeof webUtils.getPathForFile !== 'function') return '';
+    try {
+      return webUtils.getPathForFile(file);
+    } catch (_err) {
+      return '';
+    }
+  },
   openFilePath: (filePath) => ipcRenderer.invoke('manager:open-file-path', filePath),
   openLogFolder: () => ipcRenderer.invoke('manager:open-log-folder'),
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),

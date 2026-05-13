@@ -6,7 +6,8 @@ const path = require('node:path');
 
 const {
   collectPediaIconsReferenceEdits,
-  buildScenarioPediaIconsEditResult
+  buildScenarioPediaIconsEditResult,
+  pickScenarioReferenceArtTargetRelativePath
 } = require('../src/configCore');
 
 test('collectPediaIconsReferenceEdits writes civ racePaths back to the RACE block', () => {
@@ -117,6 +118,56 @@ test('buildScenarioPediaIconsEditResult deletes blocks instead of leaving empty 
   const text = result.buffer.toString('latin1');
   assert.equal(text.includes('#ICON_RACE_AMAZONIANS'), false);
   assert.equal(text.includes('#RACE_AMAZONIANS'), false);
+});
+
+test('pickScenarioReferenceArtTargetRelativePath preserves civ extra icon line folders', () => {
+  assert.equal(
+    pickScenarioReferenceArtTargetRelativePath({
+      tabKey: 'civilizations',
+      group: 'iconPaths',
+      index: 2,
+      originalPath: 'art/leaderheads/CL.pcx',
+      sourcePath: '/tmp/statue.pcx',
+      targetContentRoot: '/tmp/scenario'
+    }),
+    'art/leaderheads/statue.pcx'
+  );
+  assert.equal(
+    pickScenarioReferenceArtTargetRelativePath({
+      tabKey: 'civilizations',
+      group: 'iconPaths',
+      index: 3,
+      originalPath: 'art/advisors/CL_all.pcx',
+      sourcePath: '/tmp/statue.pcx',
+      targetContentRoot: '/tmp/scenario'
+    }),
+    'art/advisors/statue.pcx'
+  );
+});
+
+test('pickScenarioReferenceArtTargetRelativePath keeps fixed improvement folders', () => {
+  assert.equal(
+    pickScenarioReferenceArtTargetRelativePath({
+      tabKey: 'improvements',
+      group: 'wonderSplashPath',
+      index: 0,
+      originalPath: 'Art/Civilopedia/Icons/Buildings/w_old.pcx',
+      sourcePath: '/tmp/w_new.pcx',
+      targetContentRoot: '/tmp/scenario'
+    }),
+    'Art/Wonder Splash/w_new.pcx'
+  );
+  assert.equal(
+    pickScenarioReferenceArtTargetRelativePath({
+      tabKey: 'improvements',
+      group: 'iconPaths',
+      index: 0,
+      originalPath: 'Art/Other/legacy.pcx',
+      sourcePath: '/tmp/resin.pcx',
+      targetContentRoot: '/tmp/scenario'
+    }),
+    'Art/Civilopedia/Icons/Buildings/resin.pcx'
+  );
 });
 
 test('collectPediaIconsReferenceEdits writes complete structured building icon block when large icon changes', () => {

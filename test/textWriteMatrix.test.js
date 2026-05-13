@@ -12,9 +12,43 @@ const {
   parseCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder
 } = require('../src/configCore');
+const { decodePcx, encodePcx } = require('../src/artPreview');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-text-matrix-'));
+}
+
+function encodeTruecolorPcx({ width, height, rgbAt }) {
+  const bytesPerLine = width % 2 === 0 ? width : width + 1;
+  const header = Buffer.alloc(128, 0);
+  header[0] = 10;
+  header[1] = 5;
+  header[2] = 1;
+  header[3] = 8;
+  header.writeUInt16LE(0, 4);
+  header.writeUInt16LE(0, 6);
+  header.writeUInt16LE(width - 1, 8);
+  header.writeUInt16LE(height - 1, 10);
+  header.writeUInt16LE(72, 12);
+  header.writeUInt16LE(72, 14);
+  header[65] = 3;
+  header.writeUInt16LE(bytesPerLine, 66);
+  header.writeUInt16LE(1, 68);
+  const body = [];
+  const emit = (value) => {
+    const v = value & 0xff;
+    if (v >= 0xc0) body.push(0xc1, v);
+    else body.push(v);
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let plane = 0; plane < 3; plane += 1) {
+      for (let x = 0; x < bytesPerLine; x += 1) {
+        const rgb = x < width ? rgbAt(x, y) : [0, 0, 0];
+        emit(rgb[plane]);
+      }
+    }
+  }
+  return Buffer.concat([header, Buffer.from(body)]);
 }
 
 function docTextByKey(doc, key) {
@@ -695,7 +729,7 @@ test('building PediaIcons ERA blocks preserve repeated positional slots on load 
   ]);
 });
 
-test('scenario save localizes uploaded improvement art into building icon folders', () => {
+test('scenario save localizes uploaded improvement art into building icon and wonder splash folders', () => {
   const root = mkTmpDir();
   const scenario = mkTmpDir();
   const external = mkTmpDir();
@@ -746,7 +780,7 @@ test('scenario save localizes uploaded improvement art into building icon folder
   assert.equal(changed.ok, true, String(changed.error || 'changed save failed'));
   assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'UploadedTempleLarge.pcx')), true);
   assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'UploadedTempleSmall.pcx')), true);
-  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'UploadedTempleSplash.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Wonder Splash', 'UploadedTempleSplash.pcx')), true);
   const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
   const pediaDoc = parsePediaIconsDocumentWithOrder(saved);
   assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_UPLOAD_TEMPLE), [
@@ -756,7 +790,7 @@ test('scenario save localizes uploaded improvement art into building icon folder
     'Art/Civilopedia/Icons/Buildings/UploadedTempleSmall.pcx'
   ]);
   assert.deepEqual(normPediaLines(pediaDoc.blocks.WON_SPLASH_BLDG_UPLOAD_TEMPLE), [
-    'Art/Civilopedia/Icons/Buildings/UploadedTempleSplash.pcx'
+    'Art/Wonder Splash/UploadedTempleSplash.pcx'
   ]);
 });
 
@@ -955,6 +989,332 @@ test('scenario save localizes uploaded tech icons into tech chooser folder', () 
     'Art/tech chooser/Icons/UploadedTechLarge.pcx',
     'Art/tech chooser/Icons/UploadedTechSmall.pcx'
   ]);
+});
+
+test('scenario save copies pending staged improvement art from visible scenario path source map', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'statue_of_liberty_lg.pcx');
+  fs.writeFileSync(largeSource, 'large');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_STATUE_OF_LIBERTY',
+        iconPaths: ['Art/Civilopedia/Icons/Buildings/statue_of_liberty_lg.pcx'],
+        originalIconPaths: [],
+        pendingArtSources: {
+          'iconPaths:0': largeSource
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: '',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'statue_of_liberty_lg.pcx')), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_BLDG_STATUE_OF_LIBERTY\r?\nSINGLE\r?\nArt\\Civilopedia\\Icons\\Buildings\\statue_of_liberty_lg\.pcx/);
+});
+
+test('scenario save converts pending staged improvement RGBA art to right-sized PCX', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const rgba = Buffer.alloc(128 * 128 * 4);
+  for (let i = 0; i < 128 * 128; i += 1) {
+    rgba[i * 4] = 20;
+    rgba[i * 4 + 1] = 120;
+    rgba[i * 4 + 2] = 220;
+    rgba[i * 4 + 3] = 255;
+  }
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_STATUE_OF_LIBERTY',
+        iconPaths: ['Art/Civilopedia/Icons/Buildings/statue_of_liberty_lg.pcx'],
+        originalIconPaths: [],
+        pendingArtConversions: {
+          'iconPaths:0': {
+            sourcePath: '/tmp/statue_of_liberty_lg.png',
+            width: 128,
+            height: 128,
+            rgbaBase64: rgba.toString('base64')
+          }
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: '',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'statue_of_liberty_lg.pcx');
+  assert.equal(fs.existsSync(pcxPath), true);
+  const decoded = decodePcx(pcxPath);
+  assert.equal(decoded.width, 128);
+  assert.equal(decoded.height, 128);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /Art\\Civilopedia\\Icons\\Buildings\\statue_of_liberty_lg\.pcx/);
+});
+
+test('scenario save converts pending truecolor PCX art to indexed Civ3 PCX', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const source = path.join(external, 'statue_of_liberty_lg.pcx');
+  fs.writeFileSync(source, encodeTruecolorPcx({
+    width: 128,
+    height: 128,
+    rgbAt: (x, y) => [x * 2, y * 2, 120]
+  }));
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_STATUE_OF_LIBERTY',
+        iconPaths: ['Art/Civilopedia/Icons/Buildings/statue_of_liberty_lg.pcx'],
+        originalIconPaths: [],
+        pendingArtSources: {
+          'iconPaths:0': source
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: '',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'statue_of_liberty_lg.pcx');
+  const decoded = decodePcx(pcxPath, { returnIndexed: true });
+  assert.equal(decoded.width, 128);
+  assert.equal(decoded.height, 128);
+  assert.ok(decoded.indices instanceof Uint8Array);
+  assert.ok(decoded.palette instanceof Uint8Array);
+});
+
+test('scenario save copies matching indexed PCX art without re-encoding', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const source = path.join(external, 'statue_of_liberty.pcx');
+  const indices = new Uint8Array(128 * 128);
+  const palette = new Uint8Array(768);
+  for (let i = 0; i < 256; i += 1) {
+    palette[i * 3] = i;
+    palette[i * 3 + 1] = (i * 3) % 256;
+    palette[i * 3 + 2] = (255 - i);
+  }
+  for (let i = 0; i < indices.length; i += 1) indices[i] = i % 254;
+  const sourceBytes = encodePcx(indices, palette, 128, 128);
+  fs.writeFileSync(source, sourceBytes);
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_STATUE_OF_LIBERTY',
+        iconPaths: ['Art/Civilopedia/Icons/Buildings/statue_of_liberty.pcx'],
+        originalIconPaths: [],
+        pendingArtSources: {
+          'iconPaths:0': source
+        },
+        pendingArtConversions: {
+          'iconPaths:0': {
+            sourcePath: source,
+            width: 128,
+            height: 128,
+            rgbaBase64: Buffer.alloc(128 * 128 * 4, 255).toString('base64')
+          }
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: '',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'statue_of_liberty.pcx');
+  assert.deepEqual(fs.readFileSync(pcxPath), sourceBytes);
+});
+
+test('scenario save resizes pending indexed PCX art to slot dimensions', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const source = path.join(external, 'statue_source.pcx');
+  const indices = new Uint8Array(128 * 128);
+  indices.fill(12);
+  const palette = new Uint8Array(768);
+  palette[12 * 3] = 10;
+  palette[12 * 3 + 1] = 140;
+  palette[12 * 3 + 2] = 80;
+  fs.writeFileSync(source, encodePcx(indices, palette, 128, 128));
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_STATUE_OF_LIBERTY',
+        iconPaths: [
+          'Art/Civilopedia/Icons/Buildings/statue_large.pcx',
+          'Art/Civilopedia/Icons/Buildings/statue_small.pcx'
+        ],
+        originalIconPaths: [],
+        pendingArtSources: {
+          'iconPaths:1': source
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: '',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'statue_small.pcx');
+  const decoded = decodePcx(pcxPath, { returnIndexed: true });
+  assert.equal(decoded.width, 32);
+  assert.equal(decoded.height, 32);
 });
 
 test('scenario save localizes uploaded unit Civilopedia icons into unit icon folder', () => {

@@ -4,10 +4,43 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { getPreview, parseUnitAnimationIni, resolveUnitIniPath } = require('../src/artPreview');
+const { getPreview, parseUnitAnimationIni, resolveUnitIniPath, encodePcx } = require('../src/artPreview');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-unit-anim-'));
+}
+
+function encodeTruecolorPcx({ width, height, rgbAt }) {
+  const bytesPerLine = width % 2 === 0 ? width : width + 1;
+  const header = Buffer.alloc(128, 0);
+  header[0] = 10;
+  header[1] = 5;
+  header[2] = 1;
+  header[3] = 8;
+  header.writeUInt16LE(0, 4);
+  header.writeUInt16LE(0, 6);
+  header.writeUInt16LE(width - 1, 8);
+  header.writeUInt16LE(height - 1, 10);
+  header.writeUInt16LE(72, 12);
+  header.writeUInt16LE(72, 14);
+  header[65] = 3;
+  header.writeUInt16LE(bytesPerLine, 66);
+  header.writeUInt16LE(1, 68);
+  const body = [];
+  const emit = (value) => {
+    const v = value & 0xff;
+    if (v >= 0xc0) body.push(0xc1, v);
+    else body.push(v);
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let plane = 0; plane < 3; plane += 1) {
+      for (let x = 0; x < bytesPerLine; x += 1) {
+        const rgb = x < width ? rgbAt(x, y) : [0, 0, 0];
+        emit(rgb[plane]);
+      }
+    }
+  }
+  return Buffer.concat([header, Buffer.from(body)]);
 }
 
 test('parseUnitAnimationIni reads all FLC actions and picks DEFAULT as default action', () => {
@@ -105,4 +138,51 @@ test('unitAnimationManifest returns all parsed actions and source paths', () => 
   assert.equal(missing.exists, false);
   const def = res.actions.find((a) => a.key === 'DEFAULT');
   assert.equal(def.timingSeconds, 0.5);
+});
+
+test('civilopediaIcon preview does not treat palette slot 255 as transparent', () => {
+  const civ3Root = mkTmpDir();
+  const pcxPath = path.join(civ3Root, 'Conquests', 'Art', 'Civilopedia', 'Icons', 'Buildings', 'slot255.pcx');
+  fs.mkdirSync(path.dirname(pcxPath), { recursive: true });
+  const indices = new Uint8Array(4);
+  indices.fill(255);
+  const palette = new Uint8Array(768);
+  palette[255 * 3] = 60;
+  palette[255 * 3 + 1] = 120;
+  palette[255 * 3 + 2] = 180;
+  fs.writeFileSync(pcxPath, encodePcx(indices, palette, 2, 2));
+
+  const res = getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: civ3Root,
+    assetPath: 'Art/Civilopedia/Icons/Buildings/slot255.pcx'
+  });
+  assert.equal(res.ok, true);
+  const rgba = Buffer.from(res.rgbaBase64, 'base64');
+  assert.equal(rgba[3], 255);
+  assert.equal(rgba[0], 60);
+  assert.equal(rgba[1], 120);
+  assert.equal(rgba[2], 180);
+});
+
+test('civilopediaIcon preview decodes 24-bit three-plane PCX files', () => {
+  const civ3Root = mkTmpDir();
+  const pcxPath = path.join(civ3Root, 'Conquests', 'Art', 'Civilopedia', 'Icons', 'Buildings', 'truecolor.pcx');
+  fs.mkdirSync(path.dirname(pcxPath), { recursive: true });
+  fs.writeFileSync(pcxPath, encodeTruecolorPcx({
+    width: 2,
+    height: 1,
+    rgbAt: (x) => (x === 0 ? [10, 20, 30] : [200, 160, 120])
+  }));
+
+  const res = getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: civ3Root,
+    assetPath: 'Art/Civilopedia/Icons/Buildings/truecolor.pcx'
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.width, 2);
+  assert.equal(res.height, 1);
+  const rgba = Buffer.from(res.rgbaBase64, 'base64');
+  assert.deepEqual(Array.from(rgba.slice(0, 8)), [10, 20, 30, 255, 200, 160, 120, 255]);
 });

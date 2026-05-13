@@ -52,9 +52,45 @@ function decodePcx(filePathOrBuffer, options = {}) {
   const planes = b[65];
   const bytesPerLine = u16(b, 66);
 
+  if (bitsPerPixel === 8 && planes === 3) {
+    const dataEnd = b.length;
+    let src = 128;
+    const rgba = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y += 1) {
+      const planeRows = [
+        new Uint8Array(bytesPerLine),
+        new Uint8Array(bytesPerLine),
+        new Uint8Array(bytesPerLine)
+      ];
+      for (let plane = 0; plane < 3; plane += 1) {
+        let rowWritten = 0;
+        while (rowWritten < bytesPerLine && src < dataEnd) {
+          const v = b[src++];
+          if ((v & 0xc0) === 0xc0) {
+            const run = v & 0x3f;
+            const val = src < dataEnd ? b[src++] : 0;
+            const n = Math.min(run, bytesPerLine - rowWritten);
+            planeRows[plane].fill(val, rowWritten, rowWritten + n);
+            rowWritten += n;
+          } else {
+            planeRows[plane][rowWritten++] = v;
+          }
+        }
+      }
+      for (let x = 0; x < width; x += 1) {
+        const out = (y * width + x) * 4;
+        rgba[out] = planeRows[0][x];
+        rgba[out + 1] = planeRows[1][x];
+        rgba[out + 2] = planeRows[2][x];
+        rgba[out + 3] = 255;
+      }
+    }
+    return { width, height, rgba, trueColor: true };
+  }
+
   if (!(bitsPerPixel === 8 && planes === 1)) {
-    log.warn('decodePcx', `${srcLabel}: unsupported format — bitsPerPixel=${bitsPerPixel}, planes=${planes} (expected 8-bit, 1-plane)`);
-    throw new Error('Only 8-bit 1-plane PCX supported');
+    log.warn('decodePcx', `${srcLabel}: unsupported format — bitsPerPixel=${bitsPerPixel}, planes=${planes} (expected 8-bit 1-plane indexed or 8-bit 3-plane truecolor)`);
+    throw new Error('Only 8-bit indexed or 24-bit truecolor PCX supported');
   }
 
   if (b.length < 769 || b[b.length - 769] !== 12) {
@@ -757,22 +793,38 @@ function resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths
 
 function resolvePcxPath(c3xPath, fileName, scenarioRoots) {
   if (!c3xPath || !fileName) return null;
-  const direct = path.isAbsolute(fileName) ? fileName : null;
+  const normalizedFileName = String(fileName || '').trim().replace(/^["']|["']$/g, '').replace(/\\/g, '/');
+  const direct = path.isAbsolute(normalizedFileName) ? normalizedFileName : null;
+  const startsWithArt = /^art\//i.test(normalizedFileName);
   const candidates = [direct];
   (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => {
-    candidates.push(
-      path.join(root, 'Art', 'Districts', 'Summer', '1200', fileName),
-      path.join(root, 'Art', 'Districts', '1200', fileName),
-      path.join(root, 'Art', 'Summer', '1200', fileName),
-      path.join(root, 'Art', '1200', fileName)
-    );
+    if (startsWithArt) {
+      candidates.push(path.join(root, normalizedFileName));
+      if (!/^art\/districts\//i.test(normalizedFileName)) {
+        candidates.push(path.join(root, 'Art', 'Districts', '1200', path.basename(normalizedFileName)));
+      }
+    } else {
+      candidates.push(
+        path.join(root, 'Art', 'Districts', 'Summer', '1200', normalizedFileName),
+        path.join(root, 'Art', 'Districts', '1200', normalizedFileName),
+        path.join(root, 'Art', 'Summer', '1200', normalizedFileName),
+        path.join(root, 'Art', '1200', normalizedFileName)
+      );
+    }
   });
-  candidates.push(
-    path.join(c3xPath, 'Art', 'Districts', 'Summer', '1200', fileName),
-    path.join(c3xPath, 'Art', 'Districts', '1200', fileName),
-    path.join(c3xPath, 'Art', 'DayNight', 'Summer', '1200', fileName),
-    path.join(c3xPath, 'Art', 'Terrain', fileName)
-  );
+  if (startsWithArt) {
+    candidates.push(path.join(c3xPath, normalizedFileName));
+    if (!/^art\/districts\//i.test(normalizedFileName)) {
+      candidates.push(path.join(c3xPath, 'Art', 'Districts', '1200', path.basename(normalizedFileName)));
+    }
+  } else {
+    candidates.push(
+      path.join(c3xPath, 'Art', 'Districts', 'Summer', '1200', normalizedFileName),
+      path.join(c3xPath, 'Art', 'Districts', '1200', normalizedFileName),
+      path.join(c3xPath, 'Art', 'DayNight', 'Summer', '1200', normalizedFileName),
+      path.join(c3xPath, 'Art', 'Terrain', normalizedFileName)
+    );
+  }
   return candidates.filter(Boolean).find((p) => fileExists(p)) || null;
 }
 
@@ -889,7 +941,7 @@ function getPreview(request) {
       log.warn('getPreview', `civilopediaIcon: not found — key="${request.civilopediaKey}", assetPath="${request.assetPath}"`);
       return { ok: false, error: 'Civilopedia icon not found' };
     }
-    return { ok: true, ...decodeByPath(iconPath, null, request.options || {}) };
+    return { ok: true, ...decodeByPath(iconPath, null, { transparentIndexes: [], ...(request.options || {}) }) };
   }
 
   if (kind === 'pcxPalette') {
@@ -1091,11 +1143,55 @@ function encodePcx(indices, palette, width, height) {
   return Buffer.concat([header, ...encodedRows, palSection]);
 }
 
+function encodeRgbaToPcx(rgba, width, height) {
+  const w = Math.max(1, Number(width) | 0);
+  const h = Math.max(1, Number(height) | 0);
+  const source = Buffer.isBuffer(rgba) || rgba instanceof Uint8Array ? rgba : Buffer.from([]);
+  if (source.length < w * h * 4) throw new Error('RGBA buffer is too small for PCX conversion.');
+  const palette = new Uint8Array(768);
+  let p = 0;
+  for (let r = 0; r < 6; r += 1) {
+    for (let g = 0; g < 6; g += 1) {
+      for (let b = 0; b < 6; b += 1) {
+        palette[p * 3] = Math.round((r * 255) / 5);
+        palette[p * 3 + 1] = Math.round((g * 255) / 5);
+        palette[p * 3 + 2] = Math.round((b * 255) / 5);
+        p += 1;
+      }
+    }
+  }
+  for (; p < 255; p += 1) {
+    const v = Math.round(((p - 216) * 255) / Math.max(1, 254 - 216));
+    palette[p * 3] = v;
+    palette[p * 3 + 1] = v;
+    palette[p * 3 + 2] = v;
+  }
+  palette[255 * 3] = 255;
+  palette[255 * 3 + 1] = 0;
+  palette[255 * 3 + 2] = 255;
+
+  const indices = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i += 1) {
+    const off = i * 4;
+    const a = source[off + 3];
+    if (a < 128) {
+      indices[i] = 255;
+      continue;
+    }
+    const r = Math.max(0, Math.min(5, Math.round((source[off] / 255) * 5)));
+    const g = Math.max(0, Math.min(5, Math.round((source[off + 1] / 255) * 5)));
+    const b = Math.max(0, Math.min(5, Math.round((source[off + 2] / 255) * 5)));
+    indices[i] = (r * 36) + (g * 6) + b;
+  }
+  return encodePcx(indices, palette, w, h);
+}
+
 module.exports = {
   getPreview,
   parseUnitAnimationIni,
   resolveConquestsAssetPath,
   resolveUnitIniPath,
   decodePcx,
-  encodePcx
+  encodePcx,
+  encodeRgbaToPcx
 };

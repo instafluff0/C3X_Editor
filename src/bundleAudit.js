@@ -416,17 +416,34 @@ function getAssetRoots(bundle) {
 }
 
 function resolveModArtFile(bundle, relativeArtPath) {
-  const normalizedRel = String(relativeArtPath || '').trim().replace(/^[/\\]+/, '');
+  const normalizedRel = String(relativeArtPath || '').trim().replace(/^["']|["']$/g, '').replace(/^[/\\]+/, '').replace(/\\/g, '/');
   if (!normalizedRel) return '';
+  const startsWithArt = /^art\//i.test(normalizedRel);
+  const candidatePathsForRoot = (root) => {
+    const candidates = startsWithArt
+      ? [path.join(root, normalizedRel)]
+      : [path.join(root, 'Art', normalizedRel)];
+    if (startsWithArt && !/^art\/districts\//i.test(normalizedRel)) {
+      candidates.push(path.join(root, 'Art', 'Districts', '1200', path.basename(normalizedRel)));
+    }
+    return candidates;
+  };
   const assetRoots = getAssetRoots(bundle);
   for (const root of assetRoots) {
-    const candidate = path.join(root, 'Art', normalizedRel);
-    if (fileExists(candidate)) return candidate;
+    const found = candidatePathsForRoot(root).find((candidate) => fileExists(candidate));
+    if (found) return found;
   }
   const c3xPath = String(bundle && bundle.c3xPath || '').trim();
   if (!c3xPath) return '';
-  const candidate = path.join(c3xPath, 'Art', normalizedRel);
-  return fileExists(candidate) ? candidate : '';
+  return candidatePathsForRoot(c3xPath).find((candidate) => fileExists(candidate)) || '';
+}
+
+function districtFamilyArtRelativePath(fileName) {
+  const normalized = String(fileName || '').trim().replace(/^["']|["']$/g, '').replace(/^[/\\]+/, '').replace(/\\/g, '/');
+  if (!normalized) return '';
+  if (/^art\//i.test(normalized)) return normalized;
+  if (/^districts\//i.test(normalized)) return path.join('Art', normalized);
+  return path.join('Districts', '1200', normalized);
 }
 
 function createAuditAccumulator() {
@@ -598,7 +615,7 @@ function auditCurrentDistrictArt(bundle, result) {
       .map((value) => normalizeConfigToken(value))
       .filter(Boolean);
     imgPaths.forEach((fileName) => {
-      const rel = path.join('Districts', '1200', fileName);
+      const rel = districtFamilyArtRelativePath(fileName);
       if (resolveModArtFile(bundle, rel)) return;
       addSectionIssue(
         result,
@@ -627,7 +644,7 @@ function auditCurrentWonderArt(bundle, result) {
   list.forEach((section, index) => {
     const label = getSectionDisplayName(section, index, 'Wonder District');
     const fileName = normalizeConfigToken(getFieldValue(section, 'img_path')) || 'Wonders.pcx';
-    const rel = path.join('Districts', '1200', fileName);
+    const rel = districtFamilyArtRelativePath(fileName);
     if (resolveModArtFile(bundle, rel)) return;
     addSectionIssue(
       result,
@@ -646,7 +663,7 @@ function auditCurrentNaturalWonderArt(bundle, result) {
     const fileName = normalizeConfigToken(getFieldValue(section, 'img_path'));
     if (!fileName) return;
     const label = getSectionDisplayName(section, index, 'Natural Wonder');
-    const rel = path.join('Districts', '1200', fileName);
+    const rel = districtFamilyArtRelativePath(fileName);
     if (resolveModArtFile(bundle, rel)) return;
     addSectionIssue(
       result,

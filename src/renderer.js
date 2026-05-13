@@ -7551,6 +7551,7 @@ function makeReferencePreviewTasks(tabKey, entry) {
   const entryScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
   if (Array.isArray(entry.iconPaths)) {
     entry.iconPaths.slice(0, 2).forEach((assetPath, idx) => {
+      const slot = { group: 'iconPaths', index: idx, path: assetPath };
       tasks.push({
         title: idx === 0 ? 'Civilopedia Large' : 'Civilopedia Small',
         displayWidth: idx === 0 ? Math.min(largeSizeByTab[tabKey] || 170, state.previewSize) : Math.min(smallSize, state.previewSize),
@@ -7559,13 +7560,14 @@ function makeReferencePreviewTasks(tabKey, entry) {
           civ3Path: state.settings.civ3Path,
           scenarioPath: entryScenarioPath,
           scenarioPaths: entryScenarioPaths,
-          assetPath
+          assetPath: getPendingReferenceArtSource(entry, slot) || assetPath
         }
       });
     });
   }
   if (tabKey === 'civilizations' && Array.isArray(entry.racePaths)) {
     entry.racePaths.slice(0, 2).forEach((assetPath, idx) => {
+      const slot = { group: 'racePaths', index: idx, path: assetPath };
       tasks.push({
         title: idx === 0 ? 'Advisor Portrait' : 'Victory Portrait',
         displayWidth: Math.min(150, state.previewSize),
@@ -7574,7 +7576,7 @@ function makeReferencePreviewTasks(tabKey, entry) {
           civ3Path: state.settings.civ3Path,
           scenarioPath: entryScenarioPath,
           scenarioPaths: entryScenarioPaths,
-          assetPath
+          assetPath: getPendingReferenceArtSource(entry, slot) || assetPath
         }
       });
     });
@@ -9796,6 +9798,20 @@ function normalizeRelativePath(value) {
     .replace(/\\/g, '/');
 }
 
+function normalizeScenarioArtRelativePath(value) {
+  const normalized = normalizeAssetReferencePath(value);
+  if (!normalized) return '';
+  const parts = normalized.split('/').filter(Boolean);
+  return parts[parts.length - 1] || '';
+}
+
+function isSectionArtImagePathField(tabKey, fieldKey) {
+  const tab = String(tabKey || '');
+  const key = String(fieldKey || '').trim().toLowerCase();
+  return (tab === 'districts' && key === 'img_paths')
+    || ((tab === 'wonders' || tab === 'naturalWonders') && key === 'img_path');
+}
+
 function getParentPath(rawPath) {
   const p = toSlashPath(rawPath).replace(/\/+$/, '');
   const idx = p.lastIndexOf('/');
@@ -9872,8 +9888,63 @@ const FIELD_HELP_NOTES = {
       upgradeto: 'Unit this one upgrades into when upgrade conditions are met.'
     },
     improvements: {
-      obsoleteby: 'Technology that obsoletes this improvement or wonder.',
-      reqadvance: 'Technology required before this improvement or wonder can be built.'
+      civilopediaentry: 'The identifier for this building that you\'ll use when setting up the Civilopedia.',
+      wonder: 'A Wonder can only be built one time in the whole game.',
+      smallwonder: 'A Small Wonder can be built once per civilization.',
+      improvement: 'An Improvement can be built in every city.',
+      cost: 'The value here times 10 will be the cost of this building in shields.',
+      maintenancecost: 'Per-turn maintenance cost.',
+      culture: 'Per-turn culture production.  Doubles after 1000 years.',
+      production: 'Will increase production in this city by 25% times this value.  A value of 2 means a 50% increase.',
+      pollution: 'Increases the chance of pollution by this percentage.\nAdding a building with a value of 2 means a city that used to have a 7% chance now has a 9% chance.',
+      goodsmustbeincityradius: 'If checked, the above resources must be within the city\'s 21-tile radius for the city to build this building.',
+      reqimprovement: 'If Number is 1, this city must already have indicated building to build this one.  If Number is > 1, the empire must have at least Number of indicated building for a city to build this one.',
+      reqgovernment: 'A civilization must have this government to build this building and for it to be effective.',
+      reqadvance: 'A civilization must have researched this technology to build this building.',
+      mustbenearriver: 'There must be a river in the city\'s radius for it to built this building.',
+      coastalinstallation: 'This building can only be built in coastal cities.',
+      requireseliteship: 'The civilization must have an Elite ship somewhere to build this improvement.',
+      requiresvictoriousarmy: 'The civilization must have had an army win a battle to build this improvement.',
+      veteranairunits: 'Host city will now produce veteran air units.',
+      veteranunits: 'Host city will now produce veteran land units and will heal units completely in one turn.',
+      veteranseaunits: 'Host city will now produce veteran sea units.',
+      decreasessuccessofmissiles: 'Provides building civilization a 75% chance of shooting down ICBMs',
+      buildarmieswithoutleader: 'This city can build armies with no leader required.',
+      allowsnuclearweapons: 'Allows ANY civilization to build nuclear weapons.',
+      doublecombatvsbarbarians: 'Building civilization has double combat values against barbarians.',
+      increasedshipmovement: 'Increases water movement rate by one.  Building two of these will still only increase rate by 1.',
+      plustwoshipmovement: 'Increases water movement rate by two.',
+      safeseatravel: 'The building civilization\'s ships will no longer sink at sea.',
+      cheaperupgrades: 'The building civilization can upgrade units for half price.',
+      allowshealinginenemyterritory: 'Allows troops to heal one hitpoint per turn in enemy territory.',
+      doublecitydefences: 'Doubles city defences throughout the empire.',
+      increaseschanceofleaderappearance: 'Increases the chance of a leader appearing from combat.',
+      allowairtrade: 'Allows host city to participate in air trade.',
+      allowwatertrade: 'Allows host city to participate in water trade.',
+      capitalization: 'When a city is building this improvement, all shields are converted into gold.',
+      increasedtaxes: 'Increases host city tax revenue by 50% (from base rate)',
+      increasedtrade: 'Increases the amount of trade/commerce by 1 for every commerce-producing tile worked by its host city',
+      paystrademaintenance: 'All player-owned buildings with the Commercial characteristic will no longer require any maintenance.',
+      treasuryearnsinterest: 'Causes the civilization who built this building to gain 5% interest on their treasure per turn.',
+      reducescorruption: 'Decreases corruption in host city.',
+      forbiddenpalace: 'Decreases corruption throughout the empire (Forbidden Palace effect).',
+      continentalmoodeffects: 'Happiness effects apply to all cities owned by player with a land connection to this city, but none on other landmasses (only applies to Global happy/unhappy faces).',
+      unhappyall: 'Increases the number of unhappy citizens throughout the empire (or continentally if checked)',
+      happyall: 'Increases the number of happy citizens throughout the empire (or continentally if checked)',
+      happy: 'Increases the number of happy citizens in host city (cumulative with global effects)',
+      unhappy: 'Increases the number of unhappy citizens in host city (cumulative with global effects)',
+      reduceswarweariness: 'Reduces war weariness in the host city.',
+      reducewarweariness: 'Reduces war weariness throughout the empire.',
+      empirereduceswarweariness: 'Reduces war weariness throughout the empire.',
+      increasesluxurytrade: 'The city will now get +2 happiness from luxuries 3 and 4, +3 from luxuries 5 and 6, etc.',
+      increasedluxuries: 'Each gold invested in luxury happiness for this city now produces 1.5 gold instead of 1 (rounded down).',
+      allowcitylevel2: 'Allows cities of size level two (see RULE tab, City Size Limits)',
+      allowcitylevel3: 'Allows cities of size level three (see RULE tab, City Size Limits)',
+      increasedresearch: 'Increases the amount of research by 50% (from the base level) in host city.',
+      doublesresearchoutput: 'Increases the amount of research by 100% (from the base level) in host city.',
+      twofreeadvances: 'The civilization instantly discovers the technology they are researching plus one additonal technology of their choice.',
+      gainanytechsknownbytwocivs: 'Any civ with such a building will automatically gain any tech that has already been researched by any two other civilizations that they have met.  This also applies to civilization who capture this building.',
+      obsoleteby: 'Technology that obsoletes this improvement or wonder.'
     }
   },
   sections: {
@@ -9905,6 +9976,7 @@ const FIELD_HELP_NOTES = {
       techrate: 'Research cost multiplier for this world size.'
     },
     GAME: {
+      numberofplayablecivs: 'Press Enter to set the number of players',
       cityeliminationcount: 'Elimination threshold: 1 means a civ is eliminated when it loses its last city.',
       cityelimination: 'Elimination threshold: 1 means a civ is eliminated when it loses its last city.'
     },
@@ -11996,13 +12068,12 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
       label.textContent = displayLabel;
     }
     const ruleFieldKey = String(field.baseKey || field.key || '');
-    attachRichTooltip(
-      label,
-      withFieldHelp(
-        `${formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ')}\nField: ${ruleFieldKey}`,
-        { tabKey, fieldKey: ruleFieldKey }
-      )
+    const tooltipText = withFieldHelp(
+      `${formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ')}\nField: ${ruleFieldKey}`,
+      { tabKey, fieldKey: ruleFieldKey }
     );
+    attachRichTooltip(label, tooltipText);
+    attachRichTooltip(row, tooltipText);
     row.appendChild(label);
 
     const controlWrap = document.createElement('div');
@@ -18894,6 +18965,7 @@ function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onC
 
 function getPreviewRequestForArtSlot(slot, entry = null) {
   if (!slot || !slot.path) return null;
+  const previewPath = getPendingReferenceArtSource(entry, slot) || slot.path;
   const resolvedScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
   const resolvedScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
   return {
@@ -18901,7 +18973,7 @@ function getPreviewRequestForArtSlot(slot, entry = null) {
     civ3Path: state.settings.civ3Path,
     scenarioPath: resolvedScenarioPath,
     scenarioPaths: resolvedScenarioPaths,
-    assetPath: slot.path
+    assetPath: previewPath
   };
 }
 
@@ -18913,6 +18985,17 @@ function loadArtSlotPreview(slot, holder, size = 86, entry = null) {
   canvas.className = 'entry-thumb-canvas';
   holder.appendChild(canvas);
   if (!slot || !slot.path) return;
+  const conversion = getPendingReferenceArtConversion(entry, slot);
+  if (conversion && conversion.rgbaBase64) {
+    canvas.width = Math.max(1, Number(conversion.width) || size);
+    canvas.height = Math.max(1, Number(conversion.height) || size);
+    drawPreviewFrameToCanvas({
+      width: Number(conversion.width) || size,
+      height: Number(conversion.height) || size,
+      rgbaBase64: conversion.rgbaBase64
+    }, canvas);
+    return;
+  }
   const request = getPreviewRequestForArtSlot(slot, entry);
   if (!request) return;
   window.c3xManager.getPreview(request)
@@ -19039,6 +19122,20 @@ function openArtFocusPreview(slot, entry = null) {
   if (artFocus.title) artFocus.title.textContent = slot.label || 'Art Preview';
   if (artFocus.meta) artFocus.meta.textContent = slot.path;
   overlay.classList.remove('hidden');
+  const conversion = getPendingReferenceArtConversion(entry, slot);
+  if (conversion && conversion.rgbaBase64) {
+    artFocus.preview = {
+      ok: true,
+      width: Number(conversion.width) || 1,
+      height: Number(conversion.height) || 1,
+      rgbaBase64: conversion.rgbaBase64,
+      sourcePath: String(conversion.sourcePath || '')
+    };
+    artFocus.slot = slot;
+    artFocus.zoom = 1;
+    renderArtFocusCanvas();
+    return;
+  }
   const request = getPreviewRequestForArtSlot(slot, entry);
   if (!request) return;
   window.c3xManager.getPreview(request)
@@ -19435,11 +19532,141 @@ function buildReferenceArtSlots(tabKey, entry, options = {}) {
   return slots;
 }
 
-function setReferenceArtSlotPath(entry, slot, nextPathRaw) {
+function getReferenceArtSourceKey(slot) {
+  if (!slot) return '';
+  const group = String(slot.group || '').trim();
+  const index = Number.isFinite(Number(slot.index)) ? Number(slot.index) : 0;
+  return group ? `${group}:${index}` : '';
+}
+
+function getPendingReferenceArtSource(entry, slot) {
+  const key = getReferenceArtSourceKey(slot);
+  if (!entry || !key || !entry.pendingArtSources) return '';
+  return String(entry.pendingArtSources[key] || '').trim();
+}
+
+function setPendingReferenceArtSource(entry, slot, sourcePath) {
+  const key = getReferenceArtSourceKey(slot);
+  if (!entry || !key) return;
+  const source = normalizeAssetReferencePath(sourcePath);
+  if (!source) return;
+  if (!entry.pendingArtSources || typeof entry.pendingArtSources !== 'object') entry.pendingArtSources = {};
+  entry.pendingArtSources[key] = source;
+}
+
+function setPendingReferenceArtConversion(entry, slot, conversion) {
+  const key = getReferenceArtSourceKey(slot);
+  if (!entry || !key || !conversion) return;
+  if (!entry.pendingArtConversions || typeof entry.pendingArtConversions !== 'object') entry.pendingArtConversions = {};
+  entry.pendingArtConversions[key] = conversion;
+}
+
+function getPendingReferenceArtConversion(entry, slot) {
+  const key = getReferenceArtSourceKey(slot);
+  if (!entry || !key || !entry.pendingArtConversions) return null;
+  const conversion = entry.pendingArtConversions[key];
+  return conversion && typeof conversion === 'object' ? conversion : null;
+}
+
+function clearPendingReferenceArtSource(entry, slot) {
+  const key = getReferenceArtSourceKey(slot);
+  if (!entry || !key) return;
+  if (entry.pendingArtSources) {
+    delete entry.pendingArtSources[key];
+    if (Object.keys(entry.pendingArtSources).length === 0) delete entry.pendingArtSources;
+  }
+  if (entry.pendingArtConversions) {
+    delete entry.pendingArtConversions[key];
+    if (Object.keys(entry.pendingArtConversions).length === 0) delete entry.pendingArtConversions;
+  }
+}
+
+function clearPendingReferenceArtConversion(entry, slot) {
+  const key = getReferenceArtSourceKey(slot);
+  if (!entry || !key || !entry.pendingArtConversions) return;
+  delete entry.pendingArtConversions[key];
+  if (Object.keys(entry.pendingArtConversions).length === 0) delete entry.pendingArtConversions;
+}
+
+function isSmallArtSlot(tabKey, slot, entry) {
+  const label = String(slot && slot.label || '').toLowerCase();
+  if (label.includes('small')) return true;
+  if (tabKey === 'improvements' && String(slot && slot.group || '') === 'iconPaths') {
+    const kind = normalizeImprovementBuildingArtKind(entry);
+    const rows = getImprovementBuildingArtRows(kind);
+    const idx = Number(slot && slot.index);
+    return Number.isFinite(idx) && idx >= rows.length;
+  }
+  return false;
+}
+
+function pcxFileNameForArtSlot(baseName, tabKey, slot, entry) {
+  const rawBase = String(baseName || '').replace(/\.[^.\\/]+$/i, '') || 'art';
+  const group = String(slot && slot.group || '');
+  if (group === 'wonderSplashPath') return `${rawBase}.pcx`;
+  let stem = rawBase;
+  if (isSmallArtSlot(tabKey, slot, entry)) {
+    stem = stem
+      .replace(/([_-]?)(large|lg)$/i, '$1small')
+      .replace(/([_-]?)128$/i, '$132');
+    if (stem === rawBase && !/([_-]?)(small|sm|32)$/i.test(stem)) stem = `${stem}_small`;
+  } else {
+    stem = stem
+      .replace(/([_-]?)(small|sm)$/i, '$1large')
+      .replace(/([_-]?)32$/i, '$1128');
+  }
+  return `${stem}.pcx`;
+}
+
+function pickScenarioReferenceArtTargetRelativePathForUi({ tabKey, slot, entry, originalPath, sourcePath }) {
+  const normalizedOriginal = normalizeAssetReferencePath(originalPath);
+  const normalizedSource = normalizeAssetReferencePath(sourcePath);
+  const contentRoot = toSlashPath(getInferredScenarioContentRoot()).trim().replace(/\/+$/, '');
+  if (normalizedSource && contentRoot && normalizedSource.startsWith(`${contentRoot}/`)) {
+    return normalizeRelativePath(normalizedSource.slice(contentRoot.length + 1));
+  }
+  const baseName = getPathBaseName(normalizedSource || normalizedOriginal || '');
+  if (!baseName) return '';
+  const pcxName = pcxFileNameForArtSlot(baseName, tabKey, slot, entry);
+  const group = String(slot && slot.group || '').trim();
+  const index = Number(slot && slot.index);
+  if (normalizedOriginal && !isAbsoluteAssetPath(normalizedOriginal)) {
+    const originalDir = getParentPath(normalizedOriginal);
+    const shouldPreserveOriginalDir = originalDir &&
+      !(tabKey === 'improvements' && (group === 'wonderSplashPath' || group === 'iconPaths'));
+    if (shouldPreserveOriginalDir) {
+      return normalizeRelativePath(`${originalDir}/${pcxName}`);
+    }
+  }
+  if (tabKey === 'civilizations' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Races/${pcxName}`);
+  if (tabKey === 'civilizations' && group === 'racePaths') {
+    return normalizeRelativePath(Number(index) === 0 ? `Art/Leaderheads/${pcxName}` : `Art/Advisors/${pcxName}`);
+  }
+  if (tabKey === 'improvements' && group === 'wonderSplashPath') return normalizeRelativePath(`Art/Wonder Splash/${pcxName}`);
+  if (tabKey === 'improvements' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Buildings/${pcxName}`);
+  if (tabKey === 'technologies' && group === 'iconPaths') return normalizeRelativePath(`Art/tech chooser/Icons/${pcxName}`);
+  if (tabKey === 'units' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Units/${pcxName}`);
+  if (tabKey === 'resources' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Resources/${pcxName}`);
+  if (tabKey === 'governments' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Governments/${pcxName}`);
+  return normalizeRelativePath(`Art/Civilopedia/Icons/${pcxName}`);
+}
+
+function setReferenceArtSlotPath(entry, slot, nextPathRaw, tabKey = '') {
   if (!entry || !slot) return;
-  const nextPath = normalizeAssetReferencePath(toPediaRelativeAssetPath(nextPathRaw || ''));
+  const normalizedSource = normalizeAssetReferencePath(nextPathRaw || '');
+  const nextPath = isAbsoluteAssetPath(normalizedSource)
+    ? pickScenarioReferenceArtTargetRelativePathForUi({
+      tabKey,
+      slot,
+      entry,
+      originalPath: slot.path || '',
+      sourcePath: normalizedSource
+    })
+    : normalizeAssetReferencePath(toPediaRelativeAssetPath(nextPathRaw || ''));
   if (slot.group === 'wonderSplashPath') {
     entry.wonderSplashPath = nextPath;
+    if (isAbsoluteAssetPath(normalizedSource)) setPendingReferenceArtSource(entry, slot, normalizedSource);
+    else clearPendingReferenceArtSource(entry, slot);
     return;
   }
   const key = slot.group === 'racePaths' ? 'racePaths' : 'iconPaths';
@@ -19447,7 +19674,65 @@ function setReferenceArtSlotPath(entry, slot, nextPathRaw) {
   arr[slot.index] = nextPath;
   while (arr.length > 0 && !String(arr[arr.length - 1] || '').trim()) arr.pop();
   entry[key] = arr;
+  if (isAbsoluteAssetPath(normalizedSource)) setPendingReferenceArtSource(entry, slot, normalizedSource);
+  else clearPendingReferenceArtSource(entry, slot);
   if (key === 'iconPaths' && slot.index === 0) entry.thumbPath = nextPath;
+}
+
+function getArtSlotTargetSize(tabKey, slot, entry) {
+  const group = String(slot && slot.group || '').trim();
+  if (group === 'wonderSplashPath') return { width: 320, height: 320 };
+  const label = String(slot && slot.label || '').toLowerCase();
+  if (label.includes('small')) return { width: 32, height: 32 };
+  if (tabKey === 'improvements' && group === 'iconPaths') {
+    const kind = normalizeImprovementBuildingArtKind(entry);
+    const rows = getImprovementBuildingArtRows(kind);
+    const idx = Number(slot && slot.index);
+    if (Number.isFinite(idx) && idx >= rows.length) return { width: 32, height: 32 };
+  }
+  return { width: 128, height: 128 };
+}
+
+function isConvertibleArtPath(filePath) {
+  return /\.(png|bmp|jpe?g|webp)$/i.test(String(filePath || '').trim());
+}
+
+function loadImageFromFilePath(filePath) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not decode selected image.'));
+    img.src = toFileUrlFromPath(filePath);
+  });
+}
+
+async function buildPendingArtConversion(filePath, size) {
+  const img = await loadImageFromFilePath(filePath);
+  const width = Math.max(1, Number(size && size.width) || 128);
+  const height = Math.max(1, Number(size && size.height) || 128);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Could not prepare image conversion canvas.');
+  ctx.clearRect(0, 0, width, height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  const srcW = Math.max(1, Number(img.naturalWidth || img.width) || 1);
+  const srcH = Math.max(1, Number(img.naturalHeight || img.height) || 1);
+  const scale = Math.min(width / srcW, height / srcH);
+  const drawW = Math.max(1, Math.round(srcW * scale));
+  const drawH = Math.max(1, Math.round(srcH * scale));
+  const x = Math.floor((width - drawW) / 2);
+  const y = Math.floor((height - drawH) / 2);
+  ctx.drawImage(img, x, y, drawW, drawH);
+  const rgba = ctx.getImageData(0, 0, width, height).data;
+  return {
+    sourcePath: normalizeAssetReferencePath(filePath),
+    width,
+    height,
+    rgbaBase64: toBase64FromUint8(new Uint8Array(rgba.buffer.slice(0)))
+  };
 }
 
 function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle = false }) {
@@ -19487,9 +19772,21 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
   card.appendChild(actions);
   attachRichTooltip(card, `Source: PediaIcons\nFile: ${slot.path || '(not set)'}\nSlot: ${slot.label}`);
 
-  const setPathAndRefresh = (absolutePathOrRelative) => {
+  const setPathAndRefresh = async (absolutePathOrRelative) => {
     rememberUndoSnapshot();
-    setReferenceArtSlotPath(entry, slot, absolutePathOrRelative);
+    setReferenceArtSlotPath(entry, slot, absolutePathOrRelative, tabKey);
+    clearPendingReferenceArtConversion(entry, slot);
+    if (isAbsoluteAssetPath(absolutePathOrRelative) && isConvertibleArtPath(absolutePathOrRelative)) {
+      try {
+        setPendingReferenceArtConversion(entry, slot, await buildPendingArtConversion(
+          absolutePathOrRelative,
+          getArtSlotTargetSize(tabKey, slot, entry)
+        ));
+      } catch (err) {
+        clearPendingReferenceArtSource(entry, slot);
+        setStatus(err && err.message ? err.message : 'Could not convert selected image.', true);
+      }
+    }
     setDirty(true);
     if (onChanged) onChanged();
   };
@@ -19500,11 +19797,11 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
       const resolved = await resolveExistingAssetPath(slot.path);
       const fallbackDir = resolved ? getParentPath(resolved) : '';
       const filePath = await window.c3xManager.pickFile({
-        filters: [{ name: 'PCX Images', extensions: ['pcx', 'png', 'bmp'] }],
+        filters: [{ name: 'Civ3 Art Images', extensions: ['pcx', 'png', 'bmp', 'jpg', 'jpeg', 'webp'] }],
         defaultPath: resolved || fallbackDir || undefined
       });
       if (!filePath) return;
-      setPathAndRefresh(filePath);
+      await setPathAndRefresh(filePath);
     });
     card.addEventListener('click', () => {
       openArtFocusPreview(slot, entry);
@@ -19520,9 +19817,16 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
       ev.preventDefault();
       card.classList.remove('drag-over');
       const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
-      const droppedPath = file && file.path ? String(file.path) : '';
-      if (!droppedPath) return;
-      setPathAndRefresh(droppedPath);
+      const droppedPath = file && file.path
+        ? String(file.path)
+        : (window.c3xManager && typeof window.c3xManager.getPathForFile === 'function'
+          ? String(window.c3xManager.getPathForFile(file) || '')
+          : '');
+      if (!droppedPath) {
+        setStatus('Could not read the dropped file path.', true);
+        return;
+      }
+      void setPathAndRefresh(droppedPath);
     });
   } else {
     replaceBtn.disabled = true;
@@ -29524,6 +29828,14 @@ function createFieldInput(schemaField, value, onChange) {
     input.value = value || '';
     input.placeholder = schemaField.required ? 'required' : '';
     input.addEventListener('input', () => onChange(input.value));
+    if (isSectionArtImagePathField(state.activeTab, schemaField.key)) {
+      input.addEventListener('blur', () => {
+        const normalized = normalizeScenarioArtRelativePath(input.value);
+        if (!normalized || normalized === input.value) return;
+        input.value = normalized;
+        onChange(normalized);
+      });
+    }
     const browse = document.createElement('button');
     browse.type = 'button';
     browse.textContent = 'Browse';
@@ -29531,8 +29843,11 @@ function createFieldInput(schemaField, value, onChange) {
       const pickerOptions = getFilePickerOptionsForSectionField(schemaField, input.value);
       const filePath = await window.c3xManager.pickFile(pickerOptions);
       if (!filePath) return;
-      input.value = filePath;
-      onChange(filePath);
+      const nextPath = isSectionArtImagePathField(state.activeTab, schemaField.key)
+        ? normalizeScenarioArtRelativePath(filePath)
+        : filePath;
+      input.value = nextPath;
+      onChange(nextPath);
     });
     wrap.appendChild(input);
     wrap.appendChild(browse);
@@ -30577,7 +30892,9 @@ function renderDistrictImagePathsEditor(section, onValueChange) {
   const coastalSlots = ['NW', 'NE', 'SE', 'SW'];
 
   const commit = (values) => {
-    const cleaned = (Array.isArray(values) ? values : []).map((v) => String(v || '').trim()).filter(Boolean);
+    const cleaned = (Array.isArray(values) ? values : [])
+      .map((v) => normalizeScenarioArtRelativePath(v))
+      .filter(Boolean);
     setSingleFieldValue(section, 'img_paths', cleaned.join(', '));
     if (onValueChange) onValueChange('img_paths', cleaned.join(', '));
   };
