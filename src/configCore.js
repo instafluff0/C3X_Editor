@@ -3887,13 +3887,14 @@ function findFirstPathLine(lines) {
 }
 
 function buildBuildingIconLines(entry, iconPaths) {
-  const paths = normalizePediaPathList(iconPaths);
+  const paths = (Array.isArray(iconPaths) ? iconPaths : [])
+    .map((v) => normalizeAssetReferencePath(v))
+    .filter(Boolean);
   const kind = String(entry && entry.buildingIconKind || '').trim() || 'SINGLE';
   const iconIndex = String(entry && entry.buildingIconIndex || '').trim();
   const lines = [kind];
   if (iconIndex) lines.push(iconIndex);
-  if (paths[0]) lines.push(paths[0]);
-  if (paths[1]) lines.push(paths[1]);
+  paths.forEach((p) => lines.push(p));
   return lines;
 }
 
@@ -3932,7 +3933,9 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   }
 
   const rawPaths = [...usableLines, ...govFallback, ...raceUsable].map((line) => normalizeRelativePath(line));
-  const iconPaths = dedupeStrings(rawPaths.filter(Boolean));
+  const iconPaths = buildingIconBlock
+    ? rawPaths.filter(Boolean)
+    : dedupeStrings(rawPaths.filter(Boolean));
 
   const readAnimationName = (key) => {
     const block = (pediaBlocks[key] && pediaBlocks[key].value) || [];
@@ -7749,14 +7752,18 @@ function collectPediaIconsReferenceEdits(tabs) {
       const shortKey = lookupKey.replace(/^(RACE_|TECH_|GOOD_|BLDG_|GOVT_|PRTO_)/, '');
       const importedFromScenario = !!String(entry && entry._importScenarioPath || '').trim();
       const shouldForceImportedPedia = importedFromScenario && !!(entry && entry.isNew);
-      const nextIconPaths = normalizePediaPathList(entry && entry.iconPaths);
+      const isBuildingIcon = lookupKey.startsWith('BLDG_');
+      const normalizeIconPathsForEntry = (values) => isBuildingIcon
+        ? (Array.isArray(values) ? values : []).map((v) => normalizeAssetReferencePath(v)).filter(Boolean)
+        : normalizePediaPathList(values);
+      const nextIconPaths = normalizeIconPathsForEntry(entry && entry.iconPaths);
       const prevIconPaths = shouldForceImportedPedia
         ? []
-        : normalizePediaPathList(entry && entry.originalIconPaths);
+        : normalizeIconPathsForEntry(entry && entry.originalIconPaths);
       if (JSON.stringify(nextIconPaths) !== JSON.stringify(prevIconPaths)) {
         if (lookupKey.startsWith('TECH_')) {
-          const small = nextIconPaths[0] || '';
-          const large = nextIconPaths[1] || nextIconPaths[0] || '';
+          const large = nextIconPaths[0] || '';
+          const small = nextIconPaths[1] || nextIconPaths[0] || '';
           edits.push({ blockKey: key, lines: small ? [small] : [] });
           edits.push({ blockKey: `${key}_LARGE`, lines: large ? [large] : [] });
         } else if (lookupKey.startsWith('BLDG_')) {
@@ -7813,7 +7820,7 @@ function collectPediaIconsReferenceEdits(tabs) {
   return Array.from(merged.values());
 }
 
-function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, originalPath, sourcePath, targetContentRoot }) {
+function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1, originalPath, sourcePath, targetContentRoot }) {
   const normalizedOriginal = normalizeAssetReferencePath(originalPath);
   if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
     return normalizeRelativePath(normalizedOriginal);
@@ -7832,7 +7839,25 @@ function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, originalPat
     return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Races', baseName));
   }
   if (tabKey === 'civilizations' && group === 'racePaths') {
+    if (Number(index) === 0) {
+      return normalizeRelativePath(path.join('Art', 'Leaderheads', baseName));
+    }
     return normalizeRelativePath(path.join('Art', 'Advisors', baseName));
+  }
+  if (tabKey === 'improvements' && (group === 'iconPaths' || group === 'wonderSplashPath')) {
+    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Buildings', baseName));
+  }
+  if (tabKey === 'technologies' && group === 'iconPaths') {
+    return normalizeRelativePath(path.join('Art', 'tech chooser', 'Icons', baseName));
+  }
+  if (tabKey === 'units' && group === 'iconPaths') {
+    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Units', baseName));
+  }
+  if (tabKey === 'resources' && group === 'iconPaths') {
+    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Resources', baseName));
+  }
+  if (tabKey === 'governments' && group === 'iconPaths') {
+    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Governments', baseName));
   }
   return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', baseName));
 }
@@ -7913,6 +7938,7 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
           const relTarget = pickScenarioReferenceArtTargetRelativePath({
             tabKey: spec.key,
             group: fieldKey,
+            index,
             originalPath: originalValues[index],
             sourcePath: normalized,
             targetContentRoot
@@ -7930,6 +7956,36 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
         }
         if (changed) entry[fieldKey] = sourceValues;
       });
+      if (spec.key === 'improvements') {
+        const rawSplash = String(entry && entry.wonderSplashPath || '').trim();
+        const normalizedSplash = normalizeScenarioRelativeArtReferencePath(rawSplash, entry, targetContentRoot);
+        if (normalizedSplash && isAbsoluteFilesystemPath(normalizedSplash)) {
+          let stats = null;
+          try {
+            stats = fs.statSync(normalizedSplash);
+          } catch (_err) {
+            stats = null;
+          }
+          if (!stats || !stats.isFile()) {
+            throw new Error(`Referenced art file does not exist: ${normalizedSplash}`);
+          }
+          const relTarget = pickScenarioReferenceArtTargetRelativePath({
+            tabKey: spec.key,
+            group: 'wonderSplashPath',
+            originalPath: entry && entry.originalWonderSplashPath,
+            sourcePath: normalizedSplash,
+            targetContentRoot
+          });
+          if (!relTarget) {
+            throw new Error(`Could not determine scenario-relative target for art file: ${normalizedSplash}`);
+          }
+          const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+          queueFileWrite(targetPath, fs.readFileSync(normalizedSplash));
+          entry.wonderSplashPath = relTarget;
+        } else if (normalizedSplash && normalizedSplash !== normalizeAssetReferencePath(rawSplash)) {
+          entry.wonderSplashPath = normalizedSplash;
+        }
+      }
     });
   }
   queued.forEach((data, targetPath) => {

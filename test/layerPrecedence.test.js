@@ -69,7 +69,10 @@ test('global mode uses Conquests override precedence over PTW/Vanilla', () => {
   const tech = getEntryByKey(tabs.technologies.entries, 'TECH_TEST_LAYER');
   assert.ok(tech, 'expected merged tech entry');
   assert.match(String(tech.civilopediaSection1 || ''), /Conquests overview text/);
-  assert.ok((tech.iconPaths || []).some((p) => /conquests-large\.pcx/i.test(p)));
+  assert.deepEqual(tech.iconPaths, [
+    'Art/civilopedia/icons/tech chooser/conquests-large.pcx',
+    'Art/civilopedia/icons/tech chooser/conquests-small.pcx'
+  ]);
 
   const civTab = tabs.civilizations;
   const labels = (civTab.diplomacyOptions || []).map((o) => o.label).join('\n');
@@ -108,7 +111,10 @@ test('scenario mode overrides conquests layer and falls back when key missing', 
   const scenarioTech = getEntryByKey(tabs.technologies.entries, 'TECH_TEST_LAYER');
   assert.ok(scenarioTech, 'expected scenario tech entry');
   assert.match(String(scenarioTech.civilopediaSection1 || ''), /Scenario overview text/);
-  assert.ok((scenarioTech.iconPaths || []).some((p) => /scenario-large\.pcx/i.test(p)));
+  assert.deepEqual(scenarioTech.iconPaths, [
+    'Art/civilopedia/icons/tech chooser/scenario-large.pcx',
+    'Art/civilopedia/icons/tech chooser/scenario-small.pcx'
+  ]);
 
   const fallbackTech = getEntryByKey(tabs.technologies.entries, 'TECH_BASE_ONLY');
   assert.ok(fallbackTech, 'expected fallback tech entry');

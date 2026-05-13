@@ -1,3 +1,19 @@
+* RELEASE 27.6
+- Added a structured Improvements `Building Art` editor with explicit `SINGLE`, `ERA`, and `CULTURE` modes, city icon index editing, mode-aware large/small art slots, and wonder splash editing while preserving the large sidebar Civilopedia art preview.
+- Added a structured Technologies `Technology Icons` editor that labels the Civ3 `#TECH_*_LARGE` and `#TECH_*` PediaIcons targets explicitly while keeping the large sidebar tech art preview.
+- Added a structured Units `Unit Art and Animations` editor that puts large/small Civilopedia icons and the existing `units_32` icon index preview above the unit animation controls.
+- Added a structured Civs `Civilization Art` editor that separates Civilopedia race icons from the `#RACE_*` leaderhead and advisor portrait paths.
+- Added structured Resources and Governments icon editors that label the large/small `#ICON_GOOD_*` and `#ICON_GOVT_*` Civilopedia art slots explicitly while preserving the large sidebar preview.
+- Fixed the Improvements `Building Art` `CULTURE` mode rows so they use Civ3 culture groups instead of the unrelated culture-impression rules section.
+- Fixed Technology PediaIcons saves to keep the app model large-first while writing Civ3's small icon to `#TECH_*` and large icon to `#TECH_*_LARGE`.
+- Fixed Scenario-mode Technology icon saves so uploaded art outside the scenario is copied into `Art\tech chooser\Icons\` and PediaIcons is rewritten to scenario-local paths.
+- Fixed Scenario-mode Unit Civilopedia icon saves so uploaded large/small PediaIcons art outside the scenario is copied into `Art\Civilopedia\Icons\Units\` and rewritten to scenario-local paths, leaving animation folders and the `units_32.pcx` atlas as separate unit-art concerns.
+- Fixed Scenario-mode Civ art saves so uploaded Civilopedia race icons, leaderhead portraits, and advisor portraits are copied into their distinct scenario art folders and rewritten to scenario-local paths.
+- Fixed Scenario-mode Resource and Government icon saves so uploaded art outside the scenario is copied into `Art\Civilopedia\Icons\Resources\` or `Art\Civilopedia\Icons\Governments\` instead of the generic icons folder.
+- Fixed Scenario-mode Improvement art saves so uploaded building icons and wonder splash files outside the scenario are copied into `Art\Civilopedia\Icons\Buildings\` and PediaIcons is rewritten to scenario-local paths.
+- Fixed Improvements category changes so switching an entry to Wonder or Small Wonder immediately shows the Wonder Splash selector in `Building Art`.
+- Fixed Improvement PediaIcons round-tripping so era/culture-specific building icon blocks preserve every positional art path, including intentional duplicate paths used by vanilla buildings such as Granary.
+
 * RELEASE 27.5
 - Added optional daily debug log files, enabled by default, with grouped File menu controls for toggling logging, choosing/resetting the log folder, and opening the log folder directly.
 - Renamed the Units `Capacity` statistic label to `Transport Capacity` to match Quint's unit editor wording.

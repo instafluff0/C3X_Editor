@@ -195,12 +195,12 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
           civilopediaSection2: 'Updated tech description text.',
           originalCivilopediaSection2: 'Original tech description.',
           iconPaths: [
-            'art\\civilopedia\\icons\\tech chooser\\new-tech-small.pcx',
-            'art\\civilopedia\\icons\\tech chooser\\new-tech-large.pcx'
+            'art\\civilopedia\\icons\\tech chooser\\new-tech-large.pcx',
+            'art\\civilopedia\\icons\\tech chooser\\new-tech-small.pcx'
           ],
           originalIconPaths: [
-            'art\\civilopedia\\icons\\tech chooser\\tech-small.pcx',
-            'art\\civilopedia\\icons\\tech chooser\\tech-large.pcx'
+            'art\\civilopedia\\icons\\tech chooser\\tech-large.pcx',
+            'art\\civilopedia\\icons\\tech chooser\\tech-small.pcx'
           ]
         })
       ]
@@ -620,6 +620,146 @@ test('building PediaIcons structured blocks load metadata and save complete Resi
   ]);
 });
 
+test('building PediaIcons ERA blocks preserve repeated positional slots on load and save', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(path.join(textDir, 'Civilopedia.txt'), [
+    '; City Improvements',
+    '#BLDG_GRANARY',
+    'Granary',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(pediaIconsPath, [
+    '#ICON_BLDG_GRANARY',
+    'ERA',
+    '2',
+    'Art\\Civilopedia\\Icons\\Buildings\\granaryancrenindlarge.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\granaryancrenindlarge.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\granaryancrenindlarge.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\granarymodlarge.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\granaryancrenindsmall.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\granaryancrenindsmall.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\granaryancrenindsmall.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\granarymodsmall.pcx',
+    ''
+  ].join('\n'), 'latin1');
+
+  const tabs = buildReferenceTabs(root, { mode: 'scenario', civ3Path: root, scenarioPath: scenario });
+  const granary = tabs.improvements.entries.find((entry) => entry.civilopediaKey === 'BLDG_GRANARY');
+  assert.ok(granary, 'expected Granary improvement entry');
+  assert.equal(granary.buildingIconKind, 'ERA');
+  assert.equal(granary.buildingIconIndex, '2');
+  assert.deepEqual(granary.iconPaths, [
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granarymodlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+    'Art/Civilopedia/Icons/Buildings/granarymodsmall.pcx'
+  ]);
+
+  const edited = {
+    ...JSON.parse(JSON.stringify(granary)),
+    iconPaths: granary.iconPaths.map((p) => p.replace('granarymodsmall', 'granarymodernsmall')),
+    originalIconPaths: granary.originalIconPaths
+  };
+  const changed = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: { sourceDetails: { pediaIconsScenarioWrite: pediaIconsPath } },
+      improvements: { entries: [edited] }
+    }
+  });
+  assert.equal(changed.ok, true, String(changed.error || 'changed save failed'));
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  const pediaDoc = parsePediaIconsDocumentWithOrder(saved);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_GRANARY), [
+    'ERA',
+    '2',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granarymodlarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+    'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+    'Art/Civilopedia/Icons/Buildings/granarymodernsmall.pcx'
+  ]);
+});
+
+test('scenario save localizes uploaded improvement art into building icon folders', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  const largeSource = path.join(external, 'UploadedTempleLarge.pcx');
+  const smallSource = path.join(external, 'UploadedTempleSmall.pcx');
+  const splashSource = path.join(external, 'UploadedTempleSplash.pcx');
+  fs.writeFileSync(largeSource, Buffer.from([1, 2, 3]));
+  fs.writeFileSync(smallSource, Buffer.from([4, 5, 6]));
+  fs.writeFileSync(splashSource, Buffer.from([7, 8, 9]));
+  fs.writeFileSync(path.join(textDir, 'Civilopedia.txt'), [
+    '; Small Wonders',
+    '#BLDG_UPLOAD_TEMPLE',
+    'Upload Temple',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+
+  const entry = {
+    civilopediaKey: 'BLDG_UPLOAD_TEMPLE',
+    lookupCivilopediaKey: 'BLDG_UPLOAD_TEMPLE',
+    displayCivilopediaKey: 'BLDG_UPLOAD_TEMPLE',
+    rawBiqCivilopediaKey: 'BLDG_UPLOAD_TEMPLE',
+    linkCivilopediaKey: 'BLDG_UPLOAD_TEMPLE',
+    improvementKind: 'small_wonder',
+    iconPaths: [largeSource, smallSource],
+    originalIconPaths: [],
+    buildingIconKind: 'SINGLE',
+    originalBuildingIconKind: '',
+    buildingIconIndex: '3',
+    originalBuildingIconIndex: '',
+    wonderSplashPath: splashSource,
+    originalWonderSplashPath: ''
+  };
+
+  const changed = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: { sourceDetails: { pediaIconsScenarioWrite: pediaIconsPath } },
+      improvements: { entries: [entry] }
+    }
+  });
+  assert.equal(changed.ok, true, String(changed.error || 'changed save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'UploadedTempleLarge.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'UploadedTempleSmall.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'UploadedTempleSplash.pcx')), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  const pediaDoc = parsePediaIconsDocumentWithOrder(saved);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_UPLOAD_TEMPLE), [
+    'SINGLE',
+    '3',
+    'Art/Civilopedia/Icons/Buildings/UploadedTempleLarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/UploadedTempleSmall.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.WON_SPLASH_BLDG_UPLOAD_TEMPLE), [
+    'Art/Civilopedia/Icons/Buildings/UploadedTempleSplash.pcx'
+  ]);
+});
+
 test('buildReferenceTabs preserves raw mixed-case Civilopedia keys for link validation', () => {
   const root = mkTmpDir();
   const textDir = path.join(root, 'Conquests', 'Text');
@@ -722,12 +862,12 @@ test('scenario save rewrites imported tech icon paths to scenario-root-relative 
         isNew: true,
         _importScenarioPath: path.join(root, 'Eldorado5.biq'),
         iconPaths: [
-          'Eldorado5/Art/tech chooser/Icons/Pirate_Small.pcx',
-          'Eldorado5/Art/tech chooser/Icons/Pirate_Large.pcx'
+          'Eldorado5/Art/tech chooser/Icons/Pirate_Large.pcx',
+          'Eldorado5/Art/tech chooser/Icons/Pirate_Small.pcx'
         ],
         originalIconPaths: [
-          'Eldorado5/Art/tech chooser/Icons/Pirate_Small.pcx',
-          'Eldorado5/Art/tech chooser/Icons/Pirate_Large.pcx'
+          'Eldorado5/Art/tech chooser/Icons/Pirate_Large.pcx',
+          'Eldorado5/Art/tech chooser/Icons/Pirate_Small.pcx'
         ],
         racePaths: [],
         originalRacePaths: [],
@@ -757,8 +897,288 @@ test('scenario save rewrites imported tech icon paths to scenario-root-relative 
   assert.match(saved, /#TECH_003_LARGE\r?\nArt\\tech chooser\\Icons\\Pirate_Large\.pcx/);
   assert.doesNotMatch(saved, /Eldorado5[\\/]/);
   assert.deepEqual(tabs.technologies.entries[0].iconPaths, [
-    'Art/tech chooser/Icons/Pirate_Small.pcx',
-    'Art/tech chooser/Icons/Pirate_Large.pcx'
+    'Art/tech chooser/Icons/Pirate_Large.pcx',
+    'Art/tech chooser/Icons/Pirate_Small.pcx'
+  ]);
+});
+
+test('scenario save localizes uploaded tech icons into tech chooser folder', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'UploadedTechLarge.pcx');
+  const smallSource = path.join(external, 'UploadedTechSmall.pcx');
+  fs.writeFileSync(largeSource, 'large');
+  fs.writeFileSync(smallSource, 'small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_UPLOAD',
+        iconPaths: [largeSource, smallSource],
+        originalIconPaths: [],
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'tech chooser', 'Icons', 'UploadedTechLarge.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'tech chooser', 'Icons', 'UploadedTechSmall.pcx')), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#TECH_UPLOAD\r?\nArt\\tech chooser\\Icons\\UploadedTechSmall\.pcx/);
+  assert.match(saved, /#TECH_UPLOAD_LARGE\r?\nArt\\tech chooser\\Icons\\UploadedTechLarge\.pcx/);
+  assert.deepEqual(tabs.technologies.entries[0].iconPaths, [
+    'Art/tech chooser/Icons/UploadedTechLarge.pcx',
+    'Art/tech chooser/Icons/UploadedTechSmall.pcx'
+  ]);
+});
+
+test('scenario save localizes uploaded unit Civilopedia icons into unit icon folder', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'UploadedUnitLarge.pcx');
+  const smallSource = path.join(external, 'UploadedUnitSmall.pcx');
+  fs.writeFileSync(largeSource, 'large');
+  fs.writeFileSync(smallSource, 'small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    units: {
+      entries: [{
+        civilopediaKey: 'PRTO_UPLOAD_UNIT',
+        iconPaths: [largeSource, smallSource],
+        originalIconPaths: [],
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Units', 'UploadedUnitLarge.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Units', 'UploadedUnitSmall.pcx')), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_PRTO_UPLOAD_UNIT\r?\nArt\\Civilopedia\\Icons\\Units\\UploadedUnitLarge\.pcx\r?\nArt\\Civilopedia\\Icons\\Units\\UploadedUnitSmall\.pcx/);
+  assert.deepEqual(tabs.units.entries[0].iconPaths, [
+    'Art/Civilopedia/Icons/Units/UploadedUnitLarge.pcx',
+    'Art/Civilopedia/Icons/Units/UploadedUnitSmall.pcx'
+  ]);
+});
+
+test('scenario save localizes uploaded civilization icon and portrait art into civ folders', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'UploadedCivLarge.pcx');
+  const smallSource = path.join(external, 'UploadedCivSmall.pcx');
+  const leaderheadSource = path.join(external, 'UploadedLeader.pcx');
+  const advisorSource = path.join(external, 'UploadedAdvisorAll.pcx');
+  fs.writeFileSync(largeSource, 'large');
+  fs.writeFileSync(smallSource, 'small');
+  fs.writeFileSync(leaderheadSource, 'leader');
+  fs.writeFileSync(advisorSource, 'advisor');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      },
+      entries: [{
+        civilopediaKey: 'RACE_UPLOAD_CIV',
+        iconPaths: [largeSource, smallSource],
+        originalIconPaths: [],
+        racePaths: [leaderheadSource, advisorSource],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'UploadedCivLarge.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'UploadedCivSmall.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Leaderheads', 'UploadedLeader.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Advisors', 'UploadedAdvisorAll.pcx')), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_RACE_UPLOAD_CIV\r?\nArt\\Civilopedia\\Icons\\Races\\UploadedCivLarge\.pcx\r?\nArt\\Civilopedia\\Icons\\Races\\UploadedCivSmall\.pcx/);
+  assert.match(saved, /#RACE_UPLOAD_CIV\r?\nArt\\Leaderheads\\UploadedLeader\.pcx\r?\nArt\\Advisors\\UploadedAdvisorAll\.pcx/);
+  assert.deepEqual(tabs.civilizations.entries[0].iconPaths, [
+    'Art/Civilopedia/Icons/Races/UploadedCivLarge.pcx',
+    'Art/Civilopedia/Icons/Races/UploadedCivSmall.pcx'
+  ]);
+  assert.deepEqual(tabs.civilizations.entries[0].racePaths, [
+    'Art/Leaderheads/UploadedLeader.pcx',
+    'Art/Advisors/UploadedAdvisorAll.pcx'
+  ]);
+});
+
+test('scenario save localizes uploaded resource icons into resource icon folder', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'UploadedResourceLarge.pcx');
+  const smallSource = path.join(external, 'UploadedResourceSmall.pcx');
+  fs.writeFileSync(largeSource, 'large');
+  fs.writeFileSync(smallSource, 'small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    resources: {
+      entries: [{
+        civilopediaKey: 'GOOD_UPLOAD_RESOURCE',
+        iconPaths: [largeSource, smallSource],
+        originalIconPaths: [],
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Resources', 'UploadedResourceLarge.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Resources', 'UploadedResourceSmall.pcx')), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_GOOD_UPLOAD_RESOURCE\r?\nArt\\Civilopedia\\Icons\\Resources\\UploadedResourceLarge\.pcx\r?\nArt\\Civilopedia\\Icons\\Resources\\UploadedResourceSmall\.pcx/);
+  assert.deepEqual(tabs.resources.entries[0].iconPaths, [
+    'Art/Civilopedia/Icons/Resources/UploadedResourceLarge.pcx',
+    'Art/Civilopedia/Icons/Resources/UploadedResourceSmall.pcx'
+  ]);
+});
+
+test('scenario save localizes uploaded government icons into government icon folder', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'UploadedGovernmentLarge.pcx');
+  const smallSource = path.join(external, 'UploadedGovernmentSmall.pcx');
+  fs.writeFileSync(largeSource, 'large');
+  fs.writeFileSync(smallSource, 'small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    governments: {
+      entries: [{
+        civilopediaKey: 'GOVT_UPLOAD_GOVERNMENT',
+        iconPaths: [largeSource, smallSource],
+        originalIconPaths: [],
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Governments', 'UploadedGovernmentLarge.pcx')), true);
+  assert.equal(fs.existsSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Governments', 'UploadedGovernmentSmall.pcx')), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_GOVT_UPLOAD_GOVERNMENT\r?\nArt\\Civilopedia\\Icons\\Governments\\UploadedGovernmentLarge\.pcx\r?\nArt\\Civilopedia\\Icons\\Governments\\UploadedGovernmentSmall\.pcx/);
+  assert.deepEqual(tabs.governments.entries[0].iconPaths, [
+    'Art/Civilopedia/Icons/Governments/UploadedGovernmentLarge.pcx',
+    'Art/Civilopedia/Icons/Governments/UploadedGovernmentSmall.pcx'
   ]);
 });
 

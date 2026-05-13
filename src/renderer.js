@@ -14638,15 +14638,15 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
   const prereqFields = groupedFields.get('Prerequisites') || [];
   const classFields = groupedFields.get('Class') || [];
   const identityFields = groupedFields.get('Identity') || [];
+  const remainingIdentityFields = identityFields.filter((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) !== 'iconindex');
   const requiredTechField = prereqFields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'requiredtech')
     || getBiqFieldByBaseKey(entry, 'requiredtech')
     || null;
   const resourceFields = prereqFields.filter((field) => /^requiredresource[123]$/.test(normalizeRuleLookupKey(field && (field.baseKey || field.key))));
   const upgradeField = prereqFields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'upgradeto') || null;
   const classField = classFields[0] || null;
-  const iconIndexField = identityFields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'iconindex') || null;
 
-  if (requiredTechField || resourceFields.length > 0 || upgradeField || classField || iconIndexField) {
+  if (requiredTechField || resourceFields.length > 0 || upgradeField || classField) {
     const groupCard = document.createElement('div');
     groupCard.className = 'rule-group-card unit-dense-card unit-prereq-card unit-prereq-card-flat';
     groupCard.dataset.sectionLabel = 'Prerequisites';
@@ -14669,7 +14669,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
       }));
     }
 
-    if (classField || upgradeField || iconIndexField) {
+    if (classField || upgradeField) {
       const compactRow = document.createElement('div');
       compactRow.className = 'unit-prereq-compact-row';
       if (classField) {
@@ -14698,26 +14698,19 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
         });
         compactRow.appendChild(upgradeWrap);
       }
-      if (iconIndexField) {
-        const iconWrap = document.createElement('div');
-        iconWrap.className = 'unit-prereq-compact-cell';
-        appendRuleFieldsToGroupCard({
-          groupCard: iconWrap,
-          fields: [iconIndexField],
-          entry,
-          tabKey,
-          selectedBaseIndex,
-          referenceEditable
-        });
-        compactRow.appendChild(iconWrap);
-      }
       groupCard.appendChild(compactRow);
     }
 
     topGrid.appendChild(groupCard);
     groupedFields.delete('Prerequisites');
     groupedFields.delete('Class');
-    if (iconIndexField) groupedFields.delete('Identity');
+  }
+  if (identityFields.length > 0) {
+    if (remainingIdentityFields.length > 0) {
+      groupedFields.set('Identity', remainingIdentityFields);
+    } else {
+      groupedFields.delete('Identity');
+    }
   }
 
   const statsFields = groupedFields.get('Unit Statistics');
@@ -15620,7 +15613,14 @@ function buildImprovementCategorySegmentedControl(entry, referenceEditable, fiel
       options.forEach((opt) => {
         opt.field.value = opt.field === selected.field ? 'true' : 'false';
       });
+      const selectedBaseKey = normalizeRuleLookupKey(selected.field && (selected.field.baseKey || selected.field.key));
+      entry.improvementKind = selectedBaseKey === 'wonder'
+        ? 'wonder'
+        : selectedBaseKey === 'smallwonder'
+          ? 'small_wonder'
+          : 'improvement';
       setDirty(true);
+      renderActiveTab({ preserveTabScroll: true });
     } : null,
     { disabled: !referenceEditable }
   );
@@ -19052,6 +19052,356 @@ function openArtFocusPreview(slot, entry = null) {
     .catch(() => {});
 }
 
+function getImprovementBuildingArtRows(kind) {
+  const normalizedKind = String(kind || '').trim().toUpperCase();
+  if (normalizedKind === 'ERA') {
+    const eraOptions = makeBiqSectionIndexOptions('ERAS', false);
+    const rows = eraOptions.map((opt, idx) => String(opt && (opt.displayLabel || opt.label) || '').trim() || `Era ${idx + 1}`);
+    return rows.length > 0 ? rows : ['Ancient Times', 'Middle Ages', 'Industrial Age', 'Modern Times'];
+  }
+  if (normalizedKind === 'CULTURE') {
+    return ['American', 'European', 'Mediterranean', 'Mid East', 'Asian'];
+  }
+  return ['Default'];
+}
+
+function normalizeImprovementBuildingArtKind(entry) {
+  const raw = String(entry && entry.buildingIconKind || '').trim().toUpperCase();
+  if (raw === 'ERA' || raw === 'CULTURE' || raw === 'SINGLE') return raw;
+  return 'SINGLE';
+}
+
+function remapImprovementBuildingArtPathsForKind(entry, nextKind) {
+  if (!entry) return;
+  const currentKind = normalizeImprovementBuildingArtKind(entry);
+  const currentRows = getImprovementBuildingArtRows(currentKind);
+  const nextRows = getImprovementBuildingArtRows(nextKind);
+  const currentCount = currentRows.length;
+  const nextCount = nextRows.length;
+  const current = Array.isArray(entry.iconPaths) ? entry.iconPaths.map((v) => String(v || '')) : [];
+  const largeAt = (idx) => current[idx] || '';
+  const smallAt = (idx) => current[currentCount + idx] || '';
+  const fallbackLarge = largeAt(0);
+  const fallbackSmall = smallAt(0) || current[1] || '';
+  const next = [];
+  for (let i = 0; i < nextCount; i += 1) {
+    next[i] = largeAt(Math.min(i, currentCount - 1)) || fallbackLarge;
+  }
+  for (let i = 0; i < nextCount; i += 1) {
+    next[nextCount + i] = smallAt(Math.min(i, currentCount - 1)) || fallbackSmall;
+  }
+  while (next.length > 0 && !String(next[next.length - 1] || '').trim()) next.pop();
+  entry.iconPaths = next;
+  entry.buildingIconKind = nextKind;
+  entry.thumbPath = next[0] || '';
+}
+
+function makeImprovementBuildingArtSlot(entry, slot, referenceEditable, onChanged) {
+  return makeArtSlotCard({
+    tabKey: 'improvements',
+    entry,
+    slot,
+    editable: referenceEditable,
+    onChanged,
+    showTitle: true
+  });
+}
+
+function renderImprovementBuildingArtEditor(entry, referenceEditable, onChanged) {
+  const wrap = document.createElement('div');
+  wrap.className = 'improvement-building-art-editor';
+  const kind = normalizeImprovementBuildingArtKind(entry);
+  const rows = getImprovementBuildingArtRows(kind);
+  const controls = document.createElement('div');
+  controls.className = 'improvement-building-art-controls';
+
+  const modeCell = document.createElement('label');
+  modeCell.className = 'improvement-building-art-control';
+  const modeLabel = document.createElement('span');
+  modeLabel.textContent = 'Display mode';
+  modeCell.appendChild(modeLabel);
+  modeCell.appendChild(makeSegmentedChoiceControl(['SINGLE', 'ERA', 'CULTURE'], kind, (next) => {
+    rememberUndoSnapshot();
+    remapImprovementBuildingArtPathsForKind(entry, next);
+    setDirty(true);
+    if (onChanged) onChanged();
+  }, { disabled: !referenceEditable }));
+  controls.appendChild(modeCell);
+
+  const indexCell = document.createElement('label');
+  indexCell.className = 'improvement-building-art-control compact';
+  const indexLabel = document.createElement('span');
+  indexLabel.textContent = 'City icon index';
+  indexCell.appendChild(indexLabel);
+  const indexInput = document.createElement('input');
+  indexInput.type = 'number';
+  indexInput.min = '0';
+  indexInput.step = '1';
+  indexInput.value = String(entry && entry.buildingIconIndex || '');
+  indexInput.disabled = !referenceEditable;
+  indexInput.addEventListener('change', () => {
+    rememberUndoSnapshot();
+    entry.buildingIconIndex = String(indexInput.value || '').trim();
+    setDirty(true);
+  });
+  indexCell.appendChild(indexInput);
+  controls.appendChild(indexCell);
+  wrap.appendChild(controls);
+
+  const grid = document.createElement('div');
+  grid.className = 'improvement-building-art-grid';
+  rows.forEach((rowLabel, rowIdx) => {
+    const row = document.createElement('div');
+    row.className = 'improvement-building-art-row';
+    const label = document.createElement('div');
+    label.className = 'improvement-building-art-row-label';
+    label.textContent = rowLabel;
+    row.appendChild(label);
+    const largeSlot = {
+      group: 'iconPaths',
+      index: rowIdx,
+      label: rows.length === 1 ? 'Civilopedia Large' : `${rowLabel} Large`,
+      path: String((entry.iconPaths || [])[rowIdx] || '')
+    };
+    const smallIndex = rows.length + rowIdx;
+    const smallSlot = {
+      group: 'iconPaths',
+      index: smallIndex,
+      label: rows.length === 1 ? 'Civilopedia Small' : `${rowLabel} Small`,
+      path: String((entry.iconPaths || [])[smallIndex] || '')
+    };
+    row.appendChild(makeImprovementBuildingArtSlot(entry, largeSlot, referenceEditable, onChanged));
+    row.appendChild(makeImprovementBuildingArtSlot(entry, smallSlot, referenceEditable, onChanged));
+    grid.appendChild(row);
+  });
+  wrap.appendChild(grid);
+
+  const kindLower = String(entry && entry.improvementKind || '').trim().toLowerCase();
+  const splash = String(entry && entry.wonderSplashPath || '').trim();
+  if (splash || kindLower === 'wonder' || kindLower === 'small_wonder') {
+    const splashWrap = document.createElement('div');
+    splashWrap.className = 'improvement-building-art-splash';
+    splashWrap.appendChild(makeImprovementBuildingArtSlot(entry, {
+      group: 'wonderSplashPath',
+      index: 0,
+      label: 'Wonder Splash',
+      path: splash
+    }, referenceEditable, onChanged));
+    wrap.appendChild(splashWrap);
+  }
+
+  return wrap;
+}
+
+function renderTechnologyArtEditor(entry, referenceEditable, onChanged) {
+  const wrap = document.createElement('div');
+  wrap.className = 'technology-art-editor art-slot-grid';
+  const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
+  [
+    {
+      group: 'iconPaths',
+      index: 0,
+      label: 'Large (#TECH_*_LARGE)',
+      path: String(icons[0] || '')
+    },
+    {
+      group: 'iconPaths',
+      index: 1,
+      label: 'Small (#TECH_*)',
+      path: String(icons[1] || '')
+    }
+  ].forEach((slot) => {
+    wrap.appendChild(makeArtSlotCard({
+      tabKey: 'technologies',
+      entry,
+      slot,
+      editable: referenceEditable,
+      onChanged,
+      showTitle: true
+    }));
+  });
+  return wrap;
+}
+
+function renderUnitArtEditor(entry, referenceEditable, onChanged) {
+  const wrap = document.createElement('div');
+  wrap.className = 'unit-art-editor';
+  const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
+  const iconGrid = document.createElement('div');
+  iconGrid.className = 'art-slot-grid';
+  [
+    {
+      group: 'iconPaths',
+      index: 0,
+      label: 'Civilopedia Large (#ICON_PRTO_*)',
+      path: String(icons[0] || '')
+    },
+    {
+      group: 'iconPaths',
+      index: 1,
+      label: 'Civilopedia Small (#ICON_PRTO_*)',
+      path: String(icons[1] || '')
+    }
+  ].forEach((slot) => {
+    iconGrid.appendChild(makeArtSlotCard({
+      tabKey: 'units',
+      entry,
+      slot,
+      editable: referenceEditable,
+      onChanged,
+      showTitle: true
+    }));
+  });
+  wrap.appendChild(iconGrid);
+
+  const iconIndexField = getBiqFieldByBaseKey(entry, 'iconindex');
+  if (iconIndexField) {
+    const indexCard = document.createElement('div');
+    indexCard.className = 'unit-art-index-card';
+    const label = document.createElement('label');
+    label.className = 'field-meta';
+    label.textContent = 'Units_32 Icon Index';
+    indexCard.appendChild(label);
+    const picker = createUnitIconIndexPicker(iconIndexField.value, (value) => {
+      rememberUndoSnapshot();
+      iconIndexField.value = String(value);
+      if (entry && entry._pendingImportedUnitIcon) delete entry._pendingImportedUnitIcon;
+      setDirty(true);
+      if (onChanged) onChanged();
+    }, entry);
+    indexCard.appendChild(picker);
+    const iconWarnEl = document.createElement('div');
+    iconWarnEl.className = 'unit-icon-field-warning hidden';
+    indexCard.appendChild(iconWarnEl);
+    ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+      if (!iconWarnEl.isConnected) return;
+      refreshPendingImportedUnitIconAssignments();
+      if (hasPendingImportedUnitIconWarning(entry)) {
+        iconWarnEl.textContent = 'Imported unit icon needs manual setup. Create or update this scenario\'s Art/Units/units_32.pcx, then choose the correct Icon Index.';
+        iconWarnEl.classList.remove('hidden');
+        return;
+      }
+      if (!metrics) return;
+      const idx = getUnitIconValidationIndex(entry);
+      if (!Number.isFinite(idx) || idx < 0) return;
+      if (Math.floor(idx / metrics.cols) >= metrics.rows) {
+        iconWarnEl.textContent = 'Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime.';
+        iconWarnEl.classList.remove('hidden');
+      }
+    }).catch(() => {});
+    wrap.appendChild(indexCard);
+  }
+  return wrap;
+}
+
+function renderCivilizationArtEditor(entry, referenceEditable, onChanged) {
+  const wrap = document.createElement('div');
+  wrap.className = 'civilization-art-editor';
+  const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
+  const iconCount = Math.max(2, icons.length);
+  const iconGrid = document.createElement('div');
+  iconGrid.className = 'art-slot-grid';
+  for (let i = 0; i < iconCount; i += 1) {
+    const slot = {
+      group: 'iconPaths',
+      index: i,
+      label: i === 0 ? 'Civilopedia Large (#ICON_RACE_*)' : i === 1 ? 'Civilopedia Small (#ICON_RACE_*)' : `Civilopedia Icon ${i + 1} (#ICON_RACE_*)`,
+      path: String(icons[i] || '')
+    };
+    iconGrid.appendChild(makeArtSlotCard({
+      tabKey: 'civilizations',
+      entry,
+      slot,
+      editable: referenceEditable,
+      onChanged,
+      showTitle: true
+    }));
+  }
+  wrap.appendChild(iconGrid);
+
+  const racePaths = Array.isArray(entry && entry.racePaths) ? entry.racePaths : [];
+  const portraitGrid = document.createElement('div');
+  portraitGrid.className = 'art-slot-grid civilization-portrait-art-grid';
+  [
+    {
+      group: 'racePaths',
+      index: 0,
+      label: 'Leaderhead Portrait (#RACE_* line 1)',
+      path: String(racePaths[0] || '')
+    },
+    {
+      group: 'racePaths',
+      index: 1,
+      label: 'Advisor Portrait (#RACE_* line 2)',
+      path: String(racePaths[1] || '')
+    }
+  ].forEach((slot) => {
+    portraitGrid.appendChild(makeArtSlotCard({
+      tabKey: 'civilizations',
+      entry,
+      slot,
+      editable: referenceEditable,
+      onChanged,
+      showTitle: true
+    }));
+  });
+  wrap.appendChild(portraitGrid);
+  return wrap;
+}
+
+function renderSimpleIconArtEditor({ tabKey, entry, referenceEditable, onChanged, largeLabel, smallLabel, extraLabelPrefix, className }) {
+  const wrap = document.createElement('div');
+  wrap.className = className || 'simple-icon-art-editor';
+  const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
+  const iconCount = Math.max(2, icons.length);
+  const iconGrid = document.createElement('div');
+  iconGrid.className = 'art-slot-grid';
+  for (let i = 0; i < iconCount; i += 1) {
+    const slot = {
+      group: 'iconPaths',
+      index: i,
+      label: i === 0 ? largeLabel : i === 1 ? smallLabel : `${extraLabelPrefix || 'Icon'} ${i + 1}`,
+      path: String(icons[i] || '')
+    };
+    iconGrid.appendChild(makeArtSlotCard({
+      tabKey,
+      entry,
+      slot,
+      editable: referenceEditable,
+      onChanged,
+      showTitle: true
+    }));
+  }
+  wrap.appendChild(iconGrid);
+  return wrap;
+}
+
+function renderResourceArtEditor(entry, referenceEditable, onChanged) {
+  return renderSimpleIconArtEditor({
+    tabKey: 'resources',
+    entry,
+    referenceEditable,
+    onChanged,
+    largeLabel: 'Civilopedia Large (#ICON_GOOD_*)',
+    smallLabel: 'Civilopedia Small (#ICON_GOOD_*)',
+    extraLabelPrefix: 'Resource Icon',
+    className: 'resource-art-editor'
+  });
+}
+
+function renderGovernmentArtEditor(entry, referenceEditable, onChanged) {
+  return renderSimpleIconArtEditor({
+    tabKey: 'governments',
+    entry,
+    referenceEditable,
+    onChanged,
+    largeLabel: 'Civilopedia Large (#ICON_GOVT_*)',
+    smallLabel: 'Civilopedia Small (#ICON_GOVT_*)',
+    extraLabelPrefix: 'Government Icon',
+    className: 'government-art-editor'
+  });
+}
+
 function buildReferenceArtSlots(tabKey, entry, options = {}) {
   const slots = [];
   const supportsIconArt = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'terrainPedia', 'workerActions']);
@@ -19062,7 +19412,9 @@ function buildReferenceArtSlots(tabKey, entry, options = {}) {
   const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
   const iconCount = icons.length > 0 ? Math.max(2, icons.length) : (ensureIconSlots ? 2 : 0);
   for (let i = 0; i < iconCount; i += 1) {
-    const label = i === 0 ? 'Civilopedia Large' : i === 1 ? 'Civilopedia Small' : `Icon ${i + 1}`;
+    const label = tabKey === 'technologies'
+      ? (i === 0 ? 'Tech Large' : i === 1 ? 'Tech Small' : `Tech Icon ${i + 1}`)
+      : (i === 0 ? 'Civilopedia Large' : i === 1 ? 'Civilopedia Small' : `Icon ${i + 1}`);
     slots.push({ group: 'iconPaths', index: i, label, path: String(icons[i] || '') });
   }
   if (tabKey === 'improvements') {
@@ -21833,7 +22185,7 @@ function renderReferenceTab(tab, tabKey) {
   let technologyUtilityStack = null;
   let resourceUtilityStack = null;
   let civilizationUtilityStack = null;
-    let unitBottomArtSection = null;
+  let governmentUtilityStack = null;
     const identityGrid = document.createElement('div');
     identityGrid.className = 'kv-grid';
     if (tabKey === 'improvements') identityGrid.classList.add('improvement-identity-grid');
@@ -22149,51 +22501,30 @@ function renderReferenceTab(tab, tabKey) {
       });
       utilityStack.appendChild(pediaDetails);
 
-      const animationDetails = document.createElement('details');
-      animationDetails.className = 'reference-art-collapse unit-compact-collapse';
-      const animationOpenKey = 'units:animation';
-      animationDetails.open = !!state.unitUtilitySectionOpenByKey[animationOpenKey];
-      const animationSummary = document.createElement('summary');
-      animationSummary.textContent = 'Animation';
-      attachRichTooltip(animationSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
-      animationDetails.appendChild(animationSummary);
-      animationDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[animationOpenKey] = !!animationDetails.open;
+      const artAnimationDetails = document.createElement('details');
+      artAnimationDetails.className = 'reference-art-collapse unit-compact-collapse';
+      const artAnimationOpenKey = 'units:art-animation';
+      artAnimationDetails.open = !!state.unitUtilitySectionOpenByKey[artAnimationOpenKey]
+        || !!state.unitUtilitySectionOpenByKey['units:other-art']
+        || !!state.unitUtilitySectionOpenByKey['units:animation'];
+      const artAnimationSummary = document.createElement('summary');
+      artAnimationSummary.textContent = 'Unit Art and Animations';
+      attachRichTooltip(artAnimationSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
+      artAnimationDetails.appendChild(artAnimationSummary);
+      artAnimationDetails.addEventListener('toggle', () => {
+        state.unitUtilitySectionOpenByKey[artAnimationOpenKey] = !!artAnimationDetails.open;
       });
-      const animationBody = document.createElement('div');
-      animationBody.className = 'unit-collapsible-body';
-      renderUnitAnimationPanel(tabKey, entry, animationBody, referenceEditable, { showTitle: false });
-      animationDetails.appendChild(animationBody);
-      utilityStack.appendChild(animationDetails);
-      if (secondaryArtSlots.length > 0) {
-        const extraArtDetails = document.createElement('details');
-        extraArtDetails.className = 'reference-art-collapse unit-compact-collapse';
-        const otherArtOpenKey = 'units:other-art';
-        extraArtDetails.open = !!state.unitUtilitySectionOpenByKey[otherArtOpenKey];
-        const extraArtSummary = document.createElement('summary');
-        extraArtSummary.textContent = `Other Art (${secondaryArtSlots.length})`;
-        extraArtDetails.appendChild(extraArtSummary);
-        extraArtDetails.addEventListener('toggle', () => {
-          state.unitUtilitySectionOpenByKey[otherArtOpenKey] = !!extraArtDetails.open;
-        });
-        const extraArtBody = document.createElement('div');
-        extraArtBody.className = 'unit-collapsible-body';
-        const artSlotsWrap = document.createElement('div');
-        artSlotsWrap.className = 'art-slot-grid';
-        secondaryArtSlots.forEach((slot) => {
-          const cardSlot = makeArtSlotCard({
-            tabKey,
-            entry,
-            slot,
-            editable: referenceEditable,
-            onChanged: () => renderActiveTab({ preserveTabScroll: true })
-          });
-          artSlotsWrap.appendChild(cardSlot);
-        });
-        extraArtBody.appendChild(artSlotsWrap);
-        extraArtDetails.appendChild(extraArtBody);
-        unitBottomArtSection = extraArtDetails;
+      const artAnimationBody = document.createElement('div');
+      artAnimationBody.className = 'unit-collapsible-body unit-art-animation-body';
+      if (artSlots.length > 0 || getBiqFieldByBaseKey(entry, 'iconindex')) {
+        artAnimationBody.appendChild(renderUnitArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
       }
+      const animationBody = document.createElement('div');
+      animationBody.className = 'unit-animation-embedded';
+      renderUnitAnimationPanel(tabKey, entry, animationBody, referenceEditable, { showTitle: false });
+      artAnimationBody.appendChild(animationBody);
+      artAnimationDetails.appendChild(artAnimationBody);
+      utilityStack.appendChild(artAnimationDetails);
       unitUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'improvements') {
       const utilityStack = document.createElement('div');
@@ -22233,32 +22564,20 @@ function renderReferenceTab(tab, tabKey) {
         ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
       });
       utilityStack.appendChild(pediaDetails);
-      if (secondaryArtSlots.length > 0) {
+      if (artSlots.length > 0) {
         const otherArtDetails = document.createElement('details');
         otherArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const otherArtOpenKey = 'improvements:other-art';
         otherArtDetails.open = !!state.unitUtilitySectionOpenByKey[otherArtOpenKey];
         const otherArtSummary = document.createElement('summary');
-        otherArtSummary.textContent = `Building Icons (${secondaryArtSlots.length})`;
+        otherArtSummary.textContent = 'Building Art';
         otherArtDetails.appendChild(otherArtSummary);
         otherArtDetails.addEventListener('toggle', () => {
           state.unitUtilitySectionOpenByKey[otherArtOpenKey] = !!otherArtDetails.open;
         });
         const otherArtBody = document.createElement('div');
         otherArtBody.className = 'unit-collapsible-body';
-        const artSlotsWrap = document.createElement('div');
-        artSlotsWrap.className = 'art-slot-grid';
-        secondaryArtSlots.forEach((slot) => {
-          const cardSlot = makeArtSlotCard({
-            tabKey,
-            entry,
-            slot,
-            editable: referenceEditable,
-            onChanged: () => renderActiveTab({ preserveTabScroll: true })
-          });
-          artSlotsWrap.appendChild(cardSlot);
-        });
-        otherArtBody.appendChild(artSlotsWrap);
+        otherArtBody.appendChild(renderImprovementBuildingArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
         otherArtDetails.appendChild(otherArtBody);
         utilityStack.appendChild(otherArtDetails);
       }
@@ -22301,6 +22620,23 @@ function renderReferenceTab(tab, tabKey) {
         ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
       });
       utilityStack.appendChild(pediaDetails);
+      if (artSlots.length > 0) {
+        const techArtDetails = document.createElement('details');
+        techArtDetails.className = 'reference-art-collapse unit-compact-collapse';
+        const techArtOpenKey = 'technologies:art';
+        techArtDetails.open = !!state.unitUtilitySectionOpenByKey[techArtOpenKey];
+        const techArtSummary = document.createElement('summary');
+        techArtSummary.textContent = 'Technology Icons';
+        techArtDetails.appendChild(techArtSummary);
+        techArtDetails.addEventListener('toggle', () => {
+          state.unitUtilitySectionOpenByKey[techArtOpenKey] = !!techArtDetails.open;
+        });
+        const techArtBody = document.createElement('div');
+        techArtBody.className = 'unit-collapsible-body';
+        techArtBody.appendChild(renderTechnologyArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
+        techArtDetails.appendChild(techArtBody);
+        utilityStack.appendChild(techArtDetails);
+      }
       technologyUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'resources') {
       const utilityStack = document.createElement('div');
@@ -22340,36 +22676,80 @@ function renderReferenceTab(tab, tabKey) {
         ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
       });
       utilityStack.appendChild(pediaDetails);
-      if (secondaryArtSlots.length > 0) {
+      if (artSlots.length > 0) {
         const otherArtDetails = document.createElement('details');
         otherArtDetails.className = 'reference-art-collapse unit-compact-collapse';
-        const otherArtOpenKey = 'resources:other-art';
+        const otherArtOpenKey = 'resources:art';
         otherArtDetails.open = !!state.unitUtilitySectionOpenByKey[otherArtOpenKey];
         const otherArtSummary = document.createElement('summary');
-        otherArtSummary.textContent = `Other Art (${secondaryArtSlots.length})`;
+        otherArtSummary.textContent = 'Resource Icons';
         otherArtDetails.appendChild(otherArtSummary);
         otherArtDetails.addEventListener('toggle', () => {
           state.unitUtilitySectionOpenByKey[otherArtOpenKey] = !!otherArtDetails.open;
         });
         const otherArtBody = document.createElement('div');
         otherArtBody.className = 'unit-collapsible-body';
-        const artSlotsWrap = document.createElement('div');
-        artSlotsWrap.className = 'art-slot-grid';
-        secondaryArtSlots.forEach((slot) => {
-          const cardSlot = makeArtSlotCard({
-            tabKey,
-            entry,
-            slot,
-            editable: referenceEditable,
-            onChanged: () => renderActiveTab({ preserveTabScroll: true })
-          });
-          artSlotsWrap.appendChild(cardSlot);
-        });
-        otherArtBody.appendChild(artSlotsWrap);
+        otherArtBody.appendChild(renderResourceArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
         otherArtDetails.appendChild(otherArtBody);
         utilityStack.appendChild(otherArtDetails);
       }
       resourceUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
+    } else if (tabKey === 'governments') {
+      const utilityStack = document.createElement('div');
+      utilityStack.className = 'unit-utility-stack';
+      const pediaDetails = document.createElement('details');
+      pediaDetails.className = 'reference-art-collapse unit-compact-collapse';
+      const pediaOpenKey = 'governments:civilopedia';
+      pediaDetails.open = !!state.unitUtilitySectionOpenByKey[pediaOpenKey];
+      const pediaSummary = document.createElement('summary');
+      pediaSummary.textContent = 'Civilopedia';
+      attachRichTooltip(pediaSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
+      pediaDetails.appendChild(pediaSummary);
+      pediaDetails.addEventListener('toggle', () => {
+        state.unitUtilitySectionOpenByKey[pediaOpenKey] = !!pediaDetails.open;
+      });
+      const pediaBody = document.createElement('div');
+      pediaBody.className = 'unit-collapsible-body';
+      const editorBlock = createCivilopediaEditorBlock({
+        entry,
+        fieldKey: 'civilopedia',
+        titleText: 'Civilopedia',
+        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+        emptyText: 'Civilopedia text',
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
+        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
+      });
+      editorBlock.classList.remove('section-card', 'source-section');
+      const editorTop = editorBlock.querySelector(':scope > .section-top');
+      if (editorTop) {
+        const editorTitle = editorTop.querySelector('strong');
+        if (editorTitle) editorTitle.remove();
+      }
+      editorBlock.style.marginTop = '0';
+      pediaBody.appendChild(editorBlock);
+      pediaDetails.appendChild(pediaBody);
+      enableWideDetailsToggle(pediaDetails, {
+        ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
+      });
+      utilityStack.appendChild(pediaDetails);
+      if (artSlots.length > 0) {
+        const govArtDetails = document.createElement('details');
+        govArtDetails.className = 'reference-art-collapse unit-compact-collapse';
+        const govArtOpenKey = 'governments:art';
+        govArtDetails.open = !!state.unitUtilitySectionOpenByKey[govArtOpenKey];
+        const govArtSummary = document.createElement('summary');
+        govArtSummary.textContent = 'Government Icons';
+        govArtDetails.appendChild(govArtSummary);
+        govArtDetails.addEventListener('toggle', () => {
+          state.unitUtilitySectionOpenByKey[govArtOpenKey] = !!govArtDetails.open;
+        });
+        const govArtBody = document.createElement('div');
+        govArtBody.className = 'unit-collapsible-body';
+        govArtBody.appendChild(renderGovernmentArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
+        govArtDetails.appendChild(govArtBody);
+        utilityStack.appendChild(govArtDetails);
+      }
+      governmentUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'civilizations') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
@@ -22408,6 +22788,23 @@ function renderReferenceTab(tab, tabKey) {
         ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
       });
       utilityStack.appendChild(pediaDetails);
+      if (artSlots.length > 0) {
+        const civArtDetails = document.createElement('details');
+        civArtDetails.className = 'reference-art-collapse unit-compact-collapse';
+        const civArtOpenKey = 'civilizations:art';
+        civArtDetails.open = !!state.unitUtilitySectionOpenByKey[civArtOpenKey];
+        const civArtSummary = document.createElement('summary');
+        civArtSummary.textContent = 'Civilization Art';
+        civArtDetails.appendChild(civArtSummary);
+        civArtDetails.addEventListener('toggle', () => {
+          state.unitUtilitySectionOpenByKey[civArtOpenKey] = !!civArtDetails.open;
+        });
+        const civArtBody = document.createElement('div');
+        civArtBody.className = 'unit-collapsible-body';
+        civArtBody.appendChild(renderCivilizationArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
+        civArtDetails.appendChild(civArtBody);
+        utilityStack.appendChild(civArtDetails);
+      }
       civilizationUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (secondaryArtSlots.length > 0) {
       identityMeta.appendChild(artGrid);
@@ -22559,6 +22956,8 @@ function renderReferenceTab(tab, tabKey) {
       if (technologyUtilityStack) textCol.appendChild(technologyUtilityStack);
     } else if (tabKey === 'resources') {
       if (resourceUtilityStack) textCol.appendChild(resourceUtilityStack);
+    } else if (tabKey === 'governments') {
+      if (governmentUtilityStack) textCol.appendChild(governmentUtilityStack);
     } else if (tabKey !== 'units' && referenceEditable) {
       textCol.appendChild(createCivilopediaEditorBlock({
         entry,
@@ -22588,9 +22987,6 @@ function renderReferenceTab(tab, tabKey) {
       if (unitUtilityStack) textCol.appendChild(unitUtilityStack);
     }
     deferredInfoBlocks.forEach((block) => textCol.appendChild(block));
-    if (tabKey === 'units') {
-      if (unitBottomArtSection) textCol.appendChild(unitBottomArtSection);
-    }
     if (showContextPane) {
       buildReferenceSectionNav({ tabKey, textCol, navCol });
     }

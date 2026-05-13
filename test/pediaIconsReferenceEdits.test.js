@@ -69,6 +69,30 @@ test('collectPediaIconsReferenceEdits forces first-save icon writes for imported
   }]);
 });
 
+test('collectPediaIconsReferenceEdits writes tech large-first model to small and large blocks', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_PIRACY',
+        iconPaths: [
+          'Art/tech chooser/Icons/PiracyLarge.pcx',
+          'Art/tech chooser/Icons/PiracySmall.pcx'
+        ],
+        originalIconPaths: [
+          'Art/tech chooser/Icons/OldPiracyLarge.pcx',
+          'Art/tech chooser/Icons/OldPiracySmall.pcx'
+        ]
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, [
+    { blockKey: 'TECH_PIRACY', lines: ['Art/tech chooser/Icons/PiracySmall.pcx'] },
+    { blockKey: 'TECH_PIRACY_LARGE', lines: ['Art/tech chooser/Icons/PiracyLarge.pcx'] }
+  ]);
+});
+
 test('buildScenarioPediaIconsEditResult deletes blocks instead of leaving empty headers', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-pediaicons-'));
   const targetPath = path.join(dir, 'PediaIcons.txt');
@@ -161,6 +185,59 @@ test('collectPediaIconsReferenceEdits writes complete structured building icon b
       '243',
       'Art/Civilopedia/Icons/Buildings/ResinShopL.pcx',
       'Art/Civilopedia/Icons/Buildings/ResinShopS.pcx'
+    ]
+  }]);
+});
+
+test('collectPediaIconsReferenceEdits preserves positional ERA building icon paths', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_GRANARY',
+        iconPaths: [
+          'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/granarymodlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/granarymodsmall.pcx'
+        ],
+        originalIconPaths: [
+          'Art/Civilopedia/Icons/Buildings/oldlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/oldlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/oldlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/oldmodlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/oldsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/oldsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/oldsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/oldmodsmall.pcx'
+        ],
+        buildingIconKind: 'ERA',
+        originalBuildingIconKind: 'ERA',
+        buildingIconIndex: '2',
+        originalBuildingIconIndex: '2',
+        wonderSplashPath: '',
+        originalWonderSplashPath: ''
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, [{
+    blockKey: 'ICON_BLDG_GRANARY',
+    lines: [
+      'ERA',
+      '2',
+      'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+      'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+      'Art/Civilopedia/Icons/Buildings/granaryancrenindlarge.pcx',
+      'Art/Civilopedia/Icons/Buildings/granarymodlarge.pcx',
+      'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+      'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+      'Art/Civilopedia/Icons/Buildings/granaryancrenindsmall.pcx',
+      'Art/Civilopedia/Icons/Buildings/granarymodsmall.pcx'
     ]
   }]);
 });
