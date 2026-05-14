@@ -3472,6 +3472,9 @@ function parseBodyFromCivilopediaSection(civilopediaSection, options = {}) {
     const trimmed = String(line || '').trim();
     if (!trimmed || trimmed.startsWith(';')) continue;
     const cleaned = trimmed
+      .replace(/\$LINK<([^=<>]+)=([^<>]+)>/gi, '$1')
+      .replace(/\$LINK<([^<>]+)>/gi, '$1')
+      .replace(/\$LINK\b/gi, '')
       .replace(/[{}]/g, ' ')
       .replace(/\^/g, ' ')
       .replace(/\s+/g, ' ')
@@ -3541,6 +3544,7 @@ function extractTechDependenciesFromText(bodyLines) {
     const requires = line.match(/\brequires?\b\s*[:\-]?\s*(.+)$/i);
     if (!requires) continue;
     const rhs = requires[1].split(/[.;]/)[0];
+    if (/\$LINK\b/i.test(rhs) && !/\bTECH_[A-Za-z0-9_]+\b/i.test(rhs)) continue;
     rhs.split(/,|\/|\band\b/i).forEach((piece) => {
       const cleaned = piece.replace(/[\[\]()]/g, '').trim();
       if (cleaned.length > 1) deps.push(cleaned);

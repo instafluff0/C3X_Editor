@@ -3559,6 +3559,19 @@ details > summary:focus-visible {
   max-width: 100%;
 }
 
+.resource-icon-index-picker .unit-icon-picker-scroller {
+  width: calc(6 * 60px + 14px);
+}
+
+.resource-icon-index-picker .unit-icon-picker-grid {
+  width: calc(6 * 60px);
+}
+
+.resource-icon-index-picker .unit-icon-picker-item {
+  width: 56px;
+  height: 56px;
+}
+
 .civilization-art-editor {
   display: grid;
   gap: 10px;
@@ -3750,6 +3763,69 @@ details > summary:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   width: 100%;
+}
+
+.improvement-wonder-district-link {
+  width: auto;
+  max-width: 100%;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px 1px 6px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(73, 69, 98, 0.18);
+  color: var(--ink);
+  box-shadow: none;
+  text-align: left;
+}
+
+.improvement-wonder-district-link:hover {
+  border-color: rgba(11, 127, 120, 0.38);
+  background: rgba(232, 255, 252, 0.9);
+}
+
+.improvement-wonder-district-thumb {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  justify-self: center;
+}
+
+.improvement-wonder-district-thumb .entry-thumb-canvas {
+  width: 30px;
+  height: 30px;
+}
+
+.improvement-wonder-district-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.improvement-wonder-district-text strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.improvement-wonder-district-extra {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.improvement-wonder-district-arrow {
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
 }
 
 .unit-main-board {

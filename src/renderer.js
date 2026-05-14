@@ -15697,6 +15697,75 @@ function buildImprovementCategorySegmentedControl(entry, referenceEditable, fiel
   );
 }
 
+function isWonderImprovementEntry(entry) {
+  const kind = String(entry && entry.improvementKind || '').trim().toLowerCase();
+  if (kind === 'wonder' || kind === 'small_wonder') return true;
+  const wonder = getBiqFieldByBaseKey(entry, 'wonder');
+  const smallWonder = getBiqFieldByBaseKey(entry, 'smallwonder');
+  return isRuleFieldChecked(wonder) || isRuleFieldChecked(smallWonder);
+}
+
+function getLinkedWonderDistrictsForImprovement(entry) {
+  if (!isWonderImprovementEntry(entry)) return [];
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.wonders;
+  const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+  if (sections.length === 0) return [];
+  const improvementName = normalizeConfigToken(getReferenceEntryDisplayName('improvements', entry)).toLowerCase();
+  if (!improvementName) return [];
+  return sections
+    .map((section, index) => ({ section, index }))
+    .filter(({ section }) => normalizeConfigToken(getFieldValue(section, 'name')).toLowerCase() === improvementName);
+}
+
+function navigateToWonderDistrict(index) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.wonders;
+  const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+  if (!sections[index]) return;
+  navigateWithHistory(() => {
+    state.activeTab = 'wonders';
+    state.sectionSelection.wonders = index;
+    state.sectionFilter.wonders = '';
+  }, { preserveTabScroll: false });
+}
+
+function renderImprovementWonderDistrictLink(entry) {
+  const matches = getLinkedWonderDistrictsForImprovement(entry);
+  if (matches.length === 0) return null;
+  const first = matches[0];
+  const title = getSectionTitle(first.section, SECTION_SCHEMAS.wonders, first.index);
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'improvement-wonder-district-link';
+  button.title = `Open ${title} in Wonder Districts`;
+  button.addEventListener('click', () => navigateToWonderDistrict(first.index));
+
+  const thumb = document.createElement('span');
+  thumb.className = 'entry-thumb district-entry-thumb section-entry-thumb-large improvement-wonder-district-thumb';
+  button.appendChild(thumb);
+  loadWonderCompletedThumbnail(first.section, thumb, 44);
+
+  const text = document.createElement('span');
+  text.className = 'improvement-wonder-district-text';
+  const name = document.createElement('strong');
+  name.textContent = `Wonder District: ${title}`;
+  text.appendChild(name);
+  if (matches.length > 1) {
+    const extra = document.createElement('span');
+    extra.className = 'improvement-wonder-district-extra';
+    extra.textContent = `+${matches.length - 1} more`;
+    text.appendChild(extra);
+  }
+  button.appendChild(text);
+
+  const arrow = document.createElement('span');
+  arrow.className = 'improvement-wonder-district-arrow';
+  arrow.textContent = '↗';
+  button.appendChild(arrow);
+
+  return button;
+}
+
 function renderImprovementDenseTopBoard(entry, referenceEditable) {
   const wrap = document.createElement('div');
   wrap.className = 'improvement-main-board';
@@ -15750,6 +15819,8 @@ function renderImprovementDenseTopBoard(entry, referenceEditable) {
     const { cell, control } = createImprovementTopBoardCell(entry, 'Category', categoryFields);
     const segmented = buildImprovementCategorySegmentedControl(entry, referenceEditable, categoryFields);
     if (segmented) control.appendChild(segmented);
+    const wonderDistrictLink = renderImprovementWonderDistrictLink(entry);
+    if (wonderDistrictLink) control.appendChild(wonderDistrictLink);
     secondaryRow.appendChild(cell);
   }
 
@@ -16514,6 +16585,35 @@ function drawUnits32IconToCanvas(preview, spriteIndex, canvas, spriteSize = 32) 
   return true;
 }
 
+function getResourceAtlasMetrics(preview) {
+  const atlas = rgbaToCanvas(preview);
+  if (!atlas || !atlas.width || !atlas.height) return null;
+  const cols = 6;
+  const cellW = 50;
+  const cellH = 50;
+  const rows = Math.max(1, Math.floor(atlas.height / cellH));
+  return { atlas, cols, rows, cellW, cellH };
+}
+
+function drawResourceIconToCanvas(preview, spriteIndex, canvas) {
+  if (!preview || !canvas || !Number.isFinite(spriteIndex) || spriteIndex < 0) return false;
+  const metrics = getResourceAtlasMetrics(preview);
+  if (!metrics) return false;
+  const { atlas, cols, rows, cellW, cellH } = metrics;
+  const row = Math.floor(spriteIndex / cols);
+  const col = spriteIndex % cols;
+  if (row >= rows) return false;
+  const sx = col * cellW;
+  const sy = row * cellH;
+  if (sx + cellW > atlas.width || sy + cellH > atlas.height) return false;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(atlas, sx, sy, cellW, cellH, 0, 0, canvas.width, canvas.height);
+  return true;
+}
+
 async function getUnits32AtlasPreview({ scenarioPath, scenarioPaths } = {}) {
   const resolvedScenarioPath = String(
     typeof scenarioPath === 'string' ? scenarioPath : (state.settings && state.settings.scenarioPath) || ''
@@ -16532,6 +16632,32 @@ async function getUnits32AtlasPreview({ scenarioPath, scenarioPaths } = {}) {
     scenarioPath: resolvedScenarioPath,
     scenarioPaths: resolvedScenarioPaths,
     assetPath: 'Art/Units/units_32.pcx'
+  });
+  if (res && res.ok) {
+    setPreviewCache(cacheKey, res);
+    return res;
+  }
+  return null;
+}
+
+async function getResourcesAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
+  const resolvedScenarioPath = String(
+    typeof scenarioPath === 'string' ? scenarioPath : (state.settings && state.settings.scenarioPath) || ''
+  );
+  const resolvedScenarioPaths = Array.isArray(scenarioPaths) ? scenarioPaths : getScenarioPreviewPaths();
+  const cacheKey = JSON.stringify({
+    kind: 'resources-atlas',
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths.join('|')
+  });
+  if (state.previewCache.has(cacheKey)) return state.previewCache.get(cacheKey);
+  const res = await window.c3xManager.getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths,
+    assetPath: 'Art/resources.pcx'
   });
   if (res && res.ok) {
     setPreviewCache(cacheKey, res);
@@ -16703,6 +16829,159 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
   return wrap;
 }
 
+function createResourceIconIndexPicker(currentValue, onSelect) {
+  const RESOURCE_ICON_ITEM_SIZE = 60;
+  const RESOURCE_ICON_COLS = 6;
+  const RESOURCE_ICON_OVERSCAN_ROWS = 2;
+  const wrap = document.createElement('div');
+  wrap.className = 'path-input-with-btn unit-icon-index-picker resource-icon-index-picker';
+  const valueInput = document.createElement('input');
+  valueInput.type = 'number';
+  valueInput.min = '0';
+  const parsed = parseIntFromDisplayValue(currentValue);
+  let current = parsed == null ? 0 : Math.max(0, parsed);
+  valueInput.value = String(current);
+  const previewHost = document.createElement('span');
+  previewHost.className = 'entry-thumb';
+  const previewCanvas = document.createElement('canvas');
+  previewCanvas.width = 32;
+  previewCanvas.height = 32;
+  previewCanvas.className = 'entry-thumb-canvas';
+  previewHost.appendChild(previewCanvas);
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.textContent = 'Select Icon';
+  const menu = document.createElement('div');
+  menu.className = 'color-slot-picker-menu unit-icon-picker-menu hidden';
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.textContent = 'Loading resources.pcx icons...';
+  const scroller = document.createElement('div');
+  scroller.className = 'unit-icon-picker-scroller';
+  const grid = document.createElement('div');
+  grid.className = 'unit-icon-picker-grid';
+  scroller.appendChild(grid);
+  menu.appendChild(status);
+  menu.appendChild(scroller);
+  let atlasPreview = null;
+  let gridBuilt = false;
+  let buildToken = 0;
+  let totalIcons = 0;
+  let totalRows = 0;
+
+  const syncPreview = async () => {
+    const preview = await getResourcesAtlasPreview();
+    if (!atlasPreview) atlasPreview = preview;
+    if (!preview || !drawResourceIconToCanvas(preview, current, previewCanvas)) {
+      previewHost.innerHTML = '';
+      previewHost.textContent = '#';
+      return;
+    }
+    if (!previewHost.contains(previewCanvas)) {
+      previewHost.innerHTML = '';
+      previewHost.appendChild(previewCanvas);
+    }
+  };
+
+  const renderVisibleIcons = () => {
+    if (!atlasPreview || !gridBuilt) return;
+    const token = buildToken;
+    const scrollTop = scroller.scrollTop || 0;
+    const viewportHeight = scroller.clientHeight || 280;
+    const firstRow = Math.max(0, Math.floor(scrollTop / RESOURCE_ICON_ITEM_SIZE) - RESOURCE_ICON_OVERSCAN_ROWS);
+    const lastRow = Math.max(firstRow, Math.min(totalRows - 1, Math.ceil((scrollTop + viewportHeight) / RESOURCE_ICON_ITEM_SIZE) + RESOURCE_ICON_OVERSCAN_ROWS));
+    const start = firstRow * RESOURCE_ICON_COLS;
+    const end = Math.min(totalIcons, ((lastRow + 1) * RESOURCE_ICON_COLS));
+    const fragment = document.createDocumentFragment();
+    grid.innerHTML = '';
+    for (let idx = start; idx < end; idx += 1) {
+      if (token !== buildToken) return;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'unit-icon-picker-item';
+      item.title = `Icon ${idx}`;
+      item.setAttribute('aria-label', `Icon ${idx}`);
+      item.classList.toggle('active', idx === current);
+      item.style.left = `${(idx % RESOURCE_ICON_COLS) * RESOURCE_ICON_ITEM_SIZE}px`;
+      item.style.top = `${Math.floor(idx / RESOURCE_ICON_COLS) * RESOURCE_ICON_ITEM_SIZE}px`;
+      const canvas = document.createElement('canvas');
+      canvas.width = 32;
+      canvas.height = 32;
+      canvas.className = 'entry-thumb-canvas';
+      drawResourceIconToCanvas(atlasPreview, idx, canvas);
+      item.appendChild(canvas);
+      item.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        current = idx;
+        valueInput.value = String(idx);
+        menu.classList.add('hidden');
+        if (typeof onSelect === 'function') onSelect(String(idx));
+        syncPreview();
+      });
+      fragment.appendChild(item);
+    }
+    grid.appendChild(fragment);
+  };
+
+  const buildGrid = async () => {
+    if (!atlasPreview) atlasPreview = await getResourcesAtlasPreview();
+    ++buildToken;
+    grid.innerHTML = '';
+    scroller.scrollTop = 0;
+    gridBuilt = false;
+    if (!atlasPreview || !atlasPreview.width || !atlasPreview.height) {
+      status.textContent = 'Could not load resources.pcx';
+      return;
+    }
+    const metrics = getResourceAtlasMetrics(atlasPreview);
+    if (!metrics) {
+      status.textContent = 'Could not parse resources.pcx';
+      return;
+    }
+    const { cols, rows } = metrics;
+    totalIcons = cols * rows;
+    totalRows = Math.ceil(totalIcons / RESOURCE_ICON_COLS);
+    grid.style.width = `${RESOURCE_ICON_COLS * RESOURCE_ICON_ITEM_SIZE}px`;
+    grid.style.height = `${totalRows * RESOURCE_ICON_ITEM_SIZE}px`;
+    gridBuilt = true;
+    status.textContent = `${totalIcons} icons`;
+    renderVisibleIcons();
+  };
+
+  valueInput.addEventListener('input', () => {
+    current = Math.max(0, parseIntLoose(valueInput.value, 0));
+    if (typeof onSelect === 'function') onSelect(String(current));
+    syncPreview();
+    renderVisibleIcons();
+  });
+  let renderQueued = false;
+  scroller.addEventListener('scroll', () => {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      renderVisibleIcons();
+    });
+  });
+  openBtn.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden');
+    if (opening && !gridBuilt) await buildGrid();
+    if (opening) renderVisibleIcons();
+  });
+  registerOutsideClickDismiss(wrap, () => {
+    menu.classList.add('hidden');
+  });
+
+  wrap.appendChild(previewHost);
+  wrap.appendChild(valueInput);
+  wrap.appendChild(openBtn);
+  wrap.appendChild(menu);
+  syncPreview();
+  return wrap;
+}
+
 function isLikelyBooleanField(field) {
   const raw = String(field && field.value || '').toLowerCase().trim();
   if (raw === 'true' || raw === 'false') return true;
@@ -16771,6 +17050,7 @@ function buildIdentityTechContext(tabKey, entry) {
     return ctx;
   }
   if (tabKey === 'improvements') {
+    ctx.values = [];
     return ctx;
   }
   if (tabKey === 'units') {
@@ -19474,7 +19754,7 @@ function renderSimpleIconArtEditor({ tabKey, entry, referenceEditable, onChanged
 }
 
 function renderResourceArtEditor(entry, referenceEditable, onChanged) {
-  return renderSimpleIconArtEditor({
+  const wrap = renderSimpleIconArtEditor({
     tabKey: 'resources',
     entry,
     referenceEditable,
@@ -19484,6 +19764,38 @@ function renderResourceArtEditor(entry, referenceEditable, onChanged) {
     extraLabelPrefix: 'Resource Icon',
     className: 'resource-art-editor'
   });
+  const iconField = getBiqFieldByBaseKey(entry, 'icon');
+  if (iconField) {
+    const indexCard = document.createElement('div');
+    indexCard.className = 'unit-art-index-card resource-art-index-card';
+    const label = document.createElement('label');
+    label.className = 'field-meta';
+    label.textContent = 'Resources.pcx Map Icon Index';
+    indexCard.appendChild(label);
+    const picker = createResourceIconIndexPicker(iconField.value, (value) => {
+      rememberUndoSnapshot();
+      iconField.value = String(value);
+      setDirty(true);
+      if (onChanged) onChanged();
+    });
+    indexCard.appendChild(picker);
+    const iconWarnEl = document.createElement('div');
+    iconWarnEl.className = 'unit-icon-field-warning hidden';
+    indexCard.appendChild(iconWarnEl);
+    getResourcesAtlasPreview().then((preview) => {
+      if (!iconWarnEl.isConnected || !preview) return;
+      const metrics = getResourceAtlasMetrics(preview);
+      if (!metrics) return;
+      const idx = parseIntFromDisplayValue(iconField.value);
+      if (idx == null || idx < 0) return;
+      if (Math.floor(idx / metrics.cols) >= metrics.rows) {
+        iconWarnEl.textContent = 'Icon index is out of range for the available resources.pcx; this resource icon will be missing on the map.';
+        iconWarnEl.classList.remove('hidden');
+      }
+    }).catch(() => {});
+    wrap.appendChild(indexCard);
+  }
+  return wrap;
 }
 
 function renderGovernmentArtEditor(entry, referenceEditable, onChanged) {
@@ -22980,7 +23292,7 @@ function renderReferenceTab(tab, tabKey) {
         ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
       });
       utilityStack.appendChild(pediaDetails);
-      if (artSlots.length > 0) {
+      if (artSlots.length > 0 || getBiqFieldByBaseKey(entry, 'icon')) {
         const otherArtDetails = document.createElement('details');
         otherArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const otherArtOpenKey = 'resources:art';
@@ -23158,6 +23470,12 @@ function renderReferenceTab(tab, tabKey) {
         visibleRuleFields = visibleRuleFields.filter((field) => {
           const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
           return !CIVILIZATION_TOP_FIELD_KEYS.has(base);
+        });
+      }
+      if (tabKey === 'resources') {
+        visibleRuleFields = visibleRuleFields.filter((field) => {
+          const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
+          return base !== 'icon';
         });
       }
       const groups = new Map();
