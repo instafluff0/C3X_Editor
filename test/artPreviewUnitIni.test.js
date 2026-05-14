@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { getPreview, parseUnitAnimationIni, resolveUnitIniPath, encodePcx } = require('../src/artPreview');
+const { getPreview, parseUnitAnimationIni, resolveUnitIniPath, encodePcx, encodeRgbaToPcx, decodePcx } = require('../src/artPreview');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-unit-anim-'));
@@ -42,6 +42,45 @@ function encodeTruecolorPcx({ width, height, rgbAt }) {
   }
   return Buffer.concat([header, Buffer.from(body)]);
 }
+
+test('encodeRgbaToPcx preserves small exact-color palettes without dithering', () => {
+  const rgba = Buffer.from([
+    12, 34, 56, 255,
+    80, 90, 100, 255,
+    120, 130, 140, 255,
+    200, 210, 220, 255
+  ]);
+
+  const decoded = decodePcx(encodeRgbaToPcx(rgba, 2, 2), { returnIndexed: true, transparentIndexes: [] });
+  const seen = new Set();
+  for (let i = 0; i < 4; i += 1) {
+    const off = i * 4;
+    seen.add(`${decoded.rgba[off]},${decoded.rgba[off + 1]},${decoded.rgba[off + 2]}`);
+  }
+
+  assert.deepEqual(
+    Array.from(seen).sort(),
+    ['12,34,56', '80,90,100', '120,130,140', '200,210,220'].sort()
+  );
+});
+
+test('encodeRgbaToPcx reserves palette slots 254 and 255 for green and magenta transparency', () => {
+  const rgba = Buffer.from([
+    0, 255, 0, 255,
+    255, 0, 255, 0
+  ]);
+
+  const decoded = decodePcx(encodeRgbaToPcx(rgba, 2, 1), { returnIndexed: true, transparentIndexes: [] });
+
+  assert.equal(decoded.palette[254 * 3], 0);
+  assert.equal(decoded.palette[254 * 3 + 1], 255);
+  assert.equal(decoded.palette[254 * 3 + 2], 0);
+  assert.equal(decoded.palette[255 * 3], 255);
+  assert.equal(decoded.palette[255 * 3 + 1], 0);
+  assert.equal(decoded.palette[255 * 3 + 2], 255);
+  assert.equal(decoded.indices[0], 254);
+  assert.equal(decoded.indices[1], 255);
+});
 
 test('parseUnitAnimationIni reads all FLC actions and picks DEFAULT as default action', () => {
   const root = mkTmpDir();

@@ -1,3 +1,13 @@
+* RELEASE 27.7
+- Added compact `Next warning` jump controls to item-list tabs with quality-check warnings so users can select and scroll to the next warned entry without hunting through the list.
+- Added C3X-backed `Production Perfume`, `Unit Limits`, and `Building Prerequisites` controls to the Units prerequisites board.
+- Reserved PCX palette slot 254 for green transparency and slot 255 for magenta when converting true-color art to indexed PCX.
+- Added an inline `Save as` filename field for pending Civilopedia art replacements so scenario-local PCX destination names can be changed before saving.
+- Improved PNG/BMP/JPEG/WebP to PCX conversion for no-interpolation scaling and optimum-palette/no-dither indexing, using nearest-neighbor resizing and an image-derived palette instead of a fixed RGB cube.
+- Added C3X-backed `Generated Resources` and `Production Perfume` controls to the Improvements top board, with tooltips clarifying that edits save to the C3X base config instead of the BIQ.
+- Matched the Improvements top-board requirement and C3X controls to the wrapped, equal-width card styling used by the Techs top board.
+- Matched the Units prerequisite, upgrade, class, and C3X controls to the same wrapped card styling.
+
 * RELEASE 27.6
 - Removed misleading Improvements `Tech Notes` summaries derived from Civilopedia prose and cleaned Civ3 `$LINK` markup when parsing Civilopedia display text.
 - Added an Improvements top-board link to matching Wonder District entries, including the Wonder District thumbnail and direct navigation to the linked section.

@@ -1262,11 +1262,18 @@ test('scenario save resizes pending indexed PCX art to slot dimensions', () => {
   fs.writeFileSync(pediaIconsPath, '', 'latin1');
   const source = path.join(external, 'statue_source.pcx');
   const indices = new Uint8Array(128 * 128);
-  indices.fill(12);
   const palette = new Uint8Array(768);
   palette[12 * 3] = 10;
   palette[12 * 3 + 1] = 140;
   palette[12 * 3 + 2] = 80;
+  palette[13 * 3] = 240;
+  palette[13 * 3 + 1] = 20;
+  palette[13 * 3 + 2] = 30;
+  for (let y = 0; y < 128; y += 1) {
+    for (let x = 0; x < 128; x += 1) {
+      indices[y * 128 + x] = x % 2 === 0 ? 12 : 13;
+    }
+  }
   fs.writeFileSync(source, encodePcx(indices, palette, 128, 128));
 
   const tabs = {
@@ -1315,6 +1322,12 @@ test('scenario save resizes pending indexed PCX art to slot dimensions', () => {
   const decoded = decodePcx(pcxPath, { returnIndexed: true });
   assert.equal(decoded.width, 32);
   assert.equal(decoded.height, 32);
+  for (let i = 0; i < decoded.width * decoded.height; i += 1) {
+    const off = i * 4;
+    assert.equal(decoded.rgba[off], 10);
+    assert.equal(decoded.rgba[off + 1], 140);
+    assert.equal(decoded.rgba[off + 2], 80);
+  }
 });
 
 test('scenario save localizes uploaded unit Civilopedia icons into unit icon folder', () => {

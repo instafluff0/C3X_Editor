@@ -2699,6 +2699,27 @@ function getLoadAuditBadgeCount(tabKey) {
   return generalCount + sectionCount;
 }
 
+function hasReferenceEntryQualityIssue(tabKey, entry, baseIndex) {
+  if (!shouldRunQualityChecks()) return false;
+  if (getLoadAuditSectionMessages(tabKey, baseIndex).length > 0) return true;
+  if (tabKey !== 'units') return false;
+  if (hasPendingImportedUnitIconWarning(entry)) return true;
+  if (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey()) return false;
+  const iconIdx = getUnitIconValidationIndex(entry);
+  return Number.isFinite(iconIdx)
+    && iconIdx >= 0
+    && Math.floor(iconIdx / units32AtlasMetricsCache.cols) >= units32AtlasMetricsCache.rows;
+}
+
+function createNextWarningButton() {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost next-warning-btn hidden';
+  btn.textContent = '⚠ Next';
+  btn.title = 'Jump to the next item with a warning';
+  return btn;
+}
+
 function getReferenceAuditBadgeTitle(tab, key, warningCount) {
   const title = tab && tab.title ? tab.title : key;
   return `${title} has ${warningCount} warning${warningCount === 1 ? '' : 's'}`;
@@ -5588,12 +5609,14 @@ function makeNamedListPickerEditor(config) {
   const tabKey = String(cfg.tabKey || '').trim();
   const onValuesChange = typeof cfg.onValuesChange === 'function' ? cfg.onValuesChange : null;
   const options = Array.isArray(cfg.options) ? cfg.options : getNamedReferenceOptionsForTab(tabKey);
+  const hideActionsWhenEmpty = cfg.hideActionsWhenEmpty === true;
   const wrap = document.createElement('div');
   wrap.className = 'structured-list';
   let values = Array.isArray(cfg.values) ? cfg.values.map((v) => normalizeConfigToken(v)).filter(Boolean) : [];
   if (values.length === 0) values = [''];
   const rerender = () => {
     wrap.innerHTML = '';
+    const hasSelectedValue = values.some((value) => !!normalizeConfigToken(value));
     values.forEach((value, idx) => {
       const line = document.createElement('div');
       line.className = 'kv-row compact';
@@ -5618,6 +5641,7 @@ function makeNamedListPickerEditor(config) {
       const del = document.createElement('button');
       del.type = 'button';
       withRemoveIcon(del, ' Remove');
+      del.classList.toggle('hidden', hideActionsWhenEmpty && !hasSelectedValue);
       del.addEventListener('click', () => {
         values.splice(idx, 1);
         if (values.length === 0) values.push('');
@@ -5630,6 +5654,7 @@ function makeNamedListPickerEditor(config) {
     const add = document.createElement('button');
     add.type = 'button';
     add.textContent = 'Add Item';
+    add.classList.toggle('hidden', hideActionsWhenEmpty && !hasSelectedValue);
     add.addEventListener('click', () => {
       values.push('');
       if (onValuesChange) onValuesChange(values.filter(Boolean));
@@ -14652,41 +14677,197 @@ function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabK
   });
   const visibleCount = Math.max(1, Math.min(3, lastUsedIndex + 2));
 
-  (Array.isArray(fields) ? fields : []).slice(0, visibleCount).forEach((field, idx) => {
-    const pickerWrap = document.createElement('div');
-    pickerWrap.className = 'unit-prereq-resource-picker';
-    attachRichTooltip(pickerWrap, createRuleFieldTooltipText(entry, tabKey, field));
+  const visibleResourceFields = (Array.isArray(fields) ? fields : []).slice(0, visibleCount);
+  if (visibleResourceFields.length > 0) {
+    const resourceWrap = document.createElement('div');
+    resourceWrap.className = 'unit-prereq-resource-picker unit-prereq-resource-group';
+    visibleResourceFields.forEach((field) => attachRichTooltip(resourceWrap, createRuleFieldTooltipText(entry, tabKey, field)));
     const resourceLabel = document.createElement('label');
     resourceLabel.className = 'field-meta';
     const resourceStrong = document.createElement('strong');
     resourceStrong.textContent = 'Required Resources';
     resourceLabel.appendChild(resourceStrong);
-    if (idx !== 0) {
-      resourceLabel.classList.add('unit-prereq-label-spacer');
-      resourceLabel.setAttribute('aria-hidden', 'true');
-    }
-    pickerWrap.appendChild(resourceLabel);
-    const picker = createReferencePicker({
-      options: getReferenceOptionsForField(tabKey, field),
-      targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
-      currentValue: field.value,
-      searchPlaceholder: `Search required resource ${idx + 1}...`,
-      noneLabel: '(none)',
-      showOptionThumbs: true,
-      readOnly: !referenceEditable,
-      onSelect: referenceEditable ? (value) => {
-        rememberUndoSnapshot();
-        field.value = String(value);
-        setDirty(true);
-        renderActiveTab({ preserveTabScroll: true });
-      } : null
+    resourceWrap.appendChild(resourceLabel);
+    const resourcePickerList = document.createElement('div');
+    resourcePickerList.className = 'unit-prereq-resource-picker-list';
+    visibleResourceFields.forEach((field, idx) => {
+      const picker = createReferencePicker({
+        options: getReferenceOptionsForField(tabKey, field),
+        targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
+        currentValue: field.value,
+        searchPlaceholder: `Search required resource ${idx + 1}...`,
+        noneLabel: '(none)',
+        showOptionThumbs: true,
+        readOnly: !referenceEditable,
+        onSelect: referenceEditable ? (value) => {
+          rememberUndoSnapshot();
+          field.value = String(value);
+          setDirty(true);
+          renderActiveTab({ preserveTabScroll: true });
+        } : null
+      });
+      resourcePickerList.appendChild(picker);
     });
-    pickerWrap.appendChild(picker);
-    list.appendChild(pickerWrap);
-  });
+    resourceWrap.appendChild(resourcePickerList);
+    list.appendChild(resourceWrap);
+  }
+
+  list.appendChild(renderUnitProductionPerfumeControl(entry, referenceEditable));
+  list.appendChild(renderUnitLimitControl(entry, referenceEditable));
 
   wrap.appendChild(list);
   return wrap;
+}
+
+function getUnitC3XName(entry) {
+  return normalizeConfigToken(getReferenceEntryDisplayName('units', entry));
+}
+
+function createUnitC3XPrereqCell(labelText, baseKey, note = '') {
+  const row = getC3XBaseRow(baseKey);
+  const cell = document.createElement('div');
+  cell.className = 'unit-prereq-resource-picker unit-c3x-prereq-cell';
+  const label = document.createElement('label');
+  label.className = 'field-meta';
+  const strong = document.createElement('strong');
+  strong.textContent = labelText;
+  label.appendChild(strong);
+  attachRichTooltip(label, createImprovementC3XFieldTooltip(baseKey, note));
+  cell.appendChild(label);
+  const control = document.createElement('div');
+  control.className = 'unit-c3x-prereq-control';
+  cell.appendChild(control);
+  return { cell, control, row };
+}
+
+function setC3XBaseRowValue(row, nextValue, { captureUndo = true } = {}) {
+  if (!row) return;
+  if (captureUndo) rememberUndoSnapshotForKey(`BASE:${String(row.key || '').trim()}`);
+  row.value = String(nextValue || '');
+  setDirty(true);
+  recomputeDirtyCountForTab('base');
+  refreshDirtyUi();
+  refreshTabDirtyBadges();
+}
+
+function renderUnitNameAmountC3XControl({ entry, referenceEditable, baseKey, label, note, placeholder }) {
+  const { cell, control, row } = createUnitC3XPrereqCell(label, baseKey, note);
+  const unitName = getUnitC3XName(entry);
+  if (!row || !unitName) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = '(unavailable)';
+    control.appendChild(chip);
+    return cell;
+  }
+  const items = parseNameAmountItems(row.value);
+  const current = items.find((item) => c3xNameMatches(item.name, unitName)) || null;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = placeholder;
+  input.value = current ? String(current.amount || '') : '';
+  input.disabled = !referenceEditable;
+  wireGroupedUndoSession(input, {
+    key: `BASE:${baseKey}`,
+    getValue: () => String(input.value || '')
+  });
+  input.addEventListener('input', () => {
+    const nextAmount = String(input.value || '').trim();
+    const nextItems = parseNameAmountItems(row.value)
+      .filter((item) => !c3xNameMatches(item.name, unitName))
+      .map((item) => ({ ...item }));
+    if (nextAmount) nextItems.push({ name: unitName, amount: nextAmount });
+    setC3XBaseRowValue(row, serializeNameAmountItems(nextItems), { captureUndo: false });
+  });
+  input.addEventListener('change', () => {
+    commitTrackedEditSession(`BASE:${baseKey}`, String(input.value || ''));
+  });
+  control.appendChild(input);
+  return cell;
+}
+
+function renderUnitProductionPerfumeControl(entry, referenceEditable) {
+  return renderUnitNameAmountC3XControl({
+    entry,
+    referenceEditable,
+    baseKey: 'production_perfume',
+    label: 'Production Perfume',
+    note: 'Per-unit AI production perfume.',
+    placeholder: 'amount (e.g. 20 or -50%)'
+  });
+}
+
+function renderUnitLimitControl(entry, referenceEditable) {
+  return renderUnitNameAmountC3XControl({
+    entry,
+    referenceEditable,
+    baseKey: 'unit_limits',
+    label: 'Unit Limits',
+    note: 'Per-unit production limit formula.',
+    placeholder: 'formula (e.g. 3, 1 per-city, 5 + 2 per-city)'
+  });
+}
+
+function renderUnitBuildingPrereqsControl(entry, referenceEditable) {
+  const baseKey = 'building_prereqs_for_units';
+  const { cell, control, row } = createUnitC3XPrereqCell(
+    'Required Buildings',
+    baseKey,
+    'Buildings required before this unit can be produced.'
+  );
+  const unitName = getUnitC3XName(entry);
+  if (!row || !unitName) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = '(unavailable)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const getSelectedBuildings = () => parseBuildingPrereqItems(row.value)
+    .filter((item) => (Array.isArray(item.units) ? item.units : []).some((unit) => c3xNameMatches(unit, unitName)))
+    .map((item) => normalizeConfigToken(item.building))
+    .filter(Boolean);
+
+  const commitBuildings = (buildings) => {
+    const selected = new Set((Array.isArray(buildings) ? buildings : []).map((building) => normalizeConfigToken(building)).filter(Boolean));
+    const nextItems = [];
+    parseBuildingPrereqItems(row.value).forEach((item) => {
+      const building = normalizeConfigToken(item.building);
+      if (!building) return;
+      const units = (Array.isArray(item.units) ? item.units : [])
+        .map((unit) => normalizeConfigToken(unit))
+        .filter((unit) => unit && !c3xNameMatches(unit, unitName));
+      if (selected.has(building)) {
+        units.push(unitName);
+        selected.delete(building);
+      }
+      if (units.length > 0) nextItems.push({ building, units });
+    });
+    selected.forEach((building) => {
+      nextItems.push({ building, units: [unitName] });
+    });
+    setC3XBaseRowValue(row, serializeBuildingPrereqItems(nextItems));
+  };
+
+  if (!referenceEditable) {
+    const selected = getSelectedBuildings();
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = selected.length > 0 ? selected.join(', ') : '(none)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const picker = makeNamedListPickerEditor({
+    tabKey: 'improvements',
+    values: getSelectedBuildings(),
+    hideActionsWhenEmpty: true,
+    onValuesChange: commitBuildings
+  });
+  picker.classList.add('unit-c3x-building-prereq-list');
+  control.appendChild(picker);
+  return cell;
 }
 
 function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields }) {
@@ -14740,7 +14921,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
       }));
     }
 
-    if (classField || upgradeField) {
+    if (classField || upgradeField || getC3XBaseRow('building_prereqs_for_units')) {
       const compactRow = document.createElement('div');
       compactRow.className = 'unit-prereq-compact-row';
       if (classField) {
@@ -14769,6 +14950,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
         });
         compactRow.appendChild(upgradeWrap);
       }
+      compactRow.appendChild(renderUnitBuildingPrereqsControl(entry, referenceEditable));
       groupCard.appendChild(compactRow);
     }
 
@@ -15663,6 +15845,239 @@ function createImprovementTopBoardCell(entry, labelText, sourceFields = []) {
   return { cell, label, control };
 }
 
+function createImprovementC3XTopBoardCell(labelText, baseKey, note) {
+  const row = getC3XBaseRow(baseKey);
+  const cell = document.createElement('div');
+  cell.className = 'improvement-top-cell improvement-c3x-top-cell';
+  const label = document.createElement('label');
+  label.className = 'field-meta improvement-top-cell-label';
+  const strong = document.createElement('strong');
+  strong.textContent = labelText;
+  label.appendChild(strong);
+  attachRichTooltip(label, createImprovementC3XFieldTooltip(baseKey, note));
+  cell.appendChild(label);
+  const control = document.createElement('div');
+  control.className = 'improvement-top-cell-control improvement-c3x-top-control';
+  cell.appendChild(control);
+  return { cell, label, control, row };
+}
+
+function getC3XBaseRow(baseKey) {
+  const rows = state.bundle && state.bundle.tabs && state.bundle.tabs.base && Array.isArray(state.bundle.tabs.base.rows)
+    ? state.bundle.tabs.base.rows
+    : [];
+  return rows.find((row) => String(row && row.key || '') === String(baseKey || '')) || null;
+}
+
+function createImprovementC3XFieldTooltip(baseKey, note = '') {
+  const baseTab = state.bundle && state.bundle.tabs ? state.bundle.tabs.base : null;
+  const targetPath = String(baseTab && baseTab.targetPath || '').trim();
+  const fileLabel = targetPath ? compactPathFromCiv3Root(targetPath) : '(not available)';
+  const lines = [
+    'Source: C3X',
+    `File: ${fileLabel || targetPath || '(not available)'}`,
+    `Field: ${baseKey}`
+  ];
+  const cleanNote = String(note || '').trim();
+  const description = [
+    cleanNote,
+    'Stored in the C3X base config, not the BIQ. Editing here updates the same C3X row/value used by the C3X tab.'
+  ].filter(Boolean).join(' ');
+  lines.push(`Description: ${description}`);
+  return lines.join('\n');
+}
+
+function getImprovementC3XName(entry) {
+  return normalizeConfigToken(getReferenceEntryDisplayName('improvements', entry));
+}
+
+function c3xNameMatches(a, b) {
+  return normalizeConfigToken(a).toLowerCase() === normalizeConfigToken(b).toLowerCase();
+}
+
+function commitC3XBaseRowValue(row, nextValue) {
+  if (!row) return;
+  rememberUndoSnapshotForKey(`BASE:${String(row.key || '').trim()}`);
+  row.value = String(nextValue || '');
+  setDirty(true);
+  recomputeDirtyCountForTab('base');
+  refreshDirtyUi();
+  refreshTabDirtyBadges();
+}
+
+function renderImprovementProductionPerfumeControl(entry, referenceEditable) {
+  const baseKey = 'production_perfume';
+  const { cell, control, row } = createImprovementC3XTopBoardCell(
+    'Production Perfume',
+    baseKey,
+    'Per-building AI production perfume.'
+  );
+  const buildingName = getImprovementC3XName(entry);
+  if (!row || !buildingName) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = '(unavailable)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const items = parseNameAmountItems(row.value);
+  const current = items.find((item) => c3xNameMatches(item.name, buildingName)) || null;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'amount (e.g. 20 or -50%)';
+  input.value = current ? String(current.amount || '') : '';
+  input.disabled = !referenceEditable;
+  wireGroupedUndoSession(input, {
+    key: `BASE:${baseKey}`,
+    getValue: () => String(input.value || '')
+  });
+  input.addEventListener('input', () => {
+    const nextAmount = String(input.value || '').trim();
+    const nextItems = items
+      .filter((item) => !c3xNameMatches(item.name, buildingName))
+      .map((item) => ({ ...item }));
+    if (nextAmount) nextItems.push({ name: buildingName, amount: nextAmount });
+    row.value = serializeNameAmountItems(nextItems);
+    setDirty(true);
+    recomputeDirtyCountForTab('base');
+    refreshDirtyUi();
+    refreshTabDirtyBadges();
+  });
+  input.addEventListener('change', () => {
+    commitTrackedEditSession(`BASE:${baseKey}`, String(input.value || ''));
+  });
+  control.appendChild(input);
+  return cell;
+}
+
+function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
+  const baseKey = 'buildings_generating_resources';
+  const { cell, control, row } = createImprovementC3XTopBoardCell(
+    'Generated Resources',
+    baseKey,
+    'Per-building generated resources.'
+  );
+  const buildingName = getImprovementC3XName(entry);
+  if (!row || !buildingName) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = '(unavailable)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const FLAGS = ['local', 'no-tech-req', 'yields', 'show-bonus', 'hide-non-bonus'];
+  const FLAG_LABELS = {
+    local: 'Local',
+    yields: 'Yields',
+    'no-tech-req': 'No Tech Requirement',
+    'show-bonus': 'Show Bonus',
+    'hide-non-bonus': 'Hide Non-Bonus'
+  };
+  const allItems = parseBuildingResourceItems(row.value);
+  let items = allItems
+    .filter((item) => c3xNameMatches(item.building, buildingName))
+    .map((item) => ({ building: buildingName, resource: String(item.resource || ''), flags: Array.isArray(item.flags) ? item.flags.slice() : [] }));
+  if (items.length === 0) items = [{ building: buildingName, resource: '', flags: [] }];
+
+  const commitItems = (nextItems, { captureUndo = true } = {}) => {
+    if (captureUndo) rememberUndoSnapshotForKey(`BASE:${baseKey}`);
+    const otherItems = parseBuildingResourceItems(row.value)
+      .filter((item) => !c3xNameMatches(item.building, buildingName));
+    const cleaned = nextItems
+      .map((item) => ({
+        building: buildingName,
+        resource: String(item.resource || '').trim(),
+        flags: Array.isArray(item.flags) ? item.flags.slice() : []
+      }))
+      .filter((item) => item.resource);
+    row.value = serializeBuildingResourceItems([...otherItems, ...cleaned]);
+    setDirty(true);
+    recomputeDirtyCountForTab('base');
+    refreshDirtyUi();
+    refreshTabDirtyBadges();
+  };
+
+  const editorWrap = document.createElement('div');
+  editorWrap.className = 'improvement-c3x-resource-list';
+  const itemsHost = document.createElement('div');
+  itemsHost.className = 'improvement-c3x-resource-items';
+  const addButton = document.createElement('button');
+  addButton.type = 'button';
+  addButton.textContent = 'Add Resource';
+  addButton.disabled = !referenceEditable;
+  addButton.addEventListener('click', () => {
+    rememberUndoSnapshotForKey(`BASE:${baseKey}`);
+    items.push({ building: buildingName, resource: '', flags: [] });
+    renderItems();
+  });
+  const renderItems = () => {
+    itemsHost.innerHTML = '';
+    const selectedCount = items.filter((item) => String(item && item.resource || '').trim()).length;
+    items.forEach((item) => {
+      const block = document.createElement('div');
+      block.className = 'improvement-c3x-resource-card';
+      const hasResource = !!String(item && item.resource || '').trim();
+      const resourceOpts = getNamedReferenceOptionsForTab('resources');
+      if (item.resource && !resourceOpts.some((opt) => opt.value === item.resource)) {
+        resourceOpts.unshift({ value: item.resource, label: item.resource, entry: null });
+      }
+      block.appendChild(createReferencePicker({
+        options: resourceOpts,
+        targetTabKey: 'resources',
+        currentValue: item.resource || '-1',
+        searchPlaceholder: 'Search Resource...',
+        noneLabel: '(none)',
+        showOptionThumbs: true,
+        readOnly: !referenceEditable,
+        onSelect: referenceEditable ? (next) => {
+          const normalized = String(next || '').trim();
+          item.resource = normalized === '-1' ? '' : normalized;
+          commitItems(items);
+          renderItems();
+        } : null
+      }));
+      if (hasResource) {
+        const flags = makeLabeledSegmentedMultiValueEditor(
+          FLAGS,
+          Array.isArray(item.flags) ? item.flags : [],
+          (nextValues) => {
+            item.flags = nextValues;
+            commitItems(items);
+          },
+          'buildings_generating_resources_flags',
+          {
+            showTokenIcon: false,
+            getLabel: (flag) => FLAG_LABELS[String(flag || '').trim()] || String(flag || '').trim()
+          }
+        );
+        block.appendChild(flags);
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.disabled = !referenceEditable;
+        del.addEventListener('click', () => {
+          const idx = items.indexOf(item);
+          if (idx >= 0) items.splice(idx, 1);
+          if (items.length === 0) items.push({ building: buildingName, resource: '', flags: [] });
+          commitItems(items);
+          renderItems();
+        });
+        block.appendChild(del);
+      }
+      itemsHost.appendChild(block);
+    });
+    const hasEmptyResourceRow = items.some((item) => !String(item && item.resource || '').trim());
+    addButton.classList.toggle('hidden', selectedCount === 0 || hasEmptyResourceRow);
+  };
+  editorWrap.appendChild(itemsHost);
+  editorWrap.appendChild(addButton);
+  renderItems();
+  control.appendChild(editorWrap);
+  return cell;
+}
+
 function buildImprovementCategorySegmentedControl(entry, referenceEditable, fields = []) {
   const wonder = fields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'wonder') || getBiqFieldByBaseKey(entry, 'wonder');
   const smallWonder = fields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'smallwonder') || getBiqFieldByBaseKey(entry, 'smallwonder');
@@ -15815,6 +16230,18 @@ function renderImprovementDenseTopBoard(entry, referenceEditable) {
   const secondaryRow = document.createElement('div');
   secondaryRow.className = 'improvement-top-grid improvement-top-grid-secondary';
 
+  if (governmentField) {
+    const { cell, control } = createImprovementTopBoardCell(entry, 'Required Government', [governmentField]);
+    control.appendChild(buildImprovementTopReferenceControl(governmentField, 'Required Government', referenceEditable));
+    secondaryRow.appendChild(cell);
+  }
+
+  if (improvementField) {
+    const { cell, control } = createImprovementTopBoardCell(entry, 'Required Improvement', [improvementField]);
+    control.appendChild(buildImprovementTopReferenceControl(improvementField, 'Required Improvement', referenceEditable));
+    secondaryRow.appendChild(cell);
+  }
+
   if (categoryFields.length > 0) {
     const { cell, control } = createImprovementTopBoardCell(entry, 'Category', categoryFields);
     const segmented = buildImprovementCategorySegmentedControl(entry, referenceEditable, categoryFields);
@@ -15824,18 +16251,21 @@ function renderImprovementDenseTopBoard(entry, referenceEditable) {
     secondaryRow.appendChild(cell);
   }
 
-  [
-    ['Required Improvement', improvementField],
-    ['Required Government', governmentField],
-    ['Made Obsolete By', obsoleteField]
-  ].forEach(([labelText, field]) => {
-    if (!field) return;
-    const { cell, control } = createImprovementTopBoardCell(entry, labelText, [field]);
-    control.appendChild(buildImprovementTopReferenceControl(field, labelText, referenceEditable));
+  if (obsoleteField) {
+    const { cell, control } = createImprovementTopBoardCell(entry, 'Made Obsolete By', [obsoleteField]);
+    control.appendChild(buildImprovementTopReferenceControl(obsoleteField, 'Made Obsolete By', referenceEditable));
     secondaryRow.appendChild(cell);
-  });
+  }
 
   if (secondaryRow.childElementCount > 0) wrap.appendChild(secondaryRow);
+
+  if (categoryFields.length > 0 || obsoleteField) {
+    const c3xRow = document.createElement('div');
+    c3xRow.className = 'improvement-top-grid improvement-top-grid-c3x';
+    c3xRow.appendChild(renderImprovementGeneratedResourcesControl(entry, referenceEditable));
+    c3xRow.appendChild(renderImprovementProductionPerfumeControl(entry, referenceEditable));
+    wrap.appendChild(c3xRow);
+  }
   return wrap;
 }
 
@@ -19930,6 +20360,31 @@ function pcxFileNameForArtSlot(baseName, tabKey, slot, entry) {
   return `${stem}.pcx`;
 }
 
+function sanitizePendingArtPcxFileName(rawName) {
+  const base = getPathBaseName(String(rawName || '').trim())
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/g, '');
+  const stem = base.replace(/\.[^.]+$/i, '').trim().replace(/[. ]+$/g, '') || 'art';
+  return `${stem}.pcx`;
+}
+
+function setReferenceArtSlotDestinationPath(entry, slot, nextPathRaw) {
+  if (!entry || !slot) return;
+  const nextPath = normalizeAssetReferencePath(toPediaRelativeAssetPath(nextPathRaw || ''));
+  if (!nextPath) return;
+  if (slot.group === 'wonderSplashPath') {
+    entry.wonderSplashPath = nextPath;
+    return;
+  }
+  const key = slot.group === 'racePaths' ? 'racePaths' : 'iconPaths';
+  const arr = Array.isArray(entry[key]) ? [...entry[key]] : [];
+  arr[slot.index] = nextPath;
+  while (arr.length > 0 && !String(arr[arr.length - 1] || '').trim()) arr.pop();
+  entry[key] = arr;
+  if (key === 'iconPaths' && slot.index === 0) entry.thumbPath = nextPath;
+}
+
 function pickScenarioReferenceArtTargetRelativePathForUi({ tabKey, slot, entry, originalPath, sourcePath }) {
   const normalizedOriginal = normalizeAssetReferencePath(originalPath);
   const normalizedSource = normalizeAssetReferencePath(sourcePath);
@@ -20028,8 +20483,7 @@ async function buildPendingArtConversion(filePath, size) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Could not prepare image conversion canvas.');
   ctx.clearRect(0, 0, width, height);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingEnabled = false;
   const srcW = Math.max(1, Number(img.naturalWidth || img.width) || 1);
   const srcH = Math.max(1, Number(img.naturalHeight || img.height) || 1);
   const scale = Math.min(width / srcW, height / srcH);
@@ -20063,7 +20517,53 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
   loadArtSlotPreview(slot, visual, 128, entry);
   const meta = document.createElement('div');
   meta.className = 'art-slot-meta';
-  meta.textContent = slot.path ? slot.path : 'Click or drop PCX to set';
+  const pendingSource = getPendingReferenceArtSource(entry, slot);
+  const metaPath = document.createElement('div');
+  metaPath.className = 'art-slot-path';
+  metaPath.textContent = slot.path ? slot.path : 'Click or drop PCX to set';
+  meta.appendChild(metaPath);
+  if (editable && pendingSource && slot.path) {
+    const renameWrap = document.createElement('label');
+    renameWrap.className = 'art-slot-rename';
+    const renameText = document.createElement('span');
+    renameText.textContent = 'Save as';
+    renameWrap.appendChild(renameText);
+    const renameInput = document.createElement('input');
+    renameInput.type = 'text';
+    renameInput.value = getPathBaseName(slot.path);
+    renameInput.spellcheck = false;
+    renameInput.setAttribute('aria-label', 'Save art filename');
+    renameWrap.appendChild(renameInput);
+    const commitRename = () => {
+      const currentFileName = getPathBaseName(slot.path);
+      const nextFileName = sanitizePendingArtPcxFileName(renameInput.value);
+      renameInput.value = nextFileName;
+      if (!nextFileName || nextFileName === currentFileName) return;
+      const parent = getParentPath(slot.path);
+      const nextPath = normalizeRelativePath(parent ? `${parent}/${nextFileName}` : nextFileName);
+      rememberUndoSnapshot();
+      setReferenceArtSlotDestinationPath(entry, slot, nextPath);
+      setDirty(true);
+      if (onChanged) onChanged();
+    };
+    renameInput.addEventListener('click', (ev) => ev.stopPropagation());
+    renameInput.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+    renameInput.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        commitRename();
+        renameInput.blur();
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        renameInput.value = getPathBaseName(slot.path);
+        renameInput.blur();
+      }
+    });
+    renameInput.addEventListener('change', commitRename);
+    renameWrap.addEventListener('click', (ev) => ev.stopPropagation());
+    meta.appendChild(renameWrap);
+  }
   card.appendChild(meta);
   const actions = document.createElement('div');
   actions.className = 'art-slot-actions';
@@ -22202,6 +22702,8 @@ function renderReferenceTab(tab, tabKey) {
   let kindFilter = null;
   let eraFilterSelect = null;
   let techTreeBtn = null;
+  const nextWarningBtn = createNextWarningButton();
+  controlsRight.appendChild(nextWarningBtn);
   if (tabKey === 'technologies' || tabKey === 'units') {
     eraFilterSelect = document.createElement('select');
     getReferenceEraFilterOptions().forEach((opt) => {
@@ -22625,6 +23127,23 @@ function renderReferenceTab(tab, tabKey) {
   const activeBaseIndex = filteredEntries[selectedFilteredIndex]
     ? filteredEntries[selectedFilteredIndex].baseIndex
     : -1;
+  const warningEntries = filteredEntries
+    .map((item, filteredIndex) => Object.assign({ filteredIndex }, item))
+    .filter(({ entry, baseIndex }) => hasReferenceEntryQualityIssue(tabKey, entry, baseIndex));
+  nextWarningBtn.classList.toggle('hidden', warningEntries.length <= 0);
+  nextWarningBtn.disabled = warningEntries.length <= 0;
+  nextWarningBtn.title = warningEntries.length > 0
+    ? `Jump to the next ${tab.title || 'entry'} item with a warning`
+    : `No ${tab.title || 'entry'} warnings match the current filters`;
+  nextWarningBtn.onclick = () => {
+    if (warningEntries.length <= 0) return;
+    const next = warningEntries.find((item) => item.filteredIndex > selectedFilteredIndex) || warningEntries[0];
+    if (!next) return;
+    state.referenceSelection[tabKey] = next.baseIndex;
+    state.referenceListScrollTop[tabKey] = 0;
+    state.referenceDetailScrollTop[tabKey] = 0;
+    renderReferenceBody();
+  };
   const isUnitEraVariantEntry = (entry) => {
     const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
     return tabKey === 'units' && key.startsWith('PRTO_') && key.includes('_ERAS_');
@@ -32314,6 +32833,8 @@ function renderSectionTab(tab, tabKey) {
   const listFilterRight = document.createElement('div');
   listFilterRight.className = 'reference-filter-right';
   listFilterRow.appendChild(listFilterRight);
+  const nextWarningBtn = createNextWarningButton();
+  listFilterRight.appendChild(nextWarningBtn);
   if (!useInlineFilterActions) {
     const addSectionBtn = document.createElement('button');
     addSectionBtn.type = 'button';
@@ -32404,6 +32925,37 @@ function renderSectionTab(tab, tabKey) {
         || (districtHay && districtHay.includes(sectionNeedle));
     })
     .sort((a, b) => String(a.sortLabel || '').localeCompare(String(b.sortLabel || ''), 'en', { sensitivity: 'base' }));
+  const sectionHasIssue = (sectionIndex) => {
+    if (!showQualityWarnings) return false;
+    if (tabKey === 'districts') {
+      return !!((districtIssueIndexes && districtIssueIndexes.has(sectionIndex)) || getLoadAuditSectionMessages('districts', sectionIndex).length > 0);
+    }
+    if (tabKey === 'wonders') {
+      return !!((wonderIssueIndexes && wonderIssueIndexes.has(sectionIndex)) || getLoadAuditSectionMessages('wonders', sectionIndex).length > 0);
+    }
+    if (tabKey === 'naturalWonders') {
+      return getLoadAuditSectionMessages('naturalWonders', sectionIndex).length > 0;
+    }
+    return getLoadAuditSectionMessages(tabKey, sectionIndex).length > 0;
+  };
+  const warningSections = sectionEntries
+    .map((item, filteredIndex) => Object.assign({ filteredIndex }, item))
+    .filter(({ sectionIndex }) => sectionHasIssue(sectionIndex));
+  const selectedFilteredIndex = sectionEntries.findIndex((item) => item.sectionIndex === selectedIndex);
+  nextWarningBtn.classList.toggle('hidden', warningSections.length <= 0);
+  nextWarningBtn.disabled = warningSections.length <= 0;
+  nextWarningBtn.title = warningSections.length > 0
+    ? `Jump to the next ${schema.entityName.toLowerCase()} with a warning`
+    : `No ${schema.entityName.toLowerCase()} warnings match the current filters`;
+  nextWarningBtn.onclick = () => {
+    if (warningSections.length <= 0) return;
+    const next = warningSections.find((item) => item.filteredIndex > selectedFilteredIndex) || warningSections[0];
+    if (!next) return;
+    state.sectionSelection[tabKey] = next.sectionIndex;
+    state.sectionListScrollTop[tabKey] = 0;
+    state.sectionDetailScrollTop[tabKey] = 0;
+    renderSectionBody();
+  };
   sectionEntries.forEach(({ section, sectionIndex, sectionTitle, districtDisplay }) => {
     const itemBtn = document.createElement('button');
     const showSectionThumb = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders';
@@ -32415,7 +32967,7 @@ function renderSectionTab(tab, tabKey) {
     itemBtn.classList.toggle('active', sectionIndex === selectedIndex);
     itemBtn.type = 'button';
     if (tabKey === 'districts') {
-      const hasDistrictIssue = showQualityWarnings && !!((districtIssueIndexes && districtIssueIndexes.has(sectionIndex)) || getLoadAuditSectionMessages('districts', sectionIndex).length > 0);
+      const hasDistrictIssue = sectionHasIssue(sectionIndex);
       if (hasDistrictIssue) itemBtn.classList.add('entry-item-has-issue');
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb';
@@ -32442,10 +32994,7 @@ function renderSectionTab(tab, tabKey) {
         itemBtn.appendChild(issueBadge);
       }
     } else if (tabKey === 'wonders' || tabKey === 'naturalWonders') {
-      const hasSectionIssue = showQualityWarnings && (
-        (tabKey === 'wonders' && !!(wonderIssueIndexes && wonderIssueIndexes.has(sectionIndex)))
-        || getLoadAuditSectionMessages(tabKey, sectionIndex).length > 0
-      );
+      const hasSectionIssue = sectionHasIssue(sectionIndex);
       if (hasSectionIssue) itemBtn.classList.add('entry-item-has-issue');
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb section-entry-thumb-large';
@@ -32720,6 +33269,17 @@ function renderSectionTab(tab, tabKey) {
   window.requestAnimationFrame(() => {
     listPane.scrollTop = savedListTop;
     detailPane.scrollTop = savedDetailTop;
+    window.requestAnimationFrame(() => {
+      if (!listPane.isConnected) return;
+      const activeBtn = listPane.querySelector('.entry-list-item.active');
+      if (!activeBtn) return;
+      const paneRect = listPane.getBoundingClientRect();
+      const btnRect = activeBtn.getBoundingClientRect();
+      if (btnRect.bottom > paneRect.bottom || btnRect.top < paneRect.top) {
+        const relativeTop = btnRect.top - paneRect.top + listPane.scrollTop;
+        listPane.scrollTo({ top: Math.max(0, relativeTop - (listPane.clientHeight - btnRect.height) / 2), behavior: 'smooth' });
+      }
+    });
   });
   }
 

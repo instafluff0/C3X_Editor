@@ -1143,29 +1143,159 @@ function encodePcx(indices, palette, width, height) {
   return Buffer.concat([header, ...encodedRows, palSection]);
 }
 
+function getColorChannelRange(colors, channel) {
+  let min = 255;
+  let max = 0;
+  for (const color of colors) {
+    if (color[channel] < min) min = color[channel];
+    if (color[channel] > max) max = color[channel];
+  }
+  return max - min;
+}
+
+function colorBoxWeight(colors) {
+  let total = 0;
+  for (const color of colors) total += color.count;
+  return total;
+}
+
+function chooseColorBoxSplitChannel(colors) {
+  const rRange = getColorChannelRange(colors, 'r');
+  const gRange = getColorChannelRange(colors, 'g');
+  const bRange = getColorChannelRange(colors, 'b');
+  if (gRange >= rRange && gRange >= bRange) return 'g';
+  if (bRange >= rRange && bRange >= gRange) return 'b';
+  return 'r';
+}
+
+function makeAveragePaletteColor(colors) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let total = 0;
+  for (const color of colors) {
+    r += color.r * color.count;
+    g += color.g * color.count;
+    b += color.b * color.count;
+    total += color.count;
+  }
+  const inv = total > 0 ? 1 / total : 0;
+  return {
+    r: Math.round(r * inv),
+    g: Math.round(g * inv),
+    b: Math.round(b * inv),
+    count: total
+  };
+}
+
+function splitColorBox(colors) {
+  if (colors.length <= 1) return [colors, []];
+  const channel = chooseColorBoxSplitChannel(colors);
+  const sorted = colors.slice().sort((a, b) => {
+    const diff = a[channel] - b[channel];
+    if (diff) return diff;
+    const green = a.g - b.g;
+    if (green) return green;
+    const red = a.r - b.r;
+    if (red) return red;
+    return a.b - b.b;
+  });
+  const halfWeight = colorBoxWeight(sorted) / 2;
+  let running = 0;
+  let splitAt = 1;
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    running += sorted[i].count;
+    if (running >= halfWeight) {
+      splitAt = i + 1;
+      break;
+    }
+  }
+  return [sorted.slice(0, splitAt), sorted.slice(splitAt)];
+}
+
+function makeOptimizedPalette(colors, maxColors) {
+  if (colors.length <= maxColors) {
+    return colors
+      .slice()
+      .sort((a, b) => b.count - a.count || a.r - b.r || a.g - b.g || a.b - b.b)
+      .map((color) => ({ r: color.r, g: color.g, b: color.b, count: color.count }));
+  }
+
+  const boxes = [colors.slice()];
+  while (boxes.length < maxColors) {
+    let bestIndex = -1;
+    let bestScore = -1;
+    for (let i = 0; i < boxes.length; i += 1) {
+      const box = boxes[i];
+      if (box.length <= 1) continue;
+      const range = Math.max(
+        getColorChannelRange(box, 'r'),
+        getColorChannelRange(box, 'g'),
+        getColorChannelRange(box, 'b')
+      );
+      const score = range * colorBoxWeight(box);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+    if (bestIndex < 0) break;
+    const [left, right] = splitColorBox(boxes[bestIndex]);
+    boxes.splice(bestIndex, 1, left, right);
+  }
+
+  return boxes
+    .map(makeAveragePaletteColor)
+    .sort((a, b) => b.count - a.count || a.r - b.r || a.g - b.g || a.b - b.b);
+}
+
+function findNearestPaletteIndex(r, g, b, paletteColors) {
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < paletteColors.length; i += 1) {
+    const color = paletteColors[i];
+    const dr = r - color.r;
+    const dg = g - color.g;
+    const db = b - color.b;
+    const distance = (dr * dr) + (dg * dg) + (db * db);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+      if (distance === 0) break;
+    }
+  }
+  return bestIndex;
+}
+
 function encodeRgbaToPcx(rgba, width, height) {
   const w = Math.max(1, Number(width) | 0);
   const h = Math.max(1, Number(height) | 0);
   const source = Buffer.isBuffer(rgba) || rgba instanceof Uint8Array ? rgba : Buffer.from([]);
   if (source.length < w * h * 4) throw new Error('RGBA buffer is too small for PCX conversion.');
+  const colorCounts = new Map();
+  for (let i = 0; i < w * h; i += 1) {
+    const off = i * 4;
+    if (source[off + 3] < 128) continue;
+    const key = (source[off] << 16) | (source[off + 1] << 8) | source[off + 2];
+    colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
+  }
+  const sourceColors = Array.from(colorCounts, ([key, count]) => ({
+    r: (key >> 16) & 255,
+    g: (key >> 8) & 255,
+    b: key & 255,
+    count
+  }));
+  const paletteColors = makeOptimizedPalette(sourceColors, 254);
   const palette = new Uint8Array(768);
-  let p = 0;
-  for (let r = 0; r < 6; r += 1) {
-    for (let g = 0; g < 6; g += 1) {
-      for (let b = 0; b < 6; b += 1) {
-        palette[p * 3] = Math.round((r * 255) / 5);
-        palette[p * 3 + 1] = Math.round((g * 255) / 5);
-        palette[p * 3 + 2] = Math.round((b * 255) / 5);
-        p += 1;
-      }
-    }
+  for (let p = 0; p < 254; p += 1) {
+    const color = paletteColors[p] || { r: 0, g: 0, b: 0 };
+    palette[p * 3] = color.r;
+    palette[p * 3 + 1] = color.g;
+    palette[p * 3 + 2] = color.b;
   }
-  for (; p < 255; p += 1) {
-    const v = Math.round(((p - 216) * 255) / Math.max(1, 254 - 216));
-    palette[p * 3] = v;
-    palette[p * 3 + 1] = v;
-    palette[p * 3 + 2] = v;
-  }
+  palette[254 * 3] = 0;
+  palette[254 * 3 + 1] = 255;
+  palette[254 * 3 + 2] = 0;
   palette[255 * 3] = 255;
   palette[255 * 3 + 1] = 0;
   palette[255 * 3 + 2] = 255;
@@ -1178,10 +1308,11 @@ function encodeRgbaToPcx(rgba, width, height) {
       indices[i] = 255;
       continue;
     }
-    const r = Math.max(0, Math.min(5, Math.round((source[off] / 255) * 5)));
-    const g = Math.max(0, Math.min(5, Math.round((source[off + 1] / 255) * 5)));
-    const b = Math.max(0, Math.min(5, Math.round((source[off + 2] / 255) * 5)));
-    indices[i] = (r * 36) + (g * 6) + b;
+    if (source[off] === 0 && source[off + 1] === 255 && source[off + 2] === 0) {
+      indices[i] = 254;
+      continue;
+    }
+    indices[i] = findNearestPaletteIndex(source[off], source[off + 1], source[off + 2], paletteColors);
   }
   return encodePcx(indices, palette, w, h);
 }

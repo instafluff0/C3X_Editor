@@ -7980,63 +7980,16 @@ function resizeRgbaContain(sourceRgba, sourceWidth, sourceHeight, targetWidth, t
   const dh = Math.max(1, Math.round(sh * scale));
   const ox = Math.floor((tw - dw) / 2);
   const oy = Math.floor((th - dh) / 2);
-  const useArea = dw < sw || dh < sh;
   for (let y = 0; y < dh; y += 1) {
     for (let x = 0; x < dw; x += 1) {
       const dstOff = ((oy + y) * tw + (ox + x)) * 4;
-      if (useArea) {
-        const x0 = x / scale;
-        const x1 = (x + 1) / scale;
-        const y0 = y / scale;
-        const y1 = (y + 1) / scale;
-        const ix0 = Math.max(0, Math.floor(x0));
-        const ix1 = Math.min(sw, Math.ceil(x1));
-        const iy0 = Math.max(0, Math.floor(y0));
-        const iy1 = Math.min(sh, Math.ceil(y1));
-        let r = 0;
-        let g = 0;
-        let b = 0;
-        let a = 0;
-        let weight = 0;
-        for (let sy = iy0; sy < iy1; sy += 1) {
-          const wy = Math.max(0, Math.min(y1, sy + 1) - Math.max(y0, sy));
-          if (wy <= 0) continue;
-          for (let sx = ix0; sx < ix1; sx += 1) {
-            const wx = Math.max(0, Math.min(x1, sx + 1) - Math.max(x0, sx));
-            const w = wx * wy;
-            if (w <= 0) continue;
-            const srcOff = (sy * sw + sx) * 4;
-            r += sourceRgba[srcOff] * w;
-            g += sourceRgba[srcOff + 1] * w;
-            b += sourceRgba[srcOff + 2] * w;
-            a += sourceRgba[srcOff + 3] * w;
-            weight += w;
-          }
-        }
-        const inv = weight > 0 ? 1 / weight : 0;
-        out[dstOff] = Math.round(r * inv);
-        out[dstOff + 1] = Math.round(g * inv);
-        out[dstOff + 2] = Math.round(b * inv);
-        out[dstOff + 3] = Math.round(a * inv);
-      } else {
-        const sxFloat = Math.min(sw - 1, Math.max(0, ((x + 0.5) / scale) - 0.5));
-        const syFloat = Math.min(sh - 1, Math.max(0, ((y + 0.5) / scale) - 0.5));
-        const x0 = Math.floor(sxFloat);
-        const y0 = Math.floor(syFloat);
-        const x1 = Math.min(sw - 1, x0 + 1);
-        const y1 = Math.min(sh - 1, y0 + 1);
-        const fx = sxFloat - x0;
-        const fy = syFloat - y0;
-        for (let c = 0; c < 4; c += 1) {
-          const p00 = sourceRgba[(y0 * sw + x0) * 4 + c];
-          const p10 = sourceRgba[(y0 * sw + x1) * 4 + c];
-          const p01 = sourceRgba[(y1 * sw + x0) * 4 + c];
-          const p11 = sourceRgba[(y1 * sw + x1) * 4 + c];
-          const top = p00 + ((p10 - p00) * fx);
-          const bottom = p01 + ((p11 - p01) * fx);
-          out[dstOff + c] = Math.round(top + ((bottom - top) * fy));
-        }
-      }
+      const sx = Math.min(sw - 1, Math.max(0, Math.floor((x + 0.5) / scale)));
+      const sy = Math.min(sh - 1, Math.max(0, Math.floor((y + 0.5) / scale)));
+      const srcOff = (sy * sw + sx) * 4;
+      out[dstOff] = sourceRgba[srcOff];
+      out[dstOff + 1] = sourceRgba[srcOff + 1];
+      out[dstOff + 2] = sourceRgba[srcOff + 2];
+      out[dstOff + 3] = sourceRgba[srcOff + 3];
     }
   }
   return out;
