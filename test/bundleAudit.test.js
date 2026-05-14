@@ -133,6 +133,52 @@ test('auditLoadedBundle resolves district-family art from scenario Art paths and
   assert.equal(result.tabs.naturalWonders, undefined);
 });
 
+test('auditLoadedBundle resolves current district-family art from C3X Summer 1200 fallback', () => {
+  const c3xRoot = mkTmpDir();
+  touch(path.join(c3xRoot, 'Art', 'Districts', 'Summer', '1200', 'Market.pcx'));
+  touch(path.join(c3xRoot, 'Art', 'Districts', 'Summer', '1200', 'Abandoned.pcx'));
+  touch(path.join(c3xRoot, 'Art', 'Districts', 'Summer', '1200', 'Wonders.pcx'));
+  touch(path.join(c3xRoot, 'Art', 'Districts', 'Summer', '1200', 'NaturalWonders.pcx'));
+
+  const bundle = makeBundle(c3xRoot, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'true' }
+        ]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({ name: 'Market', img_paths: 'Market.pcx' })
+          ]
+        }
+      },
+      wonders: {
+        model: {
+          sections: [
+            makeSection({ name: 'The Pyramids', img_path: 'Wonders.pcx' })
+          ]
+        }
+      },
+      naturalWonders: {
+        model: {
+          sections: [
+            makeSection({ name: 'Angel Falls', img_path: 'NaturalWonders.pcx' })
+          ]
+        }
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+  assert.equal(result.tabs.districts, undefined);
+  assert.equal(result.tabs.wonders, undefined);
+  assert.equal(result.tabs.naturalWonders, undefined);
+});
+
 test('auditLoadedBundle skips day-night checks when cycle mode is off', () => {
   const c3xRoot = mkTmpDir();
   touch(path.join(c3xRoot, 'Art', 'Districts', '1200', 'Market.pcx'));

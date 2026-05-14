@@ -1191,6 +1191,7 @@ module.exports = {
   parseUnitAnimationIni,
   resolveConquestsAssetPath,
   resolveUnitIniPath,
+  resolvePcxPath,
   decodePcx,
   encodePcx,
   encodeRgbaToPcx

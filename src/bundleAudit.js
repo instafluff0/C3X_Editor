@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadBundle } = require('./configCore');
-const { resolveConquestsAssetPath } = require('./artPreview');
+const { resolveConquestsAssetPath, resolvePcxPath } = require('./artPreview');
 const C3X_BASE_MANIFEST = require('./c3xBaseManifest');
 
 const DISTRICT_TRAIT_OPTIONS = [
@@ -446,6 +446,21 @@ function districtFamilyArtRelativePath(fileName) {
   return path.join('Districts', '1200', normalized);
 }
 
+function resolveCurrentDistrictFamilyArtFile(bundle, fileName) {
+  const normalized = String(fileName || '').trim().replace(/^["']|["']$/g, '').replace(/\\/g, '/');
+  if (!normalized) return '';
+  const previewPath = /^districts\//i.test(normalized)
+    ? path.join('Art', normalized)
+    : normalized;
+  const found = resolvePcxPath(
+    String(bundle && bundle.c3xPath || '').trim(),
+    previewPath,
+    getAssetRoots(bundle)
+  );
+  if (found) return found;
+  return resolveModArtFile(bundle, districtFamilyArtRelativePath(fileName));
+}
+
 function createAuditAccumulator() {
   return {
     totalWarnings: 0,
@@ -615,8 +630,7 @@ function auditCurrentDistrictArt(bundle, result) {
       .map((value) => normalizeConfigToken(value))
       .filter(Boolean);
     imgPaths.forEach((fileName) => {
-      const rel = districtFamilyArtRelativePath(fileName);
-      if (resolveModArtFile(bundle, rel)) return;
+      if (resolveCurrentDistrictFamilyArtFile(bundle, fileName)) return;
       addSectionIssue(
         result,
         'districts',
@@ -628,7 +642,7 @@ function auditCurrentDistrictArt(bundle, result) {
   });
 
   const hasDistrictsEnabled = parseConfigBool(getBaseRowValue(bundle, 'enable_districts'));
-  if (hasDistrictsEnabled && !resolveModArtFile(bundle, path.join('Districts', '1200', 'Abandoned.pcx'))) {
+  if (hasDistrictsEnabled && !resolveCurrentDistrictFamilyArtFile(bundle, 'Abandoned.pcx')) {
     addGeneralIssue(
       result,
       'districts',
@@ -644,8 +658,7 @@ function auditCurrentWonderArt(bundle, result) {
   list.forEach((section, index) => {
     const label = getSectionDisplayName(section, index, 'Wonder District');
     const fileName = normalizeConfigToken(getFieldValue(section, 'img_path')) || 'Wonders.pcx';
-    const rel = districtFamilyArtRelativePath(fileName);
-    if (resolveModArtFile(bundle, rel)) return;
+    if (resolveCurrentDistrictFamilyArtFile(bundle, fileName)) return;
     addSectionIssue(
       result,
       'wonders',
@@ -663,8 +676,7 @@ function auditCurrentNaturalWonderArt(bundle, result) {
     const fileName = normalizeConfigToken(getFieldValue(section, 'img_path'));
     if (!fileName) return;
     const label = getSectionDisplayName(section, index, 'Natural Wonder');
-    const rel = districtFamilyArtRelativePath(fileName);
-    if (resolveModArtFile(bundle, rel)) return;
+    if (resolveCurrentDistrictFamilyArtFile(bundle, fileName)) return;
     addSectionIssue(
       result,
       'naturalWonders',

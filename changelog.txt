@@ -3,6 +3,7 @@
 - Added an Improvements top-board link to matching Wonder District entries, including the Wonder District thumbnail and direct navigation to the linked section.
 - Added the BIQ resource `icon` field to the structured Resource Icons editor as a `resources.pcx` map icon index picker.
 - Fixed district, wonder district, and natural wonder image path edits and quality checks so saved values are district-art filenames instead of full paths, while existing scenario/C3X art no longer reports false missing-art warnings.
+- Fixed current district, wonder district, and natural wonder quality checks to honor the same seasonal `Art/Districts/Summer/1200` C3X fallback used by previews.
 - Fixed Scenario-mode PCX art replacement so correctly sized indexed PCX files are copied byte-for-byte even if stale staged conversion data exists.
 - Fixed Scenario-mode replacement paths for nonstandard PediaIcons art lines so civ leaderhead/advisor entries keep their original art folders while improvement building and wonder splash art still use their fixed target folders.
 - Fixed Scenario-mode Wonder Splash replacement so uploaded splash art is staged under `Art\Wonder Splash\` instead of the Civilopedia building icon folder.
