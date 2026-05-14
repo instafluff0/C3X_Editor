@@ -47,6 +47,35 @@ test('building prereq parser preserves quoted multi-word unit names', () => {
   );
 });
 
+test('C3X name/value parsers keep single colon entries intact', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function parseDelimitedStructuredEntries\(value\)/,
+    'Renderer should provide a delimiter-only parser for C3X colon entry lists'
+  );
+
+  assert.match(
+    text,
+    /function parseNameAmountItems\(value\) \{[\s\S]*?return parseDelimitedStructuredEntries\(value\)\.map/,
+    'name/amount C3X fields should not split a single ["Name": amount] entry on whitespace'
+  );
+
+  assert.match(
+    text,
+    /function parseBuildingPrereqItems\(value\) \{[\s\S]*?return parseDelimitedStructuredEntries\(value\)\.map/,
+    'building_prereqs_for_units should not split a single ["Building": "Unit"] entry on whitespace'
+  );
+
+  assert.match(
+    text,
+    /function parseBuildingResourceItems\(value\) \{[\s\S]*?return parseDelimitedStructuredEntries\(value\)\.map/,
+    'buildings_generating_resources should not split a single ["Building": flags "Resource"] entry on whitespace'
+  );
+});
+
 test('tech era dropdown uses BIQ era names when available', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

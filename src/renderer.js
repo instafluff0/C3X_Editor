@@ -5269,6 +5269,15 @@ function parseStructuredEntries(value) {
   return tokenizeWhitespacePreservingQuotes(v);
 }
 
+function parseDelimitedStructuredEntries(value) {
+  let v = String(value || '').trim();
+  if (v.startsWith('[') && v.endsWith(']')) {
+    v = v.slice(1, -1).trim();
+  }
+  if (!v) return [];
+  return tokenizeListPreservingQuotes(v);
+}
+
 function serializeStructuredEntries(entries) {
   const cleaned = entries.map((e) => String(e || '').trim()).filter(Boolean);
   return cleaned.length > 0 ? `[${cleaned.join(', ')}]` : '';
@@ -5322,7 +5331,7 @@ function isStructuredBaseField(row) {
 }
 
 function parseNameAmountItems(value) {
-  return parseStructuredEntries(value).map((item) => {
+  return parseDelimitedStructuredEntries(value).map((item) => {
     const i = item.indexOf(':');
     if (i < 0) return { name: item.trim(), amount: '' };
     return {
@@ -5341,7 +5350,7 @@ function serializeNameAmountItems(items) {
 }
 
 function parseBuildingPrereqItems(value) {
-  return parseStructuredEntries(value).map((item) => {
+  return parseDelimitedStructuredEntries(value).map((item) => {
     const i = item.indexOf(':');
     if (i < 0) return { building: item.trim(), units: [] };
     const building = item.slice(0, i).trim().replace(/^"(.*)"$/, '$1');
@@ -5364,11 +5373,11 @@ function serializeBuildingPrereqItems(items) {
 
 function parseBuildingResourceItems(value) {
   const FLAGS = ['local', 'no-tech-req', 'yields', 'show-bonus', 'hide-non-bonus'];
-  return parseStructuredEntries(value).map((item) => {
+  return parseDelimitedStructuredEntries(value).map((item) => {
     const i = item.indexOf(':');
     if (i < 0) return { building: item.trim(), resource: '', flags: [] };
     const building = item.slice(0, i).trim().replace(/^"(.*)"$/, '$1');
-    const rhs = tokenizeListPreservingQuotes(item.slice(i + 1).replace(/\s+/g, ',')).map((t) => t.replace(/^"(.*)"$/, '$1').trim()).filter(Boolean);
+    const rhs = tokenizeWhitespacePreservingQuotes(item.slice(i + 1)).map((t) => t.replace(/^"(.*)"$/, '$1').trim()).filter(Boolean);
     const resource = rhs.length > 0 ? rhs[rhs.length - 1] : '';
     const flags = rhs.filter((t) => FLAGS.includes(t));
     return { building, resource, flags };

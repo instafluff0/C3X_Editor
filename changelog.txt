@@ -1,3 +1,6 @@
+* RELEASE 27.7.1
+- Fixed C3X name/value list parsing so single-entry values like production perfume, unit limits, building prerequisites, and generated resources stay synchronized between convenience controls and the C3X tab.
+
 * RELEASE 27.7
 - Added compact `Next warning` jump controls to item-list tabs with quality-check warnings so users can select and scroll to the next warned entry without hunting through the list.
 - Added C3X-backed `Production Perfume`, `Unit Limits`, and `Building Prerequisites` controls to the Units prerequisites board.
