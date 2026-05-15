@@ -991,6 +991,67 @@ test('scenario save localizes uploaded tech icons into tech chooser folder', () 
   ]);
 });
 
+test('scenario save resizes rectangular Civilopedia icons by cover-cropping instead of padding', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const sourcePath = path.join(external, 'TallTechLarge.pcx');
+  const sourceWidth = 64;
+  const sourceHeight = 128;
+  const indices = new Uint8Array(sourceWidth * sourceHeight);
+  const palette = new Uint8Array(768);
+  palette[0] = 210;
+  palette[1] = 24;
+  palette[2] = 18;
+  fs.writeFileSync(sourcePath, encodePcx(indices, palette, sourceWidth, sourceHeight));
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_RECTANGULAR',
+        iconPaths: ['Art/tech chooser/Icons/TallTechLarge.pcx'],
+        originalIconPaths: [],
+        pendingArtSources: {
+          'iconPaths:0': sourcePath
+        },
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const outPath = path.join(scenario, 'Art', 'tech chooser', 'Icons', 'TallTechLarge.pcx');
+  const decoded = decodePcx(outPath, { returnIndexed: true, transparentIndexes: [] });
+  assert.equal(decoded.width, 128);
+  assert.equal(decoded.height, 128);
+  assert.deepEqual(Array.from(decoded.rgba.slice(0, 3)), [210, 24, 18]);
+  const rightEdge = ((decoded.width - 1) * 4);
+  assert.deepEqual(Array.from(decoded.rgba.slice(rightEdge, rightEdge + 3)), [210, 24, 18]);
+});
+
 test('scenario save copies pending staged improvement art from visible scenario path source map', () => {
   const root = mkTmpDir();
   const scenario = path.join(root, 'MyScenario');

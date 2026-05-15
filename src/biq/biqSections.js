@@ -55,6 +55,11 @@ function readStr(buf, offset, len) {
 }
 
 function writeStr(w, str, len) {
+  const encoded = iconv.encode(String(str || ''), normalizeBiqTextEncoding(currentBiqTextEncoding));
+  if (encoded.length >= len) {
+    w.writeString(decodeBiqTextBytes(encoded.subarray(0, Math.max(0, len - 1))), len, currentBiqTextEncoding);
+    return;
+  }
   w.writeString(str || '', len, currentBiqTextEncoding);
 }
 

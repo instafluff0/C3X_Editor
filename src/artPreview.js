@@ -1155,7 +1155,7 @@ function getColorChannelRange(colors, channel) {
 
 function colorBoxWeight(colors) {
   let total = 0;
-  for (const color of colors) total += color.count;
+  for (const color of colors) total += Math.sqrt(Math.max(1, color.count));
   return total;
 }
 
@@ -1174,10 +1174,11 @@ function makeAveragePaletteColor(colors) {
   let b = 0;
   let total = 0;
   for (const color of colors) {
-    r += color.r * color.count;
-    g += color.g * color.count;
-    b += color.b * color.count;
-    total += color.count;
+    const weight = Math.sqrt(Math.max(1, color.count));
+    r += color.r * weight;
+    g += color.g * weight;
+    b += color.b * weight;
+    total += weight;
   }
   const inv = total > 0 ? 1 / total : 0;
   return {
@@ -1267,6 +1268,23 @@ function findNearestPaletteIndex(r, g, b, paletteColors) {
   return bestIndex;
 }
 
+function flattenPcxColorOverWhite(source, off) {
+  const a = source[off + 3];
+  if (a >= 255) {
+    return {
+      r: source[off],
+      g: source[off + 1],
+      b: source[off + 2]
+    };
+  }
+  const invA = 255 - a;
+  return {
+    r: Math.round(((source[off] * a) + (255 * invA)) / 255),
+    g: Math.round(((source[off + 1] * a) + (255 * invA)) / 255),
+    b: Math.round(((source[off + 2] * a) + (255 * invA)) / 255)
+  };
+}
+
 function encodeRgbaToPcx(rgba, width, height) {
   const w = Math.max(1, Number(width) | 0);
   const h = Math.max(1, Number(height) | 0);
@@ -1276,7 +1294,8 @@ function encodeRgbaToPcx(rgba, width, height) {
   for (let i = 0; i < w * h; i += 1) {
     const off = i * 4;
     if (source[off + 3] < 128) continue;
-    const key = (source[off] << 16) | (source[off + 1] << 8) | source[off + 2];
+    const flattened = flattenPcxColorOverWhite(source, off);
+    const key = (flattened.r << 16) | (flattened.g << 8) | flattened.b;
     colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
   }
   const sourceColors = Array.from(colorCounts, ([key, count]) => ({
@@ -1312,7 +1331,8 @@ function encodeRgbaToPcx(rgba, width, height) {
       indices[i] = 254;
       continue;
     }
-    indices[i] = findNearestPaletteIndex(source[off], source[off + 1], source[off + 2], paletteColors);
+    const flattened = flattenPcxColorOverWhite(source, off);
+    indices[i] = findNearestPaletteIndex(flattened.r, flattened.g, flattened.b, paletteColors);
   }
   return encodePcx(indices, palette, w, h);
 }

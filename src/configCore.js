@@ -7963,28 +7963,22 @@ function buildPendingReferenceArtConversionBuffer(conversion, targetSize = null)
   return null;
 }
 
-function resizeRgbaContain(sourceRgba, sourceWidth, sourceHeight, targetWidth, targetHeight) {
+function resizeRgbaCover(sourceRgba, sourceWidth, sourceHeight, targetWidth, targetHeight) {
   const sw = Math.max(1, Number(sourceWidth) | 0);
   const sh = Math.max(1, Number(sourceHeight) | 0);
   const tw = Math.max(1, Number(targetWidth) | 0);
   const th = Math.max(1, Number(targetHeight) | 0);
   const out = new Uint8Array(tw * th * 4);
-  for (let i = 0; i < tw * th; i += 1) {
-    out[i * 4] = 255;
-    out[i * 4 + 1] = 255;
-    out[i * 4 + 2] = 255;
-    out[i * 4 + 3] = 255;
-  }
-  const scale = Math.min(tw / sw, th / sh);
+  const scale = Math.max(tw / sw, th / sh);
   const dw = Math.max(1, Math.round(sw * scale));
   const dh = Math.max(1, Math.round(sh * scale));
   const ox = Math.floor((tw - dw) / 2);
   const oy = Math.floor((th - dh) / 2);
-  for (let y = 0; y < dh; y += 1) {
-    for (let x = 0; x < dw; x += 1) {
-      const dstOff = ((oy + y) * tw + (ox + x)) * 4;
-      const sx = Math.min(sw - 1, Math.max(0, Math.floor((x + 0.5) / scale)));
-      const sy = Math.min(sh - 1, Math.max(0, Math.floor((y + 0.5) / scale)));
+  for (let y = 0; y < th; y += 1) {
+    for (let x = 0; x < tw; x += 1) {
+      const dstOff = (y * tw + x) * 4;
+      const sx = Math.min(sw - 1, Math.max(0, Math.floor((x - ox + 0.5) / scale)));
+      const sy = Math.min(sh - 1, Math.max(0, Math.floor((y - oy + 0.5) / scale)));
       const srcOff = (sy * sw + sx) * 4;
       out[dstOff] = sourceRgba[srcOff];
       out[dstOff + 1] = sourceRgba[srcOff + 1];
@@ -8025,7 +8019,7 @@ function buildLocalizedArtBufferFromSource(sourcePath, targetSize = null) {
         (Number(decoded.width) !== targetWidth || Number(decoded.height) !== targetHeight);
       if (decoded && (decoded.trueColor || shouldResize)) {
         const rgba = shouldResize
-          ? resizeRgbaContain(decoded.rgba, decoded.width, decoded.height, targetWidth, targetHeight)
+          ? resizeRgbaCover(decoded.rgba, decoded.width, decoded.height, targetWidth, targetHeight)
           : decoded.rgba;
         return encodeRgbaToPcx(
           rgba,

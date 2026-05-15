@@ -174,6 +174,14 @@ function getRecordFields(record, key) {
   return fields.filter((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target);
 }
 
+function getBiqFieldsByCanonicalPrefix(entry, prefix) {
+  const target = String(prefix || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return getFieldCollection(entry).filter((field) => {
+    const key = String(field && (field.baseKey || field.key) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return key === target || new RegExp(`^${target}\\d+$`).test(key);
+  });
+}
+
 function getRecordInt(record, key, fallback) {
   const field = getRecordField(record, key);
   const parsed = mapCore.parseIntLoose(field && field.value, fallback);
@@ -708,6 +716,49 @@ test('BIQ round-trip persists array-backed projected and synthetic BIQ fields', 
   assert.equal(String(reTerrMaskField.value || ''), expectedMask);
 });
 
+test('BIQ round-trip persists civilization city-name list deletions and edits', (t) => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable playable civ fixture BIQ is missing.');
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'city-list-roundtrip.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const civEntry = ((bundle.tabs.civilizations && bundle.tabs.civilizations.entries) || [])
+    .find((entry) => getBiqFieldsByCanonicalPrefix(entry, 'cityname').length >= 2);
+  assert.ok(civEntry, 'expected a civilization with at least two city names');
+
+  const cityNameFields = getBiqFieldsByCanonicalPrefix(civEntry, 'cityname');
+  cityNameFields[0].value = 'Codexburg';
+  const cityCountField = findField(civEntry, 'numcitynames');
+  assert.ok(cityCountField, 'expected civilization city-name count field');
+  const fieldsToRemove = new Set(cityNameFields.slice(1));
+  civEntry.biqFields = getFieldCollection(civEntry).filter((field) => !fieldsToRemove.has(field));
+  cityCountField.value = '1';
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedCivEntry = getEntryByCivKey(reloaded.tabs.civilizations.entries, civEntry.civilopediaKey);
+  assert.ok(reloadedCivEntry, 'expected reloaded civilization entry');
+  const reloadedCityNames = getBiqFieldsByCanonicalPrefix(reloadedCivEntry, 'cityname').map((field) => String(field.value || ''));
+  assert.deepEqual(reloadedCityNames, ['Codexburg']);
+});
+
 test('BIQ round-trip supports add/copy/delete record ops for technology section', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
@@ -764,6 +815,46 @@ test('BIQ round-trip supports add/copy/delete record ops for technology section'
   const afterDelete = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   assert.equal(biqSectionHasCivilopediaKey(afterDelete, 'TECH', importedRef), false);
   assert.equal(biqSectionHasCivilopediaKey(afterDelete, 'TECH', copiedRef), false);
+});
+
+test('BIQ save keeps exact-width technology Civilopedia keys null-terminated', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-exact-width-key.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const exactWidthRef = 'TECH_HIGH_DENSITY_ENERGY_STORAGE';
+  assert.equal(exactWidthRef.length, 32);
+  const expectedStoredRef = exactWidthRef.slice(0, 31);
+
+  const save = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      technologies: {
+        recordOps: [
+          { op: 'copy', sourceRef: 'TECH_POTTERY', newRecordRef: exactWidthRef }
+        ]
+      }
+    }
+  });
+  assert.equal(save.ok, true, String(save.error || 'save exact-width key failed'));
+
+  const bytes = fs.readFileSync(scenarioBiq);
+  assert.equal(bytes.includes(Buffer.from(`${exactWidthRef}X`, 'latin1')), false);
+
+  const afterSave = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.equal(biqSectionHasCivilopediaKey(afterSave, 'TECH', expectedStoredRef), true);
 });
 
 test('BIQ round-trip persists editable government fields from fixture BIQ', () => {

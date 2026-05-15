@@ -562,7 +562,7 @@ const TAB_MIN_RELEASE = Object.freeze({
 });
 const REFERENCE_MUTABLE_ENTITY_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
 const REFERENCE_TOP_NAME_EDIT_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
-const REFERENCE_KEY_MAX_LENGTH = 32; // BIQ civilopediaEntry is a fixed 32-byte null-padded latin1 buffer
+const REFERENCE_KEY_MAX_LENGTH = 31; // BIQ civilopediaEntry is a 32-byte null-terminated buffer
 const REFERENCE_PREFIX_BY_TAB = {
   civilizations: 'RACE_',
   technologies: 'TECH_',
@@ -8147,10 +8147,46 @@ function drawPreviewFrameToCanvas(preview, canvas) {
   ctx.drawImage(scratch.canvas, x, y, w, h);
 }
 
+function getReferenceListThumbnailPendingSlot(tabKey, entry, assetPath) {
+  if (!entry || (!entry.pendingArtSources && !entry.pendingArtConversions)) return null;
+  const normalizedAssetPath = normalizeAssetReferencePath(assetPath);
+  const slots = buildReferenceArtSlots(tabKey, entry, { ensureIconSlots: true });
+  const pendingSlots = slots.filter((slot) => (
+    getPendingReferenceArtSource(entry, slot) || getPendingReferenceArtConversion(entry, slot)
+  ));
+  if (pendingSlots.length === 0) return null;
+  return pendingSlots.find((slot) => normalizeAssetReferencePath(slot.path) === normalizedAssetPath)
+    || pendingSlots.find((slot) => String(slot.group || '') === 'iconPaths' && Number(slot.index) === 0)
+    || pendingSlots[0];
+}
+
+function paintReferenceListThumbnailPreview(holder, preview) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 28;
+  canvas.height = 28;
+  canvas.className = 'entry-thumb-canvas';
+  drawPreviewFrameToCanvas(preview, canvas);
+  holder.innerHTML = '';
+  holder.appendChild(canvas);
+}
+
 function loadReferenceListThumbnail(tabKey, entry, holder) {
   const resolvedScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
   const resolvedScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
   const assetPath = entry.thumbPath || '';
+  const pendingThumbSlot = getReferenceListThumbnailPendingSlot(tabKey, entry, assetPath);
+  const pendingThumbConversion = getPendingReferenceArtConversion(entry, pendingThumbSlot);
+  if (pendingThumbConversion && pendingThumbConversion.rgbaBase64) {
+    paintReferenceListThumbnailPreview(holder, {
+      ok: true,
+      width: Math.max(1, Number(pendingThumbConversion.width) || 1),
+      height: Math.max(1, Number(pendingThumbConversion.height) || 1),
+      rgbaBase64: pendingThumbConversion.rgbaBase64,
+      sourcePath: String(pendingThumbConversion.sourcePath || '')
+    });
+    return;
+  }
+  const pendingThumbSource = getPendingReferenceArtSource(entry, pendingThumbSlot);
 
   if (!assetPath) {
     if (tabKey === 'units' && entry) {
@@ -8239,6 +8275,7 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
     (Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : []).forEach(addCandidate);
     (Array.isArray(entry && entry.racePaths) ? entry.racePaths : []).forEach(addCandidate);
   }
+  addCandidate(pendingThumbSource);
   addCandidate(assetPath);
   if (candidatePaths.length === 0) {
     // For civs, resolveConquestsAssetPath derives leaderhead fallback paths from the RACE_* key even
@@ -8251,13 +8288,7 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
   }
 
   const paint = (preview) => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 28;
-    canvas.height = 28;
-    canvas.className = 'entry-thumb-canvas';
-    drawPreviewFrameToCanvas(preview, canvas);
-    holder.innerHTML = '';
-    holder.appendChild(canvas);
+    paintReferenceListThumbnailPreview(holder, preview);
   };
 
   const tryCandidate = (index) => {
@@ -10864,8 +10895,8 @@ function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
   const entryByCivilopediaKey = new Map();
   const entryByName = new Map();
   targetEntries.forEach((entry, fallbackIdx) => {
-    const biqIndex = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
-    entryByIndex.set(biqIndex, entry);
+    const biqIndex = getReferenceEntryIndexForOption(targetTabKey, entry, fallbackIdx);
+    if (Number.isFinite(biqIndex) && biqIndex >= 0) entryByIndex.set(biqIndex, entry);
     const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
     if (key) {
       const prior = entryByCivilopediaKey.get(key);
@@ -11865,6 +11896,10 @@ const UNIT_RULE_FRIENDLY_LABELS = Object.freeze({
 function isReadonlyRuleField(tabKey, field) {
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
   return (tabKey === 'improvements' || tabKey === 'technologies' || tabKey === 'civilizations' || tabKey === 'governments' || tabKey === 'units' || tabKey === 'resources') && base === 'civilopediaentry';
+}
+
+function getReferenceTopNameBiqFieldKey(tabKey) {
+  return String(tabKey || '').trim() === 'civilizations' ? 'civilizationname' : 'name';
 }
 
 function isReadonlyBiqStructureField(sectionCode, field) {
@@ -12915,6 +12950,10 @@ function setCivilizationNoteListValues(entry, countKey, values, itemPrefix = 'no
     key: itemPrefix === 'note' ? 'note' : `${targetItem}_${idx}`,
     baseKey: itemPrefix === 'note' ? 'note' : `${targetItem}_${idx}`,
     label: existingNotes[idx] ? String(existingNotes[idx].label || existingNotes[idx].key || template.label) : template.label,
+    originalValue: existingNotes[idx]
+      ? String(existingNotes[idx].originalValue == null ? existingNotes[idx].value : existingNotes[idx].originalValue)
+      : '',
+    editable: existingNotes[idx] ? !!existingNotes[idx].editable : true,
     value
   }));
   fields.splice(start, Math.max(0, end - start), ...nextNotes);
@@ -12926,7 +12965,7 @@ function getTerrainResourceOptions() {
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   return entries
     .map((entry, idx) => ({
-      value: String(Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : idx),
+      value: String(getReferenceEntryIndexForOption('resources', entry, idx, { allowFallback: true })),
       label: String(entry && (entry.name || entry.civilopediaKey) || `Resource ${idx + 1}`),
       entry: entry || null
     }))
@@ -13187,7 +13226,7 @@ function getCivilizationBitmaskOptions() {
   const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   return entries.map((entry, fallbackIdx) => {
-    const idx = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    const idx = getReferenceEntryIndexForOption('civilizations', entry, fallbackIdx);
     return {
       value: String(idx),
       label: String(entry && entry.name || `Civilization ${idx}`),
@@ -16410,7 +16449,7 @@ function makeIndexOptionsForTab(tabKey) {
   const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
   if (!tab || !Array.isArray(tab.entries)) return [];
   return tab.entries.map((entry, idx) => ({
-    value: String(Number.isFinite(entry.biqIndex) ? entry.biqIndex : idx),
+    value: String(getReferenceEntryIndexForOption(tabKey, entry, idx, { allowFallback: true })),
     label: String(entry.name || ''),
     thumbPath: entry.thumbPath || '',
     entry
@@ -16565,17 +16604,17 @@ function resolveTechIndexFromValue(rawValue) {
     if (name && name === needle) return true;
     if (key && key === needle) return true;
     if (key && key === `tech_${needle.replace(/\s+/g, '_')}`) return true;
-    const biqIdx = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    const biqIdx = getReferenceEntryIndexForOption('technologies', entry, fallbackIdx, { allowFallback: true });
     return String(biqIdx) === needle;
   });
   if (!tech) return null;
-  return Number.isFinite(tech.biqIndex) ? tech.biqIndex : getTechEntries().indexOf(tech);
+  return getReferenceEntryIndexForOption('technologies', tech, getTechEntries().indexOf(tech), { allowFallback: true });
 }
 
 function getTechLabelByIndex(index) {
   if (!Number.isFinite(index) || index < 0) return '(none)';
   const tech = getTechEntries().find((t, fallbackIdx) => {
-    const biqIdx = Number.isFinite(t.biqIndex) ? t.biqIndex : fallbackIdx;
+    const biqIdx = getReferenceEntryIndexForOption('technologies', t, fallbackIdx, { allowFallback: true });
     return biqIdx === index;
   });
   return tech ? String(tech.name || '') : String(index);
@@ -16584,7 +16623,7 @@ function getTechLabelByIndex(index) {
 function getTechEntryByIndex(index) {
   if (!Number.isFinite(index) || index < 0) return null;
   return getTechEntries().find((entry, fallbackIdx) => {
-    const biqIdx = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    const biqIdx = getReferenceEntryIndexForOption('technologies', entry, fallbackIdx, { allowFallback: true });
     return biqIdx === index;
   }) || null;
 }
@@ -16634,7 +16673,7 @@ function resolveReferenceEntryForPicker(targetTabKey, rawValue, options = []) {
   const parsed = parseIntFromDisplayValue(normalized);
   if (parsed != null) {
     const byIndex = tab.entries.find((entry, fallbackIdx) => {
-      const biqIdx = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+      const biqIdx = getReferenceEntryIndexForOption(tabKey, entry, fallbackIdx, { allowFallback: true });
       return biqIdx === parsed;
     });
     if (byIndex) return byIndex;
@@ -17529,7 +17568,7 @@ function formatIdentityTechValues(techCtx) {
 
 function createTechIdentityPicker(field, onChange) {
   const techOptions = getTechEntries().map((tech, fallbackIdx) => ({
-    value: String(Number.isFinite(tech.biqIndex) ? tech.biqIndex : fallbackIdx),
+    value: String(getReferenceEntryIndexForOption('technologies', tech, fallbackIdx, { allowFallback: true })),
     label: String(tech.name || ''),
     entry: tech
   }));
@@ -17688,7 +17727,7 @@ function ensureTechPrereqFieldAt(entry, slotIndex) {
 function getTechTreeData(entries) {
   const list = Array.isArray(entries) ? entries : [];
   const nodes = list.map((entry, fallbackIdx) => {
-    const id = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    const id = getReferenceEntryIndexForOption('technologies', entry, fallbackIdx, { allowFallback: true });
     const era = getTechEraValue(entry, -1);
     const x = Math.max(0, getTechFieldInt(entry, 'x', 0));
     const y = Math.max(0, getTechFieldInt(entry, 'y', 0));
@@ -20495,7 +20534,7 @@ async function buildPendingArtConversion(filePath, size) {
   ctx.imageSmoothingEnabled = false;
   const srcW = Math.max(1, Number(img.naturalWidth || img.width) || 1);
   const srcH = Math.max(1, Number(img.naturalHeight || img.height) || 1);
-  const scale = Math.min(width / srcW, height / srcH);
+  const scale = Math.max(width / srcW, height / srcH);
   const drawW = Math.max(1, Math.round(srcW * scale));
   const drawH = Math.max(1, Math.round(srcH * scale));
   const x = Math.floor((width - drawW) / 2);
@@ -21296,6 +21335,16 @@ function getPredictedReferenceRecordIndex(tabKey, entryOrKey) {
   return null;
 }
 
+function getReferenceEntryIndexForOption(tabKey, entry, fallbackIndex, { allowFallback = false } = {}) {
+  const rawIndex = Number(entry && entry.biqIndex);
+  if (Number.isFinite(rawIndex) && rawIndex >= 0) return rawIndex;
+  const predictedIndex = getPredictedReferenceRecordIndex(tabKey, entry);
+  if (Number.isFinite(predictedIndex) && predictedIndex >= 0) return predictedIndex;
+  const fallback = Number(fallbackIndex);
+  if (allowFallback && Number.isFinite(fallback) && fallback >= 0) return fallback;
+  return null;
+}
+
 function getScenarioGameRecord() {
   const scenarioTab = getBiqTabByKey('scenarioSettings');
   const gameSection = getBiqSectionFromTab(scenarioTab, 'GAME');
@@ -21524,10 +21573,20 @@ function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName, excludeKey 
   let token = normalizeReferenceKeyToken(desiredName, options);
   if (prefix) token = stripReferencePrefixToken(token);
   if (!token) token = `NEW_${Date.now()}`;
-  let key = prefix ? `${prefix}${token}` : token;
+  const trimToMaxLength = (value) => {
+    const raw = String(value || '');
+    if (raw.length <= REFERENCE_KEY_MAX_LENGTH) return raw;
+    if (!prefix || !raw.toUpperCase().startsWith(prefix)) return raw.slice(0, REFERENCE_KEY_MAX_LENGTH);
+    const maxTokenLength = Math.max(1, REFERENCE_KEY_MAX_LENGTH - prefix.length);
+    return `${prefix}${raw.slice(prefix.length, prefix.length + maxTokenLength)}`;
+  };
+  let key = trimToMaxLength(prefix ? `${prefix}${token}` : token);
   let i = 2;
   while (existing.has(key.toUpperCase())) {
-    key = prefix ? `${prefix}${token}_${i}` : `${token}_${i}`;
+    const suffix = `_${i}`;
+    const maxBaseLength = Math.max(1, REFERENCE_KEY_MAX_LENGTH - suffix.length);
+    const base = trimToMaxLength(prefix ? `${prefix}${token}` : token).slice(0, maxBaseLength);
+    key = `${base}${suffix}`;
     i += 1;
   }
   return key;
@@ -23369,7 +23428,7 @@ function renderReferenceTab(tab, tabKey) {
               if (inlineKeyChip) inlineKeyChip.textContent = getEntryCivilopediaDisplayKey(entry) || '(none)';
             }
           } else {
-            const nameField = ensureBiqFieldByBaseKey(entry, 'name', 'Name', next);
+            const nameField = ensureBiqFieldByBaseKey(entry, getReferenceTopNameBiqFieldKey(tabKey), 'Name', next);
             if (nameField) nameField.value = next;
           }
           setDirty(true);

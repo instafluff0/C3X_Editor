@@ -206,3 +206,18 @@ test('RACE codec round-trips Quint packed traits, governor flags, build prioriti
   assert.equal(collapsed.buildnever, '0');
   assert.equal(collapsed.flavors, '2');
 });
+
+test('RACE codec reports deleted civilization name-list rows as count changes', () => {
+  const fields = [
+    { baseKey: 'numcitynames', key: 'numcitynames', value: '1', originalValue: '3', editable: true },
+    { baseKey: 'cityname_0', key: 'cityname_0', value: 'Codexburg', originalValue: 'Rome', editable: true }
+  ];
+
+  const current = collapseCivilizationBiqFields(fields, 0, 'value');
+  const original = collapseCivilizationBiqFields(fields, 0, 'originalValue');
+
+  assert.equal(current.numcities, '1');
+  assert.equal(original.numcities, '3');
+  assert.equal(current.cityName_0, 'Codexburg');
+  assert.equal(original.cityName_0, 'Rome');
+});

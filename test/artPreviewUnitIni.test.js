@@ -82,6 +82,54 @@ test('encodeRgbaToPcx reserves palette slots 254 and 255 for green and magenta t
   assert.equal(decoded.indices[1], 255);
 });
 
+test('encodeRgbaToPcx flattens semi-transparent PNG pixels over white before quantizing', () => {
+  const rgba = Buffer.from([
+    40, 36, 28, 128,
+    188, 176, 128, 255
+  ]);
+
+  const decoded = decodePcx(encodeRgbaToPcx(rgba, 2, 1), { returnIndexed: true, transparentIndexes: [] });
+
+  assert.equal(decoded.rgba[0], 147);
+  assert.equal(decoded.rgba[1], 145);
+  assert.equal(decoded.rgba[2], 141);
+  assert.equal(decoded.rgba[4], 188);
+  assert.equal(decoded.rgba[5], 176);
+  assert.equal(decoded.rgba[6], 128);
+});
+
+test('encodeRgbaToPcx does not let large Civilopedia backgrounds consume the unit palette', () => {
+  const width = 128;
+  const height = 128;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const off = (y * width + x) * 4;
+      const background = 188 + ((x + y) % 48);
+      rgba[off] = background;
+      rgba[off + 1] = background;
+      rgba[off + 2] = Math.max(0, background - 2);
+      rgba[off + 3] = 255;
+      if (x >= 36 && x < 92 && y >= 36 && y < 92) {
+        rgba[off] = 72 + ((x - 36) * 3);
+        rgba[off + 1] = 62 + ((y - 36) * 2);
+        rgba[off + 2] = 44 + ((x + y) % 72);
+      }
+    }
+  }
+
+  const decoded = decodePcx(encodeRgbaToPcx(rgba, width, height), { returnIndexed: true, transparentIndexes: [] });
+  const subjectColors = new Set();
+  for (let y = 36; y < 92; y += 1) {
+    for (let x = 36; x < 92; x += 1) {
+      const off = (y * width + x) * 4;
+      subjectColors.add(`${decoded.rgba[off]},${decoded.rgba[off + 1]},${decoded.rgba[off + 2]}`);
+    }
+  }
+
+  assert.ok(subjectColors.size > 90, `expected a varied unit palette, got ${subjectColors.size} colors`);
+});
+
 test('parseUnitAnimationIni reads all FLC actions and picks DEFAULT as default action', () => {
   const root = mkTmpDir();
   const iniPath = path.join(root, 'Warrior.ini');

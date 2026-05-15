@@ -240,6 +240,14 @@ function collapseCivilizationBiqFields(fields, flavorCount = 0, valueKey = 'valu
   raw.nummilleaders = readText('numgreatleaders', '0');
   raw.numcities = readText('numcitynames', '0');
 
+  const hasRepeatedFields = (prefix) => {
+    const target = normalizeKey(prefix);
+    return (Array.isArray(fields) ? fields : []).some((field) => {
+      const key = normalizeKey(field && (field.baseKey || field.key));
+      return key === target || new RegExp(`^${target}\\d+$`).test(key);
+    });
+  };
+
   const readRepeatedValues = (prefix) => {
     const target = normalizeKey(prefix);
     return (Array.isArray(fields) ? fields : [])
@@ -266,13 +274,14 @@ function collapseCivilizationBiqFields(fields, flavorCount = 0, valueKey = 'valu
     raw[`scientificLeader_${idx}`] = name;
   });
 
-  raw.numcities = cityNames.length > 0
+  const deriveCountsFromCurrentLists = valueKey === 'value';
+  raw.numcities = deriveCountsFromCurrentLists && hasRepeatedFields('cityname')
     ? toSignedIntString(cityNames.length)
     : readText('numcitynames', '0');
-  raw.nummilleaders = militaryLeaders.length > 0
+  raw.nummilleaders = deriveCountsFromCurrentLists && hasRepeatedFields('milleader')
     ? toSignedIntString(militaryLeaders.length)
     : readText('numgreatleaders', '0');
-  raw.numscientificleaders = scientificLeaders.length > 0
+  raw.numscientificleaders = deriveCountsFromCurrentLists && hasRepeatedFields('scientificleader')
     ? toSignedIntString(scientificLeaders.length)
     : readText('numscientificleaders', '0');
   return raw;

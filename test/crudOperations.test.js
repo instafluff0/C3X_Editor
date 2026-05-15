@@ -265,6 +265,48 @@ function loadRendererDeleteHelpers() {
   return sandbox.__helpers;
 }
 
+function loadRendererIndexHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = [
+    'getBaseBiqSectionCount',
+    'getPredictedReferenceRecordIndex',
+    'getReferenceEntryIndexForOption'
+  ];
+  const sandbox = {
+    state: { bundle: targetBundle },
+    REFERENCE_SECTION_BY_TAB: {
+      civilizations: 'RACE',
+      technologies: 'TECH',
+      resources: 'GOOD',
+      improvements: 'BLDG',
+      governments: 'GOVT',
+      units: 'PRTO'
+    }
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ' };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-index.vm' });
+  return sandbox.__helpers;
+}
+
+function loadRendererTopNameHelpers() {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = ['getReferenceTopNameBiqFieldKey'];
+  const sandbox = {};
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ' };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-top-name.vm' });
+  return sandbox.__helpers;
+}
+
 function buildReferenceIndexMap(bundle, tabKey) {
   const entries = bundle && bundle.tabs && bundle.tabs[tabKey] && bundle.tabs[tabKey].entries;
   return (Array.isArray(entries) ? entries : []).map((entry, fallbackIdx) => ({
@@ -272,6 +314,63 @@ function buildReferenceIndexMap(bundle, tabKey) {
     civilopediaKey: String(entry && entry.civilopediaKey || '').trim().toUpperCase()
   })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && item.civilopediaKey);
 }
+
+test('reference top-name editor targets civilizationName for Civs', () => {
+  const { getReferenceTopNameBiqFieldKey } = loadRendererTopNameHelpers();
+  assert.equal(getReferenceTopNameBiqFieldKey('civilizations'), 'civilizationname');
+  assert.equal(getReferenceTopNameBiqFieldKey('technologies'), 'name');
+  assert.equal(getReferenceTopNameBiqFieldKey('resources'), 'name');
+  assert.equal(getReferenceTopNameBiqFieldKey('improvements'), 'name');
+  assert.equal(getReferenceTopNameBiqFieldKey('governments'), 'name');
+  assert.equal(getReferenceTopNameBiqFieldKey('units'), 'name');
+});
+
+test('pending added references predict appended BIQ index instead of using list position', () => {
+  const cases = [
+    { tabKey: 'civilizations', sectionCode: 'RACE', prefix: 'RACE_', count: 4 },
+    { tabKey: 'technologies', sectionCode: 'TECH', prefix: 'TECH_', count: 3 },
+    { tabKey: 'resources', sectionCode: 'GOOD', prefix: 'GOOD_', count: 5 },
+    { tabKey: 'improvements', sectionCode: 'BLDG', prefix: 'BLDG_', count: 6 },
+    { tabKey: 'governments', sectionCode: 'GOVT', prefix: 'GOVT_', count: 2 },
+    { tabKey: 'units', sectionCode: 'PRTO', prefix: 'PRTO_', count: 8 }
+  ];
+  const bundle = {
+    biq: {
+      sections: cases.map(({ sectionCode, count }) => ({
+        code: sectionCode,
+        count,
+        records: Array.from({ length: count }, () => ({}))
+      }))
+    },
+    tabs: {}
+  };
+  cases.forEach(({ tabKey, prefix, count }) => {
+    const newRef = `${prefix}PENDING_NEW`;
+    bundle.tabs[tabKey] = {
+      entries: [
+        { civilopediaKey: newRef, biqIndex: null, isNew: true },
+        { civilopediaKey: `${prefix}ALPHA`, biqIndex: 0 },
+        { civilopediaKey: `${prefix}BETA`, biqIndex: 1 }
+      ],
+      recordOps: [{ op: 'add', newRecordRef: newRef }]
+    };
+    bundle.tabs[tabKey]._expectedCount = count;
+  });
+  const { getReferenceEntryIndexForOption } = loadRendererIndexHelpers(bundle);
+
+  cases.forEach(({ tabKey, count, prefix }) => {
+    assert.equal(
+      getReferenceEntryIndexForOption(tabKey, bundle.tabs[tabKey].entries[0], 0),
+      count,
+      `pending ${prefix} entry should resolve to append index, not UI row 0`
+    );
+    assert.equal(
+      getReferenceEntryIndexForOption(tabKey, bundle.tabs[tabKey].entries[1], 1),
+      0,
+      `existing ${prefix}ALPHA should keep raw BIQ index 0`
+    );
+  });
+});
 
 /**
  * Simulate exactly what the renderer does when the user clicks Import:
