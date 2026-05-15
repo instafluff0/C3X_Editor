@@ -49,12 +49,23 @@ function loadStealthTargetCopyHelpers(bundle) {
   const functionNames = [
     'canonicalBiqFieldKey',
     'getUnitListFieldState',
+    'getBaseBiqSectionCount',
+    'getPredictedReferenceRecordIndex',
+    'getReferenceEntryIndexForOption',
     'makeIndexOptionsForTab',
     'getStealthTargetCopySourceOptions',
     'mergeStealthTargetValues'
   ];
   const sandbox = {
-    state: { bundle }
+    state: { bundle },
+    REFERENCE_SECTION_BY_TAB: {
+      civilizations: 'RACE',
+      technologies: 'TECH',
+      resources: 'GOOD',
+      improvements: 'BLDG',
+      governments: 'GOVT',
+      units: 'PRTO'
+    }
   };
   sandbox.globalThis = sandbox;
   const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')

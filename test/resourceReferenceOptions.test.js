@@ -47,6 +47,9 @@ function loadReferenceOptionHelpers(bundle) {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
   const functionNames = [
+    'getBaseBiqSectionCount',
+    'getPredictedReferenceRecordIndex',
+    'getReferenceEntryIndexForOption',
     'normalizeRuleLookupKey',
     'makeIndexOptionsForTab',
     'shouldRestrictResourceReferenceOptions',
@@ -80,6 +83,14 @@ function loadReferenceOptionHelpers(bundle) {
     },
     makeBiqSectionIndexOptions: () => [],
     rebuildCivilizationDiplomacyOptions: () => [],
+    REFERENCE_SECTION_BY_TAB: {
+      civilizations: 'RACE',
+      technologies: 'TECH',
+      resources: 'GOOD',
+      improvements: 'BLDG',
+      governments: 'GOVT',
+      units: 'PRTO'
+    },
     globalThis: null
   };
   sandbox.globalThis = sandbox;

@@ -11714,7 +11714,7 @@ function shouldHideBiqField(tabKey, field) {
   if (tabKey === 'governments' && isGovernmentRelationsField(field)) return false;
   if (tabKey === 'governments' && canon === 'rulertitlepairsused') return true;
   if (tabKey === 'governments' && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(base) && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(canon)) return true;
-  if (tabKey === 'civilizations' && canon === 'civilizationname') return false;
+  if (tabKey === 'civilizations' && canon === 'civilizationname') return true;
   if (tabKey === 'civilizations' && !QUINT_CIV_RULE_VISIBLE_KEYS.has(base) && !QUINT_CIV_RULE_VISIBLE_KEYS.has(canon)) return true;
   const tabHidden = BIQ_FIELD_HIDDEN[tabKey];
   return !!(tabHidden && (tabHidden.has(base) || tabHidden.has(canon)));
@@ -15220,7 +15220,6 @@ const TECHNOLOGY_TOP_FIELD_KEYS = new Set([
 
 const CIVILIZATION_TOP_FIELD_KEYS = new Set([
   'civilopediaentry',
-  'civilizationname',
   'noun',
   'adjective',
   'civilizationgender',
@@ -15391,7 +15390,6 @@ function buildCivilizationTopBoardCards(entry, referenceEditable, selectedBaseIn
   const wrap = document.createElement('div');
 
   const identityFields = [
-    getBiqFieldByBaseKey(entry, 'civilizationname'),
     getBiqFieldByBaseKey(entry, 'noun'),
     getBiqFieldByBaseKey(entry, 'adjective')
   ].filter(Boolean);
@@ -21295,7 +21293,8 @@ function getPredictedReferenceRecordIndex(tabKey, entryOrKey) {
       : (entryOrKey && entryOrKey.civilopediaKey) || ''
   ).trim().toUpperCase();
   if (!targetKey) return null;
-  const entryIndex = Number(entryOrKey && entryOrKey.biqIndex);
+  const rawEntryIndex = entryOrKey && entryOrKey.biqIndex;
+  const entryIndex = rawEntryIndex === '' || rawEntryIndex == null ? NaN : Number(rawEntryIndex);
   if (Number.isFinite(entryIndex) && entryIndex >= 0) return entryIndex;
 
   const sectionCode = REFERENCE_SECTION_BY_TAB[String(tabKey || '').trim()] || '';
@@ -21336,7 +21335,8 @@ function getPredictedReferenceRecordIndex(tabKey, entryOrKey) {
 }
 
 function getReferenceEntryIndexForOption(tabKey, entry, fallbackIndex, { allowFallback = false } = {}) {
-  const rawIndex = Number(entry && entry.biqIndex);
+  const rawBiqIndex = entry && entry.biqIndex;
+  const rawIndex = rawBiqIndex === '' || rawBiqIndex == null ? NaN : Number(rawBiqIndex);
   if (Number.isFinite(rawIndex) && rawIndex >= 0) return rawIndex;
   const predictedIndex = getPredictedReferenceRecordIndex(tabKey, entry);
   if (Number.isFinite(predictedIndex) && predictedIndex >= 0) return predictedIndex;

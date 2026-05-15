@@ -122,6 +122,11 @@ function getEntryByCivKey(entries, civKey) {
   return (Array.isArray(entries) ? entries : []).find((entry) => String(entry.civilopediaKey || '').trim().toUpperCase() === target) || null;
 }
 
+function makeShortBiqTestRef(prefix, label = 'T') {
+  const token = `${label}_${Date.now().toString(36).slice(-7)}_${Math.floor(Math.random() * 1296).toString(36)}`.toUpperCase();
+  return `${prefix}_${token}`.slice(0, 31);
+}
+
 function getRawPrtoRecordsByCivKey(parsed, civKey) {
   const target = String(civKey || '').trim().toUpperCase();
   const prto = (parsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
@@ -1359,7 +1364,7 @@ test('BIQ matrix copy/delete test works for multiple sections', (t) => {
     const entries = (base.tabs[spec.tab] && base.tabs[spec.tab].entries) || [];
     const source = getEntryByCivKey(entries, spec.seed) || entries[0];
     assert.ok(source, `expected source entry for ${spec.tab}`);
-    const newRef = `${spec.prefix}_C3X_TEST_${Date.now()}_${Math.floor(Math.random() * 10000)}`.toUpperCase();
+    const newRef = makeShortBiqTestRef(spec.prefix, 'COPY');
     addTabs[spec.tab] = {
       recordOps: [
         { op: 'copy', sourceRef: String(source.civilopediaKey || '').toUpperCase(), newRecordRef: newRef }

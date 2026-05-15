@@ -296,8 +296,20 @@ function loadRendererIndexHelpers(targetBundle) {
 function loadRendererTopNameHelpers() {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
-  const functionNames = ['getReferenceTopNameBiqFieldKey'];
-  const sandbox = {};
+  const functionNames = ['getReferenceTopNameBiqFieldKey', 'shouldHideBiqField'];
+  const emptySet = new Set();
+  const sandbox = {
+    BIQ_FIELD_HIDDEN: { all: emptySet },
+    UNIT_BOTTOM_LIST_HIDDEN_KEYS: emptySet,
+    QUINT_UNIT_RULE_VISIBLE_KEYS: emptySet,
+    QUINT_TECH_RULE_VISIBLE_KEYS: emptySet,
+    QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS: emptySet,
+    QUINT_GOVERNMENT_RULE_VISIBLE_KEYS: emptySet,
+    QUINT_CIV_RULE_VISIBLE_KEYS: emptySet,
+    isReadonlyRuleField: () => false,
+    isCivilizationNameListItemField: () => false,
+    isGovernmentRelationsField: () => false
+  };
   sandbox.globalThis = sandbox;
   const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
     + '\n\nglobalThis.__helpers = { '
@@ -315,6 +327,11 @@ function buildReferenceIndexMap(bundle, tabKey) {
   })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && item.civilopediaKey);
 }
 
+function makeShortTestRef(prefix, label = 'T') {
+  const token = `${label}_${Date.now().toString(36).slice(-7)}_${Math.floor(Math.random() * 1296).toString(36)}`.toUpperCase();
+  return `${prefix}${token}`.slice(0, 31);
+}
+
 test('reference top-name editor targets civilizationName for Civs', () => {
   const { getReferenceTopNameBiqFieldKey } = loadRendererTopNameHelpers();
   assert.equal(getReferenceTopNameBiqFieldKey('civilizations'), 'civilizationname');
@@ -323,6 +340,11 @@ test('reference top-name editor targets civilizationName for Civs', () => {
   assert.equal(getReferenceTopNameBiqFieldKey('improvements'), 'name');
   assert.equal(getReferenceTopNameBiqFieldKey('governments'), 'name');
   assert.equal(getReferenceTopNameBiqFieldKey('units'), 'name');
+});
+
+test('civilizationName field is hidden from Civs detail fields because top Name edits it', () => {
+  const { shouldHideBiqField } = loadRendererTopNameHelpers();
+  assert.equal(shouldHideBiqField('civilizations', { key: 'civilizationname', baseKey: 'civilizationname' }), true);
 });
 
 test('pending added references predict appended BIQ index instead of using list position', () => {
@@ -636,7 +658,7 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
     assert.ok(sourceEntry, `expected a source entry for ${tabKey}`);
     const sourceRef = String(sourceEntry.civilopediaKey || '').toUpperCase();
 
-    const newKey = `${prefix}C3X_COPY_TEST_${Date.now()}`.toUpperCase();
+    const newKey = makeShortTestRef(prefix, 'COPY');
     const saveResult = saveBundle({
       mode: 'scenario',
       c3xPath: c3xDir,

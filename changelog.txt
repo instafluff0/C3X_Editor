@@ -1,4 +1,5 @@
 * RELEASE 27.8
+- Removed the duplicate Civs `Identity > Civilization Name` editor because the top `Name` field already edits the same RACE civilization-name value.
 - Fixed the Civs top `Name` editor so it saves to the RACE civilization-name field instead of the leader-name field.
 - Fixed Civ name-list editing so city, military leader, and scientific leader list row edits and deletions save the correct BIQ list counts, with coverage that deleted city names stay deleted after reload.
 - Fixed pending new BIQ reference entries so Tech/Civ reference pickers predict their appended BIQ index instead of temporarily using the top UI row index, preventing a newly added tech from appearing in existing civilization starting-tech slots before save.
