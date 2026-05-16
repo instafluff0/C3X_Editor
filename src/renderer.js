@@ -5612,6 +5612,27 @@ function getFilteredImprovementOptions(filterKinds = []) {
   });
 }
 
+function isPlaceholderWonderNameValue(value) {
+  const normalized = normalizeConfigToken(value).toLowerCase();
+  const schema = SECTION_SCHEMAS.wonders || {};
+  const defaultSection = schema.defaultSection || {};
+  const placeholder = normalizeConfigToken(defaultSection.name || 'New Wonder').toLowerCase();
+  return !!normalized && normalized === placeholder;
+}
+
+function getWonderNameOptions() {
+  return getFilteredImprovementOptions(['wonder', 'small_wonder'])
+    .filter((opt) => !isPlaceholderWonderNameValue(opt && opt.value));
+}
+
+function clearWonderAtlasPreviewCache() {
+  for (const key of Array.from(state.previewCache.keys())) {
+    if (String(key || '').includes('"kind":"wonder-atlas"')) {
+      state.previewCache.delete(key);
+    }
+  }
+}
+
 function getCivilizationNameSuggestions() {
   return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || '')).filter(Boolean);
 }
@@ -7125,6 +7146,20 @@ function setMultiFieldValues(section, key, values) {
   setDirty(true);
 }
 
+function setSectionFieldValues(section, valuesByKey) {
+  const entries = Object.entries(valuesByKey || {})
+    .map(([key, value]) => [String(key || '').trim(), String(value == null ? '' : value).trim()])
+    .filter(([key]) => !!key);
+  if (entries.length === 0) return;
+  rememberUndoSnapshot();
+  const keys = new Set(entries.map(([key]) => key));
+  section.fields = section.fields.filter((f) => !keys.has(String(f && f.key || '')));
+  entries.forEach(([key, value]) => {
+    if (value !== '') section.fields.push({ key, value });
+  });
+  setDirty(true);
+}
+
 function getFieldValue(section, key) {
   const f = section.fields.find((x) => x.key === key);
   return f ? String(f.value || '').trim() : '';
@@ -7461,7 +7496,8 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
   }
 }
 
-async function loadPreviewsForSection(tabKey, section, previewWrap) {
+async function loadPreviewsForSection(tabKey, section, previewWrap, shouldContinue = null) {
+  const isCurrent = () => !shouldContinue || shouldContinue();
   const cacheKey = JSON.stringify({ tabKey, fields: section.fields, c3xPath: state.settings.c3xPath });
   const previewOptions = (tabKey === 'wonders' || tabKey === 'naturalWonders')
     ? { softBlueFrame: true }
@@ -7475,8 +7511,10 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   if (state.previewCache.has(cacheKey)) {
     const cached = state.previewCache.get(cacheKey);
     appendDebugLog('preview:cache-hit', { tabKey, count: cached.length });
+    if (!isCurrent()) return;
     let altWrap = null;
     cached.forEach((p) => {
+      if (!isCurrent()) return;
       const lane = String(p && p.lane || 'base');
       if (tabKey === 'wonders' && lane === 'alt') {
         if (!altWrap) {
@@ -7617,6 +7655,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
     try {
       appendDebugLog('preview:request', { tabKey, title: task.title, request: task.request });
       const res = await window.c3xManager.getPreview(task.request);
+      if (!isCurrent()) return;
       if (res && res.ok) {
         const prepared = (tabKey === 'animations')
           ? (() => {
@@ -7653,6 +7692,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   }
 
   if (resolved.length > 0) {
+    if (!isCurrent()) return;
     setPreviewCache(cacheKey, resolved);
   }
 }
@@ -9182,7 +9222,7 @@ function getDynamicSectionFieldOptions(tabKey, schemaField, section) {
   const key = String(schemaField && schemaField.key || '').trim();
   if (!key) return [];
   if (tabKey === 'wonders' && key === 'name') {
-    return getFilteredImprovementOptions(['wonder', 'small_wonder']).map((opt) => String(opt.value || '')).filter(Boolean);
+    return getWonderNameOptions().map((opt) => String(opt.value || '')).filter(Boolean);
   }
   if (tabKey === 'wonders' && key === 'buildable_by_civs') {
     return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || ''));
@@ -9307,15 +9347,15 @@ function applyPreferredSectionFieldOrder(tabKey, orderedFields) {
     priorityByKey = new Map([
       ['name', 0],
       ['img_path', 1],
-      ['img_construct_row', 2],
-      ['img_construct_column', 3],
-      ['img_row', 4],
-      ['img_column', 5],
+      ['img_row', 2],
+      ['img_column', 3],
+      ['img_construct_row', 4],
+      ['img_construct_column', 5],
       ['enable_img_alt_dir', 6],
-      ['img_alt_dir_construct_row', 7],
-      ['img_alt_dir_construct_column', 8],
-      ['img_alt_dir_row', 9],
-      ['img_alt_dir_column', 10],
+      ['img_alt_dir_row', 7],
+      ['img_alt_dir_column', 8],
+      ['img_alt_dir_construct_row', 9],
+      ['img_alt_dir_construct_column', 10],
       ['custom_width', 11],
       ['custom_height', 12]
     ]);
@@ -17643,6 +17683,35 @@ function drawResourceIconToCanvas(preview, spriteIndex, canvas) {
   return true;
 }
 
+function getWonderAtlasMetrics(preview, crop) {
+  const atlas = rgbaToCanvas(preview);
+  const cellW = Math.max(1, Number(crop && crop.w) || 128);
+  const cellH = Math.max(1, Number(crop && crop.h) || 64);
+  if (!atlas || !atlas.width || !atlas.height) return null;
+  const cols = Math.max(1, Math.floor(atlas.width / cellW));
+  const rows = Math.max(1, Math.floor(atlas.height / cellH));
+  return { atlas, cols, rows, cellW, cellH };
+}
+
+function drawWonderAtlasCellToCanvas(preview, row, col, canvas, crop) {
+  if (!preview || !canvas) return false;
+  const metrics = getWonderAtlasMetrics(preview, crop);
+  if (!metrics) return false;
+  const { atlas, cols, rows, cellW, cellH } = metrics;
+  const safeRow = Math.max(0, Number(row) || 0);
+  const safeCol = Math.max(0, Number(col) || 0);
+  if (safeRow >= rows || safeCol >= cols) return false;
+  const sx = safeCol * cellW;
+  const sy = safeRow * cellH;
+  if (sx + cellW > atlas.width || sy + cellH > atlas.height) return false;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(atlas, sx, sy, cellW, cellH, 0, 0, canvas.width, canvas.height);
+  return true;
+}
+
 async function getUnits32AtlasPreview({ scenarioPath, scenarioPaths } = {}) {
   const resolvedScenarioPath = String(
     typeof scenarioPath === 'string' ? scenarioPath : (state.settings && state.settings.scenarioPath) || ''
@@ -17687,6 +17756,30 @@ async function getResourcesAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
     scenarioPath: resolvedScenarioPath,
     scenarioPaths: resolvedScenarioPaths,
     assetPath: 'Art/resources.pcx'
+  });
+  if (res && res.ok) {
+    setPreviewCache(cacheKey, res);
+    return res;
+  }
+  return null;
+}
+
+async function getWonderAtlasPreview(section) {
+  const fileName = normalizeConfigToken(getFieldValue(section, 'img_path')) || 'Wonders.pcx';
+  const cacheKey = JSON.stringify({
+    kind: 'wonder-atlas',
+    c3xPath: state.settings && state.settings.c3xPath,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths().join('|'),
+    fileName
+  });
+  if (state.previewCache.has(cacheKey)) return state.previewCache.get(cacheKey);
+  const res = await window.c3xManager.getPreview({
+    kind: 'wonder',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
   });
   if (res && res.ok) {
     setPreviewCache(cacheKey, res);
@@ -18099,6 +18192,159 @@ function createResourceIconIndexPicker(currentValue, onSelect) {
   wrap.appendChild(openBtn);
   wrap.appendChild(menu);
   syncPreview();
+  return wrap;
+}
+
+function createWonderCellPicker(section, currentRow, currentCol, onSelect) {
+  const WONDER_CELL_ITEM_W = 154;
+  const WONDER_CELL_ITEM_H = 110;
+  const WONDER_CELL_MAX_W = 138;
+  const WONDER_CELL_MAX_H = 88;
+  const wrap = document.createElement('div');
+  wrap.className = 'path-input-with-btn unit-icon-index-picker wonder-coordinate-picker';
+
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.textContent = 'Select';
+
+  const menu = document.createElement('div');
+  menu.className = 'color-slot-picker-menu unit-icon-picker-menu wonder-coordinate-menu hidden';
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.textContent = 'Loading wonder art sheet...';
+  const scroller = document.createElement('div');
+  scroller.className = 'unit-icon-picker-scroller wonder-coordinate-scroller';
+  const grid = document.createElement('div');
+  grid.className = 'unit-icon-picker-grid wonder-coordinate-grid';
+  scroller.appendChild(grid);
+  menu.appendChild(status);
+  menu.appendChild(scroller);
+
+  let atlasPreview = null;
+  let gridBuilt = false;
+  let selectedRow = Math.max(0, Number(currentRow) || 0);
+  let selectedCol = Math.max(0, Number(currentCol) || 0);
+  const crop = () => getCropDimensions(section, { w: 128, h: 64 });
+
+  const renderGrid = () => {
+    if (!atlasPreview) return;
+    const metrics = getWonderAtlasMetrics(atlasPreview, crop());
+    if (!metrics) {
+      status.textContent = 'Could not parse wonder art sheet';
+      return;
+    }
+    const { cols, rows } = metrics;
+    grid.innerHTML = '';
+    grid.style.width = `${cols * WONDER_CELL_ITEM_W}px`;
+    grid.style.height = `${rows * WONDER_CELL_ITEM_H}px`;
+    const cellCrop = crop();
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'unit-icon-picker-item wonder-coordinate-item';
+        item.title = `Row ${row}, Column ${col}`;
+        item.setAttribute('aria-label', `Row ${row}, Column ${col}`);
+        item.style.left = `${col * WONDER_CELL_ITEM_W}px`;
+        item.style.top = `${row * WONDER_CELL_ITEM_H}px`;
+        item.classList.toggle('active', selectedRow === row && selectedCol === col);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, cellCrop.w);
+        canvas.height = Math.max(1, cellCrop.h);
+        const scale = Math.min(
+          1.25,
+          WONDER_CELL_MAX_W / Math.max(1, cellCrop.w),
+          WONDER_CELL_MAX_H / Math.max(1, cellCrop.h)
+        );
+        canvas.style.width = `${Math.max(1, Math.round(cellCrop.w * scale))}px`;
+        canvas.style.height = `${Math.max(1, Math.round(cellCrop.h * scale))}px`;
+        canvas.className = 'entry-thumb-canvas';
+        drawWonderAtlasCellToCanvas(atlasPreview, row, col, canvas, cellCrop);
+        item.appendChild(canvas);
+        item.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          selectedRow = row;
+          selectedCol = col;
+          if (typeof onSelect === 'function') onSelect(row, col);
+          menu.classList.add('hidden');
+          renderGrid();
+        });
+        grid.appendChild(item);
+      }
+    }
+    status.textContent = '';
+    gridBuilt = true;
+  };
+
+  openBtn.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden');
+    if (!opening) return;
+    if (!atlasPreview) atlasPreview = await getWonderAtlasPreview(section);
+    if (!atlasPreview || !atlasPreview.width || !atlasPreview.height) {
+      status.textContent = 'Could not load wonder art sheet';
+      return;
+    }
+    if (!gridBuilt) renderGrid();
+  });
+  registerOutsideClickDismiss(wrap, () => {
+    menu.classList.add('hidden');
+  });
+
+  wrap.appendChild(openBtn);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
+function createWonderCoordinatePairEditor(section, rowKey, colKey, onValueChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wonder-coordinate-inline';
+
+  const makeNumberInput = (key) => {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.value = getFieldValue(section, key) || '0';
+    input.addEventListener('input', () => {
+      setSingleFieldValue(section, key, String(input.value || '').trim());
+      if (onValueChange) onValueChange(key, String(input.value || '').trim());
+    });
+    return input;
+  };
+
+  const rowInput = makeNumberInput(rowKey);
+  const colInput = makeNumberInput(colKey);
+
+  const rowLabel = document.createElement('span');
+  rowLabel.className = 'wonder-coordinate-mini-label';
+  rowLabel.textContent = 'Row';
+  const colLabel = document.createElement('span');
+  colLabel.className = 'wonder-coordinate-mini-label';
+  colLabel.textContent = 'Column';
+
+  const picker = createWonderCellPicker(
+    section,
+    parseConfigInteger(getFieldValue(section, rowKey), 0),
+    parseConfigInteger(getFieldValue(section, colKey), 0),
+    (spriteRow, spriteCol) => {
+      setSectionFieldValues(section, {
+        [rowKey]: String(spriteRow),
+        [colKey]: String(spriteCol)
+      });
+      rowInput.value = String(spriteRow);
+      colInput.value = String(spriteCol);
+      if (onValueChange) {
+        onValueChange(rowKey, String(spriteRow));
+      }
+    }
+  );
+
+  wrap.appendChild(rowLabel);
+  wrap.appendChild(rowInput);
+  wrap.appendChild(colLabel);
+  wrap.appendChild(colInput);
+  wrap.appendChild(picker);
   return wrap;
 }
 
@@ -33983,8 +34229,9 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
   }
 
   if (state.activeTab === 'wonders' && effectiveField.key === 'name') {
-    const normalizedCurrent = normalizeConfigToken(values[0] || '');
-    const wonderOptions = getFilteredImprovementOptions(['wonder', 'small_wonder']).slice();
+    const rawCurrent = normalizeConfigToken(values[0] || '');
+    const normalizedCurrent = isPlaceholderWonderNameValue(rawCurrent) ? '' : rawCurrent;
+    const wonderOptions = getWonderNameOptions().slice();
     const hasCurrent = wonderOptions.some((opt) => String(opt && opt.value || '').trim() === normalizedCurrent);
     if (normalizedCurrent && !hasCurrent) {
       wonderOptions.unshift({ value: normalizedCurrent, label: normalizedCurrent, entry: null });
@@ -34003,6 +34250,34 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
       }
     });
     controlWrap.appendChild(picker);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'wonders' && effectiveField.key === 'img_construct_row') {
+    label.textContent = 'Construction Art *';
+    controlWrap.appendChild(createWonderCoordinatePairEditor(section, 'img_construct_row', 'img_construct_column', onValueChange));
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'wonders' && effectiveField.key === 'img_row') {
+    label.textContent = 'Completed Art *';
+    controlWrap.appendChild(createWonderCoordinatePairEditor(section, 'img_row', 'img_column', onValueChange));
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'wonders' && effectiveField.key === 'img_alt_dir_construct_row') {
+    label.textContent = 'Alt Construction Art';
+    controlWrap.appendChild(createWonderCoordinatePairEditor(section, 'img_alt_dir_construct_row', 'img_alt_dir_construct_column', onValueChange));
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'wonders' && effectiveField.key === 'img_alt_dir_row') {
+    label.textContent = 'Alt Completed Art';
+    controlWrap.appendChild(createWonderCoordinatePairEditor(section, 'img_alt_dir_row', 'img_alt_dir_column', onValueChange));
     row.appendChild(controlWrap);
     return row;
   }
@@ -34569,8 +34844,10 @@ function renderSectionTab(tab, tabKey) {
       previewWrap.className = 'preview-wrap';
       if (tabKey === 'naturalWonders') previewWrap.classList.add('natural-wonder-preview-wrap');
       card.appendChild(previewWrap);
+      let previewRefreshGeneration = 0;
       if (tabKey === 'districts') {
         const refreshDistrict = () => {
+          previewRefreshGeneration += 1;
           previewWrap.innerHTML = '';
           renderDistrictRepresentativePreviewCard(section, previewWrap, `${districtDisplay.primary} Art`);
         };
@@ -34585,8 +34862,9 @@ function renderSectionTab(tab, tabKey) {
           }
         }
         void scopedKey;
+        const generation = ++previewRefreshGeneration;
         previewWrap.innerHTML = '';
-        loadPreviewsForSection(tabKey, section, previewWrap);
+        loadPreviewsForSection(tabKey, section, previewWrap, () => generation === previewRefreshGeneration);
       };
       refresh();
       return refresh;
@@ -34621,6 +34899,15 @@ function renderSectionTab(tab, tabKey) {
     if (tabKey === 'districts') {
       const hiddenBtnKeys = new Set(['btn_tile_sheet_row', 'btn_tile_sheet_column']);
       orderedSchemaFields = orderedSchemaFields.filter((field) => !hiddenBtnKeys.has(String(field && field.key || '')));
+    }
+    if (tabKey === 'wonders') {
+      const hiddenWonderCoordinateKeys = new Set([
+        'img_construct_column',
+        'img_column',
+        'img_alt_dir_construct_column',
+        'img_alt_dir_column'
+      ]);
+      orderedSchemaFields = orderedSchemaFields.filter((field) => !hiddenWonderCoordinateKeys.has(String(field && field.key || '')));
     }
     orderedSchemaFields
       .forEach((schemaField) => {
@@ -34667,6 +34954,12 @@ function renderSectionTab(tab, tabKey) {
           return;
         }
         if (tabKey === 'wonders' && key === 'enable_img_alt_dir') {
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
+        if (tabKey === 'wonders' && (key === 'img_path' || key === 'custom_width' || key === 'custom_height')) {
+          clearWonderAtlasPreviewCache();
+          setDirty(true);
           renderActiveTab({ preserveTabScroll: true });
           return;
         }

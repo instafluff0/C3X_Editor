@@ -3882,6 +3882,24 @@ function parseImprovementKindsFromPediaIconsBlocks(blocks) {
   return kinds;
 }
 
+function isProjectedBoolTruthy(value) {
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  return text === '1' || text === 'true' || text === 'yes' || text === 'on';
+}
+
+function inferImprovementKindFromBiqFields(fields) {
+  const byKey = new Map();
+  (Array.isArray(fields) ? fields : []).forEach((field) => {
+    const key = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    if (key) byKey.set(key, field);
+  });
+  const read = (key) => byKey.get(key) && byKey.get(key).value;
+  if (isProjectedBoolTruthy(read('smallwonder'))) return 'small_wonder';
+  if (isProjectedBoolTruthy(read('wonder'))) return 'wonder';
+  if (isProjectedBoolTruthy(read('improvement'))) return 'normal';
+  return '';
+}
+
 function parseBuildingIconBlockLines(lines) {
   const rawLines = Array.isArray(lines) ? lines.map((line) => String(line || '').trim()).filter(Boolean) : [];
   const pathLines = rawLines.filter((line) => /[\\/]/.test(line) || /\.(pcx|flc|ini)$/i.test(line));
@@ -4312,6 +4330,9 @@ function buildReferenceTabs(civ3Path, options = {}) {
             civilopediaEntry: displayCivilopediaKey
           });
         }
+        const biqImprovementKind = tabSpec.key === 'improvements' && rawBiqFields.length > 0
+          ? inferImprovementKindFromBiqFields(biqFields)
+          : '';
         const preferredNameBaseKey = tabSpec.key === 'civilizations' ? 'civilizationname' : 'name';
         const biqNameField = biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === preferredNameBaseKey);
         const fallbackBiqNameField = preferredNameBaseKey === 'name'
@@ -4346,7 +4367,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           civilopediaSection2: section2RawText,
           originalCivilopediaSection2: section2RawText,
           techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(section1Lines),
-          improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[lookupCivilopediaKey] || 'normal') : null,
+          improvementKind: tabSpec.key === 'improvements' ? (biqImprovementKind || improvementKindsByKey[lookupCivilopediaKey] || 'normal') : null,
           iconPaths: pedia.iconPaths,
           originalIconPaths: [...(pedia.originalIconPaths || pedia.iconPaths)],
           buildingIconKind: tabSpec.key === 'improvements' ? (pedia.buildingIconKind || '') : '',

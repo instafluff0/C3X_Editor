@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadBundle } = require('../src/configCore');
+const { buildReferenceTabs, loadBundle } = require('../src/configCore');
 const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('../src/biq/bldgCodec');
 
 const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
@@ -38,6 +38,36 @@ function getRawBldgMap(bundle, civilopediaKey) {
   });
   return map;
 }
+
+test('BIQ Small Wonder flag drives improvementKind for Wonder District pickers', () => {
+  const tabs = buildReferenceTabs('', {
+    mode: 'scenario',
+    biqTab: {
+      sourcePath: '/tmp/test.biq',
+      sections: [
+        {
+          code: 'BLDG',
+          records: [
+            {
+              index: 0,
+              fields: [
+                { key: 'civilopediaentry', baseKey: 'civilopediaentry', value: 'BLDG_SEMICONDUCTOR_FOUNDRY', editable: true },
+                { key: 'name', baseKey: 'name', value: 'Semiconductor Foundry', editable: true },
+                { key: 'other_char', baseKey: 'other_char', value: '8', editable: true }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  });
+
+  const foundry = tabs.improvements.entries.find((entry) => entry.civilopediaKey === 'BLDG_SEMICONDUCTOR_FOUNDRY');
+  assert.ok(foundry, 'Expected BIQ-backed Semiconductor Foundry improvement');
+  assert.equal(foundry.name, 'Semiconductor Foundry');
+  assert.equal(foundry.improvementKind, 'small_wonder');
+  assert.equal(getField(foundry, 'smallwonder').value, 'true');
+});
 
 test('Academy in TIDES projects raw BLDG fields into Quint-style improvement UI fields', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip(`Scenario fixture not present: ${TIDES_BIQ}`);

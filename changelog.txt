@@ -1,3 +1,9 @@
+* RELEASE 27.10
+- Added inline Wonder District art row/column controls with a larger, right-aligned sheet-cell selector for completed, construction, and enabled alternate-direction art coordinates.
+- Fixed BIQ-backed Small Wonders so Wonder District name search uses the BIQ category flags instead of requiring matching Civilopedia/PediaIcons wonder metadata.
+- Removed the placeholder `New Wonder` entry from Wonder District name pickers.
+- Fixed Wonder District cell pickers so changing the image path or custom cell size reloads the picker from the current PCX.
+
 * RELEASE 27.9
 - Added Scenario-mode notices for Resources and Units when the icon index picker is using the default `resources.pcx` or `units_32.pcx`, with a one-click action that stages copying the atlas into the scenario and lists the new file in the save details.
 - Added a `Save as` filename control for staged Scenario-mode leader animation replacements, matching the static art replacement rename workflow while keeping outputs under `Art\Flics`.

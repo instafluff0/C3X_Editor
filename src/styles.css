@@ -7897,6 +7897,89 @@ button.unit-ini-delete-btn:disabled {
   background: rgba(232, 255, 252, 0.96);
 }
 
+.wonder-coordinate-inline {
+  display: grid;
+  grid-template-columns: auto minmax(68px, 96px) auto minmax(68px, 96px) auto;
+  align-items: center;
+  justify-content: start;
+  gap: 8px;
+}
+
+.wonder-coordinate-inline input {
+  min-width: 0;
+  width: 100%;
+}
+
+.wonder-coordinate-mini-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.wonder-coordinate-picker {
+  grid-template-columns: auto;
+  justify-content: start;
+}
+
+.wonder-coordinate-menu {
+  left: auto !important;
+  right: 0;
+  max-width: calc(100vw - 48px);
+  width: fit-content;
+}
+
+.wonder-coordinate-scroller {
+  width: min(760px, calc(100vw - 84px));
+  max-height: 430px;
+  overflow-x: auto;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(95, 104, 140, 0.72) rgba(238, 241, 248, 0.98);
+}
+
+.wonder-coordinate-scroller::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+.wonder-coordinate-scroller::-webkit-scrollbar-track {
+  background: rgba(238, 241, 248, 0.98);
+  border-radius: 10px;
+  border: 1px solid rgba(74, 82, 116, 0.14);
+}
+
+.wonder-coordinate-scroller::-webkit-scrollbar-thumb {
+  background: rgba(95, 104, 140, 0.72);
+  border-radius: 10px;
+  border: 3px solid rgba(238, 241, 248, 0.98);
+}
+
+.wonder-coordinate-scroller::-webkit-scrollbar-thumb:hover {
+  background: rgba(73, 82, 119, 0.9);
+}
+
+.wonder-coordinate-item {
+  width: 144px;
+  height: 100px;
+  border-radius: 6px;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.wonder-coordinate-item .entry-thumb-canvas {
+  width: auto;
+  height: auto;
+  max-width: 138px;
+  max-height: 88px;
+}
+
+.wonder-coordinate-menu .hint:empty {
+  display: none;
+}
+
 .path-input-with-btn > button {
   min-width: 72px;
 }
