@@ -280,11 +280,22 @@ function getStandardGameBiqPath(civ3Path) {
   return root ? path.join(root, 'Conquests', 'conquests.biq') : '';
 }
 
+let currentLogContextPayload = {
+  mode: 'global',
+  civ3Path: '',
+  biqPath: ''
+};
+
 function applyLogContextFromPayload(payload) {
-  const mode = (payload && payload.mode) || 'global';
+  const hasExplicitMode = !!(payload && Object.prototype.hasOwnProperty.call(payload, 'mode'));
+  const mode = hasExplicitMode
+    ? ((payload && payload.mode) || 'global')
+    : (currentLogContextPayload.mode || 'global');
+  const civ3Path = (payload && payload.civ3Path) || currentLogContextPayload.civ3Path || '';
   const biqPath = mode === 'scenario'
-    ? (payload && payload.scenarioPath || '')
-    : getStandardGameBiqPath(payload && payload.civ3Path || '');
+    ? ((payload && payload.scenarioPath) || currentLogContextPayload.biqPath || '')
+    : getStandardGameBiqPath(civ3Path);
+  currentLogContextPayload = { mode, civ3Path, biqPath };
   log.setContext({ mode, biqPath });
 }
 

@@ -294,6 +294,7 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   const magic = u16(b, 4);
   const w = u16(b, 8);
   const h = u16(b, 10);
+  const depth = u16(b, 12);
   const headerFrameCount = u16(b, 6);
   const speedRaw = u32(b, 16);
   // Civ3 FlicAnimHeader at byte 88 (reserved3): num_anims at +8, anim_length at +10.
@@ -433,6 +434,7 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   return {
     width: w,
     height: h,
+    depth,
     framesBase64,
     indexedBase64,
     paletteBase64,
@@ -440,6 +442,8 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
     speedRaw,
     magic,
     frameCountHeader: headerFrameCount,
+    civ3NumAnims,
+    civ3AnimLength,
     debug: { chunkCounts, maxFramesRequested: frameLimit, framesDecoded: frames.length }
   };
 }
@@ -856,6 +860,13 @@ function decodeByPath(filePath, crop, options = {}) {
       ...base,
       animated: true,
       framesBase64: image.framesBase64,
+      speedField: image.speedField,
+      speedRaw: image.speedRaw,
+      magic: image.magic,
+      depth: image.depth,
+      frameCountHeader: image.frameCountHeader,
+      civ3NumAnims: image.civ3NumAnims,
+      civ3AnimLength: image.civ3AnimLength,
       debug: image.debug || null
     };
   }
@@ -942,6 +953,26 @@ function getPreview(request) {
       return { ok: false, error: 'Civilopedia icon not found' };
     }
     return { ok: true, ...decodeByPath(iconPath, null, { transparentIndexes: [], ...(request.options || {}) }) };
+  }
+
+  if (kind === 'leaderAnimationPath') {
+    const assetPath = String(request.assetPath || '').trim();
+    if (!assetPath) {
+      log.warn('getPreview', 'leaderAnimationPath: missing assetPath');
+      return { ok: false, error: 'Leader animation path is empty' };
+    }
+    const maxFrames = Number.isFinite(Number(request.maxFrames)) && Number(request.maxFrames) > 0
+      ? Math.floor(Number(request.maxFrames))
+      : 80;
+    log.debug('getPreview', `leaderAnimationPath: resolving key="${request.civilopediaKey || ''}", assetPath="${assetPath}", maxFrames=${maxFrames}`);
+    const flcPath = resolveConquestsAssetPath(civ3Path, assetPath, scenarioPath, scenarioPaths, request.civilopediaKey);
+    if (!flcPath) {
+      log.warn('getPreview', `leaderAnimationPath: FLC not found — key="${request.civilopediaKey || ''}", assetPath="${assetPath}"`);
+      return { ok: false, error: 'Leader animation FLC not found' };
+    }
+    const decoded = decodeByPath(flcPath, null, { maxFrames });
+    log.debug('getPreview', `leaderAnimationPath: decoded ${log.rel(flcPath)} ${decoded.width}x${decoded.height}, frames=${decoded.framesBase64 ? decoded.framesBase64.length : 0}, speed=${decoded.speedField || '(none)'}`);
+    return { ok: true, ...decoded };
   }
 
   if (kind === 'pcxPalette') {
@@ -1337,6 +1368,121 @@ function encodeRgbaToPcx(rgba, width, height) {
   return encodePcx(indices, palette, w, h);
 }
 
+function buildIndexedImageFromRgba(rgba, width, height, maxColors = 255) {
+  const w = Math.max(1, Number(width) | 0);
+  const h = Math.max(1, Number(height) | 0);
+  const source = Buffer.isBuffer(rgba) || rgba instanceof Uint8Array ? rgba : Buffer.from([]);
+  if (source.length < w * h * 4) throw new Error('RGBA buffer is too small for indexed conversion.');
+  const colorCounts = new Map();
+  for (let i = 0; i < w * h; i += 1) {
+    const off = i * 4;
+    if (source[off + 3] < 128) continue;
+    const flattened = flattenPcxColorOverWhite(source, off);
+    const key = (flattened.r << 16) | (flattened.g << 8) | flattened.b;
+    colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
+  }
+  const sourceColors = Array.from(colorCounts, ([key, count]) => ({
+    r: (key >> 16) & 255,
+    g: (key >> 8) & 255,
+    b: key & 255,
+    count
+  }));
+  const paletteColors = makeOptimizedPalette(sourceColors, Math.max(1, Math.min(255, maxColors)));
+  const palette = new Uint8Array(256 * 3);
+  for (let p = 0; p < 255; p += 1) {
+    const color = paletteColors[p] || { r: 0, g: 0, b: 0 };
+    palette[p * 3] = color.r;
+    palette[p * 3 + 1] = color.g;
+    palette[p * 3 + 2] = color.b;
+  }
+  palette[255 * 3] = 255;
+  palette[255 * 3 + 1] = 0;
+  palette[255 * 3 + 2] = 255;
+  const indices = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i += 1) {
+    const off = i * 4;
+    if (source[off + 3] < 128) {
+      indices[i] = 255;
+      continue;
+    }
+    const flattened = flattenPcxColorOverWhite(source, off);
+    indices[i] = findNearestPaletteIndex(flattened.r, flattened.g, flattened.b, paletteColors);
+  }
+  return { indices, palette, width: w, height: h };
+}
+
+function makeFliCopyChunk(indices) {
+  const payload = Buffer.from(indices);
+  const chunk = Buffer.alloc(6 + payload.length);
+  chunk.writeUInt32LE(chunk.length, 0);
+  chunk.writeUInt16LE(CHUNK_FLI_COPY, 4);
+  payload.copy(chunk, 6);
+  return chunk;
+}
+
+function makeColor256Chunk(palette) {
+  const packet = Buffer.alloc(2 + 1 + 1 + 256 * 3);
+  packet.writeUInt16LE(1, 0);
+  packet[2] = 0;
+  packet[3] = 0;
+  Buffer.from(palette).copy(packet, 4, 0, 256 * 3);
+  const chunk = Buffer.alloc(6 + packet.length);
+  chunk.writeUInt32LE(chunk.length, 0);
+  chunk.writeUInt16LE(CHUNK_COLOR_256, 4);
+  packet.copy(chunk, 6);
+  return chunk;
+}
+
+function makeFlcFrame(chunks) {
+  const body = Buffer.concat(chunks);
+  const frame = Buffer.alloc(16 + body.length);
+  frame.writeUInt32LE(frame.length, 0);
+  frame.writeUInt16LE(CHUNK_FRAME, 4);
+  frame.writeUInt16LE(chunks.length, 6);
+  body.copy(frame, 16);
+  return frame;
+}
+
+function makeDeltaFlcNoopChunk() {
+  const payload = Buffer.alloc(2, 0);
+  const chunk = Buffer.alloc(6 + payload.length);
+  chunk.writeUInt32LE(chunk.length, 0);
+  chunk.writeUInt16LE(CHUNK_DELTA_FLC, 4);
+  payload.copy(chunk, 6);
+  return chunk;
+}
+
+function encodeRgbaToLeaderFlc(rgba, width, height, options = {}) {
+  const w = Math.max(1, Number(width) | 0);
+  const h = Math.max(1, Number(height) | 0);
+  if (w !== 200 || h !== 240) throw new Error('Leader FLC images must be 200x240.');
+  const frameCount = Math.max(1, Math.min(240, Number(options.frameCount) || 121));
+  const speedMs = Math.max(1, Math.min(65535, Number(options.speedMs) || 66));
+  const indexed = buildIndexedImageFromRgba(rgba, w, h, 255);
+  const firstFrame = makeFlcFrame([makeColor256Chunk(indexed.palette), makeFliCopyChunk(indexed.indices)]);
+  const repeatFrame = makeFlcFrame([makeDeltaFlcNoopChunk()]);
+  const frames = [firstFrame];
+  for (let i = 0; i < frameCount; i += 1) frames.push(repeatFrame);
+  const frameBytes = Buffer.concat(frames);
+  const header = Buffer.alloc(128, 0);
+  header.writeUInt32LE(128 + frameBytes.length, 0);
+  header.writeUInt16LE(0xAF12, 4);
+  header.writeUInt16LE(frameCount, 6);
+  header.writeUInt16LE(w, 8);
+  header.writeUInt16LE(h, 10);
+  header.writeUInt16LE(8, 12);
+  header.writeUInt16LE(3, 14);
+  header.writeUInt32LE(speedMs, 16);
+  header.writeUInt32LE(0, 20);
+  header.writeUInt32LE(0, 24);
+  header.writeUInt32LE(0, 28);
+  header.writeUInt32LE(0, 32);
+  header.writeUInt32LE(0, 36);
+  header.writeUInt32LE(128, 80);
+  header.writeUInt32LE(128 + firstFrame.length, 84);
+  return Buffer.concat([header, frameBytes]);
+}
+
 module.exports = {
   getPreview,
   parseUnitAnimationIni,
@@ -1345,5 +1491,6 @@ module.exports = {
   resolvePcxPath,
   decodePcx,
   encodePcx,
-  encodeRgbaToPcx
+  encodeRgbaToPcx,
+  encodeRgbaToLeaderFlc
 };

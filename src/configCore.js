@@ -3,7 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const iconv = require('iconv-lite');
-const { resolveUnitIniPath, decodePcx, encodePcx, encodeRgbaToPcx } = require('./artPreview');
+const { resolveUnitIniPath, decodePcx, encodePcx, encodeRgbaToPcx, encodeRgbaToLeaderFlc } = require('./artPreview');
 const log = require('./log');
 const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
@@ -6180,6 +6180,33 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
   return copies;
 }
 
+function collectScenarioAtlasCopies({ tabs, targetContentRoot }) {
+  const root = String(targetContentRoot || '').trim();
+  if (!tabs || !root) return [];
+  const copySpecs = [];
+  [
+    { tabKey: 'resources', atlasKey: 'resources', relativePath: 'Art/resources.pcx' },
+    { tabKey: 'units', atlasKey: 'units32', relativePath: 'Art/Units/units_32.pcx' }
+  ].forEach((spec) => {
+    const tab = tabs[spec.tabKey];
+    const pending = tab && tab.pendingAtlasCopies && typeof tab.pendingAtlasCopies === 'object'
+      ? tab.pendingAtlasCopies
+      : null;
+    const copy = pending && pending[spec.atlasKey];
+    if (!copy || !copy.staged) return;
+    const sourcePath = String(copy.sourcePath || '').trim();
+    if (!sourcePath || !isAbsoluteFilesystemPath(sourcePath)) return;
+    const relativePath = normalizeAssetReferencePath(copy.relativePath || spec.relativePath);
+    if (!relativePath || isAbsoluteFilesystemPath(relativePath)) return;
+    copySpecs.push({
+      kind: 'atlas',
+      sourcePath,
+      targetPath: path.join(root, ...relativePath.split('/').filter(Boolean))
+    });
+  });
+  return copySpecs;
+}
+
 function buildSavePlan(payload) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
   const c3xPath = payload.c3xPath || '';
@@ -6563,6 +6590,26 @@ function buildSavePlan(payload) {
       }
       plannedWrites.push({ kind: 'art', path: artCopy.targetPath, data });
       saveReport.push({ kind: 'art', path: artCopy.targetPath });
+    }
+
+    const atlasCopies = collectScenarioAtlasCopies({
+      tabs: payload.tabs || {},
+      targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir
+    });
+    for (const atlasCopy of atlasCopies) {
+      const protectErr = failIfProtected(atlasCopy.targetPath, 'scenario atlas copy target');
+      if (protectErr) return { ok: false, error: protectErr };
+      if (isProtectedBaseCiv3Path(civ3Path, atlasCopy.targetPath)) {
+        return { ok: false, error: `Refusing to modify base Civilization III file (scenario atlas copy target): ${atlasCopy.targetPath}` };
+      }
+      let data;
+      try {
+        data = fs.readFileSync(atlasCopy.sourcePath);
+      } catch (_err) {
+        return { ok: false, error: `Could not read source atlas file: ${atlasCopy.sourcePath}` };
+      }
+      plannedWrites.push({ kind: 'atlas', path: atlasCopy.targetPath, sourcePath: atlasCopy.sourcePath, data });
+      saveReport.push({ kind: 'atlas', path: atlasCopy.targetPath });
     }
   }
 
@@ -7987,6 +8034,30 @@ function getPendingReferenceArtConversion(entry, group, index = 0) {
   return conversion && typeof conversion === 'object' ? conversion : null;
 }
 
+function getPendingLeaderAnimationSource(entry, fieldKey) {
+  if (!entry || !entry.pendingLeaderAnimationSources || typeof entry.pendingLeaderAnimationSources !== 'object') return '';
+  return normalizeAssetReferencePath(entry.pendingLeaderAnimationSources[String(fieldKey || '').trim().toLowerCase()]);
+}
+
+function getPendingLeaderAnimationConversion(entry, fieldKey) {
+  if (!entry || !entry.pendingLeaderAnimationConversions || typeof entry.pendingLeaderAnimationConversions !== 'object') return null;
+  const conversion = entry.pendingLeaderAnimationConversions[String(fieldKey || '').trim().toLowerCase()];
+  return conversion && typeof conversion === 'object' ? conversion : null;
+}
+
+function buildPendingLeaderAnimationConversionBuffer(conversion) {
+  if (!conversion || !conversion.rgbaBase64) return null;
+  return encodeRgbaToLeaderFlc(
+    Buffer.from(String(conversion.rgbaBase64), 'base64'),
+    Number(conversion.width) || 200,
+    Number(conversion.height) || 240,
+    {
+      frameCount: Number(conversion.frameCount) || 30,
+      speedMs: Number(conversion.speedMs) || 66
+    }
+  );
+}
+
 function buildPendingReferenceArtConversionBuffer(conversion, targetSize = null) {
   if (!conversion) return null;
   const sourcePath = normalizeAssetReferencePath(conversion.sourcePath);
@@ -8241,6 +8312,45 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
         }
         if (changed) entry[fieldKey] = sourceValues;
       });
+      if (spec.key === 'civilizations' && Array.isArray(entry && entry.biqFields)) {
+        entry.biqFields.forEach((field) => {
+          const fieldKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+          if (!/^(forward|reverse)filename_for_era_\d+$/.test(fieldKey)) return;
+          const pendingConversion = getPendingLeaderAnimationConversion(entry, fieldKey);
+          const pendingSource = getPendingLeaderAnimationSource(entry, fieldKey);
+          if (!pendingConversion && !pendingSource) return;
+          const rawValue = String(field && field.value || '').trim();
+          const normalizedValue = normalizeScenarioRelativeArtReferencePath(rawValue, entry, targetContentRoot);
+          const relTarget = normalizedValue && !isAbsoluteFilesystemPath(normalizedValue)
+            ? normalizeRelativePath(normalizedValue)
+            : normalizeRelativePath(path.join('Art', 'Flics', path.basename(String(
+              (pendingConversion && pendingConversion.sourcePath) || pendingSource || rawValue || 'leader.flc'
+            )).replace(/\.[^.\\/]+$/i, '.flc')));
+          if (!relTarget || !/^art\/flics\//i.test(relTarget)) {
+            throw new Error(`Leader animation replacements must save under scenario Art\\Flics: ${rawValue || pendingSource}`);
+          }
+          const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+          if (pendingConversion) {
+            const data = buildPendingLeaderAnimationConversionBuffer(pendingConversion);
+            if (!data) {
+              throw new Error(`Could not generate leader animation FLC from: ${String(pendingConversion.sourcePath || rawValue)}`);
+            }
+            queueFileWrite(targetPath, data);
+          } else if (pendingSource && isAbsoluteFilesystemPath(pendingSource)) {
+            let stats = null;
+            try {
+              stats = fs.statSync(pendingSource);
+            } catch (_err) {
+              stats = null;
+            }
+            if (!stats || !stats.isFile()) {
+              throw new Error(`Leader animation FLC does not exist: ${pendingSource}`);
+            }
+            queueFileWrite(targetPath, fs.readFileSync(pendingSource));
+          }
+          field.value = relTarget.replace(/\//g, '\\');
+        });
+      }
       if (spec.key === 'improvements') {
         const rawSplash = String(entry && entry.wonderSplashPath || '').trim();
         const pendingSplashConversion = getPendingReferenceArtConversion(entry, 'wonderSplashPath', 0);

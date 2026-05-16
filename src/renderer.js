@@ -275,6 +275,16 @@ const techTreeModal = {
   body: null,
   title: null
 };
+const unitAvailabilityModal = {
+  node: null,
+  body: null,
+  title: null
+};
+const civilizationAnimationPreviewQueue = {
+  active: 0,
+  limit: 2,
+  tasks: []
+};
 const mapModal = {
   node: null,
   body: null,
@@ -13318,6 +13328,35 @@ function getCivilizationBitmaskOptions() {
   }).filter((opt) => Number.isFinite(Number.parseInt(opt.value, 10)) && Number.parseInt(opt.value, 10) >= 0 && Number.parseInt(opt.value, 10) < 32);
 }
 
+function ensureUnitAvailableToField(entry) {
+  let field = getBiqFieldByBaseKey(entry, 'availableto');
+  if (field) return field;
+  if (!entry) return null;
+  if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+  field = { key: 'availableto', baseKey: 'availableto', label: 'Available To', value: '0', originalValue: '0', editable: true };
+  entry.biqFields.push(field);
+  return field;
+}
+
+function isUnitAvailableToCivilization(entry, civIndex) {
+  const field = getBiqFieldByBaseKey(entry, 'availableto');
+  return decodeAvailableToIndices(field && field.value).includes(Number(civIndex));
+}
+
+function setUnitAvailableToCivilization(entry, civIndex, enabled) {
+  const field = ensureUnitAvailableToField(entry);
+  if (!field) return false;
+  const idx = Number.parseInt(String(civIndex), 10);
+  if (!Number.isFinite(idx) || idx < 0 || idx > 31) return false;
+  const set = new Set(decodeAvailableToIndices(field.value).map((value) => Number(value)));
+  const had = set.has(idx);
+  if (enabled) set.add(idx);
+  else set.delete(idx);
+  if (had === set.has(idx)) return false;
+  field.value = encodeAvailableToFromIndices(Array.from(set).sort((a, b) => a - b));
+  return true;
+}
+
 function isGovernmentRelationsField(field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   return /^performance_of_this_government_versus_government_\d+$/.test(base)
@@ -15415,13 +15454,428 @@ function renderCivilizationBooleanMatrixCard(groupName, fields, entry, tabKey, r
   return groupCard;
 }
 
-function renderCivilizationAnimationTableCard(entry, referenceEditable, selectedBaseIndex) {
-  const eraRows = [
+function getCivilizationAnimationRows(entry) {
+  return [
     { era: 'Ancient', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_0'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_0') },
     { era: 'Middle Ages', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_1'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_1') },
     { era: 'Industrial', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_2'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_2') },
     { era: 'Modern', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_3'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_3') }
   ].filter((row) => row.forward || row.reverse);
+}
+
+function pumpCivilizationAnimationPreviewQueue() {
+  while (
+    civilizationAnimationPreviewQueue.active < civilizationAnimationPreviewQueue.limit
+    && civilizationAnimationPreviewQueue.tasks.length > 0
+  ) {
+    const task = civilizationAnimationPreviewQueue.tasks.shift();
+    if (typeof task !== 'function') continue;
+    civilizationAnimationPreviewQueue.active += 1;
+    Promise.resolve()
+      .then(task)
+      .catch((err) => {
+        appendDebugLog('civ-leader-flc:queue-task-error', { error: err && err.message });
+      })
+      .finally(() => {
+        civilizationAnimationPreviewQueue.active = Math.max(0, civilizationAnimationPreviewQueue.active - 1);
+        pumpCivilizationAnimationPreviewQueue();
+      });
+  }
+}
+
+function enqueueCivilizationAnimationPreview(task) {
+  civilizationAnimationPreviewQueue.tasks.push(task);
+  appendDebugLog('civ-leader-flc:queued', {
+    active: civilizationAnimationPreviewQueue.active,
+    queued: civilizationAnimationPreviewQueue.tasks.length
+  });
+  pumpCivilizationAnimationPreviewQueue();
+}
+
+function withCivilizationAnimationPreviewTimeout(promise, timeoutMs, context) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      appendDebugLog('civ-leader-flc:timeout', context || {});
+      reject(new Error('Leader animation preview timed out.'));
+    }, Math.max(1000, Number(timeoutMs) || 15000));
+    Promise.resolve(promise)
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+function observeCivilizationAnimationPreview(host, loadPreview, context = {}) {
+  if (!host || typeof loadPreview !== 'function') return;
+  let started = false;
+  const start = () => {
+    if (started) return;
+    started = true;
+    appendDebugLog('civ-leader-flc:visible', context);
+    loadPreview();
+  };
+  appendDebugLog('civ-leader-flc:deferred', context);
+  if (typeof IntersectionObserver !== 'function') {
+    window.requestAnimationFrame(start);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (started) {
+      observer.disconnect();
+      return;
+    }
+    if (!entries.some((entry) => entry && entry.isIntersecting)) return;
+    observer.disconnect();
+    start();
+  }, { root: null, rootMargin: '180px 0px', threshold: 0.01 });
+  observer.observe(host);
+}
+
+function getCivilizationAnimationFieldKey(field) {
+  return String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+}
+
+function getPendingLeaderAnimationSource(entry, field) {
+  const key = getCivilizationAnimationFieldKey(field);
+  if (!entry || !key || !entry.pendingLeaderAnimationSources) return '';
+  return String(entry.pendingLeaderAnimationSources[key] || '').trim();
+}
+
+function setPendingLeaderAnimationSource(entry, field, sourcePath) {
+  const key = getCivilizationAnimationFieldKey(field);
+  const source = normalizeAssetReferencePath(sourcePath);
+  if (!entry || !key || !source) return;
+  if (!entry.pendingLeaderAnimationSources || typeof entry.pendingLeaderAnimationSources !== 'object') entry.pendingLeaderAnimationSources = {};
+  entry.pendingLeaderAnimationSources[key] = source;
+  if (entry.pendingLeaderAnimationConversions) delete entry.pendingLeaderAnimationConversions[key];
+}
+
+function getPendingLeaderAnimationConversion(entry, field) {
+  const key = getCivilizationAnimationFieldKey(field);
+  if (!entry || !key || !entry.pendingLeaderAnimationConversions) return null;
+  const conversion = entry.pendingLeaderAnimationConversions[key];
+  return conversion && typeof conversion === 'object' ? conversion : null;
+}
+
+function setPendingLeaderAnimationConversion(entry, field, conversion) {
+  const key = getCivilizationAnimationFieldKey(field);
+  if (!entry || !key || !conversion) return;
+  if (!entry.pendingLeaderAnimationConversions || typeof entry.pendingLeaderAnimationConversions !== 'object') entry.pendingLeaderAnimationConversions = {};
+  entry.pendingLeaderAnimationConversions[key] = conversion;
+  if (entry.pendingLeaderAnimationSources) delete entry.pendingLeaderAnimationSources[key];
+}
+
+function getLeaderAnimationTargetPath(filePath, currentPath) {
+  const current = normalizeAssetReferencePath(currentPath);
+  const baseName = sanitizePendingLeaderFlcFileName(filePath || current || 'leader.flc');
+  if (current && !isAbsoluteAssetPath(current)) {
+    const dir = getParentPath(current);
+    if (normalizeRelativePath(dir).toLowerCase() === 'art/flics') return normalizeRelativePath(`${dir}/${baseName}`);
+  }
+  return normalizeRelativePath(`Art/Flics/${baseName}`);
+}
+
+function setLeaderAnimationDestinationPath(field, nextPathRaw) {
+  if (!field) return '';
+  const normalized = normalizeAssetReferencePath(nextPathRaw);
+  if (!normalized || isAbsoluteAssetPath(normalized)) return '';
+  const parent = getParentPath(normalized);
+  const fileName = sanitizePendingLeaderFlcFileName(getPathBaseName(normalized));
+  const targetDir = normalizeRelativePath(parent).toLowerCase() === 'art/flics'
+    ? parent
+    : 'Art/Flics';
+  const nextPath = normalizeRelativePath(`${targetDir}/${fileName}`);
+  field.value = nextPath.replace(/\//g, '\\');
+  return nextPath;
+}
+
+async function validateLeaderAnimationFlc(filePath) {
+  const res = await window.c3xManager.getPreview({
+    kind: 'leaderAnimationPath',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    assetPath: filePath,
+    maxFrames: 1
+  });
+  if (!res || !res.ok) throw new Error((res && res.error) || 'Could not decode FLC.');
+  if (Number(res.magic) !== 0xAF12) throw new Error('Leader animation FLC must be standard FLC magic 0xAF12.');
+  if (Number(res.width) !== 200 || Number(res.height) !== 240) throw new Error('Leader animation FLC must be 200x240.');
+  if (Number(res.depth) !== 8) throw new Error('Leader animation FLC must be 8-bit indexed color.');
+  if (Number(res.civ3NumAnims) > 0 || Number(res.civ3AnimLength) > 0) {
+    throw new Error('Leader animation FLC must be a standard single-stream FLC, not a Civ3 unit-direction FLC.');
+  }
+  return res;
+}
+
+async function stageLeaderAnimationReplacement(entry, field, filePath) {
+  if (!isScenarioMode()) {
+    throw new Error('Leader animation replacement is available in Scenario mode so files can be saved under the scenario Art\\Flics folder.');
+  }
+  const raw = normalizeAssetReferencePath(filePath);
+  if (!raw) throw new Error('No file selected.');
+  const ext = raw.split('.').pop().toLowerCase();
+  const targetPath = getLeaderAnimationTargetPath(raw, field && field.value);
+  if (!targetPath) throw new Error('Could not determine the scenario Art\\Flics target path.');
+  if (ext === 'flc') {
+    await validateLeaderAnimationFlc(raw);
+    rememberUndoSnapshot();
+    field.value = targetPath.replace(/\//g, '\\');
+    setPendingLeaderAnimationSource(entry, field, raw);
+  } else if (['png', 'jpg', 'jpeg', 'pcx'].includes(ext)) {
+    const conversion = await buildPendingLeaderAnimationConversion(raw);
+    rememberUndoSnapshot();
+    field.value = targetPath.replace(/\//g, '\\');
+    setPendingLeaderAnimationConversion(entry, field, conversion);
+  } else {
+    throw new Error('Choose an FLC, PNG, JPEG, or PCX file for leader animation replacement.');
+  }
+  setDirty(true);
+  state.previewCache.clear();
+  setStatus(`Staged ${getPathBaseName(targetPath)} for scenario Art\\Flics. Use Save to write it.`);
+}
+
+function getDroppedFilePath(ev) {
+  const file = ev && ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  return file && file.path
+    ? String(file.path)
+    : (window.c3xManager && typeof window.c3xManager.getPathForFile === 'function'
+      ? String(window.c3xManager.getPathForFile(file) || '')
+      : '');
+}
+
+function renderCivilizationAnimationPreviewCell(entry, field, directionLabel, referenceEditable) {
+  const cell = document.createElement('div');
+  cell.className = 'civilization-animation-preview-cell';
+  const rawPath = String(field && field.value || '').trim();
+  if (!rawPath) {
+    const empty = document.createElement('div');
+    empty.className = 'hint civilization-animation-empty';
+    empty.textContent = `${directionLabel} animation is not set.`;
+    cell.appendChild(empty);
+    return cell;
+  }
+
+  const previewHost = document.createElement('div');
+  previewHost.className = 'civilization-animation-preview-host';
+  const loading = document.createElement('div');
+  loading.className = 'hint';
+  loading.textContent = 'Preview loads when visible.';
+  previewHost.appendChild(loading);
+  cell.appendChild(previewHost);
+
+  const pathChip = document.createElement('div');
+  pathChip.className = 'key-display-chip civilization-animation-path-chip';
+  pathChip.textContent = rawPath;
+  pathChip.title = rawPath;
+  cell.appendChild(pathChip);
+
+  const pendingSource = getPendingLeaderAnimationSource(entry, field);
+  const pendingConversion = getPendingLeaderAnimationConversion(entry, field);
+  if (pendingSource || pendingConversion) {
+    if (referenceEditable && rawPath) {
+      const renameWrap = document.createElement('label');
+      renameWrap.className = 'art-slot-rename civilization-animation-rename';
+      const renameText = document.createElement('span');
+      renameText.textContent = 'Save as';
+      renameWrap.appendChild(renameText);
+      const renameInput = document.createElement('input');
+      renameInput.type = 'text';
+      renameInput.value = getPathBaseName(rawPath);
+      renameInput.spellcheck = false;
+      renameInput.setAttribute('aria-label', 'Save leader animation filename');
+      renameWrap.appendChild(renameInput);
+      const commitRename = () => {
+        const currentPath = normalizeAssetReferencePath(field && field.value);
+        const currentFileName = getPathBaseName(currentPath);
+        const nextFileName = sanitizePendingLeaderFlcFileName(renameInput.value);
+        renameInput.value = nextFileName;
+        if (!nextFileName || nextFileName === currentFileName) return;
+        const parent = getParentPath(currentPath) || 'Art/Flics';
+        const nextPath = normalizeRelativePath(`${parent}/${nextFileName}`);
+        rememberUndoSnapshot();
+        setLeaderAnimationDestinationPath(field, nextPath);
+        setDirty(true);
+        renderActiveTab({ preserveTabScroll: true });
+      };
+      renameInput.addEventListener('click', (ev) => ev.stopPropagation());
+      renameInput.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+      renameInput.addEventListener('keydown', (ev) => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          commitRename();
+          renameInput.blur();
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          renameInput.value = getPathBaseName(field && field.value);
+          renameInput.blur();
+        }
+      });
+      renameInput.addEventListener('change', commitRename);
+      renameWrap.addEventListener('click', (ev) => ev.stopPropagation());
+      cell.appendChild(renameWrap);
+    }
+  }
+
+  if (referenceEditable) {
+    const actions = document.createElement('div');
+    actions.className = 'art-slot-actions civilization-animation-actions';
+    const replaceBtn = document.createElement('button');
+    replaceBtn.type = 'button';
+    replaceBtn.className = 'ghost';
+    replaceBtn.textContent = 'Replace';
+    replaceBtn.disabled = !isScenarioMode();
+    replaceBtn.title = isScenarioMode()
+      ? 'Choose an FLC, PNG, JPEG, or PCX. Save writes the result under scenario Art\\Flics.'
+      : 'Switch to Scenario mode to replace leader animations.';
+    replaceBtn.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      try {
+        const filePath = await window.c3xManager.pickFile({
+          filters: [
+            { name: 'Leader Animation or Image', extensions: ['flc', 'png', 'jpg', 'jpeg', 'pcx'] },
+            { name: 'All Files', extensions: ['*'] }
+          ]
+        });
+        if (!filePath) return;
+        await stageLeaderAnimationReplacement(entry, field, filePath);
+        renderActiveTab({ preserveTabScroll: true });
+      } catch (err) {
+        setStatus(err && err.message ? err.message : 'Could not stage leader animation replacement.', true);
+      }
+    });
+    actions.appendChild(replaceBtn);
+    cell.appendChild(actions);
+
+    cell.addEventListener('dragover', (ev) => {
+      if (!isScenarioMode()) return;
+      ev.preventDefault();
+      cell.classList.add('drag-over');
+    });
+    cell.addEventListener('dragleave', () => {
+      cell.classList.remove('drag-over');
+    });
+    cell.addEventListener('drop', (ev) => {
+      if (!isScenarioMode()) return;
+      ev.preventDefault();
+      cell.classList.remove('drag-over');
+      const droppedPath = getDroppedFilePath(ev);
+      if (!droppedPath) {
+        setStatus('Could not read the dropped file path.', true);
+        return;
+      }
+      stageLeaderAnimationReplacement(entry, field, droppedPath)
+        .then(() => renderActiveTab({ preserveTabScroll: true }))
+        .catch((err) => {
+          setStatus(err && err.message ? err.message : 'Could not stage leader animation replacement.', true);
+        });
+    });
+  }
+
+  if (pendingConversion && pendingConversion.rgbaBase64) {
+    previewHost.innerHTML = '';
+    renderRgbaPreview(previewHost, {
+      ok: true,
+      animated: false,
+      width: Number(pendingConversion.width) || 200,
+      height: Number(pendingConversion.height) || 240,
+      rgbaBase64: pendingConversion.rgbaBase64,
+      sourcePath: String(pendingConversion.sourcePath || rawPath)
+    }, `${directionLabel} (generated)`, () => 66, 150);
+    return cell;
+  }
+
+  const previewAssetPath = pendingSource || rawPath;
+  const cacheKey = JSON.stringify({
+    kind: 'leaderAnimationPath',
+    key: String(entry && entry.civilopediaKey || ''),
+    assetPath: previewAssetPath,
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPathsKey()
+  });
+  const paint = (res) => {
+    if (!previewHost.isConnected) return;
+    previewHost.innerHTML = '';
+    const delayMs = Number.isFinite(Number(res && res.speedField)) && Number(res.speedField) > 0
+      ? Math.max(16, Math.round(Number(res.speedField)))
+      : 66;
+    renderRgbaPreview(previewHost, res, directionLabel, () => delayMs, 150, { sampleMaxFrames: 80 });
+  };
+  observeCivilizationAnimationPreview(previewHost, () => {
+    const cached = state.previewCache.get(cacheKey);
+    if (cached) {
+      appendDebugLog('civ-leader-flc:cache-hit', { directionLabel, assetPath: previewAssetPath, frames: cached.framesBase64 ? cached.framesBase64.length : 0 });
+      paint(cached);
+      return;
+    }
+    previewHost.innerHTML = '<div class="hint">Loading preview...</div>';
+    enqueueCivilizationAnimationPreview(async () => {
+      if (!previewHost.isConnected) {
+        appendDebugLog('civ-leader-flc:skip-disconnected', { directionLabel, assetPath: previewAssetPath });
+        return;
+      }
+      const request = {
+        kind: 'leaderAnimationPath',
+        civ3Path: state.settings.civ3Path,
+        scenarioPath: state.settings.scenarioPath,
+        scenarioPaths: getScenarioPreviewPaths(),
+        civilopediaKey: String(entry && entry.civilopediaKey || ''),
+        assetPath: previewAssetPath,
+        maxFrames: 40
+      };
+      appendDebugLog('civ-leader-flc:request', { directionLabel, assetPath: previewAssetPath, active: civilizationAnimationPreviewQueue.active });
+      try {
+        const res = await withCivilizationAnimationPreviewTimeout(
+          window.c3xManager.getPreview(request),
+          15000,
+          { directionLabel, assetPath: previewAssetPath }
+        );
+        if (!res || !res.ok) {
+          appendDebugLog('civ-leader-flc:response-error', { directionLabel, assetPath: previewAssetPath, error: res && res.error });
+          if (previewHost.isConnected) previewHost.innerHTML = `<div class="hint">${res && res.error ? res.error : 'Could not load preview.'}</div>`;
+          return;
+        }
+        appendDebugLog('civ-leader-flc:response-ok', {
+          directionLabel,
+          assetPath: previewAssetPath,
+          sourcePath: res.sourcePath,
+          width: res.width,
+          height: res.height,
+          frames: res.framesBase64 ? res.framesBase64.length : 0,
+          speedField: res.speedField,
+          debug: res.debug || null
+        });
+        setPreviewCache(cacheKey, res);
+        paint(res);
+      } catch (err) {
+        appendDebugLog('civ-leader-flc:exception', { directionLabel, assetPath: previewAssetPath, error: err && err.message });
+        if (previewHost.isConnected) previewHost.innerHTML = '<div class="hint">Could not load preview.</div>';
+      }
+    });
+  }, { directionLabel, assetPath: previewAssetPath });
+
+  return cell;
+}
+
+function renderCivilizationAnimationPreviewCard(entry, referenceEditable) {
+  const eraRows = [
+    ...getCivilizationAnimationRows(entry)
+  ];
   if (eraRows.length === 0) return null;
 
   const card = document.createElement('div');
@@ -15429,7 +15883,7 @@ function renderCivilizationAnimationTableCard(entry, referenceEditable, selected
   card.dataset.sectionLabel = 'Animations';
   const title = document.createElement('div');
   title.className = 'rule-group-title';
-  title.textContent = 'Animations';
+  title.textContent = 'Leader Animations';
   card.appendChild(title);
 
   const table = document.createElement('div');
@@ -15451,20 +15905,17 @@ function renderCivilizationAnimationTableCard(entry, referenceEditable, selected
     [row.forward, row.reverse].forEach((field) => {
       const cell = document.createElement('div');
       cell.className = 'civilization-animation-cell';
-      const control = buildCivilizationTopFieldControl({
-        entry,
-        field,
-        referenceEditable,
-        selectedBaseIndex,
-        options: { compactRow: true }
-      });
-      if (control) cell.appendChild(control);
+      cell.appendChild(renderCivilizationAnimationPreviewCell(entry, field, field === row.forward ? 'Forward' : 'Reverse', referenceEditable));
       table.appendChild(cell);
     });
   });
 
   card.appendChild(table);
   return card;
+}
+
+function hasCivilizationAnimationFields(entry) {
+  return getCivilizationAnimationRows(entry).length > 0;
 }
 
 function renderCivilizationDenseTopBoard(entry, referenceEditable, selectedBaseIndex) {
@@ -15644,11 +16095,7 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
   const diplomacySectionsCard = renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable, { showIndexRow: false });
   if (diplomacySectionsCard) bottomStack.appendChild(diplomacySectionsCard);
 
-  const animationCard = renderCivilizationAnimationTableCard(entry, referenceEditable, selectedBaseIndex);
-  if (animationCard) {
-    groupedFields.delete('Animations');
-    bottomStack.appendChild(animationCard);
-  }
+  groupedFields.delete('Animations');
 
   for (const [groupName, fields] of groupedFields.entries()) {
     if (!fields || fields.length === 0) continue;
@@ -16791,6 +17238,7 @@ function createReferencePicker(config) {
   const targetTabKey = String(opts.targetTabKey || '').trim();
   const readOnly = !!opts.readOnly;
   const resetAfterSelect = !!opts.resetAfterSelect;
+  const includeNone = opts.includeNone !== false;
   const noneLabel = String(opts.noneLabel || '(none)');
   const searchPlaceholder = String(opts.searchPlaceholder || 'Search...');
   const showOptionThumbs = opts.showOptionThumbs !== false;
@@ -16801,7 +17249,7 @@ function createReferencePicker(config) {
   const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
 
   const normalizedOptions = [];
-  normalizedOptions.push({ value: '-1', label: noneLabel, displayLabel: noneLabel, entry: null });
+  if (includeNone) normalizedOptions.push({ value: '-1', label: noneLabel, displayLabel: noneLabel, entry: null });
   options.forEach((opt) => {
     if (!opt) return;
     if (opt.separator) {
@@ -16845,7 +17293,7 @@ function createReferencePicker(config) {
       const parsed = parseIntFromDisplayValue(value);
       return parsed == null ? String(value ?? '') : String(parsed);
     })();
-    const selected = findOptionByValue(normalizedOptions, normalizedValue) || normalizedOptions[0];
+    const selected = findOptionByValue(normalizedOptions, normalizedValue) || normalizedOptions[0] || null;
     const selectedLabel = selected ? String(selected.displayLabel || selected.label || noneLabel) : noneLabel;
     selectedJumpLabel = selectedLabel;
     buttonText.textContent = selectedLabel;
@@ -17245,6 +17693,97 @@ async function getResourcesAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
     return res;
   }
   return null;
+}
+
+function getAtlasCopyTab(tabKey) {
+  return state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+}
+
+function getPendingAtlasCopy(tabKey, atlasKey) {
+  const tab = getAtlasCopyTab(tabKey);
+  return tab && tab.pendingAtlasCopies && typeof tab.pendingAtlasCopies === 'object'
+    ? tab.pendingAtlasCopies[atlasKey]
+    : null;
+}
+
+function stageScenarioAtlasCopy({ tabKey, atlasKey, relativePath, sourcePath }) {
+  const tab = getAtlasCopyTab(tabKey);
+  if (!tab || !atlasKey || !relativePath || !sourcePath) return false;
+  rememberUndoSnapshot();
+  if (!tab.pendingAtlasCopies || typeof tab.pendingAtlasCopies !== 'object') tab.pendingAtlasCopies = {};
+  tab.pendingAtlasCopies[atlasKey] = {
+    staged: true,
+    relativePath,
+    sourcePath
+  };
+  setDirty(true);
+  return true;
+}
+
+function getScenarioAtlasTargetPath(relativePath) {
+  const root = getActiveScenarioDir();
+  const rel = normalizeAssetReferencePath(relativePath);
+  if (!root || !rel || isAbsoluteAssetPath(rel)) return '';
+  return `${root.replace(/\/+$/, '')}/${rel}`;
+}
+
+function sourceIsScenarioLocal(sourcePath) {
+  const source = toSlashPath(sourcePath).trim();
+  if (!source) return false;
+  const activeDir = getActiveScenarioDir();
+  if (activeDir && pathIsSameOrChild(source, activeDir)) return true;
+  return getScenarioPreviewPaths().some((root) => pathIsSameOrChild(source, root));
+}
+
+function createScenarioAtlasCopyNotice({ tabKey, atlasKey, relativePath, label, previewPromise, onChanged }) {
+  const notice = document.createElement('div');
+  notice.className = 'scenario-atlas-copy-notice hidden';
+  const text = document.createElement('span');
+  text.className = 'scenario-atlas-copy-text';
+  notice.appendChild(text);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost scenario-atlas-copy-button';
+  btn.textContent = `Make ${label} Copy for Scenario`;
+  notice.appendChild(btn);
+
+  const pending = getPendingAtlasCopy(tabKey, atlasKey);
+  if (pending && pending.staged) {
+    text.textContent = `${label} will be copied into this scenario on save.`;
+    btn.disabled = true;
+    btn.textContent = 'Staged';
+    notice.classList.remove('hidden');
+    return notice;
+  }
+
+  if (state.settings && state.settings.mode !== 'scenario') return notice;
+  const targetPath = getScenarioAtlasTargetPath(relativePath);
+  if (!targetPath || !window.c3xManager || typeof window.c3xManager.pathExists !== 'function') return notice;
+
+  Promise.all([
+    previewPromise,
+    window.c3xManager.pathExists(targetPath).catch(() => false)
+  ]).then(([preview, targetExists]) => {
+    if (!notice.isConnected || targetExists) return;
+    const sourcePath = String(preview && preview.sourcePath || '').trim();
+    if (!sourcePath || sourceIsScenarioLocal(sourcePath)) return;
+    text.textContent = `This scenario is using the default ${label}.`;
+    btn.disabled = false;
+    btn.addEventListener('click', () => {
+      if (!stageScenarioAtlasCopy({ tabKey, atlasKey, relativePath, sourcePath })) {
+        setStatus(`Could not stage ${label} for this scenario.`, true);
+        return;
+      }
+      text.textContent = `${label} will be copied into this scenario on save.`;
+      btn.disabled = true;
+      btn.textContent = 'Staged';
+      setStatus(`Staged ${label} for this scenario.`);
+      if (typeof onChanged === 'function') onChanged();
+    }, { once: true });
+    notice.classList.remove('hidden');
+  }).catch(() => {});
+
+  return notice;
 }
 
 function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
@@ -18723,6 +19262,389 @@ function openTechTreeModal(config) {
     techTreeModal.body.innerHTML = '';
     const panel = createTechTreePanel(config || {});
     techTreeModal.body.appendChild(panel);
+  }
+  overlay.classList.remove('hidden');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
+function ensureUnitAvailabilityModalNode() {
+  if (unitAvailabilityModal.node && unitAvailabilityModal.node.isConnected) return unitAvailabilityModal.node;
+  const overlay = document.createElement('div');
+  overlay.className = 'unit-availability-modal-overlay hidden';
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.innerHTML = `
+    <div class="unit-availability-modal-panel" role="dialog" aria-modal="true" aria-label="Availability by Civ">
+      <div class="unit-availability-modal-header">
+        <strong id="unit-availability-modal-title">Availability by Civ</strong>
+        <button type="button" class="ghost" data-act="close">Close</button>
+      </div>
+      <div id="unit-availability-modal-body" class="unit-availability-modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  unitAvailabilityModal.node = overlay;
+  unitAvailabilityModal.body = overlay.querySelector('#unit-availability-modal-body');
+  unitAvailabilityModal.title = overlay.querySelector('#unit-availability-modal-title');
+  const closeBtn = overlay.querySelector('[data-act="close"]');
+  if (closeBtn) closeBtn.addEventListener('click', () => closeUnitAvailabilityModal());
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closeUnitAvailabilityModal();
+  });
+  return overlay;
+}
+
+function closeUnitAvailabilityModal() {
+  const overlay = ensureUnitAvailabilityModalNode();
+  overlay.classList.add('hidden');
+  overlay.setAttribute('aria-hidden', 'true');
+  if (unitAvailabilityModal.body) unitAvailabilityModal.body.innerHTML = '';
+}
+
+function getUnitAvailabilityClassFilter(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'unitclass');
+  const raw = String(field && field.value || '').trim().toLowerCase();
+  if (raw.startsWith('sea') || raw === '1') return 'sea';
+  if (raw.startsWith('air') || raw === '2') return 'air';
+  return 'land';
+}
+
+function getUnitAvailabilityClassLabel(entry) {
+  const key = getUnitAvailabilityClassFilter(entry);
+  if (key === 'sea') return 'Sea';
+  if (key === 'air') return 'Air';
+  return 'Land';
+}
+
+function isUnitAvailabilityKingUnit(entry) {
+  const abilityField = getBiqFieldByBaseKey(entry, 'king');
+  if (String(abilityField && abilityField.value || '').trim().toLowerCase() === 'true') return true;
+  const strategyField = getBiqFieldByBaseKey(entry, 'kingstrategy');
+  return String(strategyField && strategyField.value || '').trim().toLowerCase() === 'true';
+}
+
+function getUnitAvailabilityEraLabel(entry) {
+  const eraIndex = getReferenceEntryEraIndex('units', entry);
+  if (!(Number.isFinite(eraIndex) && eraIndex >= 0)) return 'No era';
+  const opt = getReferenceEraFilterOptions().find((item) => String(item.value) === String(eraIndex));
+  return opt ? String(opt.label || `Era ${eraIndex + 1}`) : `Era ${eraIndex + 1}`;
+}
+
+function getUnitAvailabilityRows(tab) {
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  return entries.map((entry, fallbackIndex) => {
+    const key = String(entry && entry.civilopediaKey || '');
+    const upperKey = key.trim().toUpperCase();
+    const isEraVariant = upperKey.startsWith('PRTO_') && upperKey.includes('_ERAS_');
+    const rawEraIndex = getReferenceEntryEraIndex('units', entry);
+    const eraIndex = Number.isFinite(rawEraIndex) && rawEraIndex >= 0 ? rawEraIndex : (isEraVariant ? -1 : 0);
+    const eraOpt = getReferenceEraFilterOptions().find((item) => String(item.value) === String(eraIndex));
+    return {
+      entry,
+      fallbackIndex,
+      identity: getReferenceEntryIdentity('units', entry, fallbackIndex) || `idx:${fallbackIndex}`,
+      name: String(entry && entry.name || entry && entry.civilopediaKey || `Unit ${fallbackIndex + 1}`),
+      key,
+      classKey: getUnitAvailabilityClassFilter(entry),
+      classLabel: getUnitAvailabilityClassLabel(entry),
+      eraIndex,
+      eraLabel: eraOpt ? String(eraOpt.label || `Era ${eraIndex + 1}`) : getUnitAvailabilityEraLabel(entry),
+      isKingUnit: isUnitAvailabilityKingUnit(entry),
+      isEraVariant
+    };
+  });
+}
+
+function getDefaultUnitAvailabilityCivValue() {
+  const civOptions = getCivilizationBitmaskOptions();
+  if (civOptions.length === 0) return '';
+  const civTab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
+  const civEntries = civTab && Array.isArray(civTab.entries) ? civTab.entries : [];
+  const selectedIndex = Number(state.referenceSelection && state.referenceSelection.civilizations);
+  const selectedEntry = Number.isFinite(selectedIndex) && selectedIndex >= 0 ? civEntries[selectedIndex] : null;
+  if (selectedEntry) {
+    const selectedValue = getReferenceEntryIndexForOption('civilizations', selectedEntry, selectedIndex, { allowFallback: true });
+    const match = civOptions.find((opt) => String(opt.value) === String(selectedValue));
+    if (match) return String(match.value);
+  }
+  return String(civOptions[0].value);
+}
+
+function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue = '' }) {
+  const civOptions = getCivilizationBitmaskOptions();
+  const rows = getUnitAvailabilityRows(tab).filter((row) => !row.isEraVariant && Number.isFinite(row.eraIndex) && row.eraIndex >= 0);
+  const initialMatch = civOptions.find((opt) => String(opt.value) === String(initialCivValue));
+  let selectedCiv = initialMatch ? String(initialMatch.value) : getDefaultUnitAvailabilityCivValue();
+  const filters = {
+    query: '',
+    era: 'all',
+    unitClass: 'all',
+    status: 'all',
+    showKingUnits: false
+  };
+
+  const panel = document.createElement('div');
+  panel.className = 'unit-availability-panel';
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'unit-availability-toolbar';
+  const filterRow = document.createElement('div');
+  filterRow.className = 'unit-availability-filter-row';
+  const getSelectedCivLabel = () => {
+    const selected = civOptions.find((opt) => String(opt.value) === String(selectedCiv));
+    return selected ? String(selected.label || `Civilization ${selected.value}`) : 'this civilization';
+  };
+  const civPicker = createReferencePicker({
+    targetTabKey: 'civilizations',
+    options: civOptions,
+    currentValue: selectedCiv || '-1',
+    includeNone: false,
+    searchPlaceholder: 'Search civilizations...',
+    onSelect: (value) => {
+      selectedCiv = String(value);
+      render();
+    }
+  });
+  civPicker.classList.add('unit-availability-civ-picker');
+  filterRow.appendChild(civPicker);
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.classList.add('app-search-input');
+  searchInput.placeholder = 'Search units...';
+  filterRow.appendChild(searchInput);
+
+  const eraSelect = document.createElement('select');
+  eraSelect.className = 'unit-availability-era-select';
+  getReferenceEraFilterOptions().forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    eraSelect.appendChild(o);
+  });
+  filterRow.appendChild(eraSelect);
+
+  const classSelect = document.createElement('select');
+  classSelect.className = 'unit-availability-class-select';
+  [
+    { value: 'all', label: 'All Classes' },
+    { value: 'land', label: 'Land' },
+    { value: 'sea', label: 'Sea' },
+    { value: 'air', label: 'Air' }
+  ].forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    classSelect.appendChild(o);
+  });
+  filterRow.appendChild(classSelect);
+
+  const statusSelect = document.createElement('select');
+  statusSelect.className = 'unit-availability-status-select';
+  [
+    { value: 'all', label: 'All Units' },
+    { value: 'available', label: 'Available' },
+    { value: 'unavailable', label: 'Unavailable' }
+  ].forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    statusSelect.appendChild(o);
+  });
+  filterRow.appendChild(statusSelect);
+  const showKingWrap = document.createElement('label');
+  showKingWrap.className = 'unit-availability-king-toggle';
+  const showKingCheck = document.createElement('input');
+  showKingCheck.type = 'checkbox';
+  showKingCheck.checked = false;
+  const showKingText = document.createElement('span');
+  showKingText.textContent = 'Show King Units';
+  showKingWrap.appendChild(showKingCheck);
+  showKingWrap.appendChild(showKingText);
+  filterRow.appendChild(showKingWrap);
+  toolbar.appendChild(filterRow);
+
+  const actionRow = document.createElement('div');
+  actionRow.className = 'unit-availability-action-row';
+
+  const summary = document.createElement('div');
+  summary.className = 'unit-availability-summary';
+  actionRow.appendChild(summary);
+  const setVisibleBtn = document.createElement('button');
+  setVisibleBtn.type = 'button';
+  setVisibleBtn.className = 'ghost unit-availability-bulk-btn unit-availability-bulk-available';
+  setVisibleBtn.innerHTML = '<span class="btn-icon">✓</span>Mark shown as Available';
+  const clearVisibleBtn = document.createElement('button');
+  clearVisibleBtn.type = 'button';
+  clearVisibleBtn.className = 'ghost unit-availability-bulk-btn unit-availability-bulk-unavailable';
+  clearVisibleBtn.innerHTML = '<span class="btn-icon">✕</span>Mark shown as Unavailable';
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'ghost unit-availability-undo-btn';
+  undoBtn.innerHTML = '<span class="btn-icon">↶</span>Undo';
+  const undoAllBtn = document.createElement('button');
+  undoAllBtn.type = 'button';
+  undoAllBtn.className = 'ghost unit-availability-undo-all-btn';
+  undoAllBtn.innerHTML = '<span class="btn-icon">↺</span>Undo All';
+  actionRow.appendChild(setVisibleBtn);
+  actionRow.appendChild(clearVisibleBtn);
+  actionRow.appendChild(undoBtn);
+  actionRow.appendChild(undoAllBtn);
+  toolbar.appendChild(actionRow);
+  panel.appendChild(toolbar);
+
+  const grid = document.createElement('div');
+  grid.className = 'unit-availability-grid';
+  panel.appendChild(grid);
+
+  const empty = document.createElement('div');
+  empty.className = 'unit-availability-empty hidden';
+  empty.textContent = civOptions.length ? 'No units match the current filters.' : 'No civilizations are available for unit bitmask editing.';
+  panel.appendChild(empty);
+
+  const getSelectedCivIndex = () => {
+    const idx = Number.parseInt(String(selectedCiv), 10);
+    return Number.isFinite(idx) && idx >= 0 && idx <= 31 ? idx : null;
+  };
+
+  const reopenForCurrentState = () => {
+    const currentTab = state.bundle && state.bundle.tabs && state.bundle.tabs.units;
+    if (!currentTab) return;
+    openUnitAvailabilityModal({ tab: currentTab, referenceEditable: isScenarioMode(), initialCivValue: selectedCiv });
+  };
+
+  const refreshUndoButtons = () => {
+    undoBtn.disabled = !referenceEditable || !getLatestUndoSnapshot();
+    undoAllBtn.disabled = !referenceEditable || !state.isDirty;
+  };
+
+  const getVisibleRows = () => {
+    const needle = filters.query.trim().toLowerCase();
+    const civIdx = getSelectedCivIndex();
+    return rows.filter((row) => {
+      if (needle && !`${row.name} ${row.key}`.toLowerCase().includes(needle)) return false;
+      if (!filters.showKingUnits && row.isKingUnit) return false;
+      if (filters.era !== 'all' && String(row.eraIndex) !== String(filters.era)) return false;
+      if (filters.unitClass !== 'all' && row.classKey !== filters.unitClass) return false;
+      const available = civIdx == null ? false : isUnitAvailableToCivilization(row.entry, civIdx);
+      if (filters.status === 'available' && !available) return false;
+      if (filters.status === 'unavailable' && available) return false;
+      return true;
+    });
+  };
+
+  const renderUnitThumb = (row, host) => {
+    host.textContent = '';
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb';
+    host.appendChild(thumb);
+    loadReferenceListThumbnail('units', row.entry, thumb);
+  };
+
+  const render = () => {
+    const civIdx = getSelectedCivIndex();
+    const visibleRows = getVisibleRows();
+    const availableCount = civIdx == null ? 0 : rows.filter((row) => isUnitAvailableToCivilization(row.entry, civIdx)).length;
+    summary.textContent = `${availableCount} of ${rows.length} for ${getSelectedCivLabel()} · ${visibleRows.length} shown`;
+    grid.innerHTML = '';
+    empty.classList.toggle('hidden', visibleRows.length > 0);
+    setVisibleBtn.disabled = !referenceEditable || visibleRows.length === 0;
+    clearVisibleBtn.disabled = !referenceEditable || visibleRows.length === 0;
+    refreshUndoButtons();
+    const fragment = document.createDocumentFragment();
+    visibleRows.forEach((row) => {
+      const item = document.createElement('label');
+      item.className = 'unit-availability-item';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = civIdx == null ? false : isUnitAvailableToCivilization(row.entry, civIdx);
+      input.disabled = !referenceEditable;
+      const thumbHost = document.createElement('span');
+      thumbHost.className = 'unit-availability-thumb';
+      const text = document.createElement('span');
+      text.className = 'unit-availability-text';
+      const name = document.createElement('strong');
+      name.textContent = row.name;
+      text.appendChild(name);
+      item.appendChild(input);
+      item.appendChild(thumbHost);
+      item.appendChild(text);
+      input.addEventListener('change', () => {
+        const idx = getSelectedCivIndex();
+        if (idx == null) return;
+        const next = !!input.checked;
+        if (isUnitAvailableToCivilization(row.entry, idx) === next) return;
+        rememberUndoSnapshot();
+        setUnitAvailableToCivilization(row.entry, idx, next);
+        setDirty(true);
+        render();
+      });
+      renderUnitThumb(row, thumbHost);
+      fragment.appendChild(item);
+    });
+    grid.appendChild(fragment);
+  };
+
+  searchInput.addEventListener('input', () => {
+    filters.query = searchInput.value;
+    render();
+  });
+  eraSelect.addEventListener('change', () => {
+    filters.era = eraSelect.value;
+    render();
+  });
+  classSelect.addEventListener('change', () => {
+    filters.unitClass = classSelect.value;
+    render();
+  });
+  statusSelect.addEventListener('change', () => {
+    filters.status = statusSelect.value;
+    render();
+  });
+  showKingCheck.addEventListener('change', () => {
+    filters.showKingUnits = !!showKingCheck.checked;
+    render();
+  });
+  setVisibleBtn.addEventListener('click', () => {
+    const civIdx = getSelectedCivIndex();
+    if (civIdx == null) return;
+    const targets = getVisibleRows().filter((row) => !isUnitAvailableToCivilization(row.entry, civIdx));
+    if (targets.length === 0) return;
+    rememberUndoSnapshot();
+    targets.forEach((row) => setUnitAvailableToCivilization(row.entry, civIdx, true));
+    setDirty(true);
+    render();
+  });
+  clearVisibleBtn.addEventListener('click', () => {
+    const civIdx = getSelectedCivIndex();
+    if (civIdx == null) return;
+    const targets = getVisibleRows().filter((row) => isUnitAvailableToCivilization(row.entry, civIdx));
+    if (targets.length === 0) return;
+    rememberUndoSnapshot();
+    targets.forEach((row) => setUnitAvailableToCivilization(row.entry, civIdx, false));
+    setDirty(true);
+    render();
+  });
+  undoBtn.addEventListener('click', async () => {
+    if (!referenceEditable || !getLatestUndoSnapshot()) return;
+    await undoOneStep();
+    reopenForCurrentState();
+  });
+  undoAllBtn.addEventListener('click', async () => {
+    if (!referenceEditable || !state.isDirty) return;
+    await undoAllChanges();
+    reopenForCurrentState();
+  });
+
+  render();
+  return panel;
+}
+
+function openUnitAvailabilityModal({ tab, referenceEditable, initialCivValue = '' }) {
+  const overlay = ensureUnitAvailabilityModalNode();
+  if (unitAvailabilityModal.title) unitAvailabilityModal.title.textContent = 'Availability by Civ';
+  if (unitAvailabilityModal.body) {
+    unitAvailabilityModal.body.innerHTML = '';
+    unitAvailabilityModal.body.appendChild(createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue }));
   }
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
@@ -20250,12 +21172,20 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
         iconWarnEl.classList.remove('hidden');
       }
     }).catch(() => {});
+    indexCard.appendChild(createScenarioAtlasCopyNotice({
+      tabKey: 'units',
+      atlasKey: 'units32',
+      relativePath: 'Art/Units/units_32.pcx',
+      label: 'units_32.pcx',
+      previewPromise: getUnits32AtlasPreview(),
+      onChanged
+    }));
     wrap.appendChild(indexCard);
   }
   return wrap;
 }
 
-function renderCivilizationArtEditor(entry, referenceEditable, onChanged) {
+function renderCivilizationArtEditor(entry, referenceEditable, onChanged, selectedBaseIndex) {
   const wrap = document.createElement('div');
   wrap.className = 'civilization-art-editor';
   const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
@@ -20307,6 +21237,9 @@ function renderCivilizationArtEditor(entry, referenceEditable, onChanged) {
     }));
   });
   wrap.appendChild(portraitGrid);
+
+  const animationCard = renderCivilizationAnimationPreviewCard(entry, referenceEditable);
+  if (animationCard) wrap.appendChild(animationCard);
   return wrap;
 }
 
@@ -20377,6 +21310,14 @@ function renderResourceArtEditor(entry, referenceEditable, onChanged) {
         iconWarnEl.classList.remove('hidden');
       }
     }).catch(() => {});
+    indexCard.appendChild(createScenarioAtlasCopyNotice({
+      tabKey: 'resources',
+      atlasKey: 'resources',
+      relativePath: 'Art/resources.pcx',
+      label: 'resources.pcx',
+      previewPromise: getResourcesAtlasPreview(),
+      onChanged
+    }));
     wrap.appendChild(indexCard);
   }
   return wrap;
@@ -20540,6 +21481,15 @@ function sanitizePendingArtPcxFileName(rawName) {
     .replace(/[. ]+$/g, '');
   const stem = base.replace(/\.[^.]+$/i, '').trim().replace(/[. ]+$/g, '') || 'art';
   return `${stem}.pcx`;
+}
+
+function sanitizePendingLeaderFlcFileName(rawName) {
+  const base = getPathBaseName(String(rawName || '').trim())
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/g, '');
+  const stem = base.replace(/\.[^.]+$/i, '').trim().replace(/[. ]+$/g, '') || 'leader';
+  return `${stem}.flc`;
 }
 
 function setReferenceArtSlotDestinationPath(entry, slot, nextPathRaw) {
@@ -20839,6 +21789,46 @@ async function buildPendingRepeatedPortraitSheetConversion(filePath, size) {
     height: target.height,
     rgbaBase64: toBase64FromUint8(buildRepeatedPortraitSheetRgba(source, target)),
     repeatSheet: 'civilization-portrait-sheet'
+  };
+}
+
+function resizeRgbaCoverForUi(source, targetWidth, targetHeight) {
+  const sw = Math.max(1, Number(source && source.width) || 1);
+  const sh = Math.max(1, Number(source && source.height) || 1);
+  const tw = Math.max(1, Number(targetWidth) || 1);
+  const th = Math.max(1, Number(targetHeight) || 1);
+  const src = source && source.rgba instanceof Uint8Array ? source.rgba : new Uint8Array();
+  const out = new Uint8Array(tw * th * 4);
+  const scale = Math.max(tw / sw, th / sh);
+  const drawW = Math.max(1, Math.round(sw * scale));
+  const drawH = Math.max(1, Math.round(sh * scale));
+  const ox = Math.floor((tw - drawW) / 2);
+  const oy = Math.floor((th - drawH) / 2);
+  for (let y = 0; y < th; y += 1) {
+    for (let x = 0; x < tw; x += 1) {
+      const sx = Math.min(sw - 1, Math.max(0, Math.floor((x - ox + 0.5) / scale)));
+      const sy = Math.min(sh - 1, Math.max(0, Math.floor((y - oy + 0.5) / scale)));
+      const srcOff = (sy * sw + sx) * 4;
+      const dstOff = (y * tw + x) * 4;
+      out[dstOff] = src[srcOff] || 0;
+      out[dstOff + 1] = src[srcOff + 1] || 0;
+      out[dstOff + 2] = src[srcOff + 2] || 0;
+      out[dstOff + 3] = srcOff + 3 < src.length ? src[srcOff + 3] : 255;
+    }
+  }
+  return out;
+}
+
+async function buildPendingLeaderAnimationConversion(filePath) {
+  const source = await loadRgbaForRepeatSheet(filePath);
+  return {
+    sourcePath: normalizeAssetReferencePath(filePath),
+    width: 200,
+    height: 240,
+    rgbaBase64: toBase64FromUint8(resizeRgbaCoverForUi(source, 200, 240)),
+    leaderFlc: true,
+    frameCount: 121,
+    speedMs: 66
   };
 }
 
@@ -23146,6 +24136,7 @@ function renderReferenceTab(tab, tabKey) {
     controlsRight.appendChild(kindFilter);
   }
   let unitSortSelect = null;
+  let unitAvailabilityBtn = null;
   if (tabKey === 'units') {
     unitSortSelect = document.createElement('select');
     const unitSortOptions = [
@@ -23161,6 +24152,21 @@ function renderReferenceTab(tab, tabKey) {
     });
     unitSortSelect.value = state.referenceUnitSort[tabKey] || 'ingame';
     controlsRight.appendChild(unitSortSelect);
+
+    unitAvailabilityBtn = document.createElement('button');
+    unitAvailabilityBtn.type = 'button';
+    unitAvailabilityBtn.className = 'ghost unit-availability-action-btn';
+    const unitAvailabilityIcon = document.createElement('span');
+    unitAvailabilityIcon.className = 'btn-icon unit-availability-action-icon';
+    unitAvailabilityIcon.textContent = '🌐';
+    const unitAvailabilityLabel = document.createElement('span');
+    unitAvailabilityLabel.textContent = 'Availability by Civ';
+    unitAvailabilityBtn.appendChild(unitAvailabilityIcon);
+    unitAvailabilityBtn.appendChild(unitAvailabilityLabel);
+    unitAvailabilityBtn.title = referenceEditable
+      ? 'Edit unit availability by civilization'
+      : 'View unit availability by civilization';
+    controlsRight.appendChild(unitAvailabilityBtn);
   }
   if (tabKey === 'technologies') {
     techTreeBtn = document.createElement('button');
@@ -24338,20 +25344,20 @@ function renderReferenceTab(tab, tabKey) {
         ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
       });
       utilityStack.appendChild(pediaDetails);
-      if (artSlots.length > 0) {
+      if (artSlots.length > 0 || hasCivilizationAnimationFields(entry)) {
         const civArtDetails = document.createElement('details');
         civArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const civArtOpenKey = 'civilizations:art';
         civArtDetails.open = !!state.unitUtilitySectionOpenByKey[civArtOpenKey];
         const civArtSummary = document.createElement('summary');
-        civArtSummary.textContent = 'Civilization Art';
+        civArtSummary.textContent = 'Civilization Art and Animations';
         civArtDetails.appendChild(civArtSummary);
         civArtDetails.addEventListener('toggle', () => {
           state.unitUtilitySectionOpenByKey[civArtOpenKey] = !!civArtDetails.open;
         });
         const civArtBody = document.createElement('div');
         civArtBody.className = 'unit-collapsible-body';
-        civArtBody.appendChild(renderCivilizationArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
+        civArtBody.appendChild(renderCivilizationArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true }), selectedBaseIndex));
         civArtDetails.appendChild(civArtBody);
         utilityStack.appendChild(civArtDetails);
       }
@@ -24612,6 +25618,15 @@ function renderReferenceTab(tab, tabKey) {
       state.referenceUnitSort[tabKey] = unitSortSelect.value;
       state.referenceListScrollTop[tabKey] = 0;
       renderReferenceBody();
+    });
+  }
+  if (unitAvailabilityBtn) {
+    unitAvailabilityBtn.addEventListener('click', () => {
+      openUnitAvailabilityModal({
+        tab,
+        referenceEditable,
+        initialCivValue: getDefaultUnitAvailabilityCivValue()
+      });
     });
   }
 
@@ -33868,6 +34883,9 @@ function renderActiveTab(options = {}) {
   if (state.activeTab !== 'technologies' && techTreeModal.node && !techTreeModal.node.classList.contains('hidden')) {
     closeTechTreeModal();
   }
+  if (state.activeTab !== 'units' && unitAvailabilityModal.node && !unitAvailabilityModal.node.classList.contains('hidden')) {
+    closeUnitAvailabilityModal();
+  }
 
   if (tab.type === 'reference') {
     el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
@@ -34348,6 +35366,7 @@ function mapSaveKindLabel(kind) {
   if (key === 'pediaicons') return 'PediaIcons';
   if (key === 'civilopedia') return 'Civilopedia';
   if (key === 'diplomacy') return 'Diplomacy';
+  if (key === 'atlas') return 'Icon Atlas';
   return key.toUpperCase();
 }
 
@@ -36112,6 +37131,12 @@ async function init() {
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && techTreeModal.node && !techTreeModal.node.classList.contains('hidden')) {
       closeTechTreeModal();
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (ev.key === 'Escape' && unitAvailabilityModal.node && !unitAvailabilityModal.node.classList.contains('hidden')) {
+      closeUnitAvailabilityModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;

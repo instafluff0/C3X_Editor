@@ -1,4 +1,13 @@
 * RELEASE 27.9
+- Added Scenario-mode notices for Resources and Units when the icon index picker is using the default `resources.pcx` or `units_32.pcx`, with a one-click action that stages copying the atlas into the scenario and lists the new file in the save details.
+- Added a `Save as` filename control for staged Scenario-mode leader animation replacements, matching the static art replacement rename workflow while keeping outputs under `Art\Flics`.
+- Fixed Unit FLC previews showing at the wrong speed (too quickly).
+- Fixed preview/debug log context so Scenario-mode art preview entries keep the active scenario BIQ in the log prefix instead of falling back to `Standard Game` / `conquests.biq`.
+- Added a Units `Availability by Civ` modal for viewing and editing which units a selected civilization can build through the existing `Available To` bitmasks, with thumbnail civ picking and compact unit rows.
+- Moved Civs leader animation paths into the renamed `Civilization Art and Animations` section below the leaderhead and advisor portrait art slots.
+- Added lazy read-only Civs leader animation previews for the BIQ era forward/reverse FLC paths, resolved through scenario and base Civ3 art roots.
+- Added Scenario-mode Civs leader animation replacement from FLC, PNG, JPEG, or PCX sources, validating standard 200x240 leader FLCs and generating repeated-frame FLCs for still images under scenario `Art\Flics`.
+- Changed generated still-image leader FLCs to use Conquests-style headers and no-op `DELTA_FLC` repeat frames instead of repeated full-frame `FLI_COPY` chunks, matching Civ3 leaderhead playback expectations.
 - Added a `Make Sheet` action for Civs `Civilopedia Icon 4` and `Advisor Portrait` art slots that turns one selected image into the repeated Civ3 portrait-sheet PCX format.
 - Kept Civ advisor portrait sheet generation on the actual `#RACE_* line 2` slot so duplicated advisor paths in `#ICON_RACE_*` are rewritten in place instead of adding extra top-row icon frames.
 - Normalized Civ `#ICON_RACE_*` blocks to the two Civilopedia icon paths on load/save so stale leaderhead, advisor, and work-folder lines do not render as extra icon cards.
