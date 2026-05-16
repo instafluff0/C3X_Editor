@@ -70,6 +70,39 @@ test('collectPediaIconsReferenceEdits forces first-save icon writes for imported
   }]);
 });
 
+test('collectPediaIconsReferenceEdits cleans stale civ portrait paths from ICON_RACE blocks', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    civilizations: {
+      entries: [{
+        civilopediaKey: 'RACE_VENICE',
+        iconPaths: [
+          'art/civilopedia/icons/races/venice.pcx',
+          'art/civilopedia/icons/races/venice_small.pcx'
+        ],
+        originalIconPaths: [
+          'art/civilopedia/icons/races/venice.pcx',
+          'art/civilopedia/icons/races/venice_small.pcx',
+          'art/leaderheads/venice.pcx',
+          'Art/Civilopedia/Icons/Races/venice.pcx'
+        ],
+        racePaths: ['art/leaderheads/venice.pcx', 'art/advisors/venice.pcx'],
+        originalRacePaths: ['art/leaderheads/venice.pcx', 'art/advisors/venice.pcx'],
+        animationName: '',
+        originalAnimationName: ''
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, [{
+    blockKey: 'ICON_RACE_VENICE',
+    lines: [
+      'art/civilopedia/icons/races/venice.pcx',
+      'art/civilopedia/icons/races/venice_small.pcx'
+    ]
+  }]);
+});
+
 test('collectPediaIconsReferenceEdits writes tech large-first model to small and large blocks', () => {
   const edits = collectPediaIconsReferenceEdits({
     technologies: {
@@ -120,7 +153,7 @@ test('buildScenarioPediaIconsEditResult deletes blocks instead of leaving empty 
   assert.equal(text.includes('#RACE_AMAZONIANS'), false);
 });
 
-test('pickScenarioReferenceArtTargetRelativePath preserves civ extra icon line folders', () => {
+test('pickScenarioReferenceArtTargetRelativePath uses the civ icon folder for civ icon lines', () => {
   assert.equal(
     pickScenarioReferenceArtTargetRelativePath({
       tabKey: 'civilizations',
@@ -130,7 +163,7 @@ test('pickScenarioReferenceArtTargetRelativePath preserves civ extra icon line f
       sourcePath: '/tmp/statue.pcx',
       targetContentRoot: '/tmp/scenario'
     }),
-    'art/leaderheads/statue.pcx'
+    'Art/Civilopedia/Icons/Races/statue.pcx'
   );
   assert.equal(
     pickScenarioReferenceArtTargetRelativePath({
@@ -141,7 +174,7 @@ test('pickScenarioReferenceArtTargetRelativePath preserves civ extra icon line f
       sourcePath: '/tmp/statue.pcx',
       targetContentRoot: '/tmp/scenario'
     }),
-    'art/advisors/statue.pcx'
+    'Art/Civilopedia/Icons/Races/statue.pcx'
   );
 });
 
@@ -203,6 +236,53 @@ test('collectPediaIconsReferenceEdits writes complete structured building icon b
       'Art/Civilopedia/Icons/Buildings/TinctureShopS.pcx'
     ]
   }]);
+});
+
+test('collectPediaIconsReferenceEdits can force writing an unchanged building icon block', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_Barracks',
+        displayCivilopediaKey: 'BLDG_Barracks',
+        iconPaths: [
+          'Art/Civilopedia/Icons/Buildings/barracksanclarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksrenlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksancsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksrensmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodsmall.pcx'
+        ],
+        originalIconPaths: [
+          'Art/Civilopedia/Icons/Buildings/barracksanclarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksrenlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodlarge.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksancsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksrensmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodsmall.pcx',
+          'Art/Civilopedia/Icons/Buildings/barracksindmodsmall.pcx'
+        ],
+        buildingIconKind: 'ERA',
+        originalBuildingIconKind: 'ERA',
+        buildingIconIndex: '1',
+        originalBuildingIconIndex: '1',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        forcePediaIconsBlockWrite: true
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.equal(edits.length, 1);
+  assert.equal(edits[0].blockKey, 'ICON_BLDG_Barracks');
+  assert.deepEqual(edits[0].lines.slice(0, 3), [
+    'ERA',
+    '1',
+    'Art/Civilopedia/Icons/Buildings/barracksanclarge.pcx'
+  ]);
 });
 
 test('collectPediaIconsReferenceEdits writes complete structured building icon block when small icon changes', () => {

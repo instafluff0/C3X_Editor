@@ -289,6 +289,12 @@ function fileExists(p) {
   }
 }
 
+function normalizeFsPathForCompare(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return path.normalize(raw).toLowerCase();
+}
+
 function normalizeConfigToken(value) {
   const raw = String(value == null ? '' : value).trim();
   if (!raw) return '';
@@ -486,11 +492,15 @@ function addGeneralIssue(result, tabKey, message, code = '') {
   result.totalWarnings += 1;
 }
 
-function addSectionIssue(result, tabKey, sectionIndex, message, code = '') {
+function addSectionIssue(result, tabKey, sectionIndex, message, code = '', extra = {}) {
   const tab = ensureTabState(result, tabKey);
   const key = String(sectionIndex);
   if (!Array.isArray(tab.sections[key])) tab.sections[key] = [];
-  tab.sections[key].push({ message: String(message || '').trim(), code: String(code || '').trim() });
+  tab.sections[key].push({
+    message: String(message || '').trim(),
+    code: String(code || '').trim(),
+    ...(extra && typeof extra === 'object' ? extra : {})
+  });
   tab.count += 1;
   result.totalWarnings += 1;
 }
@@ -933,6 +943,86 @@ function auditReferenceArt(bundle, result) {
   });
 }
 
+function isBiqBackedReferenceEntry(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (Number.isFinite(Number(entry.biqIndex))) return true;
+  return !!String(entry.rawBiqCivilopediaKey || '').trim();
+}
+
+function getReferenceTextSourceDetails(bundle) {
+  const tabs = ((bundle || {}).tabs || {});
+  for (const tabKey of REFERENCE_ART_TABS) {
+    const details = tabs[tabKey] && tabs[tabKey].sourceDetails;
+    if (details && typeof details === 'object') return details;
+  }
+  return {};
+}
+
+function getScenarioTextAuditPaths(bundle) {
+  const details = getReferenceTextSourceDetails(bundle);
+  const pediaIconsScenario = String(details.pediaIconsScenario || '').trim();
+  return {
+    pediaIcons: fileExists(pediaIconsScenario) ? pediaIconsScenario : ''
+  };
+}
+
+function readPathMatchesScenario(readPath, scenarioPath) {
+  const read = normalizeFsPathForCompare(readPath);
+  const scenario = normalizeFsPathForCompare(scenarioPath);
+  return !!read && !!scenario && read === scenario;
+}
+
+function getEntryCivilopediaKey(entry) {
+  return String(
+    entry && (
+      entry.rawBiqCivilopediaKey
+      || entry.displayCivilopediaKey
+      || entry.rawCivilopediaKey
+      || entry.civilopediaKey
+    ) || ''
+  ).trim();
+}
+
+function getExpectedImprovementPediaIconsLabel(civilopediaKey) {
+  const key = String(civilopediaKey || '').trim();
+  if (!key) return 'matching PediaIcons block';
+  return `#ICON_${key}`;
+}
+
+function auditScenarioTextCoverage(bundle, result) {
+  const scenarioTextPaths = getScenarioTextAuditPaths(bundle);
+  if (!scenarioTextPaths.pediaIcons) return;
+
+  const tabKey = 'improvements';
+  const tab = (((bundle || {}).tabs || {})[tabKey]) || null;
+  const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+  entries.forEach((entry, index) => {
+    if (!isBiqBackedReferenceEntry(entry)) return;
+    const civilopediaKey = getEntryCivilopediaKey(entry);
+    if (!/^BLDG_/i.test(civilopediaKey)) return;
+    const sourceMeta = (entry && entry.sourceMeta) || {};
+    const iconReadPath = sourceMeta.iconPaths && sourceMeta.iconPaths.readPath;
+    if (readPathMatchesScenario(iconReadPath, scenarioTextPaths.pediaIcons)) return;
+    const label = getReferenceEntryDisplayName(tabKey, entry) || civilopediaKey;
+    addSectionIssue(
+      result,
+      tabKey,
+      index,
+      `${label}: Scenario PediaIcons.txt is missing ${getExpectedImprovementPediaIconsLabel(civilopediaKey)}; Civ3 can stop loading when this BIQ improvement is referenced.`,
+      'scenario-pediaicons-entry-missing',
+      {
+        action: {
+          type: 'copy-scenario-pediaicons-block',
+          label: `Add #ICON_${civilopediaKey}`,
+          civilopediaKey,
+          sourcePath: String(iconReadPath || '').trim(),
+          targetPath: scenarioTextPaths.pediaIcons
+        }
+      }
+    );
+  });
+}
+
 const CIVILOPEDIA_LINK_PATTERN = /\$LINK<([^=<>]+)=([^<>]+)>/g;
 
 function collectCanonicalCivilopediaKeys(bundle) {
@@ -993,6 +1083,7 @@ function auditLoadedBundle(bundle) {
   auditCurrentNaturalWonderArt(bundle, result);
   auditDayNightAssets(bundle, result);
   auditReferenceArt(bundle, result);
+  auditScenarioTextCoverage(bundle, result);
   auditCivilopediaLinkCase(bundle, result);
   return result;
 }

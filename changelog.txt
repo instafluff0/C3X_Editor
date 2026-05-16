@@ -1,3 +1,14 @@
+* RELEASE 27.9
+- Added a `Make Sheet` action for Civs `Civilopedia Icon 4` and `Advisor Portrait` art slots that turns one selected image into the repeated Civ3 portrait-sheet PCX format.
+- Kept Civ advisor portrait sheet generation on the actual `#RACE_* line 2` slot so duplicated advisor paths in `#ICON_RACE_*` are rewritten in place instead of adding extra top-row icon frames.
+- Normalized Civ `#ICON_RACE_*` blocks to the two Civilopedia icon paths on load/save so stale leaderhead, advisor, and work-folder lines do not render as extra icon cards.
+- Restored Civ `Civilopedia Icon 3/4` display as synthesized views of the `#RACE_*` leaderhead and advisor lines without persisting those portrait paths inside `#ICON_RACE_*`.
+- Restored `Make Sheet` on the synthesized Civ `Civilopedia Icon 4` card and routed it to the underlying advisor portrait slot, with tooltip text explaining the generated 461x346 advisor sheet.
+- Fixed Scenario-mode art selection from scenario-local work folders such as `Art-dev` so chosen files display and save under the slot's expected Civ3 art folder instead of keeping a reference to the source folder.
+- Added an `All Civs` option inside Units `Available To` add-item picker so every civilization can be added without extra panel controls.
+- Added Scenario-mode quality warnings when BIQ-backed Improvements fall back to base `PediaIcons.txt` because the scenario-local file is missing the required `#ICON_BLDG_*` entry.
+- Added a warning action labeled with the exact missing `#ICON_BLDG_*` block that stages the block as a normal pending scenario `PediaIcons.txt` edit for the existing Save workflow.
+
 * RELEASE 27.8
 - Removed the duplicate Civs `Identity > Civilization Name` editor because the top `Name` field already edits the same RACE civilization-name value.
 - Fixed the Civs top `Name` editor so it saves to the RACE civilization-name field instead of the leader-name field.

@@ -6198,6 +6198,16 @@ details > summary:focus-visible {
   border-color: rgba(82, 126, 219, 0.28);
 }
 
+.tech-picker-row.special .tech-picker-row-main {
+  font-weight: 700;
+  color: #46588e;
+}
+
+.tech-picker-row.special .tech-picker-row-main:hover {
+  background: rgba(232, 244, 241, 0.96);
+  border-color: rgba(22, 153, 140, 0.28);
+}
+
 .tech-picker-row-jump {
   min-width: 28px;
   height: 28px;
@@ -6979,6 +6989,19 @@ button.unit-ini-delete-btn:disabled {
   gap: 4px;
   font-size: 0.84rem;
   line-height: 1.35;
+}
+
+.district-warning-list li {
+  padding-right: 4px;
+}
+
+.warning-action-btn {
+  margin-left: 10px;
+  padding: 3px 9px;
+  min-height: 0;
+  font-size: 0.76rem;
+  line-height: 1.2;
+  vertical-align: baseline;
 }
 
 .district-warning-box-collapsible.is-collapsed .district-warning-body {

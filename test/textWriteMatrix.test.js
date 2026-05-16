@@ -1177,6 +1177,73 @@ test('scenario save converts pending staged improvement RGBA art to right-sized 
   assert.match(saved, /Art\\Civilopedia\\Icons\\Buildings\\statue_of_liberty_lg\.pcx/);
 });
 
+test('scenario save localizes pending art selected from scenario work folders', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const workDir = path.join(scenario, 'Art-dev');
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(workDir, { recursive: true });
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const sourcePath = path.join(workDir, 'vatican.png');
+  fs.writeFileSync(sourcePath, 'source placeholder');
+  const rgba = Buffer.alloc(461 * 346 * 4);
+  for (let i = 0; i < 461 * 346; i += 1) {
+    rgba[i * 4] = 180;
+    rgba[i * 4 + 1] = 160;
+    rgba[i * 4 + 2] = 120;
+    rgba[i * 4 + 3] = 255;
+  }
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      },
+      entries: [{
+        civilopediaKey: 'RACE_VATICAN',
+        iconPaths: ['', '', '', 'Art-dev/vatican.png'],
+        originalIconPaths: [],
+        pendingArtConversions: {
+          'iconPaths:3': {
+            sourcePath,
+            width: 461,
+            height: 346,
+            rgbaBase64: rgba.toString('base64')
+          }
+        },
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(path.join(scenario, 'Art-dev', 'vatican.pcx')), false);
+  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican.pcx');
+  assert.equal(fs.existsSync(pcxPath), true);
+  const decoded = decodePcx(pcxPath);
+  assert.equal(decoded.width, 461);
+  assert.equal(decoded.height, 346);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /Art\\Civilopedia\\Icons\\Races\\vatican\.pcx/);
+  assert.equal(tabs.civilizations.entries[0].iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican.pcx');
+});
+
 test('scenario save converts pending truecolor PCX art to indexed Civ3 PCX', () => {
   const root = mkTmpDir();
   const scenario = path.join(root, 'MyScenario');

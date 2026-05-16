@@ -325,6 +325,193 @@ test('auditLoadedBundle reports missing reference art files for Civs, Techs, Res
   assert.match(result.tabs.units.sections['0'][0].message, /Warrior: Missing art file "Art\/Civilopedia\/Icons\/Units\/warriorlarge\.pcx"/);
 });
 
+test('auditLoadedBundle reports BIQ improvements missing from scenario PediaIcons files', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  touch(scenarioCivilopedia);
+  touch(scenarioPediaIcons);
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        sourceDetails: {
+          civilopediaScenario: scenarioCivilopedia,
+          pediaIconsScenario: scenarioPediaIcons
+        },
+        entries: [
+          {
+            name: 'Barracks',
+            civilopediaKey: 'BLDG_BARRACKS',
+            displayCivilopediaKey: 'BLDG_Barracks',
+            rawBiqCivilopediaKey: 'BLDG_Barracks',
+            biqIndex: 1,
+            iconPaths: [],
+            sourceMeta: {
+              civilopediaSection1: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt') },
+              civilopediaSection2: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt') },
+              iconPaths: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt') }
+            }
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  assert.match(result.tabs.improvements.sections['0'][0].message, /Barracks: Scenario PediaIcons\.txt is missing #ICON_BLDG_Barracks/);
+  assert.deepEqual(result.tabs.improvements.sections['0'][0].action, {
+    type: 'copy-scenario-pediaicons-block',
+    label: 'Add #ICON_BLDG_Barracks',
+    civilopediaKey: 'BLDG_Barracks',
+    sourcePath: path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt'),
+    targetPath: scenarioPediaIcons
+  });
+});
+
+test('auditLoadedBundle ignores missing scenario Civilopedia entries and non-improvement PediaIcons fallbacks', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  touch(scenarioCivilopedia);
+  touch(scenarioPediaIcons);
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      technologies: {
+        sourceDetails: {
+          civilopediaScenario: scenarioCivilopedia,
+          pediaIconsScenario: scenarioPediaIcons
+        },
+        entries: [
+          {
+            name: 'Mysticism',
+            civilopediaKey: 'TECH_MYSTICISM',
+            displayCivilopediaKey: 'TECH_Mysticism',
+            rawBiqCivilopediaKey: 'TECH_Mysticism',
+            biqIndex: 1,
+            iconPaths: [],
+            sourceMeta: {
+              civilopediaSection1: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt') },
+              civilopediaSection2: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt') },
+              iconPaths: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt') }
+            }
+          }
+        ]
+      },
+      improvements: {
+        sourceDetails: {
+          civilopediaScenario: scenarioCivilopedia,
+          pediaIconsScenario: scenarioPediaIcons
+        },
+        entries: [
+          {
+            name: 'Barracks',
+            civilopediaKey: 'BLDG_BARRACKS',
+            displayCivilopediaKey: 'BLDG_Barracks',
+            rawBiqCivilopediaKey: 'BLDG_Barracks',
+            biqIndex: 1,
+            iconPaths: [],
+            sourceMeta: {
+              civilopediaSection1: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt') },
+              civilopediaSection2: { readPath: path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt') },
+              iconPaths: { readPath: scenarioPediaIcons }
+            }
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
+test('auditLoadedBundle accepts BIQ improvements covered by scenario PediaIcons files', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  touch(scenarioCivilopedia);
+  touch(scenarioPediaIcons);
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        sourceDetails: {
+          civilopediaScenario: scenarioCivilopedia,
+          pediaIconsScenario: scenarioPediaIcons
+        },
+        entries: [
+          {
+            name: 'Barracks',
+            civilopediaKey: 'BLDG_BARRACKS',
+            displayCivilopediaKey: 'BLDG_Barracks',
+            rawBiqCivilopediaKey: 'BLDG_Barracks',
+            biqIndex: 1,
+            iconPaths: [],
+            sourceMeta: {
+              civilopediaSection1: { readPath: scenarioCivilopedia },
+              civilopediaSection2: { readPath: scenarioCivilopedia },
+              iconPaths: { readPath: scenarioPediaIcons }
+            }
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
 test('auditLoadedBundle skips reference art warnings when files exist on disk', () => {
   const civ3Root = mkTmpDir();
   touch(path.join(civ3Root, 'Conquests', 'Art', 'Civilopedia', 'Icons', 'Races', 'romeLarge.pcx'));

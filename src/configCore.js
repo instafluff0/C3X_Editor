@@ -3894,6 +3894,22 @@ function parseBuildingIconBlockLines(lines) {
   };
 }
 
+function normalizeRaceIconPaths(values) {
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(values) ? values : []).forEach((raw) => {
+    const normalized = normalizeAssetReferencePath(raw);
+    if (!normalized) return;
+    const lower = normalized.toLowerCase();
+    if (lower.startsWith('art/leaderheads/') || lower.startsWith('art/advisors/')) return;
+    if (!lower.startsWith('art/civilopedia/icons/races/')) return;
+    if (seen.has(lower)) return;
+    seen.add(lower);
+    out.push(normalized);
+  });
+  return out.slice(0, 2);
+}
+
 function findFirstPathLine(lines) {
   const rawLines = Array.isArray(lines) ? lines : [];
   const line = rawLines.find((value) => {
@@ -3926,10 +3942,11 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   };
 
   const upperKey = civilopediaKey.toUpperCase();
+  const isRaceKey = upperKey.startsWith('RACE_');
   const buildingIconBlock = upperKey.startsWith('BLDG_')
     ? parseBuildingIconBlockLines((pediaBlocks[`ICON_${upperKey}`] && pediaBlocks[`ICON_${upperKey}`].value) || [])
     : null;
-  const usableLines = buildingIconBlock ? buildingIconBlock.iconPaths : collectIconLines(upperKey);
+  const usableLines = buildingIconBlock ? buildingIconBlock.iconPaths : (isRaceKey ? [] : collectIconLines(upperKey));
   const raceIconKey = `ICON_RACE_${upperKey.replace(/^RACE_/, '')}`;
   const raceIconBlock = (pediaBlocks[raceIconKey] && pediaBlocks[raceIconKey].value) || [];
   const raceUsable = raceIconBlock.filter((line) => /[\\/]/.test(line) || /\.(pcx|flc|ini)$/i.test(line));
@@ -3950,9 +3967,12 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   }
 
   const rawPaths = [...usableLines, ...govFallback, ...raceUsable].map((line) => normalizeRelativePath(line));
-  const iconPaths = buildingIconBlock
+  const originalIconPaths = buildingIconBlock
     ? rawPaths.filter(Boolean)
     : dedupeStrings(rawPaths.filter(Boolean));
+  const iconPaths = buildingIconBlock
+    ? originalIconPaths
+    : (isRaceKey ? normalizeRaceIconPaths(rawPaths) : dedupeStrings(rawPaths.filter(Boolean)));
 
   const readAnimationName = (key) => {
     const block = (pediaBlocks[key] && pediaBlocks[key].value) || [];
@@ -3973,14 +3993,19 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
 
   const raceBlock = (pediaBlocks[civilopediaKey.toUpperCase()] && pediaBlocks[civilopediaKey.toUpperCase()].value) || [];
   const racePaths = raceBlock.map((line) => normalizeRelativePath(line)).filter(Boolean);
+  const normalizedRacePaths = dedupeStrings(racePaths);
+  const displayIconPaths = isRaceKey
+    ? dedupeStrings([...iconPaths, ...normalizedRacePaths])
+    : iconPaths;
   const wonderSplashPath = upperKey.startsWith('BLDG_')
     ? findFirstPathLine((pediaBlocks[`WON_SPLASH_${upperKey}`] && pediaBlocks[`WON_SPLASH_${upperKey}`].value) || [])
     : '';
 
   return {
-    iconPaths,
+    iconPaths: displayIconPaths,
+    originalIconPaths,
     animationName: animName,
-    racePaths: dedupeStrings(racePaths),
+    racePaths: normalizedRacePaths,
     buildingIconKind: buildingIconBlock ? buildingIconBlock.kind : '',
     buildingIconIndex: buildingIconBlock ? buildingIconBlock.iconIndex : '',
     wonderSplashPath
@@ -4323,7 +4348,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(section1Lines),
           improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[lookupCivilopediaKey] || 'normal') : null,
           iconPaths: pedia.iconPaths,
-          originalIconPaths: [...pedia.iconPaths],
+          originalIconPaths: [...(pedia.originalIconPaths || pedia.iconPaths)],
           buildingIconKind: tabSpec.key === 'improvements' ? (pedia.buildingIconKind || '') : '',
           originalBuildingIconKind: tabSpec.key === 'improvements' ? (pedia.buildingIconKind || '') : '',
           buildingIconIndex: tabSpec.key === 'improvements' ? (pedia.buildingIconIndex || '') : '',
@@ -4445,7 +4470,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           techDependencies: [],
           improvementKind: null,
           iconPaths: syntheticPedia.iconPaths,
-          originalIconPaths: [...syntheticPedia.iconPaths],
+          originalIconPaths: [...(syntheticPedia.originalIconPaths || syntheticPedia.iconPaths)],
           buildingIconKind: '',
           originalBuildingIconKind: '',
           buildingIconIndex: '',
@@ -7770,14 +7795,19 @@ function collectPediaIconsReferenceEdits(tabs) {
       const shortKey = lookupKey.replace(/^(RACE_|TECH_|GOOD_|BLDG_|GOVT_|PRTO_)/, '');
       const importedFromScenario = !!String(entry && entry._importScenarioPath || '').trim();
       const shouldForceImportedPedia = importedFromScenario && !!(entry && entry.isNew);
+      const shouldForcePediaIconsBlock = !!(entry && entry.forcePediaIconsBlockWrite);
       const isBuildingIcon = lookupKey.startsWith('BLDG_');
+      const isRaceIcon = lookupKey.startsWith('RACE_');
       const normalizeIconPathsForEntry = (values) => isBuildingIcon
+        ? (Array.isArray(values) ? values : []).map((v) => normalizeAssetReferencePath(v)).filter(Boolean)
+        : (isRaceIcon ? normalizeRaceIconPaths(values) : normalizePediaPathList(values));
+      const normalizeOriginalIconPathsForEntry = (values) => isBuildingIcon
         ? (Array.isArray(values) ? values : []).map((v) => normalizeAssetReferencePath(v)).filter(Boolean)
         : normalizePediaPathList(values);
       const nextIconPaths = normalizeIconPathsForEntry(entry && entry.iconPaths);
-      const prevIconPaths = shouldForceImportedPedia
+      const prevIconPaths = shouldForceImportedPedia || shouldForcePediaIconsBlock
         ? []
-        : normalizeIconPathsForEntry(entry && entry.originalIconPaths);
+        : normalizeOriginalIconPathsForEntry(entry && entry.originalIconPaths);
       if (JSON.stringify(nextIconPaths) !== JSON.stringify(prevIconPaths)) {
         if (lookupKey.startsWith('TECH_')) {
           const large = nextIconPaths[0] || '';
@@ -7838,22 +7868,16 @@ function collectPediaIconsReferenceEdits(tabs) {
   return Array.from(merged.values());
 }
 
-function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1, originalPath, sourcePath, targetContentRoot }) {
+function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1, originalPath, sourcePath, targetContentRoot, forcePcx = false }) {
   const normalizedOriginal = normalizeAssetReferencePath(originalPath);
   const absSource = String(sourcePath || '').trim();
-  const absRoot = String(targetContentRoot || '').trim();
-  if (absSource && absRoot) {
-    const relWithinTarget = normalizeRelativePath(path.relative(absRoot, absSource));
-    if (relWithinTarget && !relWithinTarget.startsWith('../')) {
-      return relWithinTarget;
-    }
-  }
-  const baseName = path.basename(absSource || normalizedOriginal || '');
+  const rawBaseName = path.basename(absSource || normalizedOriginal || '');
+  const baseName = forcePcx ? rawBaseName.replace(/\.[^.\\/]+$/i, '.pcx') : rawBaseName;
   if (!baseName) return '';
   if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
     const originalDir = normalizeRelativePath(path.posix.dirname(normalizedOriginal));
     const shouldPreserveOriginalDir = originalDir && originalDir !== '.' &&
-      !(tabKey === 'improvements' && (group === 'wonderSplashPath' || group === 'iconPaths'));
+      isExpectedReferenceArtDirectory(tabKey, group, index, originalDir);
     if (shouldPreserveOriginalDir) {
       return normalizeRelativePath(path.posix.join(originalDir, baseName));
     }
@@ -7886,6 +7910,35 @@ function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1,
     return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Governments', baseName));
   }
   return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', baseName));
+}
+
+function getExpectedReferenceArtDirectory(tabKey, group, index) {
+  if (tabKey === 'civilizations' && group === 'iconPaths') return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Races'));
+  if (tabKey === 'civilizations' && group === 'racePaths') {
+    return normalizeRelativePath(Number(index) === 0 ? path.join('Art', 'Leaderheads') : path.join('Art', 'Advisors'));
+  }
+  if (tabKey === 'improvements' && group === 'wonderSplashPath') return normalizeRelativePath(path.join('Art', 'Wonder Splash'));
+  if (tabKey === 'improvements' && group === 'iconPaths') return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Buildings'));
+  if (tabKey === 'technologies' && group === 'iconPaths') return normalizeRelativePath(path.join('Art', 'tech chooser', 'Icons'));
+  if (tabKey === 'units' && group === 'iconPaths') return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Units'));
+  if (tabKey === 'resources' && group === 'iconPaths') return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Resources'));
+  if (tabKey === 'governments' && group === 'iconPaths') return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Governments'));
+  return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons'));
+}
+
+function isExpectedReferenceArtDirectory(tabKey, group, index, dir) {
+  const expected = getExpectedReferenceArtDirectory(tabKey, group, index).toLowerCase();
+  const actual = normalizeRelativePath(dir).toLowerCase();
+  return !!expected && actual === expected;
+}
+
+function getScenarioRelativePathForAbsoluteSource(sourcePath, targetContentRoot) {
+  const absSource = String(sourcePath || '').trim();
+  const absRoot = String(targetContentRoot || '').trim();
+  if (!absSource || !absRoot) return '';
+  const rel = normalizeRelativePath(path.relative(absRoot, absSource));
+  if (!rel || rel.startsWith('../') || rel === '..') return '';
+  return rel;
 }
 
 function stripScenarioFolderPrefixFromRelativeArtPath(rawPath, candidateFolderNames = []) {
@@ -7997,6 +8050,12 @@ function getImprovementArtRowCountForSave(entry) {
 }
 
 function getReferenceArtTargetSizeForSave({ tabKey, group, index = 0, entry }) {
+  if (tabKey === 'civilizations' && (
+    (group === 'iconPaths' && Number(index) === 3) ||
+    (group === 'racePaths' && Number(index) === 1)
+  )) {
+    return { width: 461, height: 346 };
+  }
   if (group === 'wonderSplashPath') return { width: 320, height: 320 };
   if (group === 'iconPaths') {
     if (tabKey === 'improvements' && Number(index) >= getImprovementArtRowCountForSave(entry)) {
@@ -8067,16 +8126,25 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
               index,
               entry
             });
-            const relTarget = !isAbsoluteFilesystemPath(normalized)
-              ? normalizeRelativePath(normalized)
-              : pickScenarioReferenceArtTargetRelativePath({
+            const sourceRelativePath = getScenarioRelativePathForAbsoluteSource(
+              String(pendingConversion.sourcePath || pendingSource || ''),
+              targetContentRoot
+            );
+            const normalizedRelative = !isAbsoluteFilesystemPath(normalized) ? normalizeRelativePath(normalized) : '';
+            const shouldUseExpectedTarget = !normalizedRelative || (
+              sourceRelativePath && normalizedRelative.toLowerCase() === sourceRelativePath.toLowerCase()
+            );
+            const relTarget = shouldUseExpectedTarget
+              ? pickScenarioReferenceArtTargetRelativePath({
                 tabKey: spec.key,
                 group: fieldKey,
                 index,
                 originalPath: originalValues[index],
                 sourcePath: String(pendingConversion.sourcePath || pendingSource || ''),
-                targetContentRoot
-              });
+                targetContentRoot,
+                forcePcx: true
+              })
+              : normalizedRelative;
             const data = buildPendingReferenceArtConversionBuffer(pendingConversion, targetSize);
             if (!relTarget || !data) {
               throw new Error(`Could not convert referenced art file: ${String(pendingConversion.sourcePath || pendingSource || rawValue)}`);
@@ -8099,16 +8167,21 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             if (!stats || !stats.isFile()) {
               throw new Error(`Referenced art file does not exist: ${pendingSource}`);
             }
-            const relTarget = !isAbsoluteFilesystemPath(normalized)
-              ? normalizeRelativePath(normalized)
-              : pickScenarioReferenceArtTargetRelativePath({
+            const sourceRelativePath = getScenarioRelativePathForAbsoluteSource(pendingSource, targetContentRoot);
+            const normalizedRelative = !isAbsoluteFilesystemPath(normalized) ? normalizeRelativePath(normalized) : '';
+            const shouldUseExpectedTarget = !normalizedRelative || (
+              sourceRelativePath && normalizedRelative.toLowerCase() === sourceRelativePath.toLowerCase()
+            );
+            const relTarget = shouldUseExpectedTarget
+              ? pickScenarioReferenceArtTargetRelativePath({
                 tabKey: spec.key,
                 group: fieldKey,
                 index,
                 originalPath: originalValues[index],
                 sourcePath: pendingSource,
                 targetContentRoot
-              });
+              })
+              : normalizedRelative;
             if (!relTarget) {
               throw new Error(`Could not determine scenario-relative target for art file: ${pendingSource}`);
             }
