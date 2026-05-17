@@ -2325,6 +2325,7 @@ button.danger:hover {
 }
 
 .biq-map-canvas-wrap {
+  position: relative;
   overflow: auto;
   max-height: calc(100vh - 360px);
   width: 100%;
@@ -2350,10 +2351,48 @@ button.danger:hover {
   cursor: grabbing;
 }
 
+.biq-map-canvas-stack {
+  position: relative;
+  display: block;
+  width: max-content;
+}
+
 .biq-map-canvas {
   display: block;
   image-rendering: pixelated;
   background: transparent;
+}
+
+.biq-map-hover-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  pointer-events: none;
+  image-rendering: pixelated;
+  background: transparent;
+}
+
+.biq-map-hover-tooltip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  pointer-events: none;
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(28, 34, 56, 0.22);
+  background: rgba(255, 255, 255, 0.94);
+  color: #1a2238;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 8px 20px rgba(28, 34, 56, 0.16);
+}
+
+.biq-map-hover-tooltip.hidden {
+  display: none;
 }
 
 .biq-map-zoom-controls {

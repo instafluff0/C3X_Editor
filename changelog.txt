@@ -1,3 +1,11 @@
+* RELEASE 27.11
+- Split the test suite into fast, BIQ, and full npm tiers so day-to-day verification can avoid the longest BIQ round-trip and CRUD suites while keeping them available for release checks.
+- Enabled the Map tab while hiding map generation actions from the Map UI and preserving Civ3 map-art transparency slots.
+- Matched Map tab resource overlays to Quint's `TILE.resource -> GOOD.icon -> resources.pcx` mapping.
+- Fixed BIQ map resource overlays reading GOOD icon indices from map/scenario records so scenario fish resources no longer fall back to deer/game icons.
+- Made Map tab art lookups prioritize BIQ scenario search folders so scenario-local `Art/resources.pcx` and related map assets override base game art.
+- Added a Map tab hover tooltip that shows the grid coordinates under the pointer, outlines the hovered tile using Civ3's logical tile footprint, and avoids the native OS tooltip.
+
 * RELEASE 27.10
 - Added direction badges to Wonder District art previews when alternate-direction art is enabled, marking main art as right-facing and alt art as left-facing.
 - Fixed the Units tab responsive layout so the right sidebar no longer overlaps the dense rules content before the content grid collapses.

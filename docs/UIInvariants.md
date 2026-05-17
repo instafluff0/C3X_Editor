@@ -84,6 +84,8 @@ node --check src/artPreview.js
 npm test
 ```
 
+Use `npm run test:biq` for UI changes that touch BIQ-backed reference behavior, save transactions, or parser/serializer contracts. Use `npm run test:full` as the release gate.
+
 ## Update Policy
 - Keep this file to long-lived UI contracts.
 - Put transient implementation details or one-off fixes in `docs/Quirks.md` until they are proven stable.

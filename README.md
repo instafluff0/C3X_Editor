@@ -13,7 +13,9 @@ Electron app for managing C3X configuration files with two modes:
 
 ## Test
 
-- `npm test`
+- `npm test` - fast development tier
+- `npm run test:biq` - BIQ and parity integration checks
+- `npm run test:full` - full release gate
 
 ## Notes
 
