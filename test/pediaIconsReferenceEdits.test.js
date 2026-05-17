@@ -103,6 +103,70 @@ test('collectPediaIconsReferenceEdits cleans stale civ portrait paths from ICON_
   }]);
 });
 
+test('collectPediaIconsReferenceEdits keeps civ ICON_RACE icon 4 separate from advisor portrait', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    civilizations: {
+      entries: [{
+        civilopediaKey: 'RACE_VENICE',
+        iconPaths: [
+          'art/civilopedia/icons/races/venice.pcx',
+          'art/civilopedia/icons/races/venice_small.pcx',
+          'art/leaderheads/venice.pcx',
+          'Art/Civilopedia/Icons/Races/blank.pcx'
+        ],
+        originalIconPaths: [
+          'art/civilopedia/icons/races/venice.pcx',
+          'art/civilopedia/icons/races/venice_small.pcx',
+          'art/leaderheads/venice.pcx',
+          'art/advisors/venice.pcx'
+        ],
+        racePaths: ['art/leaderheads/venice.pcx', 'art/advisors/venice.pcx'],
+        originalRacePaths: ['art/leaderheads/venice.pcx', 'art/advisors/venice.pcx'],
+        animationName: '',
+        originalAnimationName: ''
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, [{
+    blockKey: 'ICON_RACE_VENICE',
+    lines: [
+      'art/civilopedia/icons/races/venice.pcx',
+      'art/civilopedia/icons/races/venice_small.pcx',
+      'art/leaderheads/venice.pcx',
+      'Art/Civilopedia/Icons/Races/blank.pcx'
+    ]
+  }]);
+});
+
+test('collectPediaIconsReferenceEdits ignores unchanged synthesized civ ICON_RACE portrait fallbacks', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    civilizations: {
+      entries: [{
+        civilopediaKey: 'RACE_VATICAN',
+        iconPaths: [
+          'art/civilopedia/icons/races/vatican.pcx',
+          'art/civilopedia/icons/races/vatican_small.pcx',
+          'art/leaderheads/vatican.pcx',
+          'art/advisors/vatican.pcx'
+        ],
+        originalIconPaths: [
+          'art/civilopedia/icons/races/vatican.pcx',
+          'art/civilopedia/icons/races/vatican_small.pcx'
+        ],
+        racePaths: ['art/leaderheads/vatican.pcx', 'art/advisors/vatican.pcx'],
+        originalRacePaths: ['art/leaderheads/vatican.pcx', 'art/advisors/vatican.pcx'],
+        animationName: '',
+        originalAnimationName: ''
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, []);
+});
+
 test('collectPediaIconsReferenceEdits writes tech large-first model to small and large blocks', () => {
   const edits = collectPediaIconsReferenceEdits({
     technologies: {

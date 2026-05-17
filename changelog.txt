@@ -1,8 +1,13 @@
 * RELEASE 27.10
+- Added direction badges to Wonder District art previews when alternate-direction art is enabled, marking main art as right-facing and alt art as left-facing.
+- Fixed the Units tab responsive layout so the right sidebar no longer overlaps the dense rules content before the content grid collapses.
+- Added an Improvements `Required Districts` C3X convenience field that edits matching Districts `dependent_improvs` entries and supports multiple required districts.
 - Added inline Wonder District art row/column controls with a larger, right-aligned sheet-cell selector for completed, construction, and enabled alternate-direction art coordinates.
 - Fixed BIQ-backed Small Wonders so Wonder District name search uses the BIQ category flags instead of requiring matching Civilopedia/PediaIcons wonder metadata.
 - Removed the placeholder `New Wonder` entry from Wonder District name pickers.
 - Fixed Wonder District cell pickers so changing the image path or custom cell size reloads the picker from the current PCX.
+- Added a Districts Button Tile sheet picker for selecting `WorkerDistrictButtonsNorm.pcx` row/column cells.
+- Added inline Natural Wonder image row/column controls with a PCX cell picker that respects custom sprite sizes.
 
 * RELEASE 27.9
 - Added Scenario-mode notices for Resources and Units when the icon index picker is using the default `resources.pcx` or `units_32.pcx`, with a one-click action that stages copying the atlas into the scenario and lists the new file in the save details.
@@ -18,7 +23,11 @@
 - Kept Civ advisor portrait sheet generation on the actual `#RACE_* line 2` slot so duplicated advisor paths in `#ICON_RACE_*` are rewritten in place instead of adding extra top-row icon frames.
 - Normalized Civ `#ICON_RACE_*` blocks to the two Civilopedia icon paths on load/save so stale leaderhead, advisor, and work-folder lines do not render as extra icon cards.
 - Restored Civ `Civilopedia Icon 3/4` display as synthesized views of the `#RACE_*` leaderhead and advisor lines without persisting those portrait paths inside `#ICON_RACE_*`.
-- Restored `Make Sheet` on the synthesized Civ `Civilopedia Icon 4` card and routed it to the underlying advisor portrait slot, with tooltip text explaining the generated 461x346 advisor sheet.
+- Restored `Make Sheet` on the Civ `Civilopedia Icon 4` card with tooltip text explaining the generated 461x346 repeated portrait sheet.
+- Fixed Civ `Civilopedia Icon 4` editing so the `#ICON_RACE_*` slot and `#RACE_* line 2` advisor portrait remain separate while both can generate 461x346 sheets.
+- Adjusted generated Civ repeated portrait sheets to use 115px circular portraits with 1px spacing where the 461x346 sheet allows, and use magenta (`#ff00ff`) in PCX palette index 255 for the sheet background.
+- Matched generated Civ repeated portrait sheet mask placement and curvature to vanilla advisor PCX sheets.
+- Fixed narrow Civ art editor layouts so sheet previews and art action buttons stay inside their cards instead of overflowing under the sidebar.
 - Fixed Scenario-mode art selection from scenario-local work folders such as `Art-dev` so chosen files display and save under the slot's expected Civ3 art folder instead of keeping a reference to the source folder.
 - Added an `All Civs` option inside Units `Available To` add-item picker so every civilization can be added without extra panel controls.
 - Added Scenario-mode quality warnings when BIQ-backed Improvements fall back to base `PediaIcons.txt` because the scenario-local file is missing the required `#ICON_BLDG_*` entry.

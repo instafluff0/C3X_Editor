@@ -3919,13 +3919,11 @@ function normalizeRaceIconPaths(values) {
     const normalized = normalizeAssetReferencePath(raw);
     if (!normalized) return;
     const lower = normalized.toLowerCase();
-    if (lower.startsWith('art/leaderheads/') || lower.startsWith('art/advisors/')) return;
-    if (!lower.startsWith('art/civilopedia/icons/races/')) return;
     if (seen.has(lower)) return;
     seen.add(lower);
     out.push(normalized);
   });
-  return out.slice(0, 2);
+  return out.slice(0, 4);
 }
 
 function findFirstPathLine(lines) {
@@ -4012,9 +4010,11 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   const raceBlock = (pediaBlocks[civilopediaKey.toUpperCase()] && pediaBlocks[civilopediaKey.toUpperCase()].value) || [];
   const racePaths = raceBlock.map((line) => normalizeRelativePath(line)).filter(Boolean);
   const normalizedRacePaths = dedupeStrings(racePaths);
-  const displayIconPaths = isRaceKey
-    ? dedupeStrings([...iconPaths, ...normalizedRacePaths])
-    : iconPaths;
+  const displayIconPaths = isRaceKey ? iconPaths.slice(0, 4) : iconPaths;
+  if (isRaceKey) {
+    if (!displayIconPaths[2] && normalizedRacePaths[0]) displayIconPaths[2] = normalizedRacePaths[0];
+    if (!displayIconPaths[3] && normalizedRacePaths[1]) displayIconPaths[3] = normalizedRacePaths[1];
+  }
   const wonderSplashPath = upperKey.startsWith('BLDG_')
     ? findFirstPathLine((pediaBlocks[`WON_SPLASH_${upperKey}`] && pediaBlocks[`WON_SPLASH_${upperKey}`].value) || [])
     : '';
@@ -7812,6 +7812,20 @@ function normalizePediaPathList(values) {
   );
 }
 
+function normalizeRaceIconPathsForSave(values, entry) {
+  const paths = normalizeRaceIconPaths(values);
+  const racePaths = (Array.isArray(entry && entry.racePaths) ? entry.racePaths : [])
+    .map((v) => normalizeAssetReferencePath(v))
+    .filter(Boolean);
+  while (paths.length > 2) {
+    const index = paths.length - 1;
+    const fallback = normalizeAssetReferencePath(racePaths[index - 2] || '');
+    if (!fallback || paths[index].toLowerCase() !== fallback.toLowerCase()) break;
+    paths.pop();
+  }
+  return paths;
+}
+
 function collectPediaIconsReferenceEdits(tabs) {
   const edits = [];
   const blank = (blockKey) => {
@@ -7868,7 +7882,7 @@ function collectPediaIconsReferenceEdits(tabs) {
       const isRaceIcon = lookupKey.startsWith('RACE_');
       const normalizeIconPathsForEntry = (values) => isBuildingIcon
         ? (Array.isArray(values) ? values : []).map((v) => normalizeAssetReferencePath(v)).filter(Boolean)
-        : (isRaceIcon ? normalizeRaceIconPaths(values) : normalizePediaPathList(values));
+        : (isRaceIcon ? normalizeRaceIconPathsForSave(values, entry) : normalizePediaPathList(values));
       const normalizeOriginalIconPathsForEntry = (values) => isBuildingIcon
         ? (Array.isArray(values) ? values : []).map((v) => normalizeAssetReferencePath(v)).filter(Boolean)
         : normalizePediaPathList(values);

@@ -1326,6 +1326,7 @@ function encodeRgbaToPcx(rgba, width, height) {
     const off = i * 4;
     if (source[off + 3] < 128) continue;
     const flattened = flattenPcxColorOverWhite(source, off);
+    if (flattened.r === 255 && flattened.g === 0 && flattened.b === 255) continue;
     const key = (flattened.r << 16) | (flattened.g << 8) | flattened.b;
     colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
   }
@@ -1355,6 +1356,10 @@ function encodeRgbaToPcx(rgba, width, height) {
     const off = i * 4;
     const a = source[off + 3];
     if (a < 128) {
+      indices[i] = 255;
+      continue;
+    }
+    if (source[off] === 255 && source[off + 1] === 0 && source[off + 2] === 255) {
       indices[i] = 255;
       continue;
     }

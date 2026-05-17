@@ -82,6 +82,18 @@ test('encodeRgbaToPcx reserves palette slots 254 and 255 for green and magenta t
   assert.equal(decoded.indices[1], 255);
 });
 
+test('encodeRgbaToPcx maps opaque magenta pixels to palette slot 255', () => {
+  const rgba = new Uint8Array([
+    255, 0, 255, 255,
+    64, 80, 96, 255
+  ]);
+  const decoded = decodePcx(encodeRgbaToPcx(rgba, 2, 1), { returnIndexed: true, transparentIndexes: [] });
+  assert.equal(decoded.palette[255 * 3], 255);
+  assert.equal(decoded.palette[255 * 3 + 1], 0);
+  assert.equal(decoded.palette[255 * 3 + 2], 255);
+  assert.equal(decoded.indices[0], 255);
+});
+
 test('encodeRgbaToPcx flattens semi-transparent PNG pixels over white before quantizing', () => {
   const rgba = Buffer.from([
     40, 36, 28, 128,

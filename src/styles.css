@@ -3091,6 +3091,10 @@ button.danger:hover {
   min-width: 0;
 }
 
+.unit-reference-text-col {
+  container: unit-reference-text / inline-size;
+}
+
 .reference-nav-col {
   position: sticky;
   top: var(--sticky-pane-top);
@@ -3261,6 +3265,29 @@ button.danger:hover {
   }
 }
 
+@container unit-reference-text (max-width: 1320px) {
+  .unit-reference-text-col .unit-prereq-resource-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .unit-reference-text-col .unit-prereq-resource-group {
+    grid-column: auto;
+  }
+
+  .unit-reference-text-col .unit-dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container unit-reference-text (max-width: 860px) {
+  .unit-reference-text-col .unit-dashboard-grid,
+  .unit-reference-text-col .unit-boolean-matrix,
+  .unit-reference-text-col .unit-prereq-resource-list,
+  .unit-reference-text-col .unit-prereq-compact-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1180px) {
   .reference-detail-layout.reference-detail-layout-technologies:not(.context-hidden) {
     grid-template-columns: minmax(0, 1fr) 220px;
@@ -3416,7 +3443,7 @@ button.danger:hover {
 
 .art-slot-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
   gap: 12px;
 }
 
@@ -3867,6 +3894,42 @@ details > summary:focus-visible {
   font-weight: 800;
   line-height: 1;
   text-align: center;
+}
+
+.improvement-required-district-list {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.improvement-required-district-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.improvement-required-district-link {
+  width: 100%;
+}
+
+.improvement-required-district-remove {
+  min-width: 30px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.improvement-required-district-remove .remove-icon {
+  margin-right: 0;
+}
+
+.improvement-required-district-picker {
+  margin-top: 6px;
 }
 
 .unit-main-board {
@@ -5053,6 +5116,8 @@ details > summary:focus-visible {
   gap: 10px;
   align-items: start;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .art-slot-card.read-only {
@@ -5087,6 +5152,8 @@ details > summary:focus-visible {
   justify-content: center;
   padding: 10px;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .art-slot-visual .entry-thumb-canvas {
@@ -5094,6 +5161,7 @@ details > summary:focus-visible {
   height: auto;
   max-height: 118px;
   max-width: 100%;
+  object-fit: contain;
 }
 
 .art-slot-meta {
@@ -5140,13 +5208,17 @@ details > summary:focus-visible {
 
 .art-slot-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 0 2px 2px;
+  min-width: 0;
 }
 
 .art-slot-actions .ghost {
   padding: 5px 9px;
   font-size: 0.7rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tech-tree-section {
@@ -7706,6 +7778,7 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .section-art-soft-frame {
+  position: relative;
   min-height: 132px;
   border-radius: 10px;
   border: 1px solid rgba(73, 69, 98, 0.16);
@@ -7714,6 +7787,34 @@ button.unit-ini-delete-btn:disabled {
   align-items: center;
   justify-content: center;
   padding: 10px;
+}
+
+.wonder-direction-hint {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  min-height: 22px;
+  max-width: calc(100% - 14px);
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(54, 73, 116, 0.24);
+  background: rgba(255, 255, 255, 0.92);
+  color: #344669;
+  font-size: 0.64rem;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(39, 45, 72, 0.1);
+  pointer-events: none;
+}
+
+.wonder-direction-hint.alt {
+  border-color: rgba(151, 113, 38, 0.28);
+  color: #6b531f;
+  background: rgba(255, 251, 238, 0.94);
 }
 
 .inline-path-preview-inline {
@@ -7895,6 +7996,43 @@ button.unit-ini-delete-btn:disabled {
 .unit-icon-picker-item.active {
   border-color: rgba(11, 127, 120, 0.46);
   background: rgba(232, 255, 252, 0.96);
+}
+
+.district-button-tile-picker {
+  grid-template-columns: auto;
+  justify-content: start;
+}
+
+.district-button-tile-menu {
+  position: fixed;
+  top: 50%;
+  left: 50% !important;
+  right: auto;
+  transform: translate(-50%, -50%);
+  width: fit-content;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+}
+
+.district-button-tile-scroller {
+  width: min(560px, calc(100vw - 84px));
+  max-height: min(520px, calc(100vh - 128px));
+  overflow: auto;
+}
+
+.district-button-tile-item {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+}
+
+.district-button-tile-item .entry-thumb-canvas {
+  width: 40px;
+  height: 40px;
+}
+
+.district-button-tile-menu .hint:empty {
+  display: none;
 }
 
 .wonder-coordinate-inline {

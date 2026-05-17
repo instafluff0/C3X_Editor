@@ -5633,6 +5633,14 @@ function clearWonderAtlasPreviewCache() {
   }
 }
 
+function clearNaturalWonderAtlasPreviewCache() {
+  for (const key of Array.from(state.previewCache.keys())) {
+    if (String(key || '').includes('"kind":"natural-wonder-atlas"')) {
+      state.previewCache.delete(key);
+    }
+  }
+}
+
 function getCivilizationNameSuggestions() {
   return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || '')).filter(Boolean);
 }
@@ -5757,6 +5765,7 @@ function makeNamedListTokenEditor(config) {
   const cfg = config || {};
   const tabKey = String(cfg.tabKey || '').trim();
   const onValuesChange = typeof cfg.onValuesChange === 'function' ? cfg.onValuesChange : null;
+  const readOnly = cfg.readOnly === true;
   const options = Array.isArray(cfg.options) ? cfg.options : getNamedReferenceOptionsForTab(tabKey);
   const specialOptions = Array.isArray(cfg.specialOptions) ? cfg.specialOptions : [];
   const wrap = document.createElement('div');
@@ -5812,12 +5821,14 @@ function makeNamedListTokenEditor(config) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'segmented-multi-btn active';
+      btn.disabled = readOnly;
       const text = document.createElement('span');
       const aliasLabels = cfg.aliasLabels instanceof Map ? cfg.aliasLabels : null;
       text.textContent = opt ? opt.label : (aliasLabels ? (aliasLabels.get(value) || value) : value);
       btn.appendChild(text);
       btn.title = 'Remove';
       btn.addEventListener('click', () => {
+        if (readOnly) return;
         values = values.filter((v) => v !== value);
         rerenderChips();
         emit();
@@ -5833,7 +5844,9 @@ function makeNamedListTokenEditor(config) {
     searchPlaceholder: `Add ${toFriendlyKey(tabKey).replace(/s$/, '')}...`,
     noneLabel: 'Add item...',
     resetAfterSelect: true,
+    readOnly,
     onSelect: (next) => {
+      if (readOnly) return;
       const normalized = normalizeConfigToken(next);
       if (!normalized || normalized === '-1') return;
       const special = specialOptions.find((opt) => normalizeConfigToken(opt && opt.value) === normalized);
@@ -5854,7 +5867,7 @@ function makeNamedListTokenEditor(config) {
       }
     }
   });
-  wrap.appendChild(picker);
+  if (!readOnly) wrap.appendChild(picker);
   wrap.appendChild(chips);
   rerenderChips();
   return wrap;
@@ -7380,6 +7393,13 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
   if (options && options.softBlueFrame) {
     const frame = document.createElement('div');
     frame.className = 'section-art-soft-frame';
+    if (options.directionHint) {
+      const hint = document.createElement('span');
+      hint.className = `wonder-direction-hint ${String(options.directionHint.kind || '')}`.trim();
+      hint.textContent = String(options.directionHint.label || '');
+      hint.title = String(options.directionHint.title || '');
+      frame.appendChild(hint);
+    }
     frame.appendChild(canvas);
     card.appendChild(frame);
   } else {
@@ -7503,8 +7523,18 @@ async function loadPreviewsForSection(tabKey, section, previewWrap, shouldContin
     ? { softBlueFrame: true }
     : null;
   const getPreviewOptionsForTitle = (taskTitle) => {
+    const titleText = String(taskTitle || '');
+    const hasWonderAltDirection = tabKey === 'wonders' && parseConfigBool(getFieldValue(section, 'enable_img_alt_dir'));
+    const wonderDirectionHint = hasWonderAltDirection
+      ? (titleText.startsWith('Alt ')
+        ? { kind: 'alt', label: '<- Alt', title: 'Alt direction art should face left.' }
+        : { kind: 'main', label: 'Main ->', title: 'Main direction art should face right.' })
+      : null;
     if (tabKey === 'naturalWonders' && String(taskTitle || '') === 'Animation') {
       return { ...(previewOptions || {}), skipBlankMagentaFrames: true };
+    }
+    if (wonderDirectionHint) {
+      return { ...(previewOptions || {}), directionHint: wonderDirectionHint };
     }
     return previewOptions;
   };
@@ -16521,6 +16551,18 @@ function createImprovementC3XFieldTooltip(baseKey, note = '') {
   return lines.join('\n');
 }
 
+function createImprovementC3XSectionFieldTooltip(tabKey, fieldKey, note = '') {
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  const sourceMeta = formatSourceInfo(getSectionTabSourceMeta(tab), 'C3X Config');
+  const lines = [
+    sourceMeta,
+    `Field: ${fieldKey}`
+  ];
+  const cleanNote = String(note || '').trim();
+  if (cleanNote) lines.push(`Description: ${cleanNote}`);
+  return lines.join('\n');
+}
+
 function getImprovementC3XName(entry) {
   return normalizeConfigToken(getReferenceEntryDisplayName('improvements', entry));
 }
@@ -16712,6 +16754,180 @@ function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
   return cell;
 }
 
+function getDistrictSectionsForImprovementDependency(entry) {
+  const buildingName = getImprovementC3XName(entry);
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.districts;
+  const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+  if (!buildingName || sections.length === 0) return [];
+  return sections
+    .map((section, index) => ({ section, index, name: normalizeConfigToken(getFieldValue(section, 'name')) }))
+    .filter(({ section, name }) => {
+      if (!name) return false;
+      return tokenizeListPreservingQuotes(getFieldValue(section, 'dependent_improvs') || '')
+        .map((token) => normalizeConfigToken(token))
+        .some((token) => c3xNameMatches(token, buildingName));
+    });
+}
+
+function serializeSectionListTokens(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => normalizeConfigToken(value))
+    .filter(Boolean)
+    .map((value) => quoteConfigToken(value))
+    .join(', ');
+}
+
+function setDistrictDependentImprovementMembership(entry, districtNames) {
+  const buildingName = getImprovementC3XName(entry);
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.districts;
+  const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+  if (!buildingName || sections.length === 0) return;
+  const selected = new Set((Array.isArray(districtNames) ? districtNames : [])
+    .map((name) => normalizeConfigToken(name).toLowerCase())
+    .filter(Boolean));
+
+  rememberUndoSnapshotForKey(`DISTRICTS:dependent_improvs:${buildingName.toLowerCase()}`);
+  let changed = false;
+  sections.forEach((section) => {
+    const districtName = normalizeConfigToken(getFieldValue(section, 'name'));
+    if (!districtName) return;
+    const shouldInclude = selected.has(districtName.toLowerCase());
+    const current = tokenizeListPreservingQuotes(getFieldValue(section, 'dependent_improvs') || '')
+      .map((token) => normalizeConfigToken(token))
+      .filter(Boolean);
+    const hasBuilding = current.some((token) => c3xNameMatches(token, buildingName));
+    if (shouldInclude === hasBuilding) return;
+    const next = current.filter((token) => !c3xNameMatches(token, buildingName));
+    if (shouldInclude) next.push(buildingName);
+    section.fields = (Array.isArray(section.fields) ? section.fields : []).filter((field) => String(field && field.key || '') !== 'dependent_improvs');
+    const serialized = serializeSectionListTokens(next);
+    if (serialized) section.fields.push({ key: 'dependent_improvs', value: serialized });
+    changed = true;
+  });
+
+  if (!changed) return;
+  setDirty(true);
+  recomputeDirtyCountForTab('districts');
+  refreshDirtyUi();
+  refreshTabDirtyBadges();
+}
+
+function renderImprovementRequiredDistrictsControl(entry, referenceEditable) {
+  const cell = document.createElement('div');
+  cell.className = 'improvement-top-cell improvement-c3x-top-cell';
+  const label = document.createElement('label');
+  label.className = 'field-meta improvement-top-cell-label';
+  const strong = document.createElement('strong');
+  strong.textContent = 'Required Districts';
+  label.appendChild(strong);
+  attachRichTooltip(label, createImprovementC3XSectionFieldTooltip(
+    'districts',
+    'dependent_improvs',
+    'Reverse view of Districts -> Dependent Improvements. Editing here updates the selected C3X district definitions.'
+  ));
+  cell.appendChild(label);
+
+  const control = document.createElement('div');
+  control.className = 'improvement-top-cell-control improvement-c3x-top-control';
+  cell.appendChild(control);
+
+  const buildingName = getImprovementC3XName(entry);
+  const districtOptions = getSectionNamesFromTab('districts', 'name').map((name) => ({ value: name, label: name }));
+  if (!buildingName || districtOptions.length === 0) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = '(unavailable)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const currentDistricts = getDistrictSectionsForImprovementDependency(entry);
+  const selectedNames = currentDistricts.map((item) => item.name).filter(Boolean);
+  const commitSelectedNames = (nextNames) => {
+    setDistrictDependentImprovementMembership(entry, nextNames);
+    renderActiveTab({ preserveTabScroll: true });
+  };
+
+  const list = document.createElement('div');
+  list.className = 'improvement-required-district-list';
+  if (currentDistricts.length > 0) {
+    currentDistricts.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'improvement-required-district-row';
+
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'improvement-wonder-district-link improvement-required-district-link';
+      const title = getDistrictSectionDisplay(item.section, item.index).primary || item.name;
+      link.title = `Open ${title} in Districts`;
+      link.addEventListener('click', () => navigateToDistrict(item.index));
+
+      const thumb = document.createElement('span');
+      thumb.className = 'entry-thumb district-entry-thumb section-entry-thumb-large improvement-wonder-district-thumb';
+      link.appendChild(thumb);
+      loadDistrictRepresentativePreview(item.section, thumb, 44);
+
+      const text = document.createElement('span');
+      text.className = 'improvement-wonder-district-text';
+      const name = document.createElement('strong');
+      name.textContent = title;
+      text.appendChild(name);
+      const internalName = normalizeConfigToken(getFieldValue(item.section, 'name'));
+      if (internalName && internalName !== title) {
+        const secondary = document.createElement('span');
+        secondary.className = 'improvement-wonder-district-extra';
+        secondary.textContent = internalName;
+        text.appendChild(secondary);
+      }
+      link.appendChild(text);
+
+      const arrow = document.createElement('span');
+      arrow.className = 'improvement-wonder-district-arrow';
+      arrow.textContent = '↗';
+      link.appendChild(arrow);
+      row.appendChild(link);
+
+      if (referenceEditable) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'ghost improvement-required-district-remove';
+        withRemoveIcon(remove, '');
+        remove.title = `Remove ${title}`;
+        remove.setAttribute('aria-label', `Remove ${title}`);
+        remove.addEventListener('click', () => {
+          commitSelectedNames(selectedNames.filter((nameValue) => !c3xNameMatches(nameValue, item.name)));
+        });
+        row.appendChild(remove);
+      }
+      list.appendChild(row);
+    });
+  }
+  if (list.childElementCount > 0) control.appendChild(list);
+
+  if (referenceEditable) {
+    const selectedSet = new Set(selectedNames.map((name) => normalizeConfigToken(name).toLowerCase()));
+    const availableOptions = districtOptions.filter((opt) => !selectedSet.has(normalizeConfigToken(opt.value).toLowerCase()));
+    if (availableOptions.length > 0) {
+      const picker = createReferencePicker({
+        options: availableOptions,
+        targetTabKey: '',
+        currentValue: '-1',
+        searchPlaceholder: 'Add District...',
+        noneLabel: 'Add District...',
+        resetAfterSelect: true,
+        onSelect: (next) => {
+          const normalized = normalizeConfigToken(next);
+          if (!normalized || normalized === '-1') return;
+          commitSelectedNames([...selectedNames, normalized]);
+        }
+      });
+      picker.classList.add('improvement-required-district-picker');
+      control.appendChild(picker);
+    }
+  }
+  return cell;
+}
+
 function buildImprovementCategorySegmentedControl(entry, referenceEditable, fields = []) {
   const wonder = fields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'wonder') || getBiqFieldByBaseKey(entry, 'wonder');
   const smallWonder = fields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'smallwonder') || getBiqFieldByBaseKey(entry, 'smallwonder');
@@ -16774,6 +16990,17 @@ function navigateToWonderDistrict(index) {
     state.activeTab = 'wonders';
     state.sectionSelection.wonders = index;
     state.sectionFilter.wonders = '';
+  }, { preserveTabScroll: false });
+}
+
+function navigateToDistrict(index) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.districts;
+  const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+  if (!sections[index]) return;
+  navigateWithHistory(() => {
+    state.activeTab = 'districts';
+    state.sectionSelection.districts = index;
+    state.sectionFilter.districts = '';
   }, { preserveTabScroll: false });
 }
 
@@ -16896,6 +17123,7 @@ function renderImprovementDenseTopBoard(entry, referenceEditable) {
   if (categoryFields.length > 0 || obsoleteField) {
     const c3xRow = document.createElement('div');
     c3xRow.className = 'improvement-top-grid improvement-top-grid-c3x';
+    c3xRow.appendChild(renderImprovementRequiredDistrictsControl(entry, referenceEditable));
     c3xRow.appendChild(renderImprovementGeneratedResourcesControl(entry, referenceEditable));
     c3xRow.appendChild(renderImprovementProductionPerfumeControl(entry, referenceEditable));
     wrap.appendChild(c3xRow);
@@ -17788,6 +18016,30 @@ async function getWonderAtlasPreview(section) {
   return null;
 }
 
+async function getNaturalWonderAtlasPreview(section) {
+  const fileName = normalizeConfigToken(getFieldValue(section, 'img_path')) || 'NaturalWonders.pcx';
+  const cacheKey = JSON.stringify({
+    kind: 'natural-wonder-atlas',
+    c3xPath: state.settings && state.settings.c3xPath,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths().join('|'),
+    fileName
+  });
+  if (state.previewCache.has(cacheKey)) return state.previewCache.get(cacheKey);
+  const res = await window.c3xManager.getPreview({
+    kind: 'naturalWonder',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
+  });
+  if (res && res.ok) {
+    setPreviewCache(cacheKey, res);
+    return res;
+  }
+  return null;
+}
+
 function getAtlasCopyTab(tabKey) {
   return state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
 }
@@ -18195,13 +18447,14 @@ function createResourceIconIndexPicker(currentValue, onSelect) {
   return wrap;
 }
 
-function createWonderCellPicker(section, currentRow, currentCol, onSelect) {
+function createWonderCellPicker(section, currentRow, currentCol, onSelect, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
   const WONDER_CELL_ITEM_W = 154;
   const WONDER_CELL_ITEM_H = 110;
   const WONDER_CELL_MAX_W = 138;
   const WONDER_CELL_MAX_H = 88;
   const wrap = document.createElement('div');
-  wrap.className = 'path-input-with-btn unit-icon-index-picker wonder-coordinate-picker';
+  wrap.className = `path-input-with-btn unit-icon-index-picker wonder-coordinate-picker ${String(opts.extraClassName || '')}`.trim();
 
   const openBtn = document.createElement('button');
   openBtn.type = 'button';
@@ -18211,7 +18464,7 @@ function createWonderCellPicker(section, currentRow, currentCol, onSelect) {
   menu.className = 'color-slot-picker-menu unit-icon-picker-menu wonder-coordinate-menu hidden';
   const status = document.createElement('div');
   status.className = 'hint';
-  status.textContent = 'Loading wonder art sheet...';
+  status.textContent = String(opts.loadingText || 'Loading wonder art sheet...');
   const scroller = document.createElement('div');
   scroller.className = 'unit-icon-picker-scroller wonder-coordinate-scroller';
   const grid = document.createElement('div');
@@ -18224,13 +18477,15 @@ function createWonderCellPicker(section, currentRow, currentCol, onSelect) {
   let gridBuilt = false;
   let selectedRow = Math.max(0, Number(currentRow) || 0);
   let selectedCol = Math.max(0, Number(currentCol) || 0);
-  const crop = () => getCropDimensions(section, { w: 128, h: 64 });
+  const defaultCrop = opts.defaultCrop || { w: 128, h: 64 };
+  const crop = () => getCropDimensions(section, defaultCrop);
+  const loadAtlasPreview = typeof opts.loadAtlasPreview === 'function' ? opts.loadAtlasPreview : getWonderAtlasPreview;
 
   const renderGrid = () => {
     if (!atlasPreview) return;
     const metrics = getWonderAtlasMetrics(atlasPreview, crop());
     if (!metrics) {
-      status.textContent = 'Could not parse wonder art sheet';
+      status.textContent = String(opts.parseErrorText || 'Could not parse wonder art sheet');
       return;
     }
     const { cols, rows } = metrics;
@@ -18281,9 +18536,9 @@ function createWonderCellPicker(section, currentRow, currentCol, onSelect) {
     const opening = menu.classList.contains('hidden');
     menu.classList.toggle('hidden');
     if (!opening) return;
-    if (!atlasPreview) atlasPreview = await getWonderAtlasPreview(section);
+    if (!atlasPreview) atlasPreview = await loadAtlasPreview(section);
     if (!atlasPreview || !atlasPreview.width || !atlasPreview.height) {
-      status.textContent = 'Could not load wonder art sheet';
+      status.textContent = String(opts.loadErrorText || 'Could not load wonder art sheet');
       return;
     }
     if (!gridBuilt) renderGrid();
@@ -18337,6 +18592,63 @@ function createWonderCoordinatePairEditor(section, rowKey, colKey, onValueChange
       if (onValueChange) {
         onValueChange(rowKey, String(spriteRow));
       }
+    }
+  );
+
+  wrap.appendChild(rowLabel);
+  wrap.appendChild(rowInput);
+  wrap.appendChild(colLabel);
+  wrap.appendChild(colInput);
+  wrap.appendChild(picker);
+  return wrap;
+}
+
+function createNaturalWonderCoordinatePairEditor(section, onValueChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wonder-coordinate-inline natural-wonder-coordinate-inline';
+
+  const makeNumberInput = (key) => {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.value = getFieldValue(section, key) || '0';
+    input.addEventListener('input', () => {
+      setSingleFieldValue(section, key, String(input.value || '').trim());
+      if (onValueChange) onValueChange(key, String(input.value || '').trim());
+    });
+    return input;
+  };
+
+  const rowInput = makeNumberInput('img_row');
+  const colInput = makeNumberInput('img_column');
+
+  const rowLabel = document.createElement('span');
+  rowLabel.className = 'wonder-coordinate-mini-label';
+  rowLabel.textContent = 'Row';
+  const colLabel = document.createElement('span');
+  colLabel.className = 'wonder-coordinate-mini-label';
+  colLabel.textContent = 'Column';
+
+  const picker = createWonderCellPicker(
+    section,
+    parseConfigInteger(getFieldValue(section, 'img_row'), 0),
+    parseConfigInteger(getFieldValue(section, 'img_column'), 0),
+    (spriteRow, spriteCol) => {
+      setSectionFieldValues(section, {
+        img_row: String(spriteRow),
+        img_column: String(spriteCol)
+      });
+      rowInput.value = String(spriteRow);
+      colInput.value = String(spriteCol);
+      if (onValueChange) onValueChange('img_row', String(spriteRow));
+    },
+    {
+      defaultCrop: { w: 128, h: 88 },
+      loadAtlasPreview: getNaturalWonderAtlasPreview,
+      extraClassName: 'natural-wonder-coordinate-picker',
+      loadingText: 'Loading natural wonder art sheet...',
+      parseErrorText: 'Could not parse natural wonder art sheet',
+      loadErrorText: 'Could not load natural wonder art sheet'
     }
   );
 
@@ -21652,22 +21964,7 @@ function getPendingReferenceArtConversion(entry, slot) {
 }
 
 function getReferenceArtPreviewAliasSlot(entry, slot) {
-  if (!slot) return slot;
-  const group = String(slot.group || '').trim();
-  const index = Number(slot.index);
-  if (group !== 'iconPaths' || index !== 3) return slot;
-  const racePaths = Array.isArray(entry && entry.racePaths) ? entry.racePaths : [];
-  const advisorPath = String(racePaths[1] || '').trim();
-  if (!advisorPath) return slot;
-  const pendingSlot = {
-    group: 'racePaths',
-    index: 1,
-    label: 'Advisor Portrait (#RACE_* line 2)',
-    path: advisorPath
-  };
-  return getPendingReferenceArtSource(entry, pendingSlot) || getPendingReferenceArtConversion(entry, pendingSlot)
-    ? pendingSlot
-    : slot;
+  return slot;
 }
 
 function clearPendingReferenceArtSource(entry, slot) {
@@ -21886,14 +22183,7 @@ function isCivilizationMakeSheetSlot(tabKey, slot) {
 
 function getCivilizationMakeSheetTargetSlot(entry, slot, tabKey) {
   if (!isCivilizationMakeSheetSlot(tabKey, slot)) return null;
-  if (String(slot && slot.group || '').trim() === 'racePaths') return slot;
-  const racePaths = Array.isArray(entry && entry.racePaths) ? entry.racePaths : [];
-  return {
-    group: 'racePaths',
-    index: 1,
-    label: 'Advisor Portrait (#RACE_* line 2)',
-    path: String(racePaths[1] || slot.path || '')
-  };
+  return slot;
 }
 
 function isConvertibleArtPath(filePath) {
@@ -21976,26 +22266,27 @@ function buildRepeatedPortraitSheetRgba(source, size) {
   const height = Math.max(1, Number(size && size.height) || 346);
   const cols = 4;
   const rows = 3;
+  const portraitSize = 115;
   const out = new Uint8Array(width * height * 4);
   for (let i = 0; i < out.length; i += 4) {
-    out[i] = 0;
+    out[i] = 255;
     out[i + 1] = 0;
-    out[i + 2] = 0;
+    out[i + 2] = 255;
     out[i + 3] = 255;
   }
   const sw = Math.max(1, Number(source && source.width) || 1);
   const sh = Math.max(1, Number(source && source.height) || 1);
   const src = source && source.rgba instanceof Uint8Array ? source.rgba : new Uint8Array();
-  const cellSize = 116;
+  const gridPosition = (index) => 1 + (index * portraitSize);
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
-      const x0 = Math.max(0, Math.min(width, Math.round(col * cellSize) - Math.floor((cols * cellSize - width) / 2)));
-      const x1 = Math.max(0, Math.min(width, x0 + cellSize));
-      const y0 = Math.max(0, Math.min(height, Math.round(row * cellSize) - Math.floor((rows * cellSize - height) / 2)));
-      const y1 = Math.max(0, Math.min(height, y0 + cellSize));
-      const cx = (x0 + x1 - 1) / 2;
-      const cy = (y0 + y1 - 1) / 2;
-      const radius = Math.max(1, Math.min(x1 - x0, y1 - y0) * 0.46);
+      const x0 = Math.max(0, Math.min(width, gridPosition(col)));
+      const x1 = Math.max(0, Math.min(width, x0 + portraitSize));
+      const y0 = Math.max(0, Math.min(height, gridPosition(row)));
+      const y1 = Math.max(0, Math.min(height, y0 + portraitSize));
+      const cx = x0 + 57;
+      const cy = y0 + 57;
+      const radius = 57;
       const scale = Math.max((radius * 2) / sw, (radius * 2) / sh);
       const drawW = Math.max(1, sw * scale);
       const drawH = Math.max(1, sh * scale);
@@ -22012,9 +22303,9 @@ function buildRepeatedPortraitSheetRgba(source, size) {
           const dstOff = (y * width + x) * 4;
           const a = srcOff + 3 < src.length ? src[srcOff + 3] : 255;
           const invA = 255 - a;
-          out[dstOff] = Math.round(((src[srcOff] * a) + (0 * invA)) / 255);
+          out[dstOff] = Math.round(((src[srcOff] * a) + (255 * invA)) / 255);
           out[dstOff + 1] = Math.round(((src[srcOff + 1] * a) + (0 * invA)) / 255);
-          out[dstOff + 2] = Math.round(((src[srcOff + 2] * a) + (0 * invA)) / 255);
+          out[dstOff + 2] = Math.round(((src[srcOff + 2] * a) + (255 * invA)) / 255);
           out[dstOff + 3] = 255;
         }
       }
@@ -22165,8 +22456,8 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
   makeSheetBtn.textContent = 'Make Sheet';
   if (isCivilizationMakeSheetSlot(tabKey, slot)) {
     actions.appendChild(makeSheetBtn);
-    makeSheetBtn.title = 'Choose one image and build the Civ 3 advisor portrait sheet. The image is repeated into the 461x346 PCX used by this advisor slot.';
-    attachRichTooltip(makeSheetBtn, 'Choose one image and build the Civ 3 advisor portrait sheet.\nThe image is repeated into the 461x346 PCX used by this advisor slot.');
+    makeSheetBtn.title = 'Choose one image and build a Civ 3 461x346 repeated portrait sheet for this slot.';
+    attachRichTooltip(makeSheetBtn, 'Choose one image and build a Civ 3 repeated portrait sheet.\nThe image is repeated into the 461x346 PCX used by this slot.');
   }
   card.appendChild(actions);
   attachRichTooltip(card, `Source: PediaIcons\nFile: ${slot.path || '(not set)'}\nSlot: ${slot.label}`);
@@ -22214,17 +22505,8 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
           defaultPath: resolved || fallbackDir || undefined
         });
         if (!filePath) return;
-        const previousPath = normalizeAssetReferencePath(targetSlot.path);
         rememberUndoSnapshot();
         setReferenceArtSlotPath(entry, targetSlot, filePath, tabKey);
-        const nextAdvisorPath = Array.isArray(entry && entry.racePaths) ? normalizeAssetReferencePath(entry.racePaths[1]) : '';
-        if (previousPath && nextAdvisorPath && Array.isArray(entry && entry.iconPaths)) {
-          entry.iconPaths = entry.iconPaths.map((value) => (
-            normalizeAssetReferencePath(value).toLowerCase() === previousPath.toLowerCase()
-              ? nextAdvisorPath
-              : value
-          ));
-        }
         try {
           setPendingReferenceArtConversion(entry, targetSlot, await buildPendingRepeatedPortraitSheetConversion(
             filePath,
@@ -32552,6 +32834,139 @@ function getTokenColor(token, fieldKey = '') {
   return `hsl(${hue} 55% 48%)`;
 }
 
+async function getDistrictButtonSheetPreview() {
+  const cacheKey = JSON.stringify({
+    kind: 'district-button-sheet',
+    c3xPath: state.settings && state.settings.c3xPath
+  });
+  const cached = state.previewCache.get(cacheKey);
+  if (cached) return cached;
+  const res = await window.c3xManager.getPreview({
+    kind: 'districtButtonSheet',
+    c3xPath: state.settings && state.settings.c3xPath
+  });
+  if (res && res.ok) {
+    setPreviewCache(cacheKey, res);
+    return res;
+  }
+  return null;
+}
+
+function getDistrictButtonSheetMetrics(preview) {
+  const atlas = rgbaToCanvas(preview);
+  if (!atlas || !atlas.width || !atlas.height) return null;
+  const cellW = 32;
+  const cellH = 32;
+  const cols = Math.max(1, Math.floor(atlas.width / cellW));
+  const rows = Math.max(1, Math.floor(atlas.height / cellH));
+  return { atlas, cols, rows, cellW, cellH };
+}
+
+function drawDistrictButtonSheetCellToCanvas(preview, row, col, canvas) {
+  const metrics = getDistrictButtonSheetMetrics(preview);
+  if (!metrics || !canvas) return false;
+  const { atlas, cols, rows, cellW, cellH } = metrics;
+  const safeRow = Math.max(0, Number(row) || 0);
+  const safeCol = Math.max(0, Number(col) || 0);
+  if (safeRow >= rows || safeCol >= cols) return false;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(atlas, safeCol * cellW, safeRow * cellH, cellW, cellH, 0, 0, canvas.width, canvas.height);
+  return true;
+}
+
+function createDistrictButtonTilePicker(currentRow, currentCol, onSelect) {
+  const CELL_STEP = 54;
+  const wrap = document.createElement('div');
+  wrap.className = 'path-input-with-btn unit-icon-index-picker district-button-tile-picker';
+
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.textContent = 'Select';
+
+  const menu = document.createElement('div');
+  menu.className = 'color-slot-picker-menu unit-icon-picker-menu district-button-tile-menu hidden';
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.textContent = 'Loading button sheet...';
+  const scroller = document.createElement('div');
+  scroller.className = 'unit-icon-picker-scroller district-button-tile-scroller';
+  const grid = document.createElement('div');
+  grid.className = 'unit-icon-picker-grid district-button-tile-grid';
+  scroller.appendChild(grid);
+  menu.appendChild(status);
+  menu.appendChild(scroller);
+
+  let sheetPreview = null;
+  let gridBuilt = false;
+  let selectedRow = Math.max(0, Number(currentRow) || 0);
+  let selectedCol = Math.max(0, Number(currentCol) || 0);
+
+  const renderGrid = () => {
+    if (!sheetPreview) return;
+    const metrics = getDistrictButtonSheetMetrics(sheetPreview);
+    if (!metrics) {
+      status.textContent = 'Could not parse button sheet';
+      return;
+    }
+    const { cols, rows } = metrics;
+    grid.innerHTML = '';
+    grid.style.width = `${cols * CELL_STEP}px`;
+    grid.style.height = `${rows * CELL_STEP}px`;
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'unit-icon-picker-item district-button-tile-item';
+        item.title = `Row ${row}, Column ${col}`;
+        item.setAttribute('aria-label', `Row ${row}, Column ${col}`);
+        item.style.left = `${col * CELL_STEP}px`;
+        item.style.top = `${row * CELL_STEP}px`;
+        item.classList.toggle('active', selectedRow === row && selectedCol === col);
+        const canvas = document.createElement('canvas');
+        canvas.width = 32;
+        canvas.height = 32;
+        canvas.className = 'entry-thumb-canvas';
+        drawDistrictButtonSheetCellToCanvas(sheetPreview, row, col, canvas);
+        item.appendChild(canvas);
+        item.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          selectedRow = row;
+          selectedCol = col;
+          if (typeof onSelect === 'function') onSelect(row, col);
+          menu.classList.add('hidden');
+          renderGrid();
+        });
+        grid.appendChild(item);
+      }
+    }
+    status.textContent = '';
+    gridBuilt = true;
+  };
+
+  openBtn.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden');
+    if (!opening) return;
+    if (!sheetPreview) sheetPreview = await getDistrictButtonSheetPreview();
+    if (!sheetPreview || !sheetPreview.width || !sheetPreview.height) {
+      status.textContent = 'Could not load button sheet';
+      return;
+    }
+    if (!gridBuilt) renderGrid();
+  });
+  registerOutsideClickDismiss(wrap, () => {
+    menu.classList.add('hidden');
+  });
+
+  wrap.appendChild(openBtn);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
 function renderButtonTileCompoundRow(section) {
   const rowEl = document.createElement('div');
   rowEl.className = 'rule-row section-rule-row';
@@ -32598,6 +33013,14 @@ function renderButtonTileCompoundRow(section) {
   controlWrap.appendChild(makeSubLabel('Col'));
   controlWrap.appendChild(colInput);
   controlWrap.appendChild(canvas);
+  controlWrap.appendChild(createDistrictButtonTilePicker(rowInput.value, colInput.value, (row, col) => {
+    rowInput.value = String(row);
+    colInput.value = String(col);
+    setSingleFieldValue(section, 'btn_tile_sheet_row', rowInput.value);
+    setSingleFieldValue(section, 'btn_tile_sheet_column', colInput.value);
+    refreshCanvas();
+    setDirty(true);
+  }));
   rowEl.appendChild(controlWrap);
 
   let loadedPreview = null;
@@ -34282,6 +34705,13 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
     return row;
   }
 
+  if (state.activeTab === 'naturalWonders' && effectiveField.key === 'img_row') {
+    label.textContent = 'Image Art *';
+    controlWrap.appendChild(createNaturalWonderCoordinatePairEditor(section, onValueChange));
+    row.appendChild(controlWrap);
+    return row;
+  }
+
   const districtSingleChoiceKeys = new Set(['render_strategy', 'ai_build_strategy']);
   if (state.activeTab === 'districts' && districtSingleChoiceKeys.has(effectiveField.key) && Array.isArray(effectiveField.options) && effectiveField.options.length > 0) {
     const chips = makeSegmentedSingleValueEditor(
@@ -34909,6 +35339,9 @@ function renderSectionTab(tab, tabKey) {
       ]);
       orderedSchemaFields = orderedSchemaFields.filter((field) => !hiddenWonderCoordinateKeys.has(String(field && field.key || '')));
     }
+    if (tabKey === 'naturalWonders') {
+      orderedSchemaFields = orderedSchemaFields.filter((field) => String(field && field.key || '') !== 'img_column');
+    }
     orderedSchemaFields
       .forEach((schemaField) => {
       form.appendChild(renderKnownField(section, schemaField, tab.fieldDocs, (key, value) => {
@@ -34971,6 +35404,12 @@ function renderSectionTab(tab, tabKey) {
         if (tabKey === 'naturalWonders' && key === 'adjacency_dir') {
           syncNaturalWonderAnimationDirections(section);
           refreshPreviews();
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
+        if (tabKey === 'naturalWonders' && (key === 'img_path' || key === 'custom_width' || key === 'custom_height')) {
+          clearNaturalWonderAtlasPreviewCache();
+          setDirty(true);
           renderActiveTab({ preserveTabScroll: true });
           return;
         }
