@@ -2412,6 +2412,11 @@ button.danger:hover {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.map-option-grid.district,
+.map-option-grid.natural-wonder {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .map-tile-option-button {
   display: grid;
   grid-template-rows: 30px minmax(26px, auto);
@@ -2502,6 +2507,12 @@ button.danger:hover {
   color: #20335c;
 }
 
+.map-option-thumb.district,
+.map-option-thumb.natural-wonder {
+  background: linear-gradient(135deg, rgba(111, 92, 241, 0.14), rgba(34, 169, 158, 0.12)), #ffffff;
+  color: #2e315e;
+}
+
 .map-option-thumb.category {
   background: linear-gradient(135deg, rgba(111, 92, 241, 0.16), rgba(34, 169, 158, 0.13)), #ffffff;
   color: #2e315e;
@@ -2573,13 +2584,54 @@ button.danger:hover {
 }
 
 .map-city-editor-title {
-  padding: 8px 10px;
+  padding: 0;
   border: 1px solid rgba(73, 69, 98, 0.10);
   border-radius: 9px;
   background: rgba(247, 250, 255, 0.78);
   color: #202640;
   font-size: 0.9rem;
   font-weight: 900;
+  overflow: hidden;
+}
+
+.map-city-title-button {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.map-city-title-button:hover:not(:disabled) {
+  background: rgba(238, 244, 255, 0.78);
+  box-shadow: none;
+  transform: none;
+}
+
+.map-city-title-button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.map-city-title-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border: 0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.94);
+  color: #202640;
+  font: inherit;
+  padding: 8px 10px;
+}
+
+.map-city-editor-title.editing {
+  border-color: rgba(82, 126, 219, 0.42);
+  box-shadow: 0 0 0 2px rgba(82, 126, 219, 0.14);
 }
 
 .map-city-fields {
@@ -2598,6 +2650,10 @@ button.danger:hover {
   background: rgba(255, 255, 255, 0.78);
 }
 
+.map-city-field-wide {
+  grid-column: 1 / -1;
+}
+
 .map-city-field input,
 .map-city-field select {
   width: 100%;
@@ -2605,14 +2661,35 @@ button.danger:hover {
   min-height: 32px;
 }
 
+.map-city-owner-field .tech-picker {
+  min-width: 0;
+  width: 100%;
+}
+
+.map-city-owner-field .tech-picker-menu {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.map-city-owner-field .tech-picker-btn {
+  min-height: 34px;
+}
+
 .map-city-buildings {
   display: grid;
-  gap: 6px;
+  gap: 3px;
+}
+
+.map-city-buildings .section-top.compact {
+  margin-bottom: 0;
 }
 
 .map-building-grid {
   display: grid;
-  gap: 6px;
+  grid-auto-rows: 46px;
+  align-content: start;
+  gap: 5px;
   max-height: min(36vh, 330px);
   overflow: auto;
   padding-right: 2px;
@@ -2620,9 +2697,21 @@ button.danger:hover {
 
 .map-building-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
-  gap: 6px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 0;
+  align-items: stretch;
+  min-height: 46px;
+  overflow: hidden;
+  border: 1px solid rgba(73, 69, 98, 0.13);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #202640;
+}
+
+.map-building-row.active {
+  border-color: #2a9f96;
+  background: linear-gradient(135deg, rgba(34, 169, 158, 0.14), rgba(101, 108, 232, 0.08)), #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(34, 169, 158, 0.32);
 }
 
 .map-building-toggle {
@@ -2630,18 +2719,18 @@ button.danger:hover {
   grid-template-columns: 34px 20px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
-  min-height: 42px;
+  min-height: 0;
+  height: 100%;
   padding: 5px 7px;
-  border: 1px solid rgba(73, 69, 98, 0.13);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.88);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #202640;
 }
 
 .map-building-row.active .map-building-toggle {
-  border-color: #2a9f96;
-  background: linear-gradient(135deg, rgba(34, 169, 158, 0.14), rgba(101, 108, 232, 0.08)), #ffffff;
-  box-shadow: inset 0 0 0 1px rgba(34, 169, 158, 0.32);
+  background: transparent;
+  box-shadow: none;
 }
 
 .map-building-thumb {
@@ -2667,6 +2756,10 @@ button.danger:hover {
   font-weight: 900;
 }
 
+.map-building-marker:empty {
+  background: transparent;
+}
+
 .map-building-row.active .map-building-marker {
   background: #2a9f96;
   color: #ffffff;
@@ -2686,13 +2779,24 @@ button.danger:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  align-self: center;
+  justify-self: center;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
   padding: 0;
+  border: 1px solid rgba(73, 69, 98, 0.18);
   border-radius: 8px;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.92);
+  color: #4c5a88;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.map-building-link:hover:not(:disabled) {
+  background: rgba(232, 240, 255, 0.95);
+  border-color: rgba(82, 126, 219, 0.32);
   color: #26305b;
-  font-size: 0.9rem;
 }
 
 .map-select-icon-host {

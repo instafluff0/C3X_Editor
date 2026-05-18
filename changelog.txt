@@ -1,4 +1,12 @@
 * RELEASE 27.11
+- Added visual Map editor Tile Info grids for placing scenario districts and natural wonders with thumbnails.
+- Made Map editor territory border comparisons use resolved civilization identity, preventing borders between cities that resolve to the same civ through different owner slots.
+- Fixed Map editor territory rendering after city owner edits so reverting an owner does not leave stale borders between cities with the same resolved owner.
+- Kept the Map editor City improvement list in place when toggling improvements and hid the Wealth/capitalization pseudo-improvement from city improvement choices.
+- Made the Map editor City owner picker show only friendly civilization names and align its dropdown width with the picker.
+- Made the Map editor City tile title inline-editable and removed the duplicate city Name field from the city controls.
+- Matched City tile improvement link buttons to the app's standard rounded-square reference jump styling.
+- Debounced Map editor city field redraws to preserve the viewport during rapid changes and refined City tile improvements into cohesive linked rows.
 - Added visible city population and culture controls plus linked improvement-thumbnail building toggles to the Map editor Tile Info panel.
 - Set Map editor Mountain and Volcano terrain paints on Grassland base terrain, matching Civ3's expected packed terrain form.
 - Made Map editor terrain painting normalize coastlines so adding land in water creates a proper island with surrounding coast tiles.
