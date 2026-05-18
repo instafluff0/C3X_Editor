@@ -121,6 +121,7 @@ const state = {
   biqMapSuppressClickUntilTs: 0,
   biqMapArtCache: {},
   biqMapArtLoading: {},
+  biqMapDistrictFallbackCache: new Map(),
   biqMapTerritoryEdgeCache: new Map(),
   biqMapNtpColorCache: {},
   civSlotUiColorCache: {},
@@ -367,6 +368,19 @@ function setPreviewCache(key, value) {
   while (state.previewCache.size > getPreviewCacheLimit()) {
     const first = state.previewCache.keys().next();
     if (first && !first.done) state.previewCache.delete(first.value);
+    else break;
+  }
+}
+
+function setMapDistrictFallbackCanvas(key, canvas) {
+  const cacheKey = String(key || '');
+  if (!cacheKey || !canvas) return;
+  if (state.biqMapDistrictFallbackCache.has(cacheKey)) state.biqMapDistrictFallbackCache.delete(cacheKey);
+  state.biqMapDistrictFallbackCache.set(cacheKey, canvas);
+  const limit = getPerformanceMode() === 'safe' ? 80 : 220;
+  while (state.biqMapDistrictFallbackCache.size > limit) {
+    const first = state.biqMapDistrictFallbackCache.keys().next();
+    if (first && !first.done) state.biqMapDistrictFallbackCache.delete(first.value);
     else break;
   }
 }
@@ -4175,6 +4189,26 @@ function persistCurrentViewSnapshot() {
   schedulePersistSettings(180);
 }
 
+function syncCurrentNavigationSnapshot() {
+  if (!state.bundle || !state.bundle.tabs) return false;
+  if (state.isApplyingHistory) return false;
+  if (state.navHistoryIndex < 0 || state.navHistoryIndex >= state.navHistory.length) {
+    persistCurrentViewSnapshot();
+    return false;
+  }
+  const snapshot = captureViewSnapshot();
+  if (!snapshot) return false;
+  const current = state.navHistory[state.navHistoryIndex];
+  if (!current || current.activeTab !== snapshot.activeTab) {
+    persistCurrentViewSnapshot();
+    return false;
+  }
+  state.navHistory[state.navHistoryIndex] = snapshot;
+  updateNavButtons();
+  persistCurrentViewSnapshot();
+  return true;
+}
+
 function loadPersistedViewSnapshot() {
   if (!state.settings || !state.settings.uiStateByContext || typeof state.settings.uiStateByContext !== 'object') {
     return null;
@@ -4207,6 +4241,13 @@ function captureViewSnapshot() {
   const tabs = state.bundle.tabs;
   const fallbackTab = Object.keys(tabs)[0] || 'base';
   const activeTab = tabs[state.activeTab] ? state.activeTab : fallbackTab;
+  const isMapModalVisible = !!(
+    mapModal.node
+    && mapModal.node.isConnected
+    && !mapModal.node.classList.contains('hidden')
+    && mapModal.tab
+    && activeTab === 'map'
+  );
   return {
     activeTab,
     tabContentScrollTop: el.tabContent ? el.tabContent.scrollTop : state.tabContentScrollTop,
@@ -4228,8 +4269,15 @@ function captureViewSnapshot() {
     techTreeCivFilterByTab: cloneStateMap(state.techTreeCivFilterByTab),
     techTreeShowNonEraByTab: cloneStateMap(state.techTreeShowNonEraByTab),
     biqMapSelectedTile: Number(state.biqMapSelectedTile || -1),
+    biqMapScrollLeft: Number.isFinite(state.biqMapScrollLeft) ? Number(state.biqMapScrollLeft) : null,
+    biqMapScrollTop: Number.isFinite(state.biqMapScrollTop) ? Number(state.biqMapScrollTop) : null,
     biqMapLayer: String(state.biqMapLayer || 'terrain'),
-    biqMapZoom: Number(state.biqMapZoom || 6)
+    biqMapZoom: Number(state.biqMapZoom || 6),
+    biqMapShowGrid: !!state.biqMapShowGrid,
+    biqMapShowOverlays: state.biqMapShowOverlays !== false,
+    biqMapShowCityNames: state.biqMapShowCityNames !== false,
+    mapModalOpen: isMapModalVisible,
+    mapEditorTool: Object.assign({}, state.mapEditorTool || {})
   };
 }
 
@@ -4420,11 +4468,23 @@ function applyViewSnapshot(snapshot) {
   state.techTreeCivFilterByTab = cloneStateMap(snapshot.techTreeCivFilterByTab);
   state.techTreeShowNonEraByTab = cloneStateMap(snapshot.techTreeShowNonEraByTab);
   state.biqMapSelectedTile = Number.isFinite(snapshot.biqMapSelectedTile) ? snapshot.biqMapSelectedTile : -1;
+  state.biqMapScrollLeft = Number.isFinite(snapshot.biqMapScrollLeft) ? Number(snapshot.biqMapScrollLeft) : null;
+  state.biqMapScrollTop = Number.isFinite(snapshot.biqMapScrollTop) ? Number(snapshot.biqMapScrollTop) : null;
   state.biqMapLayer = String(snapshot.biqMapLayer || 'terrain');
   state.biqMapZoom = Number.isFinite(snapshot.biqMapZoom) ? snapshot.biqMapZoom : state.biqMapZoom;
+  state.biqMapShowGrid = !!snapshot.biqMapShowGrid;
+  state.biqMapShowOverlays = snapshot.biqMapShowOverlays !== false;
+  state.biqMapShowCityNames = snapshot.biqMapShowCityNames !== false;
+  state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, snapshot.mapEditorTool || {});
   state.tabContentScrollTop = Number.isFinite(snapshot.tabContentScrollTop) ? snapshot.tabContentScrollTop : 0;
+  if (!snapshot.mapModalOpen || state.activeTab !== 'map') {
+    closeMapModal();
+  }
   renderTabs();
   renderActiveTab({ preserveTabScroll: true });
+  if (snapshot.mapModalOpen && state.activeTab === 'map') {
+    reopenMapModalForTab(state.bundle.tabs.map);
+  }
   updateNavButtons();
   persistCurrentViewSnapshot();
 }
@@ -4453,6 +4513,9 @@ function navigateWithHistory(mutateState, renderOptions = { preserveTabScroll: t
   if (!state.bundle || !state.bundle.tabs) return;
   const before = captureViewSnapshot();
   mutateState();
+  if (mapModal.node && mapModal.node.isConnected && !mapModal.node.classList.contains('hidden') && state.activeTab !== 'map') {
+    closeMapModal();
+  }
   const after = captureViewSnapshot();
   if (!before || !after || before.activeTab !== after.activeTab) {
     renderTabs();
@@ -17529,6 +17592,10 @@ function createReferencePicker(config) {
   const opts = config || {};
   const options = Array.isArray(opts.options) ? opts.options : [];
   const targetTabKey = String(opts.targetTabKey || '').trim();
+  const onJump = typeof opts.onJump === 'function' ? opts.onJump : null;
+  const resolveJumpTarget = typeof opts.resolveJumpTarget === 'function' ? opts.resolveJumpTarget : null;
+  const pickerClassName = String(opts.pickerClassName || '').trim();
+  const thumbClassName = String(opts.thumbClassName || '').trim();
   const readOnly = !!opts.readOnly;
   const resetAfterSelect = !!opts.resetAfterSelect;
   const includeNone = opts.includeNone !== false;
@@ -17546,12 +17613,13 @@ function createReferencePicker(config) {
   options.forEach((opt) => {
     if (!opt) return;
     if (opt.separator) {
-      normalizedOptions.push({ separator: true, label: String(opt.label || '') });
+      normalizedOptions.push({ ...opt, separator: true, label: String(opt.label || '') });
       return;
     }
     const value = normalizeConfigToken(opt.value);
     if (value === '-1') return;
     normalizedOptions.push({
+      ...opt,
       value,
       label: String(opt.label || value),
       displayLabel: String(opt.displayLabel || opt.label || value),
@@ -17563,6 +17631,7 @@ function createReferencePicker(config) {
 
   const wrap = document.createElement('div');
   wrap.className = 'tech-picker';
+  if (pickerClassName) wrap.classList.add(...pickerClassName.split(/\s+/).filter(Boolean));
   if (readOnly) wrap.classList.add('read-only');
   const head = document.createElement('div');
   head.className = 'tech-picker-head';
@@ -17577,16 +17646,43 @@ function createReferencePicker(config) {
   selectedJumpBtn.setAttribute('aria-label', 'Open selected item');
   const buttonThumb = document.createElement('span');
   buttonThumb.className = 'entry-thumb';
+  if (thumbClassName) buttonThumb.classList.add(...thumbClassName.split(/\s+/).filter(Boolean));
   const buttonText = document.createElement('span');
   buttonText.className = 'tech-picker-btn-label';
+  let selectedOption = null;
   let selectedJumpTarget = null;
   let selectedJumpLabel = '';
+  const resolveOptionJumpTarget = (option, value) => {
+    if (!option) return null;
+    if (resolveJumpTarget) {
+      const customTarget = resolveJumpTarget(option, value, normalizedOptions);
+      if (customTarget) return customTarget;
+    }
+    if (Object.prototype.hasOwnProperty.call(option, 'jumpTarget') && option.jumpTarget) {
+      return option.jumpTarget;
+    }
+    if (targetTabKey) {
+      return option.entry || resolveReferenceEntryForPicker(targetTabKey, value, normalizedOptions);
+    }
+    return null;
+  };
+  const triggerJump = (jumpTarget, option) => {
+    if (!jumpTarget) return;
+    if (onJump) {
+      onJump(jumpTarget, option || null);
+      return;
+    }
+    if (targetTabKey) {
+      navigateToReferenceEntry(targetTabKey, jumpTarget);
+    }
+  };
   const renderButton = (value) => {
     const normalizedValue = (() => {
       const parsed = parseIntFromDisplayValue(value);
       return parsed == null ? String(value ?? '') : String(parsed);
     })();
     const selected = findOptionByValue(normalizedOptions, normalizedValue) || normalizedOptions[0] || null;
+    selectedOption = selected;
     const selectedLabel = selected ? String(selected.displayLabel || selected.label || noneLabel) : noneLabel;
     selectedJumpLabel = selectedLabel;
     buttonText.textContent = selectedLabel;
@@ -17604,10 +17700,10 @@ function createReferencePicker(config) {
         selected: true
       });
     }
-    if (selected && targetTabKey) {
-      selectedJumpTarget = selected.entry || resolveReferenceEntryForPicker(targetTabKey, normalizedValue, normalizedOptions);
+    if (selected && (targetTabKey || onJump || resolveJumpTarget)) {
+      selectedJumpTarget = resolveOptionJumpTarget(selected, normalizedValue);
       if (selectedJumpTarget && !paintedCustomThumb) {
-        loadReferenceListThumbnail(targetTabKey, selectedJumpTarget, buttonThumb);
+        if (targetTabKey) loadReferenceListThumbnail(targetTabKey, selectedJumpTarget, buttonThumb);
       }
       if (!readOnly) {
         if (selectedJumpTarget) {
@@ -17644,10 +17740,10 @@ function createReferencePicker(config) {
         tab: targetTabKey,
         label: selectedJumpLabel,
         hasTarget: !!selectedJumpTarget,
-        targetKey: selectedJumpTarget ? String(selectedJumpTarget.civilopediaKey || '') : ''
+          targetKey: selectedJumpTarget ? String(selectedJumpTarget.civilopediaKey || '') : ''
       });
-      if (!selectedJumpTarget || !targetTabKey) return;
-      navigateToReferenceEntry(targetTabKey, selectedJumpTarget);
+      if (!selectedJumpTarget) return;
+      triggerJump(selectedJumpTarget, selectedOption);
     });
     button.addEventListener('mouseenter', () => {
       appendDebugLog('ref-picker:readonly:hover', {
@@ -17718,11 +17814,13 @@ function createReferencePicker(config) {
     row.className = 'tech-picker-row';
     if (opt.special) row.classList.add('special');
     row.dataset.search = String(opt.label || '').toLowerCase();
+    const rowJumpTarget = resolveOptionJumpTarget(opt, opt.value);
     const selectBtn = document.createElement('button');
     selectBtn.type = 'button';
     selectBtn.className = 'tech-picker-row-main';
     const thumb = document.createElement('span');
     thumb.className = 'entry-thumb';
+    if (thumbClassName) thumb.classList.add(...thumbClassName.split(/\s+/).filter(Boolean));
     let customThumbPainted = false;
     if (showOptionThumbs && renderOptionThumb) {
       customThumbPainted = !!renderOptionThumb({
@@ -17750,7 +17848,7 @@ function createReferencePicker(config) {
       if (resetAfterSelect) renderButton(currentValue);
     });
     row.appendChild(selectBtn);
-    if (opt.entry && targetTabKey) {
+    if (rowJumpTarget) {
       const jumpBtn = document.createElement('button');
       jumpBtn.type = 'button';
       jumpBtn.className = 'tech-picker-row-jump';
@@ -17761,7 +17859,7 @@ function createReferencePicker(config) {
         ev.preventDefault();
         ev.stopPropagation();
         menu.classList.add('hidden');
-        navigateToReferenceEntry(targetTabKey, opt.entry);
+        triggerJump(rowJumpTarget, opt);
       });
       row.appendChild(jumpBtn);
     }
@@ -17784,9 +17882,9 @@ function createReferencePicker(config) {
   selectedJumpBtn.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    if (!selectedJumpTarget || !targetTabKey) return;
+    if (!selectedJumpTarget) return;
     menu.classList.add('hidden');
-    navigateToReferenceEntry(targetTabKey, selectedJumpTarget);
+    triggerJump(selectedJumpTarget, selectedOption);
   });
   search.addEventListener('input', () => {
     const needle = search.value.trim().toLowerCase();
@@ -20292,6 +20390,7 @@ function closeMapModal() {
   if (mapModal.body) mapModal.body.innerHTML = '';
   mapModal.tab = null;
   mapModal.tileSection = null;
+  syncCurrentNavigationSnapshot();
 }
 
 function openMapModal(config) {
@@ -20308,6 +20407,7 @@ function openMapModal(config) {
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
   renderMapModalBody();
+  syncCurrentNavigationSnapshot();
 }
 
 function ensureGenerateMapModalNode() {
@@ -28075,6 +28175,18 @@ function hasMapData(tab) {
   );
 }
 
+function maybeOpenMapModalForTabClick(tabKey) {
+  if (String(tabKey || '') !== 'map' || !isScenarioMode() || !state.bundle || !state.bundle.tabs) return false;
+  const tab = state.bundle.tabs.map;
+  if (!tab || !hasMapData(tab)) return false;
+  const tileSection = Array.isArray(tab.sections)
+    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
+    : null;
+  if (!tileSection) return false;
+  openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+  return true;
+}
+
 function createGeneratedMapField(baseKey, value, label = '') {
   const stringValue = String(value == null ? '' : value);
   return {
@@ -28782,17 +28894,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   gridWrap.appendChild(gridText);
 
   const tool = state.mapEditorTool || (state.mapEditorTool = {});
+  const paintModeCategories = ['terrain', 'overlay', 'resource', 'district'];
   if (!tool.mode) tool.mode = 'select';
   if (!tool.interactionMode) tool.interactionMode = String(tool.mode || 'select') === 'select' ? 'select' : 'paint';
   if (!['move', 'select', 'paint'].includes(String(tool.interactionMode || ''))) tool.interactionMode = 'select';
   if (!tool.selectionCategory) tool.selectionCategory = 'terrain';
   if (!tool.paintCategory) {
-    tool.paintCategory = ['terrain', 'overlay', 'resource', 'fog', 'district', 'naturalWonder', 'city', 'unit'].includes(String(tool.mode || ''))
+    tool.paintCategory = paintModeCategories.includes(String(tool.mode || ''))
       ? String(tool.mode)
       : 'terrain';
   }
   if (!['terrain', 'overlay', 'resource', 'city', 'district', 'naturalWonder', 'namedTile', 'visibility', 'startingLocation', 'unit'].includes(String(tool.selectionCategory || ''))) tool.selectionCategory = 'terrain';
-  if (!['terrain', 'overlay', 'resource', 'visibility', 'fog', 'district', 'naturalWonder', 'city', 'startingLocation', 'unit'].includes(String(tool.paintCategory || ''))) tool.paintCategory = 'terrain';
+  if (!paintModeCategories.includes(String(tool.paintCategory || ''))) tool.paintCategory = 'terrain';
   tool.mode = tool.interactionMode === 'paint' ? tool.paintCategory : tool.interactionMode;
   if (!Number.isFinite(Number(tool.diameter))) tool.diameter = 1;
   if (!Number.isFinite(Number(tool.terrainCode))) tool.terrainCode = 0;
@@ -28805,6 +28918,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   if (!Number.isFinite(Number(tool.ownerType))) tool.ownerType = 1;
   if (!Number.isFinite(Number(tool.owner))) tool.owner = 0;
   if (!Number.isFinite(Number(tool.unitType))) tool.unitType = 0;
+  tool.remove = false;
 
   function makeMapGlyphIcon(glyph, title = '', tone = '') {
     const icon = document.createElement('span');
@@ -28869,9 +28983,56 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     refresh();
     select.addEventListener('change', refresh);
   }
+  function prepareMapToolbarPickerThumb(holder, variant = '') {
+    if (!holder) return null;
+    holder.innerHTML = '';
+    holder.className = 'entry-thumb map-toolbar-picker-thumb';
+    if (variant) holder.classList.add(...String(variant).split(/\s+/).filter(Boolean));
+    return holder;
+  }
+  function createMapToolbarStructuredPicker(config) {
+    const cfg = config || {};
+    const wrap = document.createElement('label');
+    wrap.className = 'hint map-toolbar-structured-picker';
+    wrap.textContent = String(cfg.label || '');
+    const picker = createReferencePicker({
+      options: Array.isArray(cfg.options) ? cfg.options : [],
+      targetTabKey: String(cfg.targetTabKey || ''),
+      currentValue: cfg.currentValue,
+      includeNone: cfg.includeNone,
+      noneLabel: cfg.noneLabel,
+      searchPlaceholder: cfg.searchPlaceholder,
+      renderOptionThumb: cfg.renderOptionThumb,
+      resolveJumpTarget: cfg.resolveJumpTarget,
+      onJump: cfg.onJump,
+      onSelect: cfg.onSelect,
+      pickerClassName: 'map-toolbar-tech-picker',
+      thumbClassName: 'map-toolbar-picker-thumb'
+    });
+    wrap.appendChild(picker);
+    return wrap;
+  }
 
   const toolRow = document.createElement('div');
   toolRow.className = 'biq-map-toolbar map-tool-row';
+  const mapPaintOverlayOptions = [
+    { value: 'road', label: 'Road', artName: 'Road', icon: '🛣', kind: 'mask', field: 'c3coverlays', mask: 0x00000001 },
+    { value: 'railroad', label: 'Railroad', artName: 'Railroad', icon: '🚆', kind: 'mask', field: 'c3coverlays', mask: 0x00000002 },
+    { value: 'mine', label: 'Mine', artName: 'Mine', icon: '⛏', kind: 'mask', field: 'c3coverlays', mask: 0x00000004 },
+    { value: 'irrigation', label: 'Irrigation', artName: 'Irrigation', icon: '💧', kind: 'mask', field: 'c3coverlays', mask: 0x00000008 },
+    { value: 'fort', label: 'Fort', artName: 'Fortress', icon: '🛡', kind: 'mask', field: 'c3coverlays', mask: 0x00000010 },
+    { value: 'goodyhut', label: 'Goody Hut', artName: 'Goody Hut', icon: '🎁', kind: 'mask', field: 'c3coverlays', mask: 0x00000020 },
+    { value: 'pollution', label: 'Pollution', artName: 'Clear Pollution', icon: '☣', kind: 'mask', field: 'c3coverlays', mask: 0x00000040 },
+    { value: 'barbariancamp', label: 'Barbarian Camp', artName: 'Barbarian Camp', icon: '⚑', kind: 'mask', field: 'c3coverlays', mask: 0x00000080 },
+    { value: 'crater', label: 'Crater', artName: 'Crater', icon: '◌', kind: 'mask', field: 'c3coverlays', mask: 0x00000100 },
+    { value: 'barricade', label: 'Barricade', artName: 'Barricade', icon: '🚧', kind: 'mask', field: 'c3coverlays', mask: 0x10000000 },
+    { value: 'airfield', label: 'Airfield', artName: 'Airfield', icon: '🛩', kind: 'colony', improvementType: 1 },
+    { value: 'radartower', label: 'Radar Tower', artName: 'Radar Tower', icon: '📡', kind: 'colony', improvementType: 2 },
+    { value: 'outpost', label: 'Outpost', artName: 'Outpost', icon: '⌂', kind: 'colony', improvementType: 3 },
+    { value: 'colony', label: 'Colony', artName: 'Colony', icon: '🏴', kind: 'colony', improvementType: 0 },
+    { value: 'victorypoint', label: 'Victory Point', artName: 'Victory Point', icon: '★', kind: 'scalar', field: 'victorypointlocation', on: '0', off: '-1' },
+    { value: 'ruins', label: 'Ruins', artName: 'Ruin', icon: '▣', kind: 'scalar', field: 'ruin', on: '1', off: '0' }
+  ];
 
   const getEffectiveToolMode = () => {
     const active = String(state.mapEditorTool && state.mapEditorTool.interactionMode || 'select');
@@ -28888,6 +29049,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   let mapInspector = null;
   let controlMoveHint = null;
   let controlMoveActive = false;
+  let tabModeFlashActive = false;
+  let tabModeFlashTimer = 0;
   let mapEditRerenderTimer = 0;
   let refreshMapToolChrome = () => {};
   let refreshMapInteractionOverlay = () => {};
@@ -28912,10 +29075,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const getStoredInteractionMode = () => String(state.mapEditorTool && state.mapEditorTool.interactionMode || 'select');
   const getEffectiveInteractionMode = () => (controlMoveActive ? 'move' : getStoredInteractionMode());
+  const mapInteractionModeOrder = ['move', 'select', 'paint'];
+  const getNextInteractionMode = (mode) => {
+    const currentMode = String(mode || 'move');
+    const idx = mapInteractionModeOrder.indexOf(currentMode);
+    return mapInteractionModeOrder[(idx >= 0 ? idx + 1 : 0) % mapInteractionModeOrder.length];
+  };
   [
     { value: 'move', label: 'Move', icon: '↕' },
     { value: 'select', label: 'Select', icon: '⌖' },
-    { value: 'paint', label: 'Paint', icon: '✎' }
+    { value: 'paint', label: 'Paint', icon: '🖌' }
   ].forEach((opt) => {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -28937,22 +29106,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const mapCategoryOptions = [
     { value: 'terrain', label: 'Terrain' },
     { value: 'overlay', label: 'Overlays' },
-    { value: 'resource', label: 'Resource' },
-    { value: 'city', label: 'City' },
-    { value: 'district', label: 'District' },
-    { value: 'naturalWonder', label: 'Natural Wonder' },
-    { value: 'namedTile', label: 'Named Tile' },
-    { value: 'visibility', label: 'Visibility' },
-    { value: 'startingLocation', label: 'Starting Location' },
-    { value: 'unit', label: 'Unit' }
+    { value: 'resource', label: 'Resources' },
+    { value: 'district', label: 'Districts' }
   ];
   const categoryWrap = document.createElement('label');
   categoryWrap.className = 'hint map-category-wrap';
-  categoryWrap.textContent = 'Paint';
   const categorySelect = document.createElement('select');
-  mapCategoryOptions.filter((opt) => {
-    return opt.value !== 'namedTile';
-  }).forEach((opt) => {
+  categorySelect.setAttribute('aria-label', 'Paint category');
+  mapCategoryOptions.forEach((opt) => {
     const o = document.createElement('option');
     o.value = opt.value;
     o.textContent = opt.label;
@@ -28977,7 +29138,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   const sizeWrap = document.createElement('label');
   sizeWrap.className = 'hint';
-  sizeWrap.textContent = 'Brush';
+  sizeWrap.textContent = 'Brush Size';
   const sizeSelect = document.createElement('select');
   [1, 3, 5, 7].forEach((size) => {
     const o = document.createElement('option');
@@ -28992,112 +29153,110 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   sizeWrap.appendChild(sizeSelect);
   toolRow.appendChild(sizeWrap);
 
-  const terrainWrap = document.createElement('label');
-  terrainWrap.className = 'hint';
-  terrainWrap.textContent = 'Terrain';
-  const terrainSelect = document.createElement('select');
   const terrainSectionForPicker = (tab.sections || []).find((s) => s.code === 'TERR');
   const terrainRecordsForPicker = terrainSectionForPicker && Array.isArray(terrainSectionForPicker.records) ? terrainSectionForPicker.records : [];
-  terrainRecordsForPicker.forEach((record, idx) => {
-    const o = document.createElement('option');
-    o.value = String(idx);
-    o.textContent = String(record && record.name || `Terrain ${idx}`);
-    terrainSelect.appendChild(o);
+  const terrainPickerOptions = terrainRecordsForPicker.map((record, idx) => {
+    const label = String(record && record.name || `Terrain ${idx}`);
+    const found = findTerrainPreviewEntry(label);
+    return {
+      value: String(idx),
+      label,
+      terrainEntry: found && found.tabKey === 'terrainPedia' ? found.entry : null
+    };
   });
-  terrainSelect.value = String(Number(tool.terrainCode) || 0);
-  terrainSelect.addEventListener('change', () => {
-    state.mapEditorTool.terrainCode = parseIntLoose(terrainSelect.value, 0);
-  });
-  terrainWrap.appendChild(terrainSelect);
-  attachMapSelectIcon(terrainWrap, terrainSelect, (value) => {
-    const idx = parseIntLoose(value, -1);
-    const record = terrainRecordsForPicker[idx] || null;
-    if (record) return makeTerrainOptionPreviewIcon(String(record.name || `Terrain ${idx}`));
-    return makeMapGlyphIcon('🗺', 'Terrain', 'natural');
+  const terrainWrap = createMapToolbarStructuredPicker({
+    label: 'Terrain',
+    options: terrainPickerOptions,
+    currentValue: String(Number(tool.terrainCode) || 0),
+    includeNone: false,
+    searchPlaceholder: 'Search terrain...',
+    renderOptionThumb: ({ holder, option }) => {
+      prepareMapToolbarPickerThumb(holder, 'terrain');
+      const preview = makeTerrainOptionPreviewIcon(String(option && option.label || ''));
+      if (preview) holder.appendChild(preview);
+      return true;
+    },
+    resolveJumpTarget: (option) => (option && option.terrainEntry
+      ? findTerrainRecordSelectionByEntry('TERR', option.terrainEntry)
+      : null),
+    onJump: (hit) => navigateToTerrainRecordSelection(hit),
+    onSelect: (value) => {
+      state.mapEditorTool.terrainCode = parseIntLoose(value, 0);
+    }
   });
   toolRow.appendChild(terrainWrap);
 
-  const overlayWrap = document.createElement('label');
-  overlayWrap.className = 'hint';
-  overlayWrap.textContent = 'Overlay';
-  const overlaySelect = document.createElement('select');
-  [
-    { value: 'road', label: 'Road' },
-    { value: 'railroad', label: 'Railroad' },
-    { value: 'mine', label: 'Mine' },
-    { value: 'irrigation', label: 'Irrigation' },
-    { value: 'fort', label: 'Fort' },
-    { value: 'barricade', label: 'Barricade' },
-    { value: 'barbariancamp', label: 'Barbarian Camp' },
-    { value: 'goodyhut', label: 'Goody Hut' },
-    { value: 'pollution', label: 'Pollution' },
-    { value: 'crater', label: 'Crater' },
-    { value: 'airfield', label: 'Airfield' },
-    { value: 'radartower', label: 'Radar Tower' },
-    { value: 'outpost', label: 'Outpost' },
-    { value: 'colony', label: 'Colony' },
-    { value: 'victorypoint', label: 'Victory Point' },
-    { value: 'ruins', label: 'Ruins' }
-  ].forEach((opt) => {
-    const o = document.createElement('option');
-    o.value = opt.value;
-    o.textContent = opt.label;
-    overlaySelect.appendChild(o);
+  const overlayPickerOptions = mapPaintOverlayOptions.map((spec) => {
+    const found = findTerrainPreviewEntry(String(spec && (spec.artName || spec.label) || ''));
+    return {
+      value: String(spec.value || ''),
+      label: String(spec.label || spec.value || ''),
+      overlaySpec: spec,
+      workerJobEntry: found && found.tabKey === 'workerActions' ? found.entry : null
+    };
   });
-  overlaySelect.value = String(tool.overlayType || 'road');
-  overlaySelect.addEventListener('change', () => {
-    state.mapEditorTool.overlayType = overlaySelect.value;
+  const overlayWrap = createMapToolbarStructuredPicker({
+    label: 'Overlay',
+    options: overlayPickerOptions,
+    currentValue: String(tool.overlayType || 'road'),
+    includeNone: false,
+    searchPlaceholder: 'Search overlays...',
+    renderOptionThumb: ({ holder, option }) => {
+      return paintMapOverlayButtonThumb(holder, option && option.overlaySpec, 'map-toolbar-picker-thumb');
+    },
+    resolveJumpTarget: (option) => (option && option.workerJobEntry
+      ? findTerrainRecordSelectionByEntry('TFRM', option.workerJobEntry)
+      : null),
+    onJump: (hit) => navigateToTerrainRecordSelection(hit),
+    onSelect: (value) => {
+      state.mapEditorTool.overlayType = String(value || 'road');
+    }
   });
-  overlayWrap.appendChild(overlaySelect);
-  const overlayIconByValue = {
-    road: '🛣',
-    railroad: '🚆',
-    mine: '⛏',
-    irrigation: '💧',
-    fort: '🛡',
-    barricade: '🚧',
-    barbariancamp: '⚑',
-    goodyhut: '🎁',
-    pollution: '☣',
-    crater: '🕳',
-    airfield: '🛩',
-    radartower: '📡',
-    outpost: '🏕',
-    colony: '🏴',
-    victorypoint: '⭐',
-    ruins: '🏚'
-  };
-  attachMapSelectIcon(overlayWrap, overlaySelect, (value) => makeMapGlyphIcon(overlayIconByValue[value] || '🧱', `Overlay: ${value}`, 'resource'));
   toolRow.appendChild(overlayWrap);
 
-  const resourceWrap = document.createElement('label');
-  resourceWrap.className = 'hint';
-  resourceWrap.textContent = 'Resource';
-  const resourceSelect = document.createElement('select');
-  const noResourceOption = document.createElement('option');
-  noResourceOption.value = '-1';
-  noResourceOption.textContent = 'None';
-  resourceSelect.appendChild(noResourceOption);
-  const resourceEntriesForPicker = getMapGenerationResourceDefs(state.bundle);
-  resourceEntriesForPicker.forEach((entry) => {
-    const o = document.createElement('option');
-    o.value = String(entry.id);
-    o.textContent = String(entry.name || `Resource ${entry.id}`);
-    resourceSelect.appendChild(o);
+  const resourceEntriesForPicker = getMapGenerationResourceEntries(state.bundle);
+  const resourcePickerOptions = resourceEntriesForPicker.map((entry, fallbackIdx) => {
+    const resourceId = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
+    return {
+      value: String(resourceId),
+      label: String(entry && (entry.name || entry.civilopediaKey) || `Resource ${resourceId}`),
+      entry: entry || null,
+      resourceId
+    };
   });
-  resourceSelect.value = String(Number(tool.resourceType));
-  resourceSelect.addEventListener('change', () => {
-    state.mapEditorTool.resourceType = parseIntLoose(resourceSelect.value, -1);
-  });
-  resourceWrap.appendChild(resourceSelect);
-  attachMapSelectIcon(resourceWrap, resourceSelect, (value) => {
-    const resourceId = parseIntLoose(value, -1);
-    if (resourceId < 0) return makeMapGlyphIcon('∅', 'No resource', 'neutral');
-    const iconIdx = getMapResourceIconIndexById()[resourceId];
-    if (Number.isFinite(iconIdx) && iconIdx >= 0) {
-      return makeMapAtlasSpriteIcon('resources', 50, 50, iconIdx, `Resource ${resourceId}`);
+  const resourceWrap = createMapToolbarStructuredPicker({
+    label: 'Resource',
+    options: resourcePickerOptions,
+    targetTabKey: 'resources',
+    currentValue: String(Number(tool.resourceType)),
+    includeNone: true,
+    noneLabel: 'None',
+    searchPlaceholder: 'Search resources...',
+    renderOptionThumb: ({ holder, option, value }) => {
+      prepareMapToolbarPickerThumb(holder, 'resource');
+      const resourceId = option && Number.isFinite(option.resourceId)
+        ? option.resourceId
+        : parseIntLoose(value, -1);
+      if (resourceId < 0) {
+        holder.appendChild(makeMapGlyphIcon('∅', 'No resource', 'neutral'));
+        return true;
+      }
+      const iconIdx = getMapResourceIconIndexById()[resourceId];
+      if (Number.isFinite(iconIdx) && iconIdx >= 0) {
+        const thumb = makeMapLargeAtlasThumb('resources', 50, 50, iconIdx, '◆');
+        if (thumb && thumb.classList && thumb.classList.contains('map-option-thumb')) {
+          while (thumb.firstChild) holder.appendChild(thumb.firstChild);
+        } else if (thumb) {
+          holder.appendChild(thumb);
+        }
+        return true;
+      }
+      holder.appendChild(makeMapGlyphIcon('◆', `Resource ${resourceId}`, 'resource'));
+      return true;
+    },
+    onSelect: (value) => {
+      state.mapEditorTool.resourceType = parseIntLoose(value, -1);
     }
-    return makeMapGlyphIcon('◆', `Resource ${resourceId}`, 'resource');
   });
   toolRow.appendChild(resourceWrap);
 
@@ -29119,38 +29278,34 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   attachMapSelectIcon(fogWrap, fogSelect, (value) => makeMapGlyphIcon(value === 'remove' ? '☀' : '🌫', `Fog: ${value}`, 'world'));
   toolRow.appendChild(fogWrap);
 
-  const districtWrap = document.createElement('label');
-  districtWrap.className = 'hint';
-  districtWrap.textContent = 'District';
-  const districtSelect = document.createElement('select');
   const districtSections = (((state.bundle && state.bundle.tabs && state.bundle.tabs.districts && state.bundle.tabs.districts.model) || {}).sections || []);
   const districtEntries = districtSections.map((section, idx) => ({
     idx,
     section,
     name: String(getFieldValue(section, 'name') || `District ${idx + 1}`)
   }));
-  districtEntries.forEach((entry) => {
-    const o = document.createElement('option');
-    o.value = String(entry.idx);
-    o.textContent = entry.name;
-    districtSelect.appendChild(o);
-  });
-  if (districtEntries.length === 0) {
-    const o = document.createElement('option');
-    o.value = '0';
-    o.textContent = '(none)';
-    districtSelect.appendChild(o);
-  }
-  districtSelect.value = String(Number(tool.districtType) || 0);
-  districtSelect.addEventListener('change', () => {
-    state.mapEditorTool.districtType = parseIntLoose(districtSelect.value, 0);
-  });
-  districtWrap.appendChild(districtSelect);
-  attachMapSelectIcon(districtWrap, districtSelect, (value) => {
-    const idx = parseIntLoose(value, -1);
-    const entry = districtEntries[idx] || null;
-    if (entry && entry.name) return makeDistrictOptionPreviewIcon(entry.name);
-    return makeMapGlyphIcon('🏙', 'District', 'civ');
+  const districtPickerOptions = districtEntries.map((entry) => ({
+    value: String(entry.idx),
+    label: entry.name,
+    districtIndex: entry.idx,
+    section: entry.section
+  }));
+  const districtWrap = createMapToolbarStructuredPicker({
+    label: 'District',
+    options: districtPickerOptions,
+    currentValue: String(Number(tool.districtType) || 0),
+    includeNone: false,
+    searchPlaceholder: 'Search districts...',
+    renderOptionThumb: ({ holder, option }) => {
+      return paintMapDistrictButtonThumb(holder, option || null, 28, 'map-toolbar-picker-thumb');
+    },
+    resolveJumpTarget: (option) => (option ? { districtIndex: option.districtIndex } : null),
+    onJump: (target) => {
+      if (target && Number.isFinite(target.districtIndex)) navigateToDistrict(target.districtIndex);
+    },
+    onSelect: (value) => {
+      state.mapEditorTool.districtType = parseIntLoose(value, 0);
+    }
   });
   toolRow.appendChild(districtWrap);
 
@@ -29311,20 +29466,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   toolRow.appendChild(unitWrap);
 
-  const removeToggle = document.createElement('label');
-  removeToggle.className = 'bool-toggle';
-  const removeCheck = document.createElement('input');
-  removeCheck.type = 'checkbox';
-  removeCheck.checked = !!tool.remove;
-  const removeText = document.createElement('span');
-  removeText.textContent = removeCheck.checked ? 'Erase' : 'Add';
-  removeCheck.addEventListener('change', () => {
-    state.mapEditorTool.remove = removeCheck.checked;
-    removeText.textContent = removeCheck.checked ? 'Erase' : 'Add';
-  });
-  removeToggle.appendChild(removeCheck);
-  removeToggle.appendChild(removeText);
-  toolRow.appendChild(removeToggle);
   toolRow.appendChild(gridWrap);
 
   const showForMode = (elNode, modes) => {
@@ -29356,7 +29497,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     showForMode(ownerWrap, ['city', 'startingLocation', 'unit']);
     showForMode(ownerTypeWrap, ['city', 'startingLocation', 'unit']);
     showForMode(unitWrap, ['unit']);
-    removeToggle.classList.toggle('hidden', interactionMode !== 'paint' || effectiveMode === 'terrain');
     if (mapPane) {
       mapPane.classList.toggle('map-mode-move', effectiveInteractionMode === 'move');
       mapPane.classList.toggle('map-mode-select', effectiveInteractionMode === 'select');
@@ -29365,6 +29505,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     if (controlMoveHint) {
       controlMoveHint.classList.toggle('active', controlMoveActive);
+      controlMoveHint.classList.toggle('tab-flash', tabModeFlashActive);
       controlMoveHint.classList.toggle('hidden', interactionMode === 'move' && !controlMoveActive);
     }
     if (mapInspector) {
@@ -29399,7 +29540,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   }
   controlMoveHint = document.createElement('div');
   controlMoveHint.className = 'biq-map-control-move-hint';
-  controlMoveHint.innerHTML = '<span class="hint-text">Hold <span class="keycap">Ctrl</span> to enter move mode temporarily</span>';
+  controlMoveHint.innerHTML = '<span class="hint-text">Hold <span class="keycap">Ctrl</span> to enter move mode temporarily</span><span class="hint-text tab-hint">Press <span class="keycap tab-keycap">Tab</span> for next mode</span>';
   mapPane = document.createElement('div');
   mapPane.className = 'biq-map-canvas-wrap';
   refreshMapToolChrome();
@@ -29577,6 +29718,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     rerenderMapView();
   };
   mapPane.addEventListener('wheel', (ev) => {
+    const interactionMode = getEffectiveInteractionMode();
+    if (interactionMode !== 'move') {
+      appendDebugLog('biq-map:wheel-zoom-blocked', { reason: 'tool-mode', mode: interactionMode });
+      return;
+    }
     ev.preventDefault();
     const paneRect = mapPane.getBoundingClientRect();
     const paneX = ev.clientX - paneRect.left;
@@ -29640,6 +29786,20 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     refreshMapToolChrome();
     refreshMapInteractionOverlay();
   };
+  const flashTabModeHint = () => {
+    tabModeFlashActive = true;
+    if (tabModeFlashTimer) window.clearTimeout(tabModeFlashTimer);
+    refreshMapToolChrome();
+    tabModeFlashTimer = window.setTimeout(() => {
+      tabModeFlashTimer = 0;
+      tabModeFlashActive = false;
+      refreshMapToolChrome();
+    }, 380);
+  };
+  const cycleInteractionMode = () => {
+    setToolMode(getNextInteractionMode(getStoredInteractionMode()));
+    flashTabModeHint();
+  };
   const mapControlKeyTargetIsEditable = (target) => !!(target && (
     target.tagName === 'INPUT'
     || target.tagName === 'SELECT'
@@ -29663,6 +29823,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     document.removeEventListener('keydown', onMapControlKeyDown);
     document.removeEventListener('keyup', onMapControlKeyUp);
     window.removeEventListener('blur', onMapControlWindowBlur);
+    if (tabModeFlashTimer) window.clearTimeout(tabModeFlashTimer);
+    tabModeFlashTimer = 0;
+    tabModeFlashActive = false;
   };
   const controlMoveCleanupObserver = new MutationObserver(() => {
     if (container.isConnected) return;
@@ -29719,6 +29882,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (key === '1' || key === '3' || key === '5' || key === '7') {
       ev.preventDefault();
       setBrushDiameter(parseIntLoose(key, 1));
+      return;
+    }
+    if (ev.key === 'Tab') {
+      ev.preventDefault();
+      cycleInteractionMode();
       return;
     }
     if (key === '+' || key === '=') {
@@ -29928,7 +30096,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   const bldgSection = (tab.sections || []).find((s) => s.code === 'BLDG');
   const capitalBuildingIds = new Set();
+  const bldgIndexByName = {};
   (bldgSection?.records || []).forEach((record, idx) => {
+    const normalizedName = normalizeConfigToken(record && record.name).toLowerCase();
+    if (normalizedName && !Object.prototype.hasOwnProperty.call(bldgIndexByName, normalizedName)) {
+      bldgIndexByName[normalizedName] = idx;
+    }
     const raw = String(getFieldByBaseKey(record, 'centerofempire')?.value || '').trim().toLowerCase();
     if (raw === '1' || raw === 'true' || raw === 'yes') capitalBuildingIds.add(idx);
   });
@@ -30911,14 +31084,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return true;
   };
   const tileCount = tiles.length;
+  const getBrushTileIndexes = (centerIndex) => {
+    const diameter = parseIntLoose(state.mapEditorTool && state.mapEditorTool.diameter, 1) || 1;
+    return (mapCore && typeof mapCore.computeBrushTileIndexes === 'function')
+      ? mapCore.computeBrushTileIndexes(width, tileCount, centerIndex, diameter, { wrapX: true })
+      : [centerIndex];
+  };
   const applyBrushAtIndex = (centerIndex) => {
     if (!isScenarioMode()) return false;
     const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
     if (mode === 'select') return false;
-    const diameter = parseIntLoose(state.mapEditorTool && state.mapEditorTool.diameter, 1) || 1;
-    const indices = (mapCore && typeof mapCore.computeBrushTileIndexes === 'function')
-      ? mapCore.computeBrushTileIndexes(width, tileCount, centerIndex, diameter, { wrapX: true })
-      : [centerIndex];
+    const indices = getBrushTileIndexes(centerIndex);
     if (indices.length === 0) return false;
     if (mode === 'terrain') {
       const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
@@ -31107,7 +31283,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return { fileIdx: spec.file, imageIdx: sum };
   };
 
-  const drawTerrainSprite = (record, geom, sx, sy) => {
+  const drawTerrainSpriteToContext = (drawCtx, record, geom, sx, sy, drawW = tileW, drawH = tileH) => {
+    if (!drawCtx) return false;
     const spriteSpec = resolveTerrainSpriteSpec(record, geom);
     const fileIdx = spriteSpec.fileIdx;
     const imageIdx = spriteSpec.imageIdx;
@@ -31120,7 +31297,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const col = imageIdx % cols;
     const row = Math.floor(imageIdx / cols);
     if (row >= rows) return false;
-    ctx.drawImage(
+    drawCtx.drawImage(
       atlas,
       col * cellW,
       row * cellH,
@@ -31128,11 +31305,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       cellH,
       sx,
       sy,
-      tileW,
-      tileH
+      drawW,
+      drawH
     );
     return true;
   };
+
+  const drawTerrainSprite = (record, geom, sx, sy) => drawTerrainSpriteToContext(ctx, record, geom, sx, sy, tileW, tileH);
 
   const getTileAtCoord = (xPos, yPos) => {
     const normalized = normalizeWrappedCoord(xPos, yPos);
@@ -31297,6 +31476,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const srcW = Math.max(1, Math.floor(sheet.width / cols));
     const srcH = Math.max(1, Math.floor(sheet.height / rows));
     ctx.drawImage(sheet, col * srcW, row * srcH, srcW, srcH, dx, dy, drawW, drawH);
+    return true;
+  };
+  const drawSheetSpriteScaledToContext = (drawCtx, sheet, cols, rows, index, dx, dy, drawW, drawH) => {
+    if (!drawCtx || !sheet || !Number.isFinite(index) || index < 0) return false;
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    if (row >= rows) return false;
+    const srcW = Math.max(1, Math.floor(sheet.width / cols));
+    const srcH = Math.max(1, Math.floor(sheet.height / rows));
+    drawCtx.drawImage(sheet, col * srcW, row * srcH, srcW, srcH, dx, dy, drawW, drawH);
     return true;
   };
   const getNeighborInfluencedOverlayGraphicsIndex = (geom, mask) => {
@@ -32174,21 +32363,118 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   };
 
-  const drawDistrictOverlay = (record, sx, sy) => {
-    const districtRaw = getMapFieldValue(record, 'district', '');
-    if (!districtRaw) return;
-    const parts = districtRaw.split(',').map((p) => parseIntLoose(p, 0));
-    const districtType = Number.isFinite(parts[0]) ? parts[0] : 0;
+  const drawDistrictOverlay = (drawCtx, record, geom, sx, sy, phase = 'all') => {
+    if (!drawCtx) return;
+    const tileIndex = geom ? getTileIndexAtCoord(geom.xPos, geom.yPos) : -1;
+    const districtMeta = getDistrictRecordMeta(record, geom);
+    const naturalWonderSection = districtMeta && districtMeta.naturalWonderSection;
+    if (naturalWonderSection) {
+      if (phase !== 'all' && phase !== 'over') return;
+      const cacheKey = requestBiqMapNaturalWonderCanvas(naturalWonderSection);
+      const previewCanvas = cacheKey ? state.biqMapArtCache[cacheKey] : null;
+      const crop = getCropDimensions(naturalWonderSection, { w: 128, h: 88 });
+      if (previewCanvas) {
+        drawDistrictCanvasAtTile(drawCtx, previewCanvas, sx, sy, crop.w, crop.h, 0, 0);
+        return;
+      }
+      return;
+    }
+
+    const districtSection = districtMeta && districtMeta.districtSection;
+    if (!districtSection) {
+      if (!(districtMeta && districtMeta.raw)) return;
+      if (phase !== 'all' && phase !== 'over') return;
+      const parts = districtMeta.raw.split(',').map((p) => parseIntLoose(p, 0));
+      const districtType = Number.isFinite(parts[0]) ? parts[0] : 0;
+      const cx = sx + Math.floor(tileW / 2);
+      const cy = sy + Math.floor(tileH / 2);
+      const radius = Math.max(3, Math.floor(tilePx / 4));
+      drawCtx.fillStyle = `hsl(${(districtType * 47) % 360} 70% 52% / 0.85)`;
+      drawCtx.beginPath();
+      drawCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+      drawCtx.fill();
+      drawCtx.strokeStyle = 'rgba(10, 18, 36, 0.85)';
+      drawCtx.lineWidth = 1;
+      drawCtx.stroke();
+      return;
+    }
+
+    const drawsOverResources = getFieldValue(districtSection, 'draw_over_resources') === '1';
+    if (phase === 'under' && drawsOverResources) return;
+    if (phase === 'over' && !drawsOverResources) return;
+
+    const territoryInfo = resolveTileTerritoryInfo(record, geom);
+    const hasTerritoryOwner = !!(territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0);
+    if (!hasTerritoryOwner) {
+      const abandonedKey = requestBiqMapAbandonedDistrictCanvas();
+      const abandonedCanvas = abandonedKey ? state.biqMapArtCache[abandonedKey] : null;
+      if (abandonedCanvas) {
+        drawDistrictCanvasAtTile(drawCtx, abandonedCanvas, sx, sy, 128, 64, 0, 0);
+        return;
+      }
+    }
+
+    const visual = getDistrictVisualContext(districtSection, record, geom, tileIndex);
+    const cacheKey = requestBiqMapDistrictCanvas(districtSection, visual);
+    const previewCanvas = cacheKey ? state.biqMapArtCache[cacheKey] : null;
+    const fallbackCanvas = previewCanvas || getCachedMapDistrictFallbackCanvas(districtSection, visual);
+    const crop = getCropDimensions(districtSection, { w: 128, h: 64 });
+    if (fallbackCanvas) {
+      drawDistrictCanvasAtTile(
+        drawCtx,
+        fallbackCanvas,
+        sx,
+        sy,
+        crop.w,
+        crop.h,
+        parseConfigInteger(getFieldValue(districtSection, 'x_offset'), 0),
+        parseConfigInteger(getFieldValue(districtSection, 'y_offset'), 0)
+      );
+      return;
+    }
+
+    if (phase !== 'all' && phase !== 'over') return;
+    const districtType = districtMeta && Number.isFinite(districtMeta.districtType) ? districtMeta.districtType : 0;
     const cx = sx + Math.floor(tileW / 2);
     const cy = sy + Math.floor(tileH / 2);
     const radius = Math.max(3, Math.floor(tilePx / 4));
-    ctx.fillStyle = `hsl(${(districtType * 47) % 360} 70% 52% / 0.85)`;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(10, 18, 36, 0.85)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    drawCtx.fillStyle = `hsl(${(districtType * 47) % 360} 70% 52% / 0.85)`;
+    drawCtx.beginPath();
+    drawCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+    drawCtx.fill();
+    drawCtx.strokeStyle = 'rgba(10, 18, 36, 0.85)';
+    drawCtx.lineWidth = 1;
+    drawCtx.stroke();
+  };
+  const prewarmVisibleDistrictArt = (overlayPassItems) => {
+    if (!Array.isArray(overlayPassItems) || !overlayPassItems.length) return;
+    let queued = 0;
+    const maxQueued = getPerformanceMode() === 'safe' ? 18 : 60;
+    for (let i = 0; i < overlayPassItems.length; i += 1) {
+      if (queued >= maxQueued) break;
+      const item = overlayPassItems[i];
+      const districtMeta = getDistrictRecordMeta(item.record, item.geom);
+      if (districtMeta && districtMeta.naturalWonderSection) {
+        requestBiqMapNaturalWonderCanvas(districtMeta.naturalWonderSection);
+        queued += 1;
+        continue;
+      }
+      const districtSection = districtMeta && districtMeta.districtSection;
+      if (!districtSection) continue;
+      const territoryInfo = resolveTileTerritoryInfo(item.record, item.geom);
+      const hasTerritoryOwner = !!(territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0);
+      if (!hasTerritoryOwner) {
+        requestBiqMapAbandonedDistrictCanvas();
+        queued += 1;
+        continue;
+      }
+      const tileIndex = item.geom ? getTileIndexAtCoord(item.geom.xPos, item.geom.yPos) : -1;
+      const visual = getDistrictVisualContext(districtSection, item.record, item.geom, tileIndex);
+      const cacheKey = getMapDistrictCanvasCacheKey(districtSection, visual);
+      if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) continue;
+      requestBiqMapDistrictCanvas(districtSection, visual);
+      queued += 1;
+    }
   };
 
   const drawFogOverlay = (record, sx, sy) => {
@@ -32424,6 +32710,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
 
     if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+      prewarmVisibleDistrictArt(overlayPassItems);
       for (let i = 0; i < overlayPassItems.length; i += 1) {
         const item = overlayPassItems[i];
         drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'tall');
@@ -32431,8 +32718,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       for (let i = 0; i < overlayPassItems.length; i += 1) {
         const item = overlayPassItems[i];
         drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
+        drawDistrictOverlay(ctx, item.record, item.geom, item.sx, item.sy, 'under');
         drawResourceOverlay(item.record, item.sx, item.sy);
-        drawDistrictOverlay(item.record, item.sx, item.sy);
+        drawDistrictOverlay(ctx, item.record, item.geom, item.sx, item.sy, 'over');
         drawCityOverlay(item.record, item.geom, item.sx, item.sy);
         drawSlocOverlay(item.geom, item.sx, item.sy);
         drawVpOverlay(item.record, item.sx, item.sy);
@@ -32523,6 +32811,155 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   };
 
+  const drawPaintPreview = (hit) => {
+    if (!hoverCtx || !hit) return;
+    const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
+    if (getEffectiveInteractionMode() !== 'paint') return;
+    const previewIndexes = getBrushTileIndexes(hit.index);
+    previewIndexes.forEach((tileIdx) => {
+      const geom = tileGeom[tileIdx];
+      if (!geom) return;
+      const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+      const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+      for (const wrapOffset of drawWrapOffsets) {
+        const sx = basePos.sx + wrapOffset.dx;
+        const sy = basePos.sy + wrapOffset.dy;
+        const logical = tileLogicalCenter(sx, sy);
+        hoverCtx.save();
+        hoverCtx.globalAlpha = 0.52;
+        if (mode === 'terrain') {
+          const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
+          const packedTerrain = packedTerrainForPaint(terrainCode);
+          const baseTile = tiles[tileIdx] || null;
+          const previewRecord = baseTile
+            ? JSON.parse(JSON.stringify(baseTile))
+            : { fields: [] };
+          setMapFieldValue(previewRecord, 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
+          setMapFieldValue(previewRecord, 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
+          hoverCtx.save();
+          drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
+          hoverCtx.clip();
+          const diamondTop = Math.round(logical.cy - Math.floor(tileH / 2));
+          if (!drawTerrainSpriteToContext(hoverCtx, previewRecord, geom, sx, diamondTop, tileW, tileH)) {
+            hoverCtx.fillStyle = colorFromNumber(terrainCode);
+            drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
+            hoverCtx.fill();
+          }
+          hoverCtx.restore();
+          const midY = sy + Math.floor(tileH / 2);
+          if (terrainCode === BIQ_TERRAIN.HILLS) {
+            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.hills, 4, 4, 0, sx, midY - Math.round(12 * scale), tileW, Math.max(1, Math.round(72 * scale)));
+          } else if (terrainCode === BIQ_TERRAIN.MOUNTAIN) {
+            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.mountains, 4, 4, 0, sx, midY - Math.round(24 * scale), tileW, Math.max(1, Math.round(88 * scale)));
+          } else if (terrainCode === BIQ_TERRAIN.VOLCANO) {
+            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.volcanos, 4, 4, 0, sx, midY - Math.round(24 * scale), tileW, Math.max(1, Math.round(88 * scale)));
+          } else if (terrainCode === BIQ_TERRAIN.FOREST) {
+            const forestSheet = state.biqMapArtCache.grasslandForests;
+            if (forestSheet) {
+              hoverCtx.drawImage(forestSheet, 0, 4 * 88, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
+            }
+          } else if (terrainCode === BIQ_TERRAIN.JUNGLE) {
+            const jungleSheet = state.biqMapArtCache.grasslandForests;
+            if (jungleSheet) {
+              hoverCtx.drawImage(jungleSheet, 0, 0, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
+            }
+          } else if (terrainCode === BIQ_TERRAIN.MARSH) {
+            const marshSheet = state.biqMapArtCache.marsh;
+            if (marshSheet) {
+              hoverCtx.drawImage(marshSheet, 0, 0, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
+            }
+          }
+          hoverCtx.restore();
+          return;
+        }
+        if (mode === 'resource') {
+          const atlas = state.biqMapArtCache.resources;
+          const resourceId = parseIntLoose(state.mapEditorTool && state.mapEditorTool.resourceType, -1);
+          const iconIdx = getMapResourceIconIndexById()[resourceId];
+          if (atlas && Number.isFinite(iconIdx) && iconIdx >= 0) {
+            const cols = 6;
+            const cellW = 50;
+            const cellH = 50;
+            const col = iconIdx % cols;
+            const row = Math.floor(iconIdx / cols);
+            const dx = Math.round(logical.cx - Math.round((cellW * scale) / 2));
+            const dy = Math.round(logical.cy - Math.round((cellH * scale) / 2));
+            hoverCtx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, Math.round(cellW * scale), Math.round(cellH * scale));
+          }
+          hoverCtx.restore();
+          return;
+        }
+        if (mode === 'overlay') {
+          const overlayType = String(state.mapEditorTool && state.mapEditorTool.overlayType || 'road');
+          const overlaySpec = mapInfoOverlayOptions.find((spec) => spec.value === overlayType) || null;
+          const midY = sy + Math.floor(tileH / 2);
+          let drewOverlay = false;
+          if (overlayType === 'road') {
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.roads, 16, 16, 0, sx, midY, tileW, tileH);
+          } else if (overlayType === 'railroad') {
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, 0, sx, midY, tileW, tileH);
+          } else if (overlayType === 'mine') {
+            const buildingSheet = state.biqMapArtCache.terrainBuildings;
+            const cols = buildingSheet && buildingSheet.width >= 512 ? 4 : 3;
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, buildingSheet, cols, 4, 6, sx, midY, tileW, tileH);
+          } else if (overlayType === 'fort') {
+            const buildingSheet = state.biqMapArtCache.terrainBuildings;
+            const cols = buildingSheet && buildingSheet.width >= 512 ? 4 : 3;
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, buildingSheet, cols, 4, 0, sx, midY, tileW, tileH);
+          } else if (overlayType === 'barbariancamp') {
+            const buildingSheet = state.biqMapArtCache.terrainBuildings;
+            const cols = buildingSheet && buildingSheet.width >= 512 ? 4 : 3;
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, buildingSheet, cols, 4, 2, sx, midY, tileW, tileH);
+          } else if (overlayType === 'irrigation') {
+            const hoveredTerrain = terrainInfo(tiles[tileIdx]).realTerrain;
+            let key = 'irrigationGrass';
+            if (hoveredTerrain === BIQ_TERRAIN.DESERT) key = 'irrigationDesert';
+            else if (hoveredTerrain === BIQ_TERRAIN.PLAINS) key = 'irrigationPlains';
+            else if (hoveredTerrain === BIQ_TERRAIN.TUNDRA) key = 'irrigationTundra';
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache[key], 4, 4, 0, sx, midY, tileW, tileH);
+          } else if (overlayType === 'goodyhut') {
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.goodyHuts, 3, 3, 0, sx, midY, tileW, tileH);
+          } else if (overlayType === 'pollution') {
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.pollution, 5, 5, 0, sx, midY, tileW, tileH);
+          } else if (overlayType === 'crater') {
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.craters, 5, 5, 0, sx, midY, tileW, tileH);
+          } else {
+            const previewThumb = makeMapOverlayArtThumb(overlaySpec);
+            const previewCanvas = previewThumb ? previewThumb.querySelector('canvas') : null;
+            if (previewCanvas) {
+              const size = Math.max(18, Math.round(tilePx * 1.55));
+              const dx = Math.round(logical.cx - Math.round(size / 2));
+              const dy = Math.round(logical.cy - Math.round(size / 2));
+              hoverCtx.drawImage(previewCanvas, dx, dy, size, size);
+              drewOverlay = true;
+            }
+          }
+          if (!drewOverlay && overlaySpec && overlaySpec.icon) {
+            hoverCtx.font = `${Math.max(14, Math.round(tilePx * 1.15))}px sans-serif`;
+            hoverCtx.textAlign = 'center';
+            hoverCtx.textBaseline = 'middle';
+            hoverCtx.fillStyle = 'rgba(55, 40, 105, 0.9)';
+            hoverCtx.fillText(String(overlaySpec.icon), Math.round(logical.cx), Math.round(logical.cy));
+          }
+          hoverCtx.restore();
+          return;
+        }
+        if (mode === 'district') {
+          const districtEntry = districtEntries[parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtType, 0)] || null;
+          const previewRecord = tiles[tileIdx]
+            ? JSON.parse(JSON.stringify(tiles[tileIdx]))
+            : { fields: [] };
+          if (districtEntry) {
+            setMapFieldValue(previewRecord, 'district', `${districtEntry.idx},2`, 'District');
+            setMapFieldValue(previewRecord, 'districtname', districtEntry.name, 'District Name');
+          }
+          drawDistrictOverlay(hoverCtx, previewRecord, geom, sx, sy, 'all');
+        }
+        hoverCtx.restore();
+      }
+    });
+  };
+
   let paintStroke = null;
   const readHitFromPointer = (ev) => {
     const rect = canvas.getBoundingClientRect();
@@ -32545,19 +32982,31 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const interactionMode = getEffectiveInteractionMode();
     hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
     if (interactionMode === 'select') drawSelectedTileBorder(hoverCtx);
-    const cx = Math.round(hit.centerX);
-    const cy = Math.round(hit.centerY);
+    const previewIndexes = interactionMode === 'paint'
+      ? getBrushTileIndexes(hit.index)
+      : [hit.index];
     hoverCtx.save();
     hoverCtx.lineJoin = 'round';
     hoverCtx.shadowColor = 'rgba(196, 149, 255, 0.52)';
     hoverCtx.shadowBlur = Math.max(3, Math.round(tilePx * 0.42));
-    const hoverGradient = hoverCtx.createLinearGradient(cx - tileW / 2, cy - tileH / 2, cx + tileW / 2, cy + tileH / 2);
-    hoverGradient.addColorStop(0, 'rgba(185, 158, 255, 0.98)');
-    hoverGradient.addColorStop(1, 'rgba(244, 158, 255, 0.96)');
-    hoverCtx.strokeStyle = hoverGradient;
     hoverCtx.lineWidth = Math.max(2, Math.round(tilePx / 3.6));
-    drawTileDiamondPath(hoverCtx, cx, cy, Math.max(3, Math.round(tilePx / 3.8)));
-    hoverCtx.stroke();
+    previewIndexes.forEach((tileIdx) => {
+      const previewGeom = tileGeom[tileIdx];
+      if (!previewGeom) return;
+      const basePosRaw = tileToScreenTopLeft(previewGeom.xPos, previewGeom.yPos);
+      const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+      for (const wrapOffset of drawWrapOffsets) {
+        const logical = tileLogicalCenter(basePos.sx + wrapOffset.dx, basePos.sy + wrapOffset.dy);
+        const cx = Math.round(logical.cx);
+        const cy = Math.round(logical.cy);
+        const hoverGradient = hoverCtx.createLinearGradient(cx - tileW / 2, cy - tileH / 2, cx + tileW / 2, cy + tileH / 2);
+        hoverGradient.addColorStop(0, 'rgba(185, 158, 255, 0.98)');
+        hoverGradient.addColorStop(1, 'rgba(244, 158, 255, 0.96)');
+        hoverCtx.strokeStyle = hoverGradient;
+        drawTileDiamondPath(hoverCtx, cx, cy, Math.max(3, Math.round(tilePx / 3.8)));
+        hoverCtx.stroke();
+      }
+    });
     hoverCtx.restore();
   };
   const updateHoverTooltip = (ev) => {
@@ -32572,6 +33021,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return;
     }
     drawHoverBorder(hit);
+    drawPaintPreview(hit);
     const label = `x=${geom.xPos}, y=${geom.yPos}`;
     hoverTooltip.textContent = label;
     hoverTooltip.classList.remove('hidden');
@@ -32869,6 +33319,293 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!geom || typeof listUnitsAtCoords !== 'function') return [];
     return listUnitsAtCoords(geom.xPos, geom.yPos);
   };
+  function getDistrictWorkAreaOffsets() {
+    return [
+      [0, 0],
+      [1, -1], [2, 0], [1, 1], [0, 2], [-1, 1], [-2, 0], [-1, -1], [0, -2],
+      [1, -3], [2, -2], [3, -1], [3, 1], [2, 2], [1, 3], [-1, 3], [-2, 2], [-3, 1], [-3, -1], [-2, -2], [-1, -3]
+    ];
+  }
+  function getCityBuildingSetForCityPos(cityPos) {
+    const cityBuildingSetByCityPos = getCityBuildingSetForCityPos._cache || (getCityBuildingSetForCityPos._cache = new Map());
+    if (cityBuildingSetByCityPos.has(cityPos)) return cityBuildingSetByCityPos.get(cityPos);
+    const cityRecord = citySection && Array.isArray(citySection.records) ? citySection.records[cityPos] : null;
+    const set = cityRecord ? getCityBuildingSet(cityRecord) : new Set();
+    cityBuildingSetByCityPos.set(cityPos, set);
+    return set;
+  }
+  function getDistrictDependentBuildingIds(section) {
+    if (!section) return [];
+    const districtDependentBuildingIdCache = getDistrictDependentBuildingIds._cache || (getDistrictDependentBuildingIds._cache = new WeakMap());
+    const cached = districtDependentBuildingIdCache.get(section);
+    if (cached) return cached;
+    const ids = tokenizeListPreservingQuotes(getFieldValue(section, 'dependent_improvs') || '')
+      .map((value) => normalizeConfigToken(value).toLowerCase())
+      .filter(Boolean)
+      .map((name) => bldgIndexByName[name])
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    districtDependentBuildingIdCache.set(section, ids);
+    return ids;
+  }
+  function isNeighborhoodDistrictSection(section) {
+    return normalizeConfigToken(getFieldValue(section, 'name') || '').toLowerCase() === 'neighborhood';
+  }
+  function getNeighborhoodDistrictBuildingVariant(xPos, yPos) {
+    let v = (Math.imul((Number(xPos) || 0) >>> 0, 0x9E3779B1) + Math.imul((Number(yPos) || 0) >>> 0, 0x85EBCA6B)) >>> 0;
+    v ^= v >>> 16;
+    v = Math.imul(v, 0x7FEB352D) >>> 0;
+    v ^= v >>> 15;
+    v = Math.imul(v, 0x846CA68B) >>> 0;
+    v ^= v >>> 16;
+    return Math.max(0, Math.min(3, v & 3));
+  }
+  function getDistrictRecordMeta(record, geom) {
+    const raw = String(getMapFieldValue(record, 'district', '') || '').trim();
+    const placedEntry = geom ? findScenarioDistrictEntryAtCoords(geom.xPos, geom.yPos) : null;
+    const parts = raw ? raw.split(',').map((part) => parseIntLoose(part, NaN)) : [];
+    const districtType = Number.isFinite(parts[0]) ? parts[0] : -1;
+    const districtState = Number.isFinite(parts[1]) ? parts[1] : NaN;
+    const districtNameCandidates = [
+      placedEntry && placedEntry.district,
+      getMapFieldValue(record, 'districtname', ''),
+      districtType >= 0 ? ((districtEntries[districtType] || {}).name || '') : ''
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    const districtSection = districtNameCandidates
+      .map((name) => findDistrictSectionByName(name))
+      .find(Boolean) || null;
+    const wonderNameCandidates = [
+      placedEntry && placedEntry.wonderName,
+      getMapFieldValue(record, 'wondername', ''),
+      (() => {
+        const idx = parseIntLoose(getMapFieldValue(record, 'naturalwonder', '-1'), -1);
+        return idx >= 0 ? ((naturalWonderEntries[idx] || {}).name || '') : '';
+      })()
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    const naturalWonderSection = wonderNameCandidates
+      .map((name) => findNaturalWonderSectionByName(name))
+      .find(Boolean) || null;
+    return {
+      raw,
+      districtType,
+      districtState,
+      placedEntry,
+      districtSection,
+      naturalWonderSection
+    };
+  }
+  function getDistrictVisualContext(section, record, geom, tileIndex) {
+    const territoryInfo = resolveTileTerritoryInfo(record, geom);
+    const varyByCulture = getFieldValue(section, 'vary_img_by_culture') === '1';
+    const varyByEra = getFieldValue(section, 'vary_img_by_era') === '1';
+    let cultureIndex = 0;
+    let eraIndex = 0;
+    if (territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0) {
+      if (Number.isFinite(territoryInfo.civId) && territoryInfo.civId >= 0) {
+        cultureIndex = parseIntLoose(raceCultureById[territoryInfo.civId], 0);
+      }
+      if (territoryInfo.ownerType === 2 && Number.isFinite(territoryInfo.civId) && territoryInfo.civId >= 0) {
+        eraIndex = parseIntLoose(civEraById[territoryInfo.civId], 0);
+      } else if (territoryInfo.ownerType === 3 && territoryInfo.ownerId >= 0) {
+        eraIndex = parseIntLoose(playerEraById[territoryInfo.ownerId], 0);
+      }
+    }
+    cultureIndex = varyByCulture ? Math.max(0, Math.min(4, cultureIndex)) : 0;
+    eraIndex = varyByEra ? Math.max(0, Math.min(3, eraIndex)) : 0;
+    if (geom && isNeighborhoodDistrictSection(section)) {
+      return {
+        cultureIndex,
+        eraIndex,
+        renderStrategy: 'by-count',
+        buildingCol: getNeighborhoodDistrictBuildingVariant(geom.xPos, geom.yPos),
+        buildingCols: []
+      };
+    }
+    const renderStrategy = getDistrictRenderStrategy(section);
+    const dependentBuildingIds = getDistrictDependentBuildingIds(section);
+    const influencingCities = [];
+    const seenCityPositions = new Set();
+    if (geom && territoryInfo && territoryInfo.hasOwner && Number.isFinite(territoryInfo.civId) && territoryInfo.civId >= 0) {
+      getDistrictWorkAreaOffsets().forEach(([dx, dy]) => {
+        const coord = normalizeWrappedCoord(geom.xPos + dx, geom.yPos + dy);
+        if (!coord) return;
+        const cityRecord = cityRecordByCoord.get(`${coord.xPos},${coord.yPos}`);
+        if (!cityRecord) return;
+        const cityPos = citySection && Array.isArray(citySection.records)
+          ? citySection.records.indexOf(cityRecord)
+          : -1;
+        if (cityPos < 0 || seenCityPositions.has(cityPos)) return;
+        const cityOwnerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
+        const cityOwnerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
+        const cityCivId = resolveCivIdFromOwnership(cityOwnerTypeRaw, cityOwnerRaw);
+        if (cityCivId !== territoryInfo.civId) return;
+        seenCityPositions.add(cityPos);
+        influencingCities.push(cityPos);
+      });
+    }
+    const hasBuildingInRadius = (buildingId) => influencingCities.some((cityPos) => getCityBuildingSetForCityPos(cityPos).has(buildingId));
+    const presentBuildingCols = dependentBuildingIds
+      .map((buildingId, idx) => (hasBuildingInRadius(buildingId) ? (idx + 1) : -1))
+      .filter((value) => value > 0);
+    return {
+      cultureIndex,
+      eraIndex,
+      renderStrategy,
+      buildingCol: renderStrategy === 'by-count'
+        ? Math.min(presentBuildingCols.length, dependentBuildingIds.length)
+        : (presentBuildingCols[presentBuildingCols.length - 1] || 0),
+      buildingCols: renderStrategy === 'by-building' ? presentBuildingCols : []
+    };
+  }
+  function getMapDistrictCanvasCacheKey(section, context) {
+    return JSON.stringify({
+      kind: 'map-district-cell',
+      c3xPath: state.settings && state.settings.c3xPath,
+      scenarioPath: state.settings && state.settings.scenarioPath,
+      district: normalizeConfigToken(getFieldValue(section, 'name') || ''),
+      cultureIndex: Number(context && context.cultureIndex) || 0,
+      eraIndex: Number(context && context.eraIndex) || 0,
+      buildingCol: Number(context && context.buildingCol) || 0,
+      buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : []
+    });
+  }
+  function getMapDistrictFallbackCacheKeys(section, context) {
+    const district = normalizeConfigToken(getFieldValue(section, 'name') || '');
+    const cultureIndex = Number(context && context.cultureIndex) || 0;
+    const eraIndex = Number(context && context.eraIndex) || 0;
+    return [
+      JSON.stringify({
+        kind: 'map-district-fallback',
+        c3xPath: state.settings && state.settings.c3xPath,
+        scenarioPath: state.settings && state.settings.scenarioPath,
+        district,
+        cultureIndex,
+        eraIndex
+      }),
+      JSON.stringify({
+        kind: 'map-district-fallback',
+        c3xPath: state.settings && state.settings.c3xPath,
+        scenarioPath: state.settings && state.settings.scenarioPath,
+        district,
+        cultureIndex
+      }),
+      JSON.stringify({
+        kind: 'map-district-fallback',
+        c3xPath: state.settings && state.settings.c3xPath,
+        scenarioPath: state.settings && state.settings.scenarioPath,
+        district
+      })
+    ];
+  }
+  function getCachedMapDistrictFallbackCanvas(section, context) {
+    if (!section) return null;
+    const keys = getMapDistrictFallbackCacheKeys(section, context);
+    for (let i = 0; i < keys.length; i += 1) {
+      const canvas = state.biqMapDistrictFallbackCache.get(keys[i]) || null;
+      if (canvas) return canvas;
+    }
+    return null;
+  }
+  function storeMapDistrictFallbackCanvas(section, context, canvas) {
+    if (!section || !canvas) return;
+    getMapDistrictFallbackCacheKeys(section, context).forEach((key) => setMapDistrictFallbackCanvas(key, canvas));
+  }
+  function requestBiqMapDistrictCanvas(section, context) {
+    if (!section || !state.settings || !state.settings.c3xPath) return null;
+    const cacheKey = getMapDistrictCanvasCacheKey(section, context);
+    if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) return cacheKey;
+    state.biqMapArtLoading[cacheKey] = true;
+    fetchDistrictCellPreview(section, {
+      cultureIndex: Number(context && context.cultureIndex) || 0,
+      eraIndex: Number(context && context.eraIndex) || 0,
+      buildingCol: Number(context && context.buildingCol) || 0,
+      buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : []
+    }).then((preview) => {
+      const canvas = preview ? (rgbaToCanvas(preview) || null) : null;
+      state.biqMapArtCache[cacheKey] = canvas;
+      if (canvas) storeMapDistrictFallbackCanvas(section, context, canvas);
+    }).catch(() => {
+      state.biqMapArtCache[cacheKey] = null;
+    }).finally(() => {
+      delete state.biqMapArtLoading[cacheKey];
+      biqMapArtRerender();
+    });
+    return cacheKey;
+  }
+  function requestBiqMapNaturalWonderCanvas(section) {
+    if (!section || !state.settings || !state.settings.c3xPath) return null;
+    const fileName = normalizeConfigToken(getFieldValue(section, 'img_path') || '');
+    if (!fileName) return null;
+    const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
+    const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
+    const crop = getCropDimensions(section, { w: 128, h: 88 });
+    const cacheKey = JSON.stringify({
+      kind: 'map-natural-wonder',
+      c3xPath: state.settings.c3xPath,
+      scenarioPath: state.settings.scenarioPath,
+      fileName,
+      row,
+      col,
+      w: crop.w,
+      h: crop.h
+    });
+    if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) return cacheKey;
+    state.biqMapArtLoading[cacheKey] = true;
+    window.c3xManager.getPreview({
+      kind: 'naturalWonder',
+      c3xPath: state.settings.c3xPath,
+      fileName,
+      crop: { row, col, w: crop.w, h: crop.h },
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths()
+    }).then((preview) => {
+      state.biqMapArtCache[cacheKey] = preview ? (rgbaToCanvas(preview) || null) : null;
+    }).catch(() => {
+      state.biqMapArtCache[cacheKey] = null;
+    }).finally(() => {
+      delete state.biqMapArtLoading[cacheKey];
+      biqMapArtRerender();
+    });
+    return cacheKey;
+  }
+  function requestBiqMapAbandonedDistrictCanvas() {
+    if (!state.settings || !state.settings.c3xPath) return null;
+    const cacheKey = JSON.stringify({
+      kind: 'map-district-abandoned',
+      c3xPath: state.settings.c3xPath,
+      scenarioPath: state.settings.scenarioPath
+    });
+    if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) return cacheKey;
+    state.biqMapArtLoading[cacheKey] = true;
+    window.c3xManager.getPreview({
+      kind: 'district',
+      c3xPath: state.settings.c3xPath,
+      fileName: 'Abandoned.pcx',
+      crop: { row: 0, col: 0, w: 128, h: 64 },
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths()
+    }).then((preview) => {
+      state.biqMapArtCache[cacheKey] = preview ? (rgbaToCanvas(preview) || null) : null;
+    }).catch(() => {
+      state.biqMapArtCache[cacheKey] = null;
+    }).finally(() => {
+      delete state.biqMapArtLoading[cacheKey];
+      biqMapArtRerender();
+    });
+    return cacheKey;
+  }
+  function drawDistrictCanvasAtTile(drawCtx, previewCanvas, sx, sy, nativeWidth, nativeHeight, xOffset = 0, yOffset = 0) {
+    if (!drawCtx || !previewCanvas || !nativeWidth || !nativeHeight) return false;
+    const tileScale = tileW / 128;
+    const drawW = Math.max(1, Math.round(nativeWidth * tileScale));
+    const drawH = Math.max(1, Math.round(nativeHeight * tileScale));
+    const defaultPixelY = sy + Math.floor(tileH / 2);
+    const drawX = sx + Math.round((Number(xOffset) || 0) * tileScale) - Math.round(((nativeWidth - 128) * tileScale) / 2);
+    const drawY = defaultPixelY + Math.round((Number(yOffset) || 0) * tileScale) - Math.round((nativeHeight - 64) * tileScale);
+    drawCtx.imageSmoothingEnabled = false;
+    drawCtx.drawImage(previewCanvas, drawX, drawY, drawW, drawH);
+    drawCtx.imageSmoothingEnabled = true;
+    return true;
+  }
   const getActiveOverlayLabels = (tile) => {
     return mapInfoOverlayOptions.filter((spec) => isTileOverlayActive(tile, spec)).map((spec) => spec.label);
   };
@@ -32882,40 +33619,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     const mask = parseIntLoose(getMapFieldValue(tile, spec.field, '0'), 0) >>> 0;
     return (mask & spec.mask) === spec.mask;
-  };
-  const makeLargeAtlasThumb = (assetKey, spriteW, spriteH, spriteIndex, fallbackGlyph = '?') => {
-    const holder = document.createElement('span');
-    holder.className = 'map-option-thumb';
-    const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
-    if (!atlas || !Number.isFinite(spriteIndex) || spriteIndex < 0) {
-      holder.textContent = fallbackGlyph;
-      return holder;
-    }
-    const cols = Math.max(1, Math.floor(atlas.width / spriteW));
-    const row = Math.floor(spriteIndex / cols);
-    const col = spriteIndex % cols;
-    const sx = col * spriteW;
-    const sy = row * spriteH;
-    if (sx + spriteW > atlas.width || sy + spriteH > atlas.height) {
-      holder.textContent = fallbackGlyph;
-      return holder;
-    }
-    const canvasNode = document.createElement('canvas');
-    canvasNode.width = 42;
-    canvasNode.height = 42;
-    const thumbCtx = canvasNode.getContext('2d');
-    if (thumbCtx) {
-      thumbCtx.imageSmoothingEnabled = false;
-      thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
-      const scaleRatio = Math.min(canvasNode.width / spriteW, canvasNode.height / spriteH);
-      const drawW = Math.max(1, Math.round(spriteW * scaleRatio));
-      const drawH = Math.max(1, Math.round(spriteH * scaleRatio));
-      const dx = Math.floor((canvasNode.width - drawW) / 2);
-      const dy = Math.floor((canvasNode.height - drawH) / 2);
-      thumbCtx.drawImage(atlas, sx, sy, spriteW, spriteH, dx, dy, drawW, drawH);
-    }
-    holder.appendChild(canvasNode);
-    return holder;
   };
   const makeTerrainButtonThumb = (record, idx) => {
     const holder = document.createElement('span');
@@ -32949,77 +33652,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     holder.appendChild(canvasNode);
     return holder;
   };
-  const makeCroppedAssetThumb = (assetKey, sx, sy, sw, sh, fallbackGlyph = '?') => {
-    const holder = document.createElement('span');
-    holder.className = 'map-option-thumb';
-    const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
-    if (!atlas || !atlas.width || !atlas.height || (sx + sw) > atlas.width || (sy + sh) > atlas.height) {
-      holder.textContent = fallbackGlyph;
-      return holder;
-    }
-    const canvasNode = document.createElement('canvas');
-    canvasNode.width = 42;
-    canvasNode.height = 42;
-    const thumbCtx = canvasNode.getContext('2d');
-    if (thumbCtx) {
-      thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
-      thumbCtx.imageSmoothingEnabled = false;
-      const scaleRatio = Math.min(canvasNode.width / sw, canvasNode.height / sh);
-      const drawW = Math.max(1, Math.round(sw * scaleRatio));
-      const drawH = Math.max(1, Math.round(sh * scaleRatio));
-      const dx = Math.floor((canvasNode.width - drawW) / 2);
-      const dy = Math.floor((canvasNode.height - drawH) / 2);
-      thumbCtx.drawImage(atlas, sx, sy, sw, sh, dx, dy, drawW, drawH);
-    }
-    holder.appendChild(canvasNode);
-    return holder;
-  };
-  const makeOverlayArtThumb = (spec) => {
-    if (!spec) return null;
-    switch (spec.value) {
-      case 'goodyhut':
-        return makeCroppedAssetThumb('goodyHuts', 0, 0, 128, 64, spec.icon || '•');
-      case 'pollution':
-        return makeCroppedAssetThumb('pollution', 0, 0, 128, 64, spec.icon || '•');
-      case 'barbariancamp':
-        return makeCroppedAssetThumb('terrainBuildings', 256, 0, 128, 64, spec.icon || '•');
-      case 'crater':
-        return makeCroppedAssetThumb('craters', 0, 0, 128, 64, spec.icon || '•');
-      case 'colony': {
-        return makeCroppedAssetThumb('terrainBuildings', 128, 0, 128, 64, spec.icon || '•');
-      }
-      case 'airfield':
-        return makeCroppedAssetThumb('airfieldsDetect', 0, 0, 128, 64, spec.icon || '•');
-      case 'outpost':
-        return makeCroppedAssetThumb('airfieldsDetect', 0, 64, 128, 128, spec.icon || '•');
-      case 'radartower':
-        return makeCroppedAssetThumb('airfieldsDetect', 0, 192, 128, 128, spec.icon || '•');
-      case 'victorypoint':
-        return makeCroppedAssetThumb('victoryPoint', 0, 0, 128, 64, spec.icon || '•');
-      case 'ruins': {
-        return makeCroppedAssetThumb('ruins', 0, 0, 128, 64, spec.icon || '•');
-      }
-      default:
-        return null;
-    }
-  };
-  const makeWorkerActionButtonThumb = (spec) => {
-    const artThumb = makeOverlayArtThumb(spec);
-    if (artThumb) return artThumb;
-    const holder = document.createElement('span');
-    holder.className = 'map-option-thumb overlay';
-    const found = findTerrainPreviewEntry(String(spec && (spec.artName || spec.label) || ''));
-    if (!found) {
-      holder.textContent = spec && spec.icon ? spec.icon : '•';
-      return holder;
-    }
-    const icon = document.createElement('span');
-    icon.className = 'terrain-option-chip-thumb';
-    loadReferenceListThumbnail(found.tabKey, found.entry, icon);
-    holder.appendChild(icon);
-    return holder;
-  };
-  const getCityBuildingSet = (cityRecord) => {
+  const makeWorkerActionButtonThumb = (spec) => buildMapOverlayButtonThumb(spec);
+  function getCityBuildingSet(cityRecord) {
     const out = new Set();
     (Array.isArray(cityRecord && cityRecord.fields) ? cityRecord.fields : []).forEach((field) => {
       const key = String((field && (field.baseKey || field.key)) || '').trim().toLowerCase();
@@ -33035,7 +33669,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       });
     }
     return out;
-  };
+  }
 	  const setCityBuildingSet = (cityRecord, buildingSet) => {
 	    const chosen = Array.from(buildingSet || []).map((value) => Number(value)).filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b);
     const remaining = (Array.isArray(cityRecord.fields) ? cityRecord.fields : []).filter((field) => {
@@ -33191,16 +33825,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     thumb.textContent = '∅';
     return thumb;
   };
-  const makeDistrictButtonThumb = (entry) => {
-    const thumb = document.createElement('span');
-    thumb.className = 'map-option-thumb district';
-    if (entry && entry.section) {
-      loadDistrictRepresentativePreview(entry.section, thumb, 30);
-    } else {
-      thumb.textContent = '◆';
-    }
-    return thumb;
-  };
+  const makeDistrictButtonThumb = (entry) => buildMapDistrictButtonThumb(entry, 30);
   const makeNaturalWonderButtonThumb = (entry) => {
     const thumb = document.createElement('span');
     thumb.className = 'map-option-thumb natural-wonder';
@@ -33251,7 +33876,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const iconIdx = goodIconById[resourceId];
       grid.appendChild(makeOptionButton({
         label: String(entry && entry.name || `Resource ${resourceId}`),
-        thumb: makeLargeAtlasThumb('resources', 50, 50, iconIdx, '◆'),
+        thumb: makeMapLargeAtlasThumb('resources', 50, 50, iconIdx, '◆'),
         selected: currentResource === resourceId,
         disabled: !isScenarioMode(),
         onClick: () => setSelectedTileResource(resourceId)
@@ -33614,10 +34239,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     host.appendChild(editor);
   };
   renderTileInfoPanel = () => {
+    if (getStoredInteractionMode() !== 'select') {
+      tileInfoPanel.classList.add('hidden');
+      tileInfoPanel.innerHTML = '';
+      return;
+    }
     const tile = tiles[state.biqMapSelectedTile] || null;
     const geom = tileGeom[state.biqMapSelectedTile] || { xPos: 0, yPos: 0 };
     const activeCategory = String(state.mapEditorTool && state.mapEditorTool.selectionCategory || 'terrain');
     const activeOption = mapCategoryOptions.find((opt) => opt.value === activeCategory) || mapCategoryOptions[0];
+    tileInfoPanel.classList.remove('hidden');
     tileInfoPanel.innerHTML = '';
     const top = document.createElement('div');
     top.className = 'section-top map-info-top';
@@ -35747,6 +36378,142 @@ function makeDistrictOptionPreviewIcon(optionName) {
   return holder;
 }
 
+function makeMapCroppedAssetThumb(assetKey, sx, sy, sw, sh, fallbackGlyph = '?') {
+  const holder = document.createElement('span');
+  holder.className = 'map-option-thumb';
+  const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
+  if (!atlas || !atlas.width || !atlas.height || (sx + sw) > atlas.width || (sy + sh) > atlas.height) {
+    holder.textContent = fallbackGlyph;
+    return holder;
+  }
+  const canvasNode = document.createElement('canvas');
+  canvasNode.width = 42;
+  canvasNode.height = 42;
+  const thumbCtx = canvasNode.getContext('2d');
+  if (thumbCtx) {
+    thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
+    thumbCtx.imageSmoothingEnabled = false;
+    const scaleRatio = Math.min(canvasNode.width / sw, canvasNode.height / sh);
+    const drawW = Math.max(1, Math.round(sw * scaleRatio));
+    const drawH = Math.max(1, Math.round(sh * scaleRatio));
+    const dx = Math.floor((canvasNode.width - drawW) / 2);
+    const dy = Math.floor((canvasNode.height - drawH) / 2);
+    thumbCtx.drawImage(atlas, sx, sy, sw, sh, dx, dy, drawW, drawH);
+  }
+  holder.appendChild(canvasNode);
+  return holder;
+}
+
+function makeMapLargeAtlasThumb(assetKey, spriteW, spriteH, spriteIndex, fallbackGlyph = '?') {
+  const holder = document.createElement('span');
+  holder.className = 'map-option-thumb';
+  const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
+  if (!atlas || !Number.isFinite(spriteIndex) || spriteIndex < 0) {
+    holder.textContent = fallbackGlyph;
+    return holder;
+  }
+  const cols = Math.max(1, Math.floor(atlas.width / spriteW));
+  const row = Math.floor(spriteIndex / cols);
+  const col = spriteIndex % cols;
+  const sx = col * spriteW;
+  const sy = row * spriteH;
+  if (sx + spriteW > atlas.width || sy + spriteH > atlas.height) {
+    holder.textContent = fallbackGlyph;
+    return holder;
+  }
+  const canvasNode = document.createElement('canvas');
+  canvasNode.width = 42;
+  canvasNode.height = 42;
+  const thumbCtx = canvasNode.getContext('2d');
+  if (thumbCtx) {
+    thumbCtx.imageSmoothingEnabled = false;
+    thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
+    const scaleRatio = Math.min(canvasNode.width / spriteW, canvasNode.height / spriteH);
+    const drawW = Math.max(1, Math.round(spriteW * scaleRatio));
+    const drawH = Math.max(1, Math.round(spriteH * scaleRatio));
+    const dx = Math.floor((canvasNode.width - drawW) / 2);
+    const dy = Math.floor((canvasNode.height - drawH) / 2);
+    thumbCtx.drawImage(atlas, sx, sy, spriteW, spriteH, dx, dy, drawW, drawH);
+  }
+  holder.appendChild(canvasNode);
+  return holder;
+}
+
+function makeMapOverlayArtThumb(spec) {
+  if (!spec) return null;
+  switch (spec.value) {
+    case 'goodyhut':
+      return makeMapCroppedAssetThumb('goodyHuts', 0, 0, 128, 64, spec.icon || '•');
+    case 'pollution':
+      return makeMapCroppedAssetThumb('pollution', 0, 0, 128, 64, spec.icon || '•');
+    case 'barbariancamp':
+      return makeMapCroppedAssetThumb('terrainBuildings', 256, 0, 128, 64, spec.icon || '•');
+    case 'crater':
+      return makeMapCroppedAssetThumb('craters', 0, 0, 128, 64, spec.icon || '•');
+    case 'colony':
+      return makeMapCroppedAssetThumb('terrainBuildings', 128, 0, 128, 64, spec.icon || '•');
+    case 'airfield':
+      return makeMapCroppedAssetThumb('airfieldsDetect', 0, 0, 128, 64, spec.icon || '•');
+    case 'outpost':
+      return makeMapCroppedAssetThumb('airfieldsDetect', 0, 64, 128, 128, spec.icon || '•');
+    case 'radartower':
+      return makeMapCroppedAssetThumb('airfieldsDetect', 0, 192, 128, 128, spec.icon || '•');
+    case 'victorypoint':
+      return makeMapCroppedAssetThumb('victoryPoint', 0, 0, 128, 64, spec.icon || '•');
+    case 'ruins':
+      return makeMapCroppedAssetThumb('ruins', 0, 0, 128, 64, spec.icon || '•');
+    default:
+      return null;
+  }
+}
+
+function paintMapOverlayButtonThumb(holder, spec, extraClassName = '') {
+  if (!holder) return false;
+  holder.innerHTML = '';
+  holder.className = 'map-option-thumb overlay';
+  if (extraClassName) holder.classList.add(...String(extraClassName).split(/\s+/).filter(Boolean));
+  const artThumb = makeMapOverlayArtThumb(spec);
+  if (artThumb) {
+    while (artThumb.firstChild) holder.appendChild(artThumb.firstChild);
+    return true;
+  }
+  const found = findTerrainPreviewEntry(String(spec && (spec.artName || spec.label) || ''));
+  if (!found) {
+    holder.textContent = spec && spec.icon ? spec.icon : '•';
+    return true;
+  }
+  const icon = document.createElement('span');
+  icon.className = 'terrain-option-chip-thumb';
+  loadReferenceListThumbnail(found.tabKey, found.entry, icon);
+  holder.appendChild(icon);
+  return true;
+}
+
+function buildMapOverlayButtonThumb(spec) {
+  const holder = document.createElement('span');
+  paintMapOverlayButtonThumb(holder, spec);
+  return holder;
+}
+
+function paintMapDistrictButtonThumb(holder, entry, canvasSize = 30, extraClassName = '') {
+  if (!holder) return false;
+  holder.className = 'map-option-thumb district';
+  if (extraClassName) holder.classList.add(...String(extraClassName).split(/\s+/).filter(Boolean));
+  if (entry && entry.section) {
+    loadDistrictRepresentativePreview(entry.section, holder, canvasSize);
+    return true;
+  }
+  holder.innerHTML = '';
+  holder.textContent = '◆';
+  return true;
+}
+
+function buildMapDistrictButtonThumb(entry, canvasSize = 30) {
+  const holder = document.createElement('span');
+  paintMapDistrictButtonThumb(holder, entry, canvasSize);
+  return holder;
+}
+
 function findNaturalWonderSectionByName(name) {
   const target = normalizeConfigToken(name);
   if (!target) return null;
@@ -37500,6 +38267,7 @@ function renderTabs() {
         navigateWithHistory(() => {
           state.activeTab = key;
         }, { preserveTabScroll: false });
+        maybeOpenMapModalForTabClick(key);
       });
       row.appendChild(button);
     });
@@ -37778,6 +38546,7 @@ async function loadBundleAndRender(options = {}) {
     state.baseFilter = '';
     state.biqMapArtCache = {};
     state.biqMapArtLoading = {};
+    state.biqMapDistrictFallbackCache = new Map();
     state.biqMapTerritoryEdgeCache = new Map();
     state.biqMapNtpColorCache = {};
     state.civSlotUiColorCache = {};

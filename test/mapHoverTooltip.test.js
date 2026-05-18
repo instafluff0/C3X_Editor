@@ -39,6 +39,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const drawPaintPreview = \(hit\) => \{[\s\S]*?const previewIndexes = getBrushTileIndexes\(hit\.index\);[\s\S]*?previewIndexes\.forEach\(\(tileIdx\) => \{[\s\S]*?hoverCtx\.globalAlpha = 0\.52;[\s\S]*?drawTerrainSpriteToContext\(hoverCtx, previewRecord, geom, sx, diamondTop, tileW, tileH\)[\s\S]*?hoverCtx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, dx, dy, Math\.round\(cellW \* scale\), Math\.round\(cellH \* scale\)\)[\s\S]*?drawSheetSpriteScaledToContext\(hoverCtx, state\.biqMapArtCache\.roads, 16, 16, 0, sx, midY, tileW, tileH\)[\s\S]*?drawDistrictOverlay\(hoverCtx, previewRecord, geom, sx, sy, 'all'\);/,
+    'paint preview should render semi-transparent previews across the whole brush footprint for terrain, resources, overlays, and district art'
+  );
+  assert.match(
+    rendererText,
     /const drawSelectedTileBorder = \(drawCtx = hoverCtx\) => \{[\s\S]*?state\.biqMapSelectedTile[\s\S]*?strokeStyle = 'rgba\(58, 32, 139, 0\.98\)'[\s\S]*?drawTileDiamondPath\(drawCtx, cx, cy, 0\);/,
     'selected tile should draw a darker persistent outer purple selection marker'
   );
@@ -58,6 +63,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     'map canvas should update the coordinate tooltip on pointer movement'
   );
   assert.match(
+    rendererText,
+    /drawHoverBorder\(hit\);[\s\S]*?drawPaintPreview\(hit\);/,
+    'paint mode should draw the selected paint preview into the hovered tile as the pointer moves'
+  );
+  assert.match(
     stylesText,
     /\.biq-map-hover-tooltip\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?pointer-events:\s*none;/,
     'coordinate tooltip should be positioned as a non-interactive map overlay'
@@ -71,5 +81,10 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     stylesText,
     /\.biq-map-hover-canvas\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?pointer-events:\s*none;/,
     'hover border canvas should be positioned as a non-interactive map overlay'
+  );
+  assert.doesNotMatch(
+    stylesText,
+    /\.biq-map-paint-cursor-ghost\s*\{/,
+    'paint preview should no longer rely on a separate floating tooltip card'
   );
 });

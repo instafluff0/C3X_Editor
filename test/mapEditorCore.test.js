@@ -23,16 +23,24 @@ function packTerrain(code) {
 }
 
 test('computeBrushTileIndexes expands with diameter', () => {
-  const width = 8;
-  const tileCount = 64;
-  const center = 20;
+  const width = 10;
+  const tileCount = 100;
+  const center = 27;
   const one = mapCore.computeBrushTileIndexes(width, tileCount, center, 1);
   const three = mapCore.computeBrushTileIndexes(width, tileCount, center, 3);
   const five = mapCore.computeBrushTileIndexes(width, tileCount, center, 5);
   assert.equal(one.length, 1);
-  assert.ok(three.length > one.length);
-  assert.ok(five.length > three.length);
+  assert.equal(three.length, 9);
+  assert.equal(five.length, 25);
   assert.ok(one.includes(center));
+});
+
+test('computeBrushTileIndexes keeps 3x3 paint brushes centered on Civ3 logical tiles', () => {
+  const width = 8;
+  const tileCount = Math.floor((width * 8) / 2);
+  const center = 10;
+  const brush = mapCore.computeBrushTileIndexes(width, tileCount, center, 3);
+  assert.deepEqual(brush, [2, 5, 6, 9, 10, 11, 13, 14, 18]);
 });
 
 test('applyTerrain writes baserealterrain and c3cbaserealterrain', () => {

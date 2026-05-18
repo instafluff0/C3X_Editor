@@ -1,4 +1,21 @@
 * RELEASE 27.11
+- Added a `Tab` shortcut in the Map editor modal to cycle Move, Select, and Paint modes, with a bottom-hint flash that confirms each mode jump alongside the existing temporary Ctrl-to-Move hint.
+- Made the Map editor modal draw real district and natural-wonder map art, using territory owner culture/era, district `render_strategy`, nearby city improvements, and resource layering instead of generic district dots.
+- Changed the Map editor Paint-mode preview from a floating badge to a semi-transparent in-tile ghost, so the selected Terrain, Resource, Overlay, or District appears directly inside the hovered tile diamond.
+- Added a semi-transparent Paint-mode cursor ghost in the Map editor that follows the mouse and previews the currently selected Terrain, Resource, Overlay, or District art.
+- Fixed the Map editor modal Paint-mode 3x3 brush to use Civ3 logical tile coordinates, so the hover footprint and painted tiles form the intended 3-by-3 block instead of the skewed packed-record shape.
+- Corrected Map editor brush-footprint math to use the Civ3-style logical tile grid, fixing 3x3 and larger Paint previews and edits that were previously too wide on the diagonals.
+- Made the Map editor Paint-mode hover outline expand to the real brush footprint and renamed the toolbar label from Brush to Brush Size.
+- Restricted the Map editor Tile Info panel to Select mode so Paint mode no longer leaves the inspector visible; Paint selections stay configurable from the top toolbar instead.
+- Limited Map editor mouse-wheel zooming to Move mode, including the temporary Ctrl-held move state, so scrolling in other tools no longer zooms the map.
+- Removed the redundant Add/Erase checkbox from the Map editor Paint toolbar and made Paint mode always apply the selected Terrain, Overlay, Resource, or District when you click a tile.
+- Switched the Map editor Paint toolbar's Resource picker to the same full-size resource thumbnails used in Tile Info so icons no longer upscale from tiny pixelated sprites.
+- Fixed structured picker option normalization so Paint toolbar overlay and district entries keep their thumbnail/jump metadata instead of dropping back to placeholder icons.
+- Fixed the Map editor Paint toolbar's Overlay and District pickers to reuse the same Tile Info thumbnail previews, so roads, railroads, mines, irrigation, and district art no longer fall back to empty placeholder boxes.
+- Replaced the Map editor Paint toolbar's Terrain, Overlay, Resource, and District controls with structured thumbnail pickers and added jump links into Terrain Types, Worker Jobs, Resources, and Districts where applicable.
+- Tightened the Map editor Paint toolbar by switching the Paint icon away from a pencil, removing the redundant Paint label beside the category picker, and limiting paint categories to Terrain, Overlays, Resources, and Districts.
+- Fixed Map modal history navigation so jumping from a map link to another tab closes the modal, and Back restores the same map session with the modal reopened.
+- Made the Scenario Map tab open the full map editor immediately when the current scenario already has map data, removing the extra Open Map click.
 - Made Map editor colony-family overlays use real `CLNY` records and Quint-style art, so colonies, airfields, outposts, and radar towers paint, toggle, thumbnail, and render from the correct BIQ structures and terrain PCX assets.
 - Fixed Map editor overlay selectors so scenario-aware thumbnails appear on first open and terrain-PCX overlays like pollution, craters, barbarian camps, goody huts, ruins, and victory points use real map art thumbnails instead of placeholder icons.
 - Loaded and rendered Map editor goody huts, barbarian camps, pollution, craters, ruins, and other scenario map overlays from the same Civ3 PCX assets and slice rules used by Quint.

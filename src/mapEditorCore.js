@@ -57,18 +57,44 @@
     return { xPos: column, yPos: row };
   }
 
+  function tileGridCoordsByIndex(width, index) {
+    var half = Math.floor(width / 2);
+    if (!Number.isFinite(half) || half <= 0) return { col: 0, row: 0 };
+    return {
+      col: index % half,
+      row: Math.floor(index / half)
+    };
+  }
+
+  function wrapDelta(value, span) {
+    var delta = Number(value) || 0;
+    var size = Math.floor(Number(span) || 0);
+    if (size <= 0) return delta;
+    var best = delta;
+    var minus = delta - size;
+    var plus = delta + size;
+    if (Math.abs(minus) < Math.abs(best)) best = minus;
+    if (Math.abs(plus) < Math.abs(best)) best = plus;
+    return best;
+  }
+
   function computeBrushTileIndexes(width, tileCount, centerIndex, diameter, options) {
     var out = [];
     var radius = Math.max(0, (Math.max(1, Number(diameter) || 1) - 1) / 2);
     var center = tileCoordsByIndex(width, centerIndex);
     var wrapX = !options || options.wrapX !== false;
-    var mapWidth = Number(width) || 0;
+    var mapWidth = Math.floor(Number(width) || 0);
+    var maxDistance = radius * 2;
     for (var i = 0; i < tileCount; i += 1) {
       var p = tileCoordsByIndex(width, i);
-      var dx = Math.abs(p.xPos - center.xPos);
-      if (wrapX && mapWidth > 0) dx = Math.min(dx, Math.abs(mapWidth - dx));
-      var dy = Math.abs(p.yPos - center.yPos);
-      if (Math.max(dx, dy) <= radius * 2) out.push(i);
+      var dx = p.xPos - center.xPos;
+      if (wrapX && mapWidth > 0) dx = wrapDelta(dx, mapWidth);
+      var dy = p.yPos - center.yPos;
+      // Use Civ3 logical tile axes instead of the packed TILE record grid so
+      // screen-space NxN brushes stay centered on the isometric lattice.
+      var axisA = dx + dy;
+      var axisB = dx - dy;
+      if (Math.max(Math.abs(axisA), Math.abs(axisB)) <= maxDistance) out.push(i);
     }
     return out;
   }
@@ -215,6 +241,7 @@
     ensureField: ensureField,
     setField: setField,
     tileCoordsByIndex: tileCoordsByIndex,
+    tileGridCoordsByIndex: tileGridCoordsByIndex,
     computeBrushTileIndexes: computeBrushTileIndexes,
     applyTerrain: applyTerrain,
     applyOverlay: applyOverlay,
