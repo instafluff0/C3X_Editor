@@ -2236,10 +2236,10 @@ button.danger:hover {
 }
 
 .biq-map-floating-right {
-  top: 12px;
+  top: 92px;
   right: 12px;
   width: var(--biq-map-side-panel-width);
-  max-height: calc(100% - 24px);
+  max-height: calc(100% - 104px);
   overflow: auto;
 }
 
@@ -2264,8 +2264,304 @@ button.danger:hover {
   gap: 6px;
 }
 
+.biq-map-toolbar .hidden {
+  display: none !important;
+}
+
 .map-tool-row {
   margin-top: -2px;
+}
+
+.map-tool-row > .bool-toggle:last-child {
+  margin-left: auto;
+}
+
+.map-mode-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid rgba(73, 69, 98, 0.14);
+  border-radius: 10px;
+  background: rgba(247, 250, 255, 0.86);
+}
+
+.map-mode-btn {
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border-color: #d8deed;
+  background: #ffffff;
+  color: var(--mode-ink, #2c3658);
+  box-shadow: 0 1px 2px rgba(31, 35, 58, 0.06);
+}
+
+.map-mode-btn[data-mode="move"] {
+  --mode-color: #22a99e;
+  --mode-color-2: #42c8ba;
+  --mode-grad: linear-gradient(135deg, #1e9e95, #41caba);
+  --mode-ink: #174d4a;
+}
+
+.map-mode-btn[data-mode="select"] {
+  --mode-color: #625ce7;
+  --mode-color-2: #8d75ff;
+  --mode-grad: linear-gradient(135deg, #5d66d9, #9b75ff);
+  --mode-ink: #30266d;
+}
+
+.map-mode-btn[data-mode="paint"] {
+  --mode-color: #e57c32;
+  --mode-color-2: #f2a04d;
+  --mode-grad: linear-gradient(135deg, #df7931, #f0a04c);
+  --mode-ink: #6a2f1d;
+}
+
+.map-mode-btn.active {
+  background: var(--mode-grad);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 5px 14px rgba(31, 35, 58, 0.18);
+}
+
+.map-mode-btn.control-active:not(.active) {
+  border-color: #22a99e;
+  box-shadow:
+    inset 0 0 0 1px rgba(34, 169, 158, 0.35),
+    0 0 0 3px rgba(34, 169, 158, 0.16),
+    0 5px 14px rgba(31, 35, 58, 0.12);
+}
+
+.map-mode-btn .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  margin-right: 7px;
+  border-radius: 5px;
+  background: var(--mode-grad);
+  color: #ffffff;
+  font-size: 0.86rem;
+  line-height: 1;
+}
+
+.map-mode-btn.active .btn-icon {
+  background: #ffffff;
+  color: var(--mode-color);
+}
+
+.map-category-wrap select {
+  min-width: 150px;
+}
+
+.biq-map-inspector {
+  display: grid;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.biq-map-inspector.hidden {
+  display: none !important;
+}
+
+.biq-map-tile-info-panel {
+  border: 1px solid rgba(73, 69, 98, 0.14);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(31, 35, 58, 0.12);
+}
+
+.map-info-top {
+  align-items: start;
+}
+
+.map-info-category {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.map-info-category select {
+  width: 100%;
+}
+
+.map-info-body {
+  display: grid;
+  gap: 6px;
+}
+
+.map-info-summary {
+  padding: 7px 9px;
+  border: 1px solid rgba(73, 69, 98, 0.10);
+  border-radius: 8px;
+  background: rgba(247, 250, 255, 0.78);
+  color: #323a5b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.map-option-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  max-height: min(58vh, 520px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.map-option-grid.resource {
+  grid-template-columns: 1fr;
+}
+
+.map-tile-option-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 5px 8px;
+  border: 1px solid rgba(73, 69, 98, 0.16);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #202640;
+  box-shadow: 0 1px 2px rgba(31, 35, 58, 0.06);
+}
+
+.map-tile-option-button:hover:not(:disabled) {
+  border-color: rgba(126, 94, 232, 0.48);
+  box-shadow: 0 5px 14px rgba(83, 58, 171, 0.14);
+  transform: translateY(-1px);
+}
+
+.map-tile-option-button.active {
+  border-color: #6f5cf1;
+  background: linear-gradient(135deg, rgba(110, 96, 239, 0.14), rgba(239, 130, 245, 0.12)), #ffffff;
+  box-shadow:
+    inset 0 0 0 2px rgba(111, 92, 241, 0.42),
+    0 7px 18px rgba(83, 58, 171, 0.18);
+}
+
+.map-tile-option-button.multi.active {
+  border-color: #2a9f96;
+  background: linear-gradient(135deg, rgba(34, 169, 158, 0.15), rgba(101, 108, 232, 0.10)), #ffffff;
+  box-shadow:
+    inset 0 0 0 2px rgba(34, 169, 158, 0.38),
+    0 7px 18px rgba(31, 35, 58, 0.14);
+}
+
+.map-tile-option-button:disabled {
+  cursor: not-allowed;
+}
+
+.map-option-thumb {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: rgba(235, 240, 250, 0.82);
+  color: #4c5270;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.map-option-thumb canvas {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+}
+
+.map-option-thumb.terrain .terrain-option-chip-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
+
+.map-option-thumb.terrain .entry-thumb-canvas {
+  width: 30px;
+  height: 30px;
+}
+
+.map-option-thumb.overlay .terrain-option-chip-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
+
+.map-option-thumb.overlay .entry-thumb-canvas {
+  width: 30px;
+  height: 30px;
+}
+
+.map-option-thumb.overlay {
+  background: linear-gradient(135deg, rgba(102, 205, 194, 0.18), rgba(116, 104, 232, 0.16)), #ffffff;
+  color: #20335c;
+}
+
+.map-option-thumb.none {
+  color: #737a93;
+}
+
+.map-option-label {
+  min-width: 0;
+  max-width: 100%;
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.map-info-row {
+  display: grid;
+  grid-template-columns: minmax(84px, 0.7fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-height: 26px;
+  padding: 5px 7px;
+  border: 1px solid rgba(73, 69, 98, 0.10);
+  border-radius: 7px;
+  background: rgba(247, 250, 255, 0.76);
+}
+
+.map-info-label {
+  color: #59627d;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.map-info-value {
+  min-width: 0;
+  color: #1b2037;
+  font-size: 0.78rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.map-tile-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.map-tile-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  border: 1px solid rgba(73, 69, 98, 0.12);
+  background: rgba(247, 250, 255, 0.88);
+  color: #33405f;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .map-select-icon-host {
@@ -2341,6 +2637,23 @@ button.danger:hover {
   -ms-overflow-style: none;
 }
 
+.biq-map-canvas-wrap.map-mode-move {
+  cursor: grab;
+}
+
+.biq-map-canvas-wrap.control-move-active {
+  border-color: rgba(34, 169, 158, 0.72);
+  box-shadow: inset 0 0 0 2px rgba(34, 169, 158, 0.26);
+}
+
+.biq-map-canvas-wrap.map-mode-select {
+  cursor: pointer;
+}
+
+.biq-map-canvas-wrap.map-mode-paint {
+  cursor: crosshair;
+}
+
 .biq-map-canvas-wrap::-webkit-scrollbar {
   width: 0;
   height: 0;
@@ -2393,6 +2706,54 @@ button.danger:hover {
 
 .biq-map-hover-tooltip.hidden {
   display: none;
+}
+
+.biq-map-control-move-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid rgba(42, 48, 75, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #27314e;
+  font-size: 0.78rem;
+  font-weight: 500;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 22px rgba(31, 35, 58, 0.14);
+}
+
+.biq-map-control-move-hint.hidden {
+  display: none;
+}
+
+.biq-map-control-move-hint .keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 22px;
+  margin: 0 3px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #1e9e95, #41caba);
+  color: #ffffff;
+  text-align: center;
+  font-weight: 800;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.16);
+}
+
+.biq-map-control-move-hint.active {
+  border-color: rgba(34, 169, 158, 0.56);
+  background: rgba(23, 72, 69, 0.86);
+  color: #ffffff;
 }
 
 .biq-map-zoom-controls {

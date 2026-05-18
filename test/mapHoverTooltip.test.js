@@ -34,8 +34,13 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const drawHoverBorder = \(hit\) => \{[\s\S]*?shadowColor = 'rgba\(0, 214, 255, 0\.72\)'[\s\S]*?hoverCtx\.stroke\(\);/,
-    'hover border should draw a visible outlined diamond around the hovered tile'
+    /const drawHoverBorder = \(hit\) => \{[\s\S]*?shadowColor = 'rgba\(196, 149, 255, 0\.52\)'[\s\S]*?hoverGradient\.addColorStop\(1, 'rgba\(244, 158, 255, 0\.96\)'\)[\s\S]*?drawTileDiamondPath\(hoverCtx, cx, cy, Math\.max\(3, Math\.round\(tilePx \/ 3\.8\)\)\);/,
+    'hover border should draw a lighter inset purple-gradient diamond around the hovered tile'
+  );
+  assert.match(
+    rendererText,
+    /const drawSelectedTileBorder = \(drawCtx = hoverCtx\) => \{[\s\S]*?state\.biqMapSelectedTile[\s\S]*?strokeStyle = 'rgba\(58, 32, 139, 0\.98\)'[\s\S]*?drawTileDiamondPath\(drawCtx, cx, cy, 0\);/,
+    'selected tile should draw a darker persistent outer purple selection marker'
   );
   assert.match(
     rendererText,

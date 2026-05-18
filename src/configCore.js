@@ -2964,6 +2964,247 @@ function resolveScenarioTextPath(scenarioPath, name, scenarioPaths = []) {
   return candidates.find((candidate) => fs.existsSync(candidate)) || '';
 }
 
+function stripScenarioDistrictValueQuotes(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (text.length >= 2) {
+    const first = text.charAt(0);
+    const last = text.charAt(text.length - 1);
+    if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+      return text.slice(1, -1).trim();
+    }
+  }
+  return text;
+}
+
+function parseScenarioDistrictCoordinates(value) {
+  const parts = String(value || '').split(',').map((part) => Number.parseInt(part.trim(), 10));
+  if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return null;
+  return { x: parts[0], y: parts[1] };
+}
+
+function quoteScenarioDistrictValue(value) {
+  const text = String(value == null ? '' : value).trim().slice(0, 99);
+  if (!text) return '';
+  if (/^[A-Za-z0-9_. -]+$/.test(text) && !/^\s|\s$/.test(text)) return text;
+  return `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function parseScenarioDistrictsText(text) {
+  const entries = [];
+  const namedTiles = [];
+  const issues = [];
+  let current = null;
+  const finish = () => {
+    if (!current) return;
+    const coords = parseScenarioDistrictCoordinates(current.fields.coordinates);
+    if (!coords) {
+      issues.push(`${current.type} section missing valid coordinates.`);
+      current = null;
+      return;
+    }
+    if (current.type === 'district') {
+      const district = stripScenarioDistrictValueQuotes(current.fields.district);
+      if (!district) {
+        issues.push(`District section at ${coords.x},${coords.y} is missing district.`);
+      } else {
+        entries.push({
+          x: coords.x,
+          y: coords.y,
+          district,
+          wonderName: stripScenarioDistrictValueQuotes(current.fields.wonder_name),
+          wonderCity: stripScenarioDistrictValueQuotes(current.fields.wonder_city)
+        });
+      }
+    } else if (current.type === 'namedTile') {
+      const name = stripScenarioDistrictValueQuotes(current.fields.name);
+      if (!name) {
+        issues.push(`NamedTile section at ${coords.x},${coords.y} is missing name.`);
+      } else {
+        namedTiles.push({ x: coords.x, y: coords.y, name: name.slice(0, 99) });
+      }
+    }
+    current = null;
+  };
+
+  String(text || '').split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('[')) return;
+    if (trimmed === 'DISTRICTS') return;
+    if (trimmed === '#District' || trimmed === '#NamedTile') {
+      finish();
+      current = { type: trimmed === '#District' ? 'district' : 'namedTile', fields: {} };
+      return;
+    }
+    if (!current) return;
+    const match = trimmed.match(/^([^=]+?)\s*=\s*(.*)$/);
+    if (!match) return;
+    const key = String(match[1] || '').trim().toLowerCase();
+    const value = String(match[2] || '').trim();
+    current.fields[key] = value;
+  });
+  finish();
+  return { entries, namedTiles, issues };
+}
+
+function serializeScenarioDistrictsText(model) {
+  const entries = Array.isArray(model && model.entries) ? model.entries : [];
+  const namedTiles = Array.isArray(model && model.namedTiles) ? model.namedTiles : [];
+  const rows = ['DISTRICTS', ''];
+  const sortable = [];
+  entries.forEach((entry) => {
+    const x = Number.parseInt(entry && entry.x, 10);
+    const y = Number.parseInt(entry && entry.y, 10);
+    const district = String(entry && entry.district || '').trim();
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !district) return;
+    sortable.push({ kind: 'district', x, y, entry });
+  });
+  namedTiles.forEach((entry) => {
+    const x = Number.parseInt(entry && entry.x, 10);
+    const y = Number.parseInt(entry && entry.y, 10);
+    const name = String(entry && entry.name || '').trim();
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !name) return;
+    sortable.push({ kind: 'namedTile', x, y, entry: { ...entry, name: name.slice(0, 99) } });
+  });
+  sortable.sort((a, b) => (a.y - b.y) || (a.x - b.x) || a.kind.localeCompare(b.kind));
+  sortable.forEach((item) => {
+    if (item.kind === 'district') {
+      rows.push('#District');
+      rows.push(`coordinates  = ${item.x},${item.y}`);
+      rows.push(`district     = ${quoteScenarioDistrictValue(item.entry.district)}`);
+      if (String(item.entry.wonderCity || '').trim()) rows.push(`wonder_city  = ${quoteScenarioDistrictValue(item.entry.wonderCity)}`);
+      if (String(item.entry.wonderName || '').trim()) rows.push(`wonder_name  = ${quoteScenarioDistrictValue(item.entry.wonderName)}`);
+      rows.push('');
+      return;
+    }
+    rows.push('#NamedTile');
+    rows.push(`coordinates  = ${item.x},${item.y}`);
+    rows.push(`name         = ${quoteScenarioDistrictValue(item.entry.name)}`);
+    rows.push('');
+  });
+  return ensureTrailingNewline(rows.join('\n'));
+}
+
+function loadScenarioDistrictsMetadata({ scenarioPath, scenarioPaths = [], targetRoot = '', preferredEncoding = DEFAULT_TEXT_FILE_ENCODING }) {
+  const sourcePath = resolveScenarioTextPath(scenarioPath, 'scenario.districts.txt', scenarioPaths);
+  const targetPath = path.join(targetRoot || resolveScenarioDir(scenarioPath), 'scenario.districts.txt');
+  const info = readTextFileWithEncodingInfoIfExists(sourcePath, { preferredEncoding });
+  const parsed = parseScenarioDistrictsText(info ? info.text : '');
+  return {
+    sourcePath,
+    targetPath,
+    encoding: (info && info.encoding) || '',
+    bom: !!(info && info.bom),
+    entries: parsed.entries,
+    originalEntries: JSON.parse(JSON.stringify(parsed.entries)),
+    namedTiles: parsed.namedTiles,
+    originalNamedTiles: JSON.parse(JSON.stringify(parsed.namedTiles)),
+    issues: parsed.issues
+  };
+}
+
+function collectScenarioDistrictsEdit(tabs) {
+  const mapTab = tabs && tabs.map;
+  const meta = mapTab && mapTab.scenarioDistricts;
+  if (!meta) return null;
+  const entries = Array.isArray(meta.entries) ? meta.entries : [];
+  const namedTiles = Array.isArray(meta.namedTiles) ? meta.namedTiles : [];
+  const beforeEntries = Array.isArray(meta.originalEntries) ? meta.originalEntries : [];
+  const beforeNamedTiles = Array.isArray(meta.originalNamedTiles) ? meta.originalNamedTiles : [];
+  const now = JSON.stringify({ entries, namedTiles });
+  const before = JSON.stringify({ entries: beforeEntries, namedTiles: beforeNamedTiles });
+  if (now === before) return null;
+  return {
+    targetPath: String(meta.targetPath || '').trim(),
+    sourcePath: String(meta.sourcePath || '').trim(),
+    encoding: String(meta.encoding || ''),
+    bom: !!meta.bom,
+    entries,
+    namedTiles
+  };
+}
+
+function findMapSection(mapTab, code) {
+  const target = String(code || '').trim().toUpperCase();
+  return (Array.isArray(mapTab && mapTab.sections) ? mapTab.sections : [])
+    .find((section) => String(section && section.code || '').trim().toUpperCase() === target) || null;
+}
+
+function setRecordDisplayField(record, key, value, label) {
+  if (!record) return;
+  if (!Array.isArray(record.fields)) record.fields = [];
+  const canonical = canonicalFieldKey(key);
+  let field = record.fields.find((entry) => canonicalFieldKey(entry && (entry.baseKey || entry.key)) === canonical);
+  if (!field) {
+    field = {
+      key,
+      baseKey: key,
+      label: label || key,
+      value: '',
+      originalValue: ''
+    };
+    record.fields.push(field);
+  }
+  field.value = String(value == null ? '' : value);
+  field.originalValue = String(value == null ? '' : value);
+}
+
+function getSectionFieldDisplayName(section, key, fallback = '') {
+  const fields = Array.isArray(section && section.fields) ? section.fields : [];
+  const field = fields.find((entry) => canonicalFieldKey(entry && entry.key) === canonicalFieldKey(key));
+  return cleanDisplayText(field && field.value) || fallback;
+}
+
+function applyScenarioDistrictsToMapTab(mapTab, tabs) {
+  const meta = mapTab && mapTab.scenarioDistricts;
+  if (!meta) return;
+  const tileSection = findMapSection(mapTab, 'TILE');
+  const tiles = tileSection && Array.isArray(tileSection.records) ? tileSection.records : [];
+  if (tiles.length === 0) return;
+  const byCoord = new Map();
+  tiles.forEach((record) => {
+    const fields = Array.isArray(record && record.fields) ? record.fields : [];
+    const xField = fields.find((field) => canonicalFieldKey(field && (field.baseKey || field.key)) === 'xpos');
+    const yField = fields.find((field) => canonicalFieldKey(field && (field.baseKey || field.key)) === 'ypos');
+    const x = Number.parseInt(String(xField && xField.value || ''), 10);
+    const y = Number.parseInt(String(yField && yField.value || ''), 10);
+    if (Number.isFinite(x) && Number.isFinite(y)) byCoord.set(`${x},${y}`, record);
+  });
+  const districtSections = ((((tabs && tabs.districts) || {}).model || {}).sections || []);
+  const naturalSections = ((((tabs && tabs.naturalWonders) || {}).model || {}).sections || []);
+  const districtIndexByName = new Map();
+  districtSections.forEach((section, idx) => {
+    const name = getSectionFieldDisplayName(section, 'name', `District ${idx + 1}`);
+    if (name) districtIndexByName.set(name.toLowerCase(), idx);
+  });
+  const naturalIndexByName = new Map();
+  naturalSections.forEach((section, idx) => {
+    const name = getSectionFieldDisplayName(section, 'name', `Natural Wonder ${idx + 1}`);
+    if (name) naturalIndexByName.set(name.toLowerCase(), idx);
+  });
+  (Array.isArray(meta.entries) ? meta.entries : []).forEach((entry) => {
+    const tile = byCoord.get(`${Number(entry && entry.x)},${Number(entry && entry.y)}`);
+    if (!tile) return;
+    const districtName = String(entry && entry.district || '').trim();
+    const districtIndex = districtIndexByName.has(districtName.toLowerCase()) ? districtIndexByName.get(districtName.toLowerCase()) : -1;
+    if (districtIndex >= 0) setRecordDisplayField(tile, 'district', `${districtIndex},2`, 'District');
+    setRecordDisplayField(tile, 'districtname', districtName, 'District Name');
+    if (String(entry && entry.wonderName || '').trim()) {
+      const wonderName = String(entry.wonderName || '').trim();
+      const naturalIndex = naturalIndexByName.has(wonderName.toLowerCase()) ? naturalIndexByName.get(wonderName.toLowerCase()) : -1;
+      setRecordDisplayField(tile, 'wondername', wonderName, 'Wonder Name');
+      if (naturalIndex >= 0) setRecordDisplayField(tile, 'naturalwonder', String(naturalIndex), 'Natural Wonder');
+    }
+    if (String(entry && entry.wonderCity || '').trim()) {
+      setRecordDisplayField(tile, 'wondercity', String(entry.wonderCity || '').trim(), 'Wonder City');
+    }
+  });
+  (Array.isArray(meta.namedTiles) ? meta.namedTiles : []).forEach((entry) => {
+    const tile = byCoord.get(`${Number(entry && entry.x)},${Number(entry && entry.y)}`);
+    if (!tile) return;
+    setRecordDisplayField(tile, 'namedtile', String(entry && entry.name || '').trim(), 'Named Tile');
+  });
+}
+
 function readTextLayers(civ3Path, name, scenarioPath, scenarioPaths = [], options = {}) {
   const layers = {};
   for (const ref of getTextLayerFiles(civ3Path, name)) {
@@ -4603,7 +4844,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
   return tabs;
 }
 
-function buildMapTabFromBiq(biqTab, mode) {
+function buildMapTabFromBiq(biqTab, mode, options = {}) {
   const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections : [];
   const hasMapData = sections.some((s) => s.code === 'TILE') && sections.some((s) => s.code === 'WMAP');
   return {
@@ -4616,6 +4857,7 @@ function buildMapTabFromBiq(biqTab, mode) {
     originalHasMap: hasMapData,
     mapMutation: null,
     recordOps: [],
+    scenarioDistricts: options.scenarioDistricts || null,
     sections
   };
 }
@@ -5410,7 +5652,15 @@ function loadBundle(payload) {
         bundle.tabs[spec.key] = referenceTabs[spec.key];
       }
     }
-    bundle.tabs.map = buildMapTabFromBiq(biqTab, mode);
+    const scenarioDistrictsMetadata = mode === 'scenario'
+      ? loadScenarioDistrictsMetadata({
+        scenarioPath: mode === 'scenario' ? (scenarioContext.contentWriteRoot || scenarioDir) : scenarioDir,
+        scenarioPaths: scenarioSearchPaths,
+        targetRoot: scenarioContext.expectedContentWriteRoot || scenarioContext.contentWriteRoot || scenarioDir,
+        preferredEncoding: textFileEncoding
+      })
+      : null;
+    bundle.tabs.map = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts: scenarioDistrictsMetadata });
     const biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
     Object.keys(biqStructureTabs).forEach((key) => {
       bundle.tabs[key] = biqStructureTabs[key];
@@ -5491,6 +5741,7 @@ function loadBundle(payload) {
         }
       };
     }
+    applyScenarioDistrictsToMapTab(bundle.tabs.map, bundle.tabs);
 
     bundle.readFiles = Array.from(readPaths).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
     log.info('loadBundle', `Complete — ${bundle.readFiles.length} file(s) read, tabs=[${Object.keys(bundle.tabs).join(', ')}]`);
@@ -6595,6 +6846,31 @@ function buildSavePlan(payload) {
       }
     }
 
+    const scenarioDistrictsEdit = collectScenarioDistrictsEdit(payload.tabs || {});
+    if (scenarioDistrictsEdit) {
+      const targetPath = scenarioDistrictsEdit.targetPath || path.join(scenarioContext.contentWriteRoot || scenarioDir, 'scenario.districts.txt');
+      const protectErr = failIfProtected(targetPath, 'scenario districts target');
+      if (protectErr) return { ok: false, error: protectErr };
+      const text = serializeScenarioDistrictsText({
+        entries: scenarioDistrictsEdit.entries,
+        namedTiles: scenarioDistrictsEdit.namedTiles
+      });
+      const encoding = resolveScenarioTextWriteEncoding({
+        targetPath,
+        sourcePath: scenarioDistrictsEdit.sourcePath,
+        explicitEncoding: scenarioDistrictsEdit.encoding,
+        preferredEncoding: textFileEncoding
+      });
+      plannedWrites.push({
+        kind: 'scenarioDistricts',
+        path: targetPath,
+        data: encodeTextBuffer(text, encoding.encoding, { bom: encoding.bom }),
+        encoding: encoding.encoding,
+        bom: encoding.bom
+      });
+      saveReport.push({ kind: 'scenarioDistricts', path: targetPath, applied: scenarioDistrictsEdit.entries.length + scenarioDistrictsEdit.namedTiles.length });
+    }
+
     // Copy art files referenced by imported entries into the local scenario content root.
     // Skips files that cannot be resolved; never blocks a save.
     const artCopies = collectImportArtCopies({
@@ -7658,6 +7934,7 @@ function collectBiqMapEdits(tabs) {
         if (!key) return;
         if (isLockedBiqField(sectionCode, key)) return;
         const keyLower = key.toLowerCase();
+        if (sectionCode === 'TILE' && ['district', 'districtname', 'wondername', 'wondercity', 'naturalwonder', 'namedtile'].includes(keyLower)) return;
         if (keyLower === 'civilopediaentry' || keyLower === 'note') return;
         const value = cleanDisplayText(field.value);
         const originalValue = cleanDisplayText(field.originalValue);

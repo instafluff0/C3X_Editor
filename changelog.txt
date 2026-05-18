@@ -1,4 +1,15 @@
 * RELEASE 27.11
+- Added Select-mode map tile editors for terrain, resources, and overlays with visual option grids and scenario-aware resource art.
+- Added a Select-mode tile information panel with category-specific tile details and renamed the map toolbar Grid toggle to Show Grid.
+- Added a temporary Control-to-Move shortcut in the Map editor with an active bottom-center indicator and map border cue.
+- Updated the Map editor Move, Select, and Paint controls to use bold app-style colors with neutral inactive buttons.
+- Removed the full Map editor redraw from ordinary terrain tile selection so clicked selection feedback is immediate.
+- Split Map editor tile markers so selected tiles use an outer dark purple outline while hovered tiles use an inset light purple outline.
+- Fixed Map editor mode behavior so Move, Select, and Paint use distinct cursors and only Select maintains a persistent clicked tile selection.
+- Made Map editor mode switches update the toolbar and transient highlights in place instead of rebuilding the full map modal.
+- Simplified the Map editor modal by removing the legacy top view bar, hiding the terrain inspector, moving Grid into the mode bar, and removing the modal Remove Map action.
+- Added Map editor support for C3X `scenario.districts.txt` placements, including named tiles and sidecar-backed district/natural wonder edits.
+- Revamped the Map editor controls around Move, Select, and Paint modes with category-specific tool palettes and a floating tile inspector.
 - Split the test suite into fast, BIQ, and full npm tiers so day-to-day verification can avoid the longest BIQ round-trip and CRUD suites while keeping them available for release checks.
 - Enabled the Map tab while hiding map generation actions from the Map UI and preserving Civ3 map-art transparency slots.
 - Matched Map tab resource overlays to Quint's `TILE.resource -> GOOD.icon -> resources.pcx` mapping.
