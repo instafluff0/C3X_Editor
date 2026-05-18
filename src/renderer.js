@@ -29893,8 +29893,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('mtnRivers', 'Art/Terrain/mtnRivers.pcx');
   requestBiqMapArtAsset('deltaRivers', 'Art/Terrain/deltaRivers.pcx');
   requestBiqMapArtAsset('marsh', 'Art/Terrain/marsh.pcx');
+  requestBiqMapArtAsset('goodyHuts', 'Art/Terrain/goodyhuts.pcx');
+  requestBiqMapArtAsset('pollution', 'Art/Terrain/pollution.pcx');
+  requestBiqMapArtAsset('craters', 'Art/Terrain/craters.pcx');
+  requestBiqMapArtAsset('airfieldsDetect', 'Art/Terrain/x_airfields and detect.pcx');
   requestBiqMapArtAsset('victoryPoint', 'Art/Terrain/x_victory.pcx');
   requestBiqMapArtAsset('startLoc', 'Art/Terrain/StartLoc.pcx', { returnIndexed: true });
+  requestBiqMapArtAsset('ruins', 'Art/Cities/DESTROY.pcx');
   requestBiqMapArtAsset('cityAmerc', 'Art/Cities/rAMER.pcx');
   requestBiqMapArtAsset('cityEuro', 'Art/Cities/rEURO.pcx');
   requestBiqMapArtAsset('cityRoman', 'Art/Cities/rROMAN.pcx');
@@ -29938,6 +29943,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (Number.isFinite(cx) && Number.isFinite(cy)) {
       cityRecordByCoord.set(`${cx},${cy}`, record);
     }
+  });
+  const colonySection = (tab.sections || []).find((s) => s.code === 'CLNY');
+  const colonyRecordById = {};
+  (colonySection?.records || []).forEach((record, idx) => {
+    const ref = Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx;
+    colonyRecordById[ref] = record;
   });
   const unitSection = (tab.sections || []).find((s) => s.code === 'UNIT');
   const unitRecordById = {};
@@ -30699,6 +30710,86 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     slocSection.records = slocSection.records.filter((record) => record !== target);
     return true;
   };
+  const clearLegacyColonyOverlayBits = (tile) => {
+    if (!tile) return;
+    const current = parseIntLoose(getMapFieldValue(tile, 'c3coverlays', '0'), 0) >>> 0;
+    const cleared = current & (~0xE0000000);
+    if (cleared !== current) setMapFieldValue(tile, 'c3coverlays', String(cleared >>> 0), 'C3C Overlays');
+  };
+  const removeColonyByIndex = (colonyIndex) => {
+    const idx = Number(colonyIndex);
+    if (!Number.isFinite(idx) || idx < 0 || !colonySection || !Array.isArray(colonySection.records)) return false;
+    const target = colonySection.records.find((record) => Number(record && record.index) === idx);
+    if (!target) return false;
+    const ref = getBiqStructureRecordRef(target);
+    if (ref) pushStructureDeleteOp('CLNY', ref);
+    colonySection.records = colonySection.records.filter((record) => record !== target);
+    tiles.forEach((candidateTile) => {
+      if (!candidateTile) return;
+      const candidateValue = parseIntLoose(getMapFieldValue(candidateTile, 'colony', '-1'), -1);
+      if (candidateValue === idx) {
+        setMapFieldValue(candidateTile, 'colony', '-1', 'Colony');
+        clearLegacyColonyOverlayBits(candidateTile);
+      }
+    });
+    return true;
+  };
+  const setTileColonyType = (tileIndex, colonyType) => {
+    if (!colonySection) return false;
+    if (!Array.isArray(colonySection.records)) colonySection.records = [];
+    const tile = tiles[tileIndex] || null;
+    const geom = tileGeom[tileIndex] || null;
+    if (!tile || !geom) return false;
+    const existingColony = getTileColonyRecord(tile);
+    if (existingColony) {
+      setMapFieldValue(existingColony, 'improvementtype', String(colonyType), 'Improvement Type');
+      setMapFieldValue(existingColony, 'x', String(geom.xPos), 'X');
+      setMapFieldValue(existingColony, 'y', String(geom.yPos), 'Y');
+      clearLegacyColonyOverlayBits(tile);
+      return true;
+    }
+    const tileOwnerRaw = String(getFieldRawValue(tile, 'owner') || '').trim();
+    const tileOwnerTypeRaw = String(getFieldRawValue(tile, 'ownertype') || '').trim();
+    const owner = tileOwnerRaw !== '' ? tileOwnerRaw : String(parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 1));
+    const ownerType = tileOwnerTypeRaw !== '' ? tileOwnerTypeRaw : String(parseIntLoose(state.mapEditorTool && state.mapEditorTool.ownerType, 2));
+    const ref = uniqueRecordRef('CLNY');
+    const nextIndex = colonySection.records.reduce((max, rec) => Math.max(max, Number.isFinite(Number(rec && rec.index)) ? Number(rec.index) : -1), -1) + 1;
+    const record = createGeneratedMapRecord(
+      nextIndex,
+      [
+        { baseKey: 'ownertype', value: ownerType, label: 'Owner Type' },
+        { baseKey: 'owner', value: owner, label: 'Owner' },
+        { baseKey: 'x', value: geom.xPos, label: 'X' },
+        { baseKey: 'y', value: geom.yPos, label: 'Y' },
+        { baseKey: 'improvementtype', value: colonyType, label: 'Improvement Type' }
+      ],
+      `Colony ${colonySection.records.length + 1}`
+    );
+    record.newRecordRef = ref;
+    colonySection.records.push(record);
+    setMapFieldValue(tile, 'colony', String(record.index), 'Colony');
+    clearLegacyColonyOverlayBits(tile);
+    pushStructureAddOp('CLNY', ref);
+    return true;
+  };
+  const applyColonyOverlayToIndexes = (indexes, spec, enabled) => {
+    if (!spec || spec.kind !== 'colony') return false;
+    let changed = false;
+    indexes.forEach((tileIndex) => {
+      const tile = tiles[tileIndex] || null;
+      if (!tile) return;
+      const existingType = getColonyTypeForTile(tile);
+      if (enabled) {
+        if (existingType === Number(spec.improvementType)) return;
+        if (setTileColonyType(tileIndex, Number(spec.improvementType))) changed = true;
+        return;
+      }
+      if (existingType !== Number(spec.improvementType)) return;
+      const colonyRef = parseIntLoose(getMapFieldValue(tile, 'colony', '-1'), -1);
+      if (removeColonyByIndex(colonyRef)) changed = true;
+    });
+    return changed;
+  };
   const scenarioDistrictsMeta = tab.scenarioDistricts || null;
   const findScenarioDistrictEntryAtCoords = (xPos, yPos) => {
     const entries = Array.isArray(scenarioDistrictsMeta && scenarioDistrictsMeta.entries) ? scenarioDistrictsMeta.entries : [];
@@ -30838,6 +30929,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (mode === 'overlay') {
       const overlayType = String(state.mapEditorTool && state.mapEditorTool.overlayType || 'road');
       const enabled = !(state.mapEditorTool && state.mapEditorTool.remove);
+      const overlaySpec = mapInfoOverlayOptions.find((spec) => spec.value === overlayType) || null;
+      if (overlaySpec && overlaySpec.kind === 'colony') {
+        return applyColonyOverlayToIndexes(indices, overlaySpec, enabled);
+      }
       if (mapCore && typeof mapCore.applyOverlay === 'function') {
         return !!mapCore.applyOverlay(tiles, indices, overlayType, enabled);
       }
@@ -31203,6 +31298,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const srcH = Math.max(1, Math.floor(sheet.height / rows));
     ctx.drawImage(sheet, col * srcW, row * srcH, srcW, srcH, dx, dy, drawW, drawH);
     return true;
+  };
+  const getNeighborInfluencedOverlayGraphicsIndex = (geom, mask) => {
+    if (!geom) return 0;
+    let index = 0;
+    if (overlayMask(getTileAtCoord(geom.xPos - 1, geom.yPos - 1), mask)) index += 1;
+    if (overlayMask(getTileAtCoord(geom.xPos + 1, geom.yPos - 1), mask)) index += 2;
+    if (overlayMask(getTileAtCoord(geom.xPos + 1, geom.yPos + 1), mask)) index += 4;
+    if (overlayMask(getTileAtCoord(geom.xPos - 1, geom.yPos + 1), mask)) index += 8;
+    return index;
   };
 
   const drawResourceOverlay = (record, sx, sy) => {
@@ -32037,6 +32141,34 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           if (hasFort) drawSheetSprite(sheet, cols, rows, 0, sx, midY);
         }
       }
+      if ((c3cOverlays & 0x00000080) === 0x00000080) {
+        const sheet = state.biqMapArtCache.terrainBuildings;
+        if (sheet) {
+          const cols = sheet.width >= 512 ? 4 : 3;
+          drawSheetSprite(sheet, cols, 4, 2, sx, midY);
+        }
+      }
+      if ((c3cOverlays & 0x00000020) === 0x00000020) {
+        const goodySheet = state.biqMapArtCache.goodyHuts;
+        const variant = ((geom.xPos + geom.yPos) % 8 + 8) % 8;
+        drawSheetSprite(goodySheet, 3, 3, variant, sx, midY);
+      }
+      if ((c3cOverlays & 0x00000040) === 0x00000040) {
+        const pollutionSheet = state.biqMapArtCache.pollution;
+        const pollutionIndex = getNeighborInfluencedOverlayGraphicsIndex(geom, 0x00000040);
+        const variant = pollutionIndex !== 0
+          ? pollutionIndex + 9
+          : (((geom.xPos + geom.yPos) % 10 + 10) % 10);
+        drawSheetSprite(pollutionSheet, 5, 5, variant, sx, midY);
+      }
+      if ((c3cOverlays & 0x00000100) === 0x00000100) {
+        const craterSheet = state.biqMapArtCache.craters;
+        const craterIndex = getNeighborInfluencedOverlayGraphicsIndex(geom, 0x00000100);
+        const variant = craterIndex !== 0
+          ? craterIndex + 9
+          : (((geom.xPos + geom.yPos) % 10 + 10) % 10);
+        drawSheetSprite(craterSheet, 5, 5, variant, sx, midY);
+      }
       drawRivers();
       drawTerritoryBorders();
     }
@@ -32081,6 +32213,48 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const midY = sy + Math.floor(tileH / 2);
     const drawH = Math.max(1, Math.round(vpSheet.height * scale));
     ctx.drawImage(vpSheet, 0, 0, vpSheet.width, vpSheet.height, sx, midY, tileW, drawH);
+  };
+  const drawRuinsOverlay = (record, sx, sy) => {
+    const ruin = parseIntLoose(getFieldByBaseKey(record, 'ruin')?.value, 0);
+    if (ruin !== 1) return;
+    const ruinSheet = state.biqMapArtCache.ruins;
+    if (!ruinSheet) return;
+    const cellW = Math.max(1, Math.floor(ruinSheet.width / 3));
+    const cellH = ruinSheet.height;
+    const drawW = Math.max(1, Math.round(cellW * scale));
+    const drawH = Math.max(1, Math.round(cellH * scale));
+    const drawX = sx - Math.round((drawW - tileW) / 2) - Math.round(20 * scale);
+    const drawY = sy + Math.floor(tileH / 2) - Math.round(15 * scale) - Math.round((drawH - tileH) / 2);
+    ctx.drawImage(ruinSheet, 0, 0, cellW, cellH, drawX, drawY, drawW, drawH);
+  };
+  const drawColonyOverlay = (record, sx, sy) => {
+    const colonyRecord = getTileColonyRecord(record);
+    if (!colonyRecord) return;
+    const colonyType = parseIntLoose(getMapFieldValue(colonyRecord, 'improvementtype', '-1'), -1);
+    const colonyAge = resolveColonyAge(colonyRecord);
+    if (colonyType === 0) {
+      const sheet = state.biqMapArtCache.terrainBuildings;
+      if (!sheet) return;
+      const cols = sheet.width >= 512 ? 4 : 4;
+      const rows = 4;
+      drawSheetSprite(sheet, cols, rows, (4 * Math.max(0, Math.min(3, colonyAge))) + 1, sx, sy);
+      return;
+    }
+    const airfieldsSheet = state.biqMapArtCache.airfieldsDetect;
+    if (!airfieldsSheet) return;
+    if (colonyType === 1) {
+      const airfieldVariant = colonyAge < 2 ? 0 : 1;
+      ctx.drawImage(airfieldsSheet, airfieldVariant * 128, 0, 128, 64, sx, sy, tileW, tileH);
+      return;
+    }
+    if (colonyType === 2) {
+      ctx.drawImage(airfieldsSheet, 0, 192, 128, 128, sx, sy - tileH, tileW, tileH * 2);
+      return;
+    }
+    if (colonyType === 3) {
+      const outpostVariant = Math.max(0, Math.min(2, colonyAge));
+      ctx.drawImage(airfieldsSheet, outpostVariant * 128, 64, 128, 128, sx, sy - tileH, tileW, tileH * 2);
+    }
   };
 
   const drawSlocOverlay = (geom, sx, sy) => {
@@ -32262,6 +32436,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         drawCityOverlay(item.record, item.geom, item.sx, item.sy);
         drawSlocOverlay(item.geom, item.sx, item.sy);
         drawVpOverlay(item.record, item.sx, item.sy);
+        drawRuinsOverlay(item.record, item.sx, item.sy);
+        drawColonyOverlay(item.record, item.sx, item.sy);
         drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
         drawFogOverlay(item.record, item.sx, item.sy);
       }
@@ -32631,9 +32807,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     { value: 'barbariancamp', label: 'Barbarian Camp', artName: 'Barbarian Camp', icon: '⚑', kind: 'mask', field: 'c3coverlays', mask: 0x00000080 },
     { value: 'crater', label: 'Crater', artName: 'Crater', icon: '◌', kind: 'mask', field: 'c3coverlays', mask: 0x00000100 },
     { value: 'barricade', label: 'Barricade', artName: 'Barricade', icon: '🚧', kind: 'mask', field: 'c3coverlays', mask: 0x10000000 },
-    { value: 'airfield', label: 'Airfield', artName: 'Airfield', icon: '🛩', kind: 'mask', field: 'c3coverlays', mask: 0x20000000 },
-    { value: 'radartower', label: 'Radar Tower', artName: 'Radar Tower', icon: '📡', kind: 'mask', field: 'c3coverlays', mask: 0x40000000 },
-    { value: 'outpost', label: 'Outpost', artName: 'Outpost', icon: '⌂', kind: 'mask', field: 'c3coverlays', mask: 0x80000000 },
+    { value: 'airfield', label: 'Airfield', artName: 'Airfield', icon: '🛩', kind: 'colony', improvementType: 1 },
+    { value: 'radartower', label: 'Radar Tower', artName: 'Radar Tower', icon: '📡', kind: 'colony', improvementType: 2 },
+    { value: 'outpost', label: 'Outpost', artName: 'Outpost', icon: '⌂', kind: 'colony', improvementType: 3 },
+    { value: 'colony', label: 'Colony', artName: 'Colony', icon: '🏴', kind: 'colony', improvementType: 0 },
     { value: 'victorypoint', label: 'Victory Point', artName: 'Victory Point', icon: '★', kind: 'scalar', field: 'victorypointlocation', on: '0', off: '-1' },
     { value: 'ruins', label: 'Ruins', artName: 'Ruin', icon: '▣', kind: 'scalar', field: 'ruin', on: '1', off: '0' }
   ];
@@ -32654,6 +32831,40 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (idx < 0 || !citySection || !Array.isArray(citySection.records)) return null;
     return citySection.records.find((entry) => Number(entry && entry.index) === idx) || null;
   };
+  function getColonyRecordByRef(colonyRef) {
+    const idx = parseIntLoose(colonyRef, -1);
+    if (idx < 0 || !colonySection || !Array.isArray(colonySection.records)) return null;
+    return colonySection.records.find((entry) => Number(entry && entry.index) === idx) || null;
+  }
+  function getTileColonyRecord(tile) {
+    return getColonyRecordByRef(getMapFieldValue(tile, 'colony', '-1'));
+  }
+  function getColonyTypeForTile(tile) {
+    const colonyRecord = getTileColonyRecord(tile);
+    if (!colonyRecord) return -1;
+    return parseIntLoose(getMapFieldValue(colonyRecord, 'improvementtype', '-1'), -1);
+  }
+  function resolveColonyAge(colonyRecord) {
+    if (!colonyRecord) return 0;
+    const ownerTypeRaw = String(getFieldRawValue(colonyRecord, 'ownertype') || getFieldDisplayValue(colonyRecord, 'ownertype') || getMapFieldValue(colonyRecord, 'ownertype', '0'));
+    const ownerRaw = String(getFieldRawValue(colonyRecord, 'owner') || getFieldDisplayValue(colonyRecord, 'owner') || getMapFieldValue(colonyRecord, 'owner', '-1'));
+    const ownerType = parseOwnerType(ownerTypeRaw);
+    if (ownerType === 2) {
+      const civId = resolveCivIdFromRaw(ownerRaw);
+      if (hasCustomPlayerData) {
+        for (let p = 0; p < (leadSection?.records || []).length; p += 1) {
+          if (parseIntLoose(playerCivById[p], -1) !== civId) continue;
+          return parseEraIndex(playerEraById[p]);
+        }
+      }
+      return parseEraIndex(civEraById[civId]);
+    }
+    if (ownerType === 3) {
+      const playerId = resolvePlayerIdFromOwnerRaw(ownerRaw);
+      return parseEraIndex(playerEraById[playerId]);
+    }
+    return 0;
+  }
   const getUnitRecordsForTile = (geom) => {
     if (!geom || typeof listUnitsAtCoords !== 'function') return [];
     return listUnitsAtCoords(geom.xPos, geom.yPos);
@@ -32663,6 +32874,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const isTileOverlayActive = (tile, spec) => {
     if (!tile || !spec) return false;
+    if (spec.kind === 'colony') {
+      return getColonyTypeForTile(tile) === Number(spec.improvementType);
+    }
     if (spec.kind === 'scalar') {
       return String(getMapFieldValue(tile, spec.field, spec.off)).trim() === String(spec.on);
     }
@@ -32692,7 +32906,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const thumbCtx = canvasNode.getContext('2d');
     if (thumbCtx) {
       thumbCtx.imageSmoothingEnabled = false;
-      thumbCtx.drawImage(atlas, sx, sy, spriteW, spriteH, 0, 0, canvasNode.width, canvasNode.height);
+      thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
+      const scaleRatio = Math.min(canvasNode.width / spriteW, canvasNode.height / spriteH);
+      const drawW = Math.max(1, Math.round(spriteW * scaleRatio));
+      const drawH = Math.max(1, Math.round(spriteH * scaleRatio));
+      const dx = Math.floor((canvasNode.width - drawW) / 2);
+      const dy = Math.floor((canvasNode.height - drawH) / 2);
+      thumbCtx.drawImage(atlas, sx, sy, spriteW, spriteH, dx, dy, drawW, drawH);
     }
     holder.appendChild(canvasNode);
     return holder;
@@ -32704,15 +32924,99 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     holder.appendChild(icon);
     return holder;
   };
+  const makeWholeImageThumb = (assetKey, fallbackGlyph = '?') => {
+    const holder = document.createElement('span');
+    holder.className = 'map-option-thumb';
+    const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
+    if (!atlas || !atlas.width || !atlas.height) {
+      holder.textContent = fallbackGlyph;
+      return holder;
+    }
+    const canvasNode = document.createElement('canvas');
+    canvasNode.width = 42;
+    canvasNode.height = 42;
+    const thumbCtx = canvasNode.getContext('2d');
+    if (thumbCtx) {
+      thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
+      thumbCtx.imageSmoothingEnabled = false;
+      const scaleRatio = Math.min(canvasNode.width / atlas.width, canvasNode.height / atlas.height);
+      const drawW = Math.max(1, Math.round(atlas.width * scaleRatio));
+      const drawH = Math.max(1, Math.round(atlas.height * scaleRatio));
+      const dx = Math.floor((canvasNode.width - drawW) / 2);
+      const dy = Math.floor((canvasNode.height - drawH) / 2);
+      thumbCtx.drawImage(atlas, 0, 0, atlas.width, atlas.height, dx, dy, drawW, drawH);
+    }
+    holder.appendChild(canvasNode);
+    return holder;
+  };
+  const makeCroppedAssetThumb = (assetKey, sx, sy, sw, sh, fallbackGlyph = '?') => {
+    const holder = document.createElement('span');
+    holder.className = 'map-option-thumb';
+    const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
+    if (!atlas || !atlas.width || !atlas.height || (sx + sw) > atlas.width || (sy + sh) > atlas.height) {
+      holder.textContent = fallbackGlyph;
+      return holder;
+    }
+    const canvasNode = document.createElement('canvas');
+    canvasNode.width = 42;
+    canvasNode.height = 42;
+    const thumbCtx = canvasNode.getContext('2d');
+    if (thumbCtx) {
+      thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
+      thumbCtx.imageSmoothingEnabled = false;
+      const scaleRatio = Math.min(canvasNode.width / sw, canvasNode.height / sh);
+      const drawW = Math.max(1, Math.round(sw * scaleRatio));
+      const drawH = Math.max(1, Math.round(sh * scaleRatio));
+      const dx = Math.floor((canvasNode.width - drawW) / 2);
+      const dy = Math.floor((canvasNode.height - drawH) / 2);
+      thumbCtx.drawImage(atlas, sx, sy, sw, sh, dx, dy, drawW, drawH);
+    }
+    holder.appendChild(canvasNode);
+    return holder;
+  };
+  const makeOverlayArtThumb = (spec) => {
+    if (!spec) return null;
+    switch (spec.value) {
+      case 'goodyhut':
+        return makeCroppedAssetThumb('goodyHuts', 0, 0, 128, 64, spec.icon || '•');
+      case 'pollution':
+        return makeCroppedAssetThumb('pollution', 0, 0, 128, 64, spec.icon || '•');
+      case 'barbariancamp':
+        return makeCroppedAssetThumb('terrainBuildings', 256, 0, 128, 64, spec.icon || '•');
+      case 'crater':
+        return makeCroppedAssetThumb('craters', 0, 0, 128, 64, spec.icon || '•');
+      case 'colony': {
+        return makeCroppedAssetThumb('terrainBuildings', 128, 0, 128, 64, spec.icon || '•');
+      }
+      case 'airfield':
+        return makeCroppedAssetThumb('airfieldsDetect', 0, 0, 128, 64, spec.icon || '•');
+      case 'outpost':
+        return makeCroppedAssetThumb('airfieldsDetect', 0, 64, 128, 128, spec.icon || '•');
+      case 'radartower':
+        return makeCroppedAssetThumb('airfieldsDetect', 0, 192, 128, 128, spec.icon || '•');
+      case 'victorypoint':
+        return makeCroppedAssetThumb('victoryPoint', 0, 0, 128, 64, spec.icon || '•');
+      case 'ruins': {
+        return makeCroppedAssetThumb('ruins', 0, 0, 128, 64, spec.icon || '•');
+      }
+      default:
+        return null;
+    }
+  };
   const makeWorkerActionButtonThumb = (spec) => {
+    const artThumb = makeOverlayArtThumb(spec);
+    if (artThumb) return artThumb;
     const holder = document.createElement('span');
     holder.className = 'map-option-thumb overlay';
-    const icon = makeTerrainOptionPreviewIcon(String(spec && (spec.artName || spec.label) || ''));
-    if (icon && icon.childNodes.length > 0) {
-      holder.appendChild(icon);
-    } else {
+    const found = findTerrainPreviewEntry(String(spec && (spec.artName || spec.label) || ''));
+    if (!found) {
       holder.textContent = spec && spec.icon ? spec.icon : '•';
+      return holder;
     }
+    const icon = document.createElement('span');
+    icon.className = 'terrain-option-chip-thumb';
+    loadReferenceListThumbnail(found.tabKey, found.entry, icon);
+    holder.appendChild(icon);
     return holder;
   };
   const getCityBuildingSet = (cityRecord) => {
@@ -32817,6 +33121,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   const toggleSelectedTileOverlay = (spec) => applySelectedTileEdit((_tile) => {
     const enabled = !isTileOverlayActive(_tile, spec);
+    if (spec.kind === 'colony') {
+      return applyColonyOverlayToIndexes([state.biqMapSelectedTile], spec, enabled);
+    }
     if (mapCore && typeof mapCore.applyOverlay === 'function') {
       mapCore.applyOverlay(tiles, [state.biqMapSelectedTile], spec.value, enabled);
       return true;
@@ -32866,6 +33173,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     btn.classList.toggle('multi', !!multi);
     btn.disabled = !!disabled;
     btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    const marker = document.createElement('span');
+    marker.className = 'map-option-check';
+    marker.textContent = selected ? '✓' : '';
+    btn.appendChild(marker);
     if (thumb) btn.appendChild(thumb);
     const text = document.createElement('span');
     text.className = 'map-option-label';

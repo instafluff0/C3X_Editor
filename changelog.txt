@@ -1,4 +1,8 @@
 * RELEASE 27.11
+- Made Map editor colony-family overlays use real `CLNY` records and Quint-style art, so colonies, airfields, outposts, and radar towers paint, toggle, thumbnail, and render from the correct BIQ structures and terrain PCX assets.
+- Fixed Map editor overlay selectors so scenario-aware thumbnails appear on first open and terrain-PCX overlays like pollution, craters, barbarian camps, goody huts, ruins, and victory points use real map art thumbnails instead of placeholder icons.
+- Loaded and rendered Map editor goody huts, barbarian camps, pollution, craters, ruins, and other scenario map overlays from the same Civ3 PCX assets and slice rules used by Quint.
+- Restyled Map editor Tile Info option selectors and City improvement choices with flatter two-column rows, left thumbnails, selector markers, and Unit Availability blue active states.
 - Added visual Map editor Tile Info grids for placing scenario districts and natural wonders with thumbnails.
 - Made Map editor territory border comparisons use resolved civilization identity, preventing borders between cities that resolve to the same civ through different owner slots.
 - Fixed Map editor territory rendering after city owner edits so reverting an owner does not leave stale borders between cities with the same resolved owner.
