@@ -2217,6 +2217,18 @@ button.danger:hover {
   width: 100%;
 }
 
+.biq-map-layout:focus,
+.biq-map-layout:focus-visible,
+.biq-map-layout.floating-ui:focus,
+.biq-map-layout.floating-ui:focus-visible,
+.biq-map-frame:focus,
+.biq-map-frame:focus-visible,
+.map-editor-modal-body:focus,
+.map-editor-modal-body:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 .biq-map-floating-panel {
   position: absolute;
   z-index: 5;
@@ -2396,6 +2408,20 @@ button.danger:hover {
   border-color: transparent;
   color: #ffffff;
   box-shadow: 0 5px 14px rgba(31, 35, 58, 0.18);
+}
+
+.map-mode-btn:focus,
+.map-mode-btn:focus-visible {
+  outline: none;
+}
+
+.map-mode-btn:focus-visible:not(.active) {
+  border-color: rgba(82, 126, 219, 0.52);
+  box-shadow: 0 0 0 2px rgba(82, 126, 219, 0.14), 0 5px 14px rgba(31, 35, 58, 0.12);
+}
+
+.map-mode-btn.active:focus-visible {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.82), 0 5px 14px rgba(31, 35, 58, 0.18);
 }
 
 .map-mode-btn.control-active:not(.active) {
@@ -2615,13 +2641,37 @@ button.danger:hover {
   color: #737a93;
 }
 
+.map-option-text {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 .map-option-label {
+  display: block;
   min-width: 0;
   max-width: 100%;
   color: inherit;
   font-size: 0.78rem;
   font-weight: 900;
   line-height: 1.1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-option-detail {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  color: rgba(67, 78, 110, 0.72);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.15;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
@@ -2679,6 +2729,8 @@ button.danger:hover {
 }
 
 .map-city-editor-title {
+  display: flex;
+  align-items: stretch;
   padding: 0;
   border: 1px solid rgba(73, 69, 98, 0.10);
   border-radius: 9px;
@@ -2690,7 +2742,8 @@ button.danger:hover {
 }
 
 .map-city-title-button {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-height: 42px;
   padding: 8px 10px;
   border: 0;
@@ -2713,7 +2766,8 @@ button.danger:hover {
 }
 
 .map-city-title-input {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   min-height: 42px;
   border: 0;
@@ -2722,6 +2776,23 @@ button.danger:hover {
   color: #202640;
   font: inherit;
   padding: 8px 10px;
+}
+
+.map-city-title-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-left: 1px solid rgba(73, 69, 98, 0.10);
+  background: transparent;
+}
+
+.map-city-title-danger {
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
 }
 
 .map-city-editor-title.editing {
@@ -2965,6 +3036,14 @@ button.danger:hover {
   touch-action: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+.biq-map-canvas-wrap:focus,
+.biq-map-canvas-wrap:focus-visible,
+.biq-map-canvas-wrap canvas:focus,
+.biq-map-canvas-wrap canvas:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .biq-map-canvas-wrap.map-mode-move {

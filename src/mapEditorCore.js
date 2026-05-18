@@ -234,6 +234,52 @@
     return unit;
   }
 
+  function addOrUpdateStartingLocation(section, x, y, owner, ownerType, newRecordRef) {
+    if (!section) return { changed: false, created: false, record: null, removedRecords: [] };
+    if (!Array.isArray(section.records)) section.records = [];
+    var targetX = Number(x);
+    var targetY = Number(y);
+    var targetOwner = parseIntLoose(owner, -1);
+    var targetOwnerType = parseIntLoose(ownerType, 0);
+    var removedRecords = [];
+    if ((targetOwnerType === 2 || targetOwnerType === 3) && targetOwner >= 0) {
+      section.records = section.records.filter(function (record) {
+        var recordOwnerType = parseIntLoose(getField(record, 'ownertype') && getField(record, 'ownertype').value, 0);
+        var recordOwner = parseIntLoose(getField(record, 'owner') && getField(record, 'owner').value, -1);
+        if (recordOwnerType !== targetOwnerType || recordOwner !== targetOwner) return true;
+        var recordX = parseIntLoose(getField(record, 'x') && getField(record, 'x').value, NaN);
+        var recordY = parseIntLoose(getField(record, 'y') && getField(record, 'y').value, NaN);
+        if (recordX === targetX && recordY === targetY) return true;
+        removedRecords.push(record);
+        return false;
+      });
+    }
+    var existing = null;
+    for (var i = 0; i < section.records.length; i += 1) {
+      var record = section.records[i];
+      var sx = parseIntLoose(getField(record, 'x') && getField(record, 'x').value, NaN);
+      var sy = parseIntLoose(getField(record, 'y') && getField(record, 'y').value, NaN);
+      if (sx === targetX && sy === targetY) {
+        existing = record;
+        break;
+      }
+    }
+    if (existing) {
+      setField(existing, 'ownertype', String(targetOwnerType), 'Owner Type');
+      setField(existing, 'owner', String(targetOwner), 'Owner');
+      setField(existing, 'x', String(targetX), 'X');
+      setField(existing, 'y', String(targetY), 'Y');
+      return { changed: true, created: false, record: existing, removedRecords: removedRecords };
+    }
+    var sloc = makeRecordFromTemplate(section, newRecordRef);
+    setField(sloc, 'ownertype', String(targetOwnerType), 'Owner Type');
+    setField(sloc, 'owner', String(targetOwner), 'Owner');
+    setField(sloc, 'x', String(targetX), 'X');
+    setField(sloc, 'y', String(targetY), 'Y');
+    section.records.push(sloc);
+    return { changed: true, created: true, record: sloc, removedRecords: removedRecords };
+  }
+
   return {
     canonicalKey: canonicalKey,
     parseIntLoose: parseIntLoose,
@@ -248,6 +294,7 @@
     applyFog: applyFog,
     applyDistrict: applyDistrict,
     addCity: addCity,
-    addUnit: addUnit
+    addUnit: addUnit,
+    addOrUpdateStartingLocation: addOrUpdateStartingLocation
   };
 }));

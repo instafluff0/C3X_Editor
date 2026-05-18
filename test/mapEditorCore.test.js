@@ -116,6 +116,40 @@ test('addUnit appends UNIT record and links tile unit slot', () => {
   assert.equal(mapCore.getField(tile, 'unit_on_tile').value, String(unit.index));
 });
 
+test('addOrUpdateStartingLocation moves duplicate civ-owned starts to the new tile', () => {
+  const slocSection = {
+    records: [
+      {
+        index: 0,
+        newRecordRef: 'SLOC_OLD',
+        fields: [
+          { key: 'ownertype', baseKey: 'ownertype', value: '2', originalValue: '2' },
+          { key: 'owner', baseKey: 'owner', value: '4', originalValue: '4' },
+          { key: 'x', baseKey: 'x', value: '2', originalValue: '2' },
+          { key: 'y', baseKey: 'y', value: '6', originalValue: '6' }
+        ]
+      }
+    ]
+  };
+  const result = mapCore.addOrUpdateStartingLocation(slocSection, 8, 10, 4, 2, 'SLOC_NEW');
+  assert.equal(result.changed, true);
+  assert.equal(result.created, true);
+  assert.equal(result.removedRecords.length, 1);
+  assert.equal(result.removedRecords[0].newRecordRef, 'SLOC_OLD');
+  assert.equal(slocSection.records.length, 1);
+  assert.equal(mapCore.getField(slocSection.records[0], 'owner').value, '4');
+  assert.equal(mapCore.getField(slocSection.records[0], 'ownertype').value, '2');
+  assert.equal(mapCore.getField(slocSection.records[0], 'x').value, '8');
+  assert.equal(mapCore.getField(slocSection.records[0], 'y').value, '10');
+});
+
+test('addOrUpdateStartingLocation keeps multiple unowned starts', () => {
+  const slocSection = { records: [] };
+  mapCore.addOrUpdateStartingLocation(slocSection, 1, 1, -1, 0, 'SLOC_A');
+  mapCore.addOrUpdateStartingLocation(slocSection, 3, 5, -1, 0, 'SLOC_B');
+  assert.equal(slocSection.records.length, 2);
+});
+
 test('setField creates missing fields and preserves existing entries', () => {
   const tile = makeTile(0, 4);
   mapCore.setField(tile, 'custom_flag', 'true', 'Custom Flag');

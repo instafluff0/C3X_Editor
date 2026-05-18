@@ -1,4 +1,14 @@
 * RELEASE 27.11
+- Added Select-mode Tile Info editing for starting locations, with immediate assignment updates, clearer player/civ labels, and automatic removal of any previous start already assigned to that same civilization or player.
+- Added Select-mode Tile Info visibility controls that edit each tile's scenario fog-of-war state and clarify that Quint renders fogged tiles with the gray `EditFog` overlay.
+- Added a confirmed `Remove City` action to the Map editor Tile Info City panel so scenario users can delete cities directly from the selected tile.
+- Unified Map editor special tile labels so Named Tiles stay visible when not selected and Natural Wonder names render on-map with the same text style and offsets.
+- Debounced Select-mode Named Tile typing in the Map editor and moved the selected tile's named-tile label above the highlight overlay so it stays readable while editing.
+- Added Select-mode Named Tile editing in the Map editor Tile Info panel and rendered named-tile labels on the map above city names using the same badge style.
+- Refined Map editor Tile Info resource counts to show as subtle second-line text under each resource name and made them refresh immediately after resource edits.
+- Added resource-count labels to the Map editor Tile Info Resources picker in Select mode, so each resource option shows how many copies exist on the current map.
+- Added Map editor hotkeys for `Ctrl+G` grid toggling and browser-style `Ctrl/Cmd` + `+`/`-` zoom, and exposed the grid shortcut in the `Show Grid` tooltip.
+- Made Map editor modal keyboard shortcuts respond immediately on first open and removed the stray browser focus outline from the map canvas while keeping the new `Tab` mode-cycle shortcut.
 - Added a `Tab` shortcut in the Map editor modal to cycle Move, Select, and Paint modes, with a bottom-hint flash that confirms each mode jump alongside the existing temporary Ctrl-to-Move hint.
 - Made the Map editor modal draw real district and natural-wonder map art, using territory owner culture/era, district `render_strategy`, nearby city improvements, and resource layering instead of generic district dots.
 - Changed the Map editor Paint-mode preview from a floating badge to a semi-transparent in-tile ghost, so the selected Terrain, Resource, Overlay, or District appears directly inside the hovered tile diamond.
