@@ -1,4 +1,7 @@
 * RELEASE 27.11
+- Added visible city population and culture controls plus linked improvement-thumbnail building toggles to the Map editor Tile Info panel.
+- Set Map editor Mountain and Volcano terrain paints on Grassland base terrain, matching Civ3's expected packed terrain form.
+- Made Map editor terrain painting normalize coastlines so adding land in water creates a proper island with surrounding coast tiles.
 - Added Select-mode map tile editors for terrain, resources, and overlays with visual option grids and scenario-aware resource art.
 - Added a Select-mode tile information panel with category-specific tile details and renamed the map toolbar Grid toggle to Show Grid.
 - Added a temporary Control-to-Move shortcut in the Map editor with an active bottom-center indicator and map border cue.

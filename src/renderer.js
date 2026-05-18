@@ -30794,16 +30794,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (indices.length === 0) return false;
     if (mode === 'terrain') {
       const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
-      const packedTerrain = ((terrainCode & 0x0f) << 4) | (terrainCode & 0x0f);
-      if (mapCore && typeof mapCore.applyTerrain === 'function') {
-        mapCore.applyTerrain(tiles, indices, terrainCode);
-      } else {
-        indices.forEach((idx) => {
-          setMapFieldValue(tiles[idx], 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
-          setMapFieldValue(tiles[idx], 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
-        });
-      }
-      recalculateTerrainFileImageAround(indices);
+      const changedIndexes = smartApplyTerrainToIndexes(indices, terrainCode);
+      recalculateTerrainFileImageAround(changedIndexes);
       return true;
     }
     if (mode === 'overlay') {
@@ -31052,6 +31044,85 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     || terrainCode === BIQ_TERRAIN.SEA
     || terrainCode === BIQ_TERRAIN.OCEAN
   );
+
+  const terrainUsesGrasslandBase = (terrainCode) => (
+    terrainCode === BIQ_TERRAIN.FOREST
+    || terrainCode === BIQ_TERRAIN.JUNGLE
+    || terrainCode === BIQ_TERRAIN.MARSH
+    || terrainCode === BIQ_TERRAIN.MOUNTAIN
+    || terrainCode === BIQ_TERRAIN.VOLCANO
+  );
+
+  const baseTerrainForPaint = (terrainCode) => (
+    terrainUsesGrasslandBase(terrainCode) ? BIQ_TERRAIN.GRASSLAND : terrainCode
+  );
+
+  const packedTerrainForPaint = (terrainCode) => {
+    const code = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
+    const base = baseTerrainForPaint(code);
+    return ((code & 0x0f) << 4) | (base & 0x0f);
+  };
+
+  const setTileTerrainForPaint = (tileIndex, terrainCode, changedIndexes) => {
+    const tile = tiles[tileIndex];
+    if (!tile) return false;
+    const packedTerrain = packedTerrainForPaint(terrainCode);
+    const current = terrainInfo(tile);
+    const nextBase = packedTerrain & 0x0f;
+    const nextReal = (packedTerrain >>> 4) & 0x0f;
+    const alreadySet = current.baseTerrain === nextBase && current.realTerrain === nextReal;
+    if (alreadySet) return false;
+    setMapFieldValue(tile, 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
+    setMapFieldValue(tile, 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
+    if (changedIndexes) changedIndexes.add(tileIndex);
+    return true;
+  };
+
+  const mapTileNeighborIndexes = (tileIndex) => {
+    const geom = tileGeom[tileIndex];
+    if (!geom) return [];
+    return [
+      [geom.xPos + 1, geom.yPos - 1],
+      [geom.xPos + 2, geom.yPos],
+      [geom.xPos + 1, geom.yPos + 1],
+      [geom.xPos, geom.yPos + 2],
+      [geom.xPos - 1, geom.yPos + 1],
+      [geom.xPos - 2, geom.yPos],
+      [geom.xPos - 1, geom.yPos - 1],
+      [geom.xPos, geom.yPos - 2]
+    ].map(([x, y]) => getTileIndexAtCoord(x, y)).filter((idx) => idx >= 0);
+  };
+
+  const normalizeCoastlineAround = (seedIndexes, changedIndexes) => {
+    const candidates = new Set();
+    seedIndexes.forEach((idx) => {
+      if (idx < 0) return;
+      candidates.add(idx);
+      mapTileNeighborIndexes(idx).forEach((neighborIdx) => candidates.add(neighborIdx));
+    });
+    candidates.forEach((idx) => {
+      const tile = tiles[idx];
+      if (!tile) return;
+      const info = terrainInfo(tile);
+      if (!isWaterTerrain(info.baseTerrain)) return;
+      const touchesLand = mapTileNeighborIndexes(idx).some((neighborIdx) => {
+        const neighbor = tiles[neighborIdx];
+        if (!neighbor) return false;
+        return !isWaterTerrain(terrainInfo(neighbor).baseTerrain);
+      });
+      if (touchesLand && info.baseTerrain !== BIQ_TERRAIN.COAST) {
+        setTileTerrainForPaint(idx, BIQ_TERRAIN.COAST, changedIndexes);
+      }
+    });
+  };
+
+  const smartApplyTerrainToIndexes = (indexes, terrainCode) => {
+    const seeds = Array.isArray(indexes) ? indexes : [];
+    const changedIndexes = new Set();
+    seeds.forEach((idx) => setTileTerrainForPaint(idx, terrainCode, changedIndexes));
+    normalizeCoastlineAround(new Set([...seeds, ...changedIndexes]), changedIndexes);
+    return Array.from(changedIndexes.size > 0 ? changedIndexes : new Set(seeds));
+  };
 
   const calculateRoadImageIndex = (geom, mask) => {
     let idx = 0;
@@ -32062,88 +32133,138 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return { index: bestIdx, centerX: bestCx, centerY: bestCy, metric: bestDist };
   };
 
-  const overlayPassItems = [];
-  for (let i = 0; i <= maxIdx; i += 1) {
-    const record = tiles[i];
-    const geom = tileGeom[i];
+  const rectIntersects = (a, b) => (
+    a.x < (b.x + b.w)
+    && (a.x + a.w) > b.x
+    && a.y < (b.y + b.h)
+    && (a.y + a.h) > b.y
+  );
+  const tileDrawRect = (sx, sy) => ({
+    x: sx - Math.round(tileW * 0.08),
+    y: sy - Math.round(tileH * 0.75),
+    w: Math.round(tileW * 1.16),
+    h: Math.round(tileH * 2.85)
+  });
+  const tileEditRedrawRects = (tileIndex) => {
+    const geom = tileGeom[tileIndex];
+    if (!geom) return null;
     const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
     const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
-    const terrain = terrainInfo(record).baseTerrain;
-    const resource = parseIntLoose(getFieldByBaseKey(record, 'resource')?.value, -1);
-    const owner = parseIntLoose(getFieldByBaseKey(record, 'owner')?.value, 0);
-    const continent = parseIntLoose(getFieldByBaseKey(record, 'continent')?.value, 0);
-
-    let value = terrain;
-    if (state.biqMapLayer === 'resource') value = resource;
-    if (state.biqMapLayer === 'owner') value = owner;
-    if (state.biqMapLayer === 'continent') value = continent;
-
-    for (const wrapOffset of drawWrapOffsets) {
+    return drawWrapOffsets.map((wrapOffset) => {
       const sx = basePos.sx + wrapOffset.dx;
       const sy = basePos.sy + wrapOffset.dy;
-      let drewSprite = false;
-      if (state.biqMapLayer === 'terrain') drewSprite = drawTerrainSprite(record, geom, sx, sy);
-      if (!drewSprite) {
-        ctx.fillStyle = value < 0 ? '#222831' : colorFromNumber(value);
-        ctx.beginPath();
-        ctx.moveTo(sx + Math.floor(tileW / 2), sy);
-        ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
-        ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
-        ctx.lineTo(sx, sy + Math.floor(tileH / 2));
-        ctx.closePath();
-        ctx.fill();
-      }
-      overlayPassItems.push({ record, geom, sx, sy });
+      const padXLocal = Math.round(tileW * 2.35);
+      const padTop = Math.round(tileH * 2.10);
+      const padBottom = Math.round(tileH * 2.45);
+      return {
+        x: Math.max(0, sx - padXLocal),
+        y: Math.max(0, sy - padTop),
+        w: Math.min(canvas.width, tileW + padXLocal * 2),
+        h: Math.min(canvas.height, tileH + padTop + padBottom)
+      };
+    });
+  };
+  const redrawMapCanvasInPlace = (clipRects = null) => {
+    if (!ctx) return;
+    const clips = Array.isArray(clipRects) && clipRects.length > 0 ? clipRects : null;
+    if (clips) {
+      ctx.save();
+      ctx.beginPath();
+      clips.forEach((rect) => ctx.rect(rect.x, rect.y, rect.w, rect.h));
+      ctx.clip();
+      clips.forEach((rect) => ctx.clearRect(rect.x, rect.y, rect.w, rect.h));
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
-  }
-
-  if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
-    for (let i = 0; i < overlayPassItems.length; i += 1) {
-      const item = overlayPassItems[i];
-      drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'tall');
-    }
-    for (let i = 0; i < overlayPassItems.length; i += 1) {
-      const item = overlayPassItems[i];
-      drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
-      drawResourceOverlay(item.record, item.sx, item.sy);
-      drawDistrictOverlay(item.record, item.sx, item.sy);
-      drawCityOverlay(item.record, item.geom, item.sx, item.sy);
-      drawSlocOverlay(item.geom, item.sx, item.sy);
-      drawVpOverlay(item.record, item.sx, item.sy);
-      drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
-      drawFogOverlay(item.record, item.sx, item.sy);
-    }
-  }
-
-  if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+    const overlayPassItems = [];
     for (let i = 0; i <= maxIdx; i += 1) {
       const record = tiles[i];
       const geom = tileGeom[i];
       const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
       const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+      const terrain = terrainInfo(record).baseTerrain;
+      const resource = parseIntLoose(getFieldByBaseKey(record, 'resource')?.value, -1);
+      const owner = parseIntLoose(getFieldByBaseKey(record, 'owner')?.value, 0);
+      const continent = parseIntLoose(getFieldByBaseKey(record, 'continent')?.value, 0);
+
+      let value = terrain;
+      if (state.biqMapLayer === 'resource') value = resource;
+      if (state.biqMapLayer === 'owner') value = owner;
+      if (state.biqMapLayer === 'continent') value = continent;
+
       for (const wrapOffset of drawWrapOffsets) {
-        drawCityNameOverlay(record, geom, basePos.sx + wrapOffset.dx, basePos.sy + wrapOffset.dy);
+        const sx = basePos.sx + wrapOffset.dx;
+        const sy = basePos.sy + wrapOffset.dy;
+        if (clips && !clips.some((rect) => rectIntersects(tileDrawRect(sx, sy), rect))) continue;
+        let drewSprite = false;
+        if (state.biqMapLayer === 'terrain') drewSprite = drawTerrainSprite(record, geom, sx, sy);
+        if (!drewSprite) {
+          ctx.fillStyle = value < 0 ? '#222831' : colorFromNumber(value);
+          ctx.beginPath();
+          ctx.moveTo(sx + Math.floor(tileW / 2), sy);
+          ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
+          ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
+          ctx.lineTo(sx, sy + Math.floor(tileH / 2));
+          ctx.closePath();
+          ctx.fill();
+        }
+        overlayPassItems.push({ record, geom, sx, sy });
       }
     }
-  }
 
-  if (state.biqMapShowGrid && tilePx >= 5) {
-    ctx.strokeStyle = 'rgba(38, 44, 58, 0.72)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i < overlayPassItems.length; i += 1) {
-      const item = overlayPassItems[i];
-      const leftX = item.sx;
-      const topVertexY = item.sy;
-      // Quint's grid uses gpxY - 32 as the shared top vertex.
-      // Our item.sy already is that terrain-top / top-vertex position.
-      ctx.moveTo(leftX + 0.5, topVertexY + 0.5);
-      ctx.lineTo(leftX + stepX + 0.5, topVertexY + stepY + 0.5);
-      ctx.moveTo(leftX + 0.5, topVertexY + 0.5);
-      ctx.lineTo(leftX + stepX + 0.5, topVertexY - stepY + 0.5);
+    if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+      for (let i = 0; i < overlayPassItems.length; i += 1) {
+        const item = overlayPassItems[i];
+        drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'tall');
+      }
+      for (let i = 0; i < overlayPassItems.length; i += 1) {
+        const item = overlayPassItems[i];
+        drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
+        drawResourceOverlay(item.record, item.sx, item.sy);
+        drawDistrictOverlay(item.record, item.sx, item.sy);
+        drawCityOverlay(item.record, item.geom, item.sx, item.sy);
+        drawSlocOverlay(item.geom, item.sx, item.sy);
+        drawVpOverlay(item.record, item.sx, item.sy);
+        drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
+        drawFogOverlay(item.record, item.sx, item.sy);
+      }
     }
-    ctx.stroke();
-  }
+
+    if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+      for (let i = 0; i <= maxIdx; i += 1) {
+        const record = tiles[i];
+        const geom = tileGeom[i];
+        const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+        const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+        for (const wrapOffset of drawWrapOffsets) {
+          const sx = basePos.sx + wrapOffset.dx;
+          const sy = basePos.sy + wrapOffset.dy;
+          if (clips && !clips.some((rect) => rectIntersects(tileDrawRect(sx, sy), rect))) continue;
+          drawCityNameOverlay(record, geom, sx, sy);
+        }
+      }
+    }
+
+    if (state.biqMapShowGrid && tilePx >= 5) {
+      ctx.strokeStyle = 'rgba(38, 44, 58, 0.72)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < overlayPassItems.length; i += 1) {
+        const item = overlayPassItems[i];
+        const leftX = item.sx;
+        const topVertexY = item.sy;
+        // Quint's grid uses gpxY - 32 as the shared top vertex.
+        // Our item.sy already is that terrain-top / top-vertex position.
+        ctx.moveTo(leftX + 0.5, topVertexY + 0.5);
+        ctx.lineTo(leftX + stepX + 0.5, topVertexY + stepY + 0.5);
+        ctx.moveTo(leftX + 0.5, topVertexY + 0.5);
+        ctx.lineTo(leftX + stepX + 0.5, topVertexY - stepY + 0.5);
+      }
+      ctx.stroke();
+    }
+    if (clips) ctx.restore();
+  };
+  redrawMapCanvasInPlace();
 
   const drawTileDiamondPath = (drawCtx, cx, cy, inset = 0) => {
     const xInset = Math.max(0, Number(inset) || 0);
@@ -32557,27 +32678,63 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return holder;
   };
+  const getCityBuildingSet = (cityRecord) => {
+    const out = new Set();
+    (Array.isArray(cityRecord && cityRecord.fields) ? cityRecord.fields : []).forEach((field) => {
+      const key = String((field && (field.baseKey || field.key)) || '').trim().toLowerCase();
+      if (!/^building(?:_\d+)?$/.test(key)) return;
+      const value = parseIntLoose(field.value, -1);
+      if (value >= 0) out.add(value);
+    });
+    const packed = getMapFieldValue(cityRecord, 'buildings', '').trim();
+    if (packed) {
+      packed.split(/[,\s]+/).forEach((part) => {
+        const value = parseIntLoose(part, -1);
+        if (value >= 0) out.add(value);
+      });
+    }
+    return out;
+  };
+  const setCityBuildingSet = (cityRecord, buildingSet) => {
+    const chosen = Array.from(buildingSet || []).map((value) => Number(value)).filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b);
+    const remaining = (Array.isArray(cityRecord.fields) ? cityRecord.fields : []).filter((field) => {
+      const key = String((field && (field.baseKey || field.key)) || '').trim().toLowerCase();
+      return !/^building(?:_\d+)?$/.test(key);
+    });
+    chosen.forEach((buildingId, idx) => {
+      remaining.push({
+        key: idx === 0 ? 'building' : `building_${idx + 1}`,
+        baseKey: idx === 0 ? 'building' : `building_${idx + 1}`,
+        label: `Building ${idx + 1}`,
+        value: String(buildingId),
+        originalValue: ''
+      });
+    });
+    cityRecord.fields = remaining;
+    setMapFieldValue(cityRecord, 'numbuildings', String(chosen.length), 'Number Of Buildings');
+    setMapFieldValue(cityRecord, 'buildings', chosen.join(','), 'Buildings');
+  };
   const applySelectedTileEdit = (editFn) => {
     if (!isScenarioMode()) return false;
     const tile = tiles[state.biqMapSelectedTile] || null;
     if (!tile || typeof editFn !== 'function') return false;
     rememberUndoSnapshot();
-    const changed = editFn(tile) !== false;
-    if (!changed) return false;
+    const editResult = editFn(tile);
+    if (editResult === false) return false;
     setDirty(true);
-    rerenderMapView();
+    const redrawIndexes = Array.isArray(editResult) && editResult.length > 0
+      ? editResult
+      : [state.biqMapSelectedTile];
+    redrawMapCanvasInPlace(redrawIndexes.flatMap((idx) => tileEditRedrawRects(idx) || []));
+    renderMiniMap();
+    renderTileInfoPanel();
+    hideHoverTooltip();
     return true;
   };
-  const setSelectedTileTerrain = (terrainCode) => applySelectedTileEdit((tile) => {
-    const code = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
-    const base = (code === BIQ_TERRAIN.FOREST || code === BIQ_TERRAIN.JUNGLE || code === BIQ_TERRAIN.MARSH)
-      ? BIQ_TERRAIN.GRASSLAND
-      : code;
-    const packedTerrain = ((code & 0x0f) << 4) | (base & 0x0f);
-    setMapFieldValue(tile, 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
-    setMapFieldValue(tile, 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
-    recalculateTerrainFileImageAround([state.biqMapSelectedTile]);
-    return true;
+  const setSelectedTileTerrain = (terrainCode) => applySelectedTileEdit((_tile) => {
+    const changedIndexes = smartApplyTerrainToIndexes([state.biqMapSelectedTile], terrainCode);
+    recalculateTerrainFileImageAround(changedIndexes);
+    return changedIndexes;
   });
   const setSelectedTileResource = (resourceId) => applySelectedTileEdit((tile) => {
     setMapFieldValue(tile, 'resource', String(parseIntLoose(resourceId, -1)), 'Resource');
@@ -32625,7 +32782,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const grid = document.createElement('div');
     grid.className = 'map-option-grid terrain';
     terrainRecordsForPicker.forEach((record, idx) => {
-      const selected = (idx === BIQ_TERRAIN.FOREST || idx === BIQ_TERRAIN.JUNGLE || idx === BIQ_TERRAIN.MARSH)
+      const selected = terrainUsesGrasslandBase(idx)
         ? current.realTerrain === idx
         : current.realTerrain === idx && current.baseTerrain === idx;
       grid.appendChild(makeOptionButton({
@@ -32682,6 +32839,154 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
     host.appendChild(grid);
   };
+  const renderCityOptions = (host, tile, geom) => {
+    const cityRef = getMapFieldValue(tile, 'city', '-1');
+    const cityRecord = getCityRecordByRef(cityRef);
+    if (!cityRecord) {
+      const empty = document.createElement('div');
+      empty.className = 'map-city-editor';
+      const title = document.createElement('div');
+      title.className = 'map-city-editor-title';
+      title.textContent = 'No city on this tile';
+      empty.appendChild(title);
+      if (isScenarioMode()) {
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'secondary';
+        add.textContent = 'Add City Here';
+        add.addEventListener('click', () => {
+          if (!citySection || !mapCore || typeof mapCore.addCity !== 'function') return;
+          rememberUndoSnapshot();
+          const ref = uniqueRecordRef('CITY');
+          const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
+          const ownerType = parseIntLoose(state.mapEditorTool && state.mapEditorTool.ownerType, 1);
+          mapCore.addCity(citySection, tile, geom.xPos, geom.yPos, owner, ownerType, `City ${citySection.records.length + 1}`, ref);
+          pushStructureAddOp('CITY', ref);
+          setDirty(true);
+          rerenderMapView();
+        });
+        empty.appendChild(add);
+      }
+      host.appendChild(empty);
+      return;
+    }
+
+    const editor = document.createElement('div');
+    editor.className = 'map-city-editor';
+    const cityTop = document.createElement('div');
+    cityTop.className = 'map-city-editor-title';
+    cityTop.textContent = String(getFieldByBaseKey(cityRecord, 'name')?.value || `City ${cityRef}`);
+    editor.appendChild(cityTop);
+
+    const fields = document.createElement('div');
+    fields.className = 'map-city-fields';
+    const addCityField = ({ key, label, type = 'text', min = null, options = null }) => {
+      const row = document.createElement('label');
+      row.className = 'map-city-field';
+      const text = document.createElement('span');
+      text.className = 'field-meta';
+      text.textContent = label;
+      let input;
+      if (Array.isArray(options)) {
+        input = document.createElement('select');
+        options.forEach((opt) => {
+          const node = document.createElement('option');
+          node.value = opt.value;
+          node.textContent = opt.label;
+          input.appendChild(node);
+        });
+      } else {
+        input = document.createElement('input');
+        input.type = type;
+        if (min != null) input.min = String(min);
+      }
+      input.value = String(getMapFieldValue(cityRecord, key, key === 'size' ? '1' : '0'));
+      input.disabled = !isScenarioMode();
+      input.addEventListener('change', () => {
+        if (!isScenarioMode()) return;
+        rememberUndoSnapshot();
+        setMapFieldValue(cityRecord, key, input.value.trim(), label);
+        setDirty(true);
+        rerenderMapView();
+      });
+      row.appendChild(text);
+      row.appendChild(input);
+      fields.appendChild(row);
+    };
+    addCityField({ key: 'name', label: 'Name' });
+    addCityField({ key: 'size', label: 'Population', type: 'number', min: 1 });
+    addCityField({ key: 'culture', label: 'Culture', type: 'number', min: 0 });
+    editor.appendChild(fields);
+
+    const bldgSection = (tab.sections || []).find((s) => s.code === 'BLDG');
+    const bldgRecords = bldgSection && Array.isArray(bldgSection.records) ? bldgSection.records : [];
+    const buildingWrap = document.createElement('div');
+    buildingWrap.className = 'map-city-buildings';
+    const buildingTop = document.createElement('div');
+    buildingTop.className = 'section-top compact';
+    buildingTop.innerHTML = `<strong>Buildings</strong><span class="hint">${getCityBuildingSet(cityRecord).size} present</span>`;
+    buildingWrap.appendChild(buildingTop);
+    if (bldgRecords.length > 0) {
+      const currentSet = getCityBuildingSet(cityRecord);
+      const grid = document.createElement('div');
+      grid.className = 'map-building-grid';
+      bldgRecords.forEach((buildingRecord, idx) => {
+        const improvementEntry = resolveReferenceEntryForPicker('improvements', String(idx));
+        const row = document.createElement('div');
+        row.className = 'map-building-row';
+        row.classList.toggle('active', currentSet.has(idx));
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'map-building-toggle';
+        btn.disabled = !isScenarioMode();
+        btn.setAttribute('aria-pressed', currentSet.has(idx) ? 'true' : 'false');
+        const thumb = document.createElement('span');
+        thumb.className = 'entry-thumb map-building-thumb';
+        if (improvementEntry) loadReferenceListThumbnail('improvements', improvementEntry, thumb);
+        else thumb.textContent = '•';
+        const marker = document.createElement('span');
+        marker.className = 'map-building-marker';
+        marker.textContent = currentSet.has(idx) ? '✓' : '+';
+        const name = document.createElement('span');
+        name.className = 'map-building-name';
+        name.textContent = String((improvementEntry && improvementEntry.name) || (buildingRecord && buildingRecord.name) || `Building ${idx}`);
+        btn.appendChild(thumb);
+        btn.appendChild(marker);
+        btn.appendChild(name);
+        btn.addEventListener('click', () => {
+          if (!isScenarioMode()) return;
+          rememberUndoSnapshot();
+          if (currentSet.has(idx)) currentSet.delete(idx);
+          else currentSet.add(idx);
+          setCityBuildingSet(cityRecord, currentSet);
+          setDirty(true);
+          renderTileInfoPanel();
+        });
+        row.appendChild(btn);
+        const linkBtn = document.createElement('button');
+        linkBtn.type = 'button';
+        linkBtn.className = 'map-building-link';
+        linkBtn.textContent = '↗';
+        linkBtn.title = `Open ${name.textContent}`;
+        linkBtn.setAttribute('aria-label', `Open ${name.textContent}`);
+        linkBtn.disabled = !improvementEntry;
+        linkBtn.addEventListener('click', () => {
+          if (!improvementEntry) return;
+          navigateToReferenceEntry('improvements', improvementEntry);
+        });
+        row.appendChild(linkBtn);
+        grid.appendChild(row);
+      });
+      buildingWrap.appendChild(grid);
+    } else {
+      const emptyBuildings = document.createElement('div');
+      emptyBuildings.className = 'map-info-summary';
+      emptyBuildings.textContent = 'No building records are available in this BIQ.';
+      buildingWrap.appendChild(emptyBuildings);
+    }
+    editor.appendChild(buildingWrap);
+    host.appendChild(editor);
+  };
   renderTileInfoPanel = () => {
     const tile = tiles[state.biqMapSelectedTile] || null;
     const geom = tileGeom[state.biqMapSelectedTile] || { xPos: 0, yPos: 0 };
@@ -32699,11 +33004,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     top.appendChild(meta);
     tileInfoPanel.appendChild(top);
 
-    const categoryRow = document.createElement('label');
+    const categoryRow = document.createElement('div');
     categoryRow.className = 'map-info-category';
-    const categoryLabel = document.createElement('span');
-    categoryLabel.className = 'field-meta';
-    categoryLabel.textContent = 'Category';
     const infoCategorySelect = document.createElement('select');
     mapCategoryOptions.forEach((opt) => {
       const o = document.createElement('option');
@@ -32717,7 +33019,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       state.mapEditorTool.mode = 'select';
       renderTileInfoPanel();
     });
-    categoryRow.appendChild(categoryLabel);
     categoryRow.appendChild(infoCategorySelect);
     tileInfoPanel.appendChild(categoryRow);
 
@@ -32731,9 +33032,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     } else if (activeOption.value === 'resource') {
       renderResourceOptions(body, tile);
     } else if (activeOption.value === 'city') {
-      const cityRef = getMapFieldValue(tile, 'city', '-1');
-      const cityRecord = getCityRecordByRef(cityRef);
-      addOptionSummary(body, cityRecord ? `City: ${String(getFieldByBaseKey(cityRecord, 'name')?.value || `City ${cityRef}`)}` : 'No city on this tile yet.');
+      renderCityOptions(body, tile, geom);
     } else if (activeOption.value === 'district' || activeOption.value === 'naturalWonder') {
       const placedEntry = findScenarioDistrictEntryAtCoords(geom.xPos, geom.yPos);
       addOptionSummary(body, placedEntry ? `Placed: ${placedEntry.district || placedEntry.wonderName || 'District'}` : 'No district or wonder on this tile yet.');
