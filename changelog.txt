@@ -1,4 +1,6 @@
 * RELEASE 27.11
+- Made Map editor `Undo` and `Undo All` apply map snapshots locally in memory instead of routing through the full scenario bundle reload path, removing the loading modal and making map-only undo much faster while keeping the modal open in place.
+- Fixed Map editor modal Paint-mode drag painting so holding left mouse and sweeping across tiles now applies edits continuously, and replaced the old full modal rerender-per-tile path with clipped in-place canvas redraws plus no-op paint suppression to make terrain/overlay painting much faster.
 - Added `Undo` and `Undo All` buttons to the Map editor modal header, with map-scoped undo behavior so the modal rewinds map content edits like terrain, overlays, cities, units, and tile data without undoing camera movement or tool-mode changes.
 - Fixed Map editor navigation state so leaving the map for a linked reference and then using `Back` now restores the current map session instead of an older snapshot; scroll position, selected tile, zoom, modal reopen state, and display/tool settings persist correctly.
 - Simplified Map editor Terrain paint previews so the hover overlay now fills the full tile diamond with the selected terrain's representative color instead of trying to predict transition graphics from the hovered tile neighborhood.

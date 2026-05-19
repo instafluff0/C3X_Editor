@@ -8870,7 +8870,7 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
   };
 
   const withUndo = (fn) => {
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     fn();
     syncModelSections();
     setDirty(true);
@@ -12903,7 +12903,7 @@ function buildImprovementTopReferenceControl(field, labelText, referenceEditable
       showOptionThumbs: true,
       readOnly: !referenceEditable,
       onSelect: referenceEditable ? (value) => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         field.value = String(value);
         setDirty(true);
       } : null
@@ -13509,7 +13509,7 @@ function renderCivilizationNoteListEditor(entry, cfg, referenceEditable) {
   const addItem = () => {
     const value = String(addInput.value || '').trim();
     if (!value) return;
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     items.push(value);
     addInput.value = '';
     commit();
@@ -14459,7 +14459,7 @@ function renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable, 
       const parsedIndex = parseIntFromDisplayValue(indexField.value);
       select.value = parsedIndex == null ? '-1' : String(parsedIndex);
       select.addEventListener('change', () => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         indexField.value = String(select.value);
         setDirty(true);
         renderActiveTab({ preserveTabScroll: true });
@@ -14784,7 +14784,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       removeAllBtn.title = hasValues ? `Remove all ${cfg.label.toLowerCase()}` : `No ${cfg.label.toLowerCase()} to remove`;
       removeAllBtn.addEventListener('click', () => {
         if (removeAllBtn.disabled) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         if (cfg.kind === 'abilities') {
           setUnitAbilitySelections(entry, []);
         } else if (cfg.kind === 'availableTo') {
@@ -14910,7 +14910,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       controlWrap.appendChild(createStealthTargetsCopyControl(entry, stealthState));
     } else if (cfg.kind === 'ignoreMovement') {
       const editor = renderTerrainFlagEditor(entry, ignoreMoveState.values, (values) => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         setUnitListFieldValues(entry, ignoreMoveState.key, values);
         setDirty(true);
       });
@@ -14993,7 +14993,7 @@ function createStealthTargetsCopyControl(entry, stealthState) {
       setStatus(`No new stealth targets to add from "${source.label}".`);
       return;
     }
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     setUnitListFieldValues(entry, stealthState.key, merged);
     setDirty(true);
     renderActiveTab({ preserveTabScroll: true });
@@ -15070,7 +15070,7 @@ function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, reference
     check.disabled = !referenceEditable;
     if (referenceEditable) {
       check.addEventListener('change', () => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         field.value = check.checked ? 'true' : 'false';
         item.classList.toggle('active', check.checked);
         setDirty(true);
@@ -15126,7 +15126,7 @@ function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabK
       showOptionThumbs: true,
       readOnly: !referenceEditable,
       onSelect: referenceEditable ? (value) => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         requiredTechField.value = String(value);
         setDirty(true);
         renderActiveTab({ preserveTabScroll: true });
@@ -15606,7 +15606,7 @@ function renderTechnologyBooleanMatrixCard(groupName, fields, entry, tabKey, ref
     check.disabled = !referenceEditable;
     if (referenceEditable) {
       check.addEventListener('change', () => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         field.value = check.checked ? 'true' : 'false';
         item.classList.toggle('active', check.checked);
         setDirty(true);
@@ -15716,7 +15716,7 @@ function renderCivilizationBooleanMatrixCard(groupName, fields, entry, tabKey, r
     check.disabled = !referenceEditable;
     if (referenceEditable) {
       check.addEventListener('change', () => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         field.value = check.checked ? 'true' : 'false';
         item.classList.toggle('active', check.checked);
         setDirty(true);
@@ -15912,12 +15912,12 @@ async function stageLeaderAnimationReplacement(entry, field, filePath) {
   if (!targetPath) throw new Error('Could not determine the scenario Art\\Flics target path.');
   if (ext === 'flc') {
     await validateLeaderAnimationFlc(raw);
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     field.value = targetPath.replace(/\//g, '\\');
     setPendingLeaderAnimationSource(entry, field, raw);
   } else if (['png', 'jpg', 'jpeg', 'pcx'].includes(ext)) {
     const conversion = await buildPendingLeaderAnimationConversion(raw);
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     field.value = targetPath.replace(/\//g, '\\');
     setPendingLeaderAnimationConversion(entry, field, conversion);
   } else {
@@ -15986,7 +15986,7 @@ function renderCivilizationAnimationPreviewCell(entry, field, directionLabel, re
         if (!nextFileName || nextFileName === currentFileName) return;
         const parent = getParentPath(currentPath) || 'Art/Flics';
         const nextPath = normalizeRelativePath(`${parent}/${nextFileName}`);
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         setLeaderAnimationDestinationPath(field, nextPath);
         setDirty(true);
         renderActiveTab({ preserveTabScroll: true });
@@ -16568,7 +16568,7 @@ function renderImprovementBooleanMatrixCard(groupName, fields, entry, tabKey, re
     check.disabled = !referenceEditable;
     if (referenceEditable) {
       check.addEventListener('change', () => {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         field.value = check.checked ? 'true' : 'false';
         item.classList.toggle('active', check.checked);
         setDirty(true);
@@ -19924,7 +19924,7 @@ function createTechTreePanel({
           selectNodeInPlace(node);
         }
         if (!referenceEditable || node.autoLayout) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         refreshUndoButton();
         drag = {
           pointerId: ev.pointerId,
@@ -20406,7 +20406,7 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
         if (idx == null) return;
         const next = !!input.checked;
         if (isUnitAvailableToCivilization(row.entry, idx) === next) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         setUnitAvailableToCivilization(row.entry, idx, next);
         setDirty(true);
         render();
@@ -20442,7 +20442,7 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
     if (civIdx == null) return;
     const targets = getVisibleRows().filter((row) => !isUnitAvailableToCivilization(row.entry, civIdx));
     if (targets.length === 0) return;
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     targets.forEach((row) => setUnitAvailableToCivilization(row.entry, civIdx, true));
     setDirty(true);
     render();
@@ -20452,7 +20452,7 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
     if (civIdx == null) return;
     const targets = getVisibleRows().filter((row) => isUnitAvailableToCivilization(row.entry, civIdx));
     if (targets.length === 0) return;
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     targets.forEach((row) => setUnitAvailableToCivilization(row.entry, civIdx, false));
     setDirty(true);
     render();
@@ -20512,19 +20512,13 @@ function ensureMapModalNode() {
   if (mapModal.undoBtn) {
     mapModal.undoBtn.addEventListener('click', async () => {
       if (!isScenarioMode() || !getLatestScopedUndoSnapshot('map')) return;
-      const changed = await undoMapOneStep();
-      if (changed && state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
-        reopenMapModalForTab(state.bundle.tabs.map);
-      }
+      await undoMapOneStep();
     });
   }
   if (mapModal.undoAllBtn) {
     mapModal.undoAllBtn.addEventListener('click', async () => {
       if (!isScenarioMode() || !isMapDirty()) return;
-      const changed = await undoAllMapChanges();
-      if (changed && state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
-        reopenMapModalForTab(state.bundle.tabs.map);
-      }
+      await undoAllMapChanges();
     });
   }
   overlay.addEventListener('click', (ev) => {
@@ -22817,7 +22811,7 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
           defaultPath: resolved || fallbackDir || undefined
         });
         if (!filePath) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         setReferenceArtSlotPath(entry, targetSlot, filePath, tabKey);
         try {
           setPendingReferenceArtConversion(entry, targetSlot, await buildPendingRepeatedPortraitSheetConversion(
@@ -25219,7 +25213,7 @@ function renderReferenceTab(tab, tabKey) {
           targetKey: key,
           opCount: Array.isArray(tab && tab.recordOps) ? tab.recordOps.length : -1
         });
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         tab.entries.unshift(newEntry);
         appendDebugLog('reference-import:entry-inserted', {
           tabKey,
@@ -25680,7 +25674,7 @@ function renderReferenceTab(tab, tabKey) {
         keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
         keyInput.title = 'Record key (editable for new entries)';
         keyInput.addEventListener('change', () => {
-          rememberUndoSnapshot();
+          rememberMapUndoSnapshot();
           const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
           if (!changed) {
             keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
@@ -25721,7 +25715,7 @@ function renderReferenceTab(tab, tabKey) {
         keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
         keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
         keyInput.addEventListener('change', () => {
-          rememberUndoSnapshot();
+          rememberMapUndoSnapshot();
           const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
           if (!changed) {
             keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
@@ -25762,7 +25756,7 @@ function renderReferenceTab(tab, tabKey) {
       checkText.textContent = check.checked ? 'Playable' : '';
       check.addEventListener('change', () => {
         if (playableReadonly) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         const changed = setCivilizationPlayableState(entry, check.checked);
         if (!changed) {
           check.checked = !check.checked;
@@ -26929,7 +26923,7 @@ function renderBiqTab(tab) {
           newRecordRef: newRef
         });
         const ops = ensureBiqStructureRecordOps(tab);
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         selected.records.unshift(newRecord);
         ops.push({ op: 'add', sectionCode: selected.code, newRecordRef: newRef });
         _dbgLog('INF', 'BiqCRUD', `structure import: section=${selected.code} newRef=${newRef} from=${_dbgRelPath(importPath)}`);
@@ -28771,7 +28765,7 @@ function applyGeneratedMapSectionsToTab(tab, generatedSections, mutation = 'set'
 }
 
 function refreshOpenMapModalForTab(tab) {
-  if (!tab || mapModal.tab !== tab) return false;
+  if (!tab) return false;
   const overlay = ensureMapModalNode();
   if (overlay.classList.contains('hidden')) return false;
   const tileSection = Array.isArray(tab.sections)
@@ -31831,12 +31825,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       : [centerIndex];
   };
   const applyBrushAtIndex = (centerIndex) => {
-    if (!isScenarioMode()) return false;
+    if (!isScenarioMode()) return [];
     const interactionMode = String(state.mapEditorTool && state.mapEditorTool.interactionMode || 'select');
-    if (interactionMode !== 'paint') return false;
+    if (interactionMode !== 'paint') return [];
     const mode = String(state.mapEditorTool && state.mapEditorTool.paintCategory || 'terrain');
     const indices = getBrushTileIndexes(centerIndex);
-    if (indices.length === 0) return false;
+    if (indices.length === 0) return [];
     const centerGeom = tileGeom[centerIndex] || null;
     appendDebugLog('biq-map:paint-apply-start', {
       ...describePaintToolState(),
@@ -31849,6 +31843,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
       const variantMask = terrainBonusMaskFromVariantState(terrainCode, getMapToolTerrainVariantState(terrainCode));
       const changedIndexes = smartApplyTerrainToIndexes(indices, terrainCode, variantMask);
+      if (changedIndexes.length === 0) {
+        appendDebugLog('biq-map:paint-apply-result', {
+          mode,
+          terrainCode,
+          variantMask,
+          changedSummary: summarizeTileIndexes([])
+        });
+        return [];
+      }
       recalculateTerrainFileImageAround(changedIndexes);
       appendDebugLog('biq-map:paint-apply-result', {
         mode,
@@ -31856,7 +31859,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         variantMask,
         changedSummary: summarizeTileIndexes(changedIndexes)
       });
-      return true;
+      return changedIndexes;
     }
     if (mode === 'overlay') {
       const overlayType = String(state.mapEditorTool && state.mapEditorTool.overlayType || 'road');
@@ -31872,7 +31875,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           changed,
           changedSummary: summarizeTileIndexes(changedIndexes)
         });
-        return changed;
+        return changed ? changedIndexes : [];
       }
       if (overlaySpec && overlaySpec.kind === 'colony') {
         const changed = applyColonyOverlayToIndexes(indices, overlaySpec, enabled);
@@ -31882,7 +31885,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           enabled,
           changed
         });
-        return changed;
+        return changed ? indices : [];
       }
       if (mapCore && typeof mapCore.applyOverlay === 'function') {
         const changed = !!mapCore.applyOverlay(tiles, indices, overlayType, enabled);
@@ -31892,38 +31895,58 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           enabled,
           changed
         });
-        return changed;
+        return changed ? indices : [];
       }
-      return false;
+      return [];
     }
     if (mode === 'resource') {
       const resourceId = parseIntLoose(state.mapEditorTool && state.mapEditorTool.resourceType, -1);
       const remove = !!(state.mapEditorTool && state.mapEditorTool.remove);
+      const changedIndexes = [];
       indices.forEach((idx) => {
-        if (!tiles[idx]) return;
-        setMapFieldValue(tiles[idx], 'resource', remove ? '-1' : String(resourceId), 'Resource');
+        const tile = tiles[idx];
+        if (!tile) return;
+        const nextValue = remove ? '-1' : String(resourceId);
+        if (String(getMapFieldValue(tile, 'resource', '-1')) === nextValue) return;
+        setMapFieldValue(tile, 'resource', nextValue, 'Resource');
+        changedIndexes.push(idx);
       });
       appendDebugLog('biq-map:paint-apply-result', {
         mode,
         resourceId,
         remove,
-        changedSummary: summarizeTileIndexes(indices)
+        changedSummary: summarizeTileIndexes(changedIndexes)
       });
-      return true;
+      return changedIndexes;
     }
     if (mode === 'visibility' || mode === 'fog') {
       const addFog = String(state.mapEditorTool && state.mapEditorTool.fogMode || 'add') !== 'remove';
+      const changedIndexes = [];
       if (mapCore && typeof mapCore.applyFog === 'function') {
-        mapCore.applyFog(tiles, indices, addFog);
+        indices.forEach((idx) => {
+          const tile = tiles[idx];
+          if (!tile) return;
+          const nextValue = addFog ? '0' : '1';
+          if (String(getMapFieldValue(tile, 'fogofwar', addFog ? '1' : '0')) === nextValue) return;
+          changedIndexes.push(idx);
+        });
+        if (changedIndexes.length > 0) mapCore.applyFog(tiles, changedIndexes, addFog);
       } else {
-        indices.forEach((idx) => setMapFieldValue(tiles[idx], 'fogofwar', addFog ? '0' : '1', 'Fog Of War'));
+        indices.forEach((idx) => {
+          const tile = tiles[idx];
+          if (!tile) return;
+          const nextValue = addFog ? '0' : '1';
+          if (String(getMapFieldValue(tile, 'fogofwar', addFog ? '1' : '0')) === nextValue) return;
+          setMapFieldValue(tile, 'fogofwar', nextValue, 'Fog Of War');
+          changedIndexes.push(idx);
+        });
       }
       appendDebugLog('biq-map:paint-apply-result', {
         mode,
         addFog,
-        changedSummary: summarizeTileIndexes(indices)
+        changedSummary: summarizeTileIndexes(changedIndexes)
       });
-      return true;
+      return changedIndexes;
     }
     if (mode === 'startingLocation') {
       const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
@@ -31946,28 +31969,37 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         remove,
         changed
       });
-      return changed;
+      return changed ? indices : [];
     }
     if (mode === 'district') {
       const enabled = !(state.mapEditorTool && state.mapEditorTool.remove);
       const type = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtType, 0);
       const dState = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtState, 1);
       if (mapCore && typeof mapCore.applyDistrict === 'function') {
-        mapCore.applyDistrict(tiles, indices, type, dState, enabled);
+        const changedIndexes = [];
+        indices.forEach((idx) => {
+          const tile = tiles[idx];
+          if (!tile) return;
+          const nextValue = enabled ? `${type},${dState}` : '';
+          if (String(getMapFieldValue(tile, 'district', '')) === nextValue) return;
+          changedIndexes.push(idx);
+        });
+        if (changedIndexes.length > 0) mapCore.applyDistrict(tiles, changedIndexes, type, dState, enabled);
+        return changedIndexes;
       }
-      return true;
+      return [];
     }
     if (mode === 'naturalWonder') {
       const remove = !!(state.mapEditorTool && state.mapEditorTool.remove);
       const naturalIdx = parseIntLoose(state.mapEditorTool && state.mapEditorTool.naturalWonderType, 0);
       const naturalEntry = naturalWonderEntries[naturalIdx] || null;
       const naturalName = String(naturalEntry && naturalEntry.name || '').trim();
-      let changed = false;
+      const changedIndexes = [];
       indices.forEach((idx) => {
         const g = tileGeom[idx];
         if (!g || !scenarioDistrictsMeta) return;
         if (remove) {
-          if (removeScenarioDistrictEntryAtCoords(g.xPos, g.yPos)) changed = true;
+          if (removeScenarioDistrictEntryAtCoords(g.xPos, g.yPos)) changedIndexes.push(idx);
           return;
         }
         if (!naturalName) return;
@@ -31975,9 +32007,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           district: naturalName,
           wonderName: naturalName,
           wonderCity: ''
-        })) changed = true;
+        })) changedIndexes.push(idx);
       });
-      return changed;
+      return changedIndexes;
     }
     if (mode === 'city') {
       const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
@@ -32006,7 +32038,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           changed = true;
         }
       });
-      return changed;
+      return changed ? indices : [];
     }
     if (mode === 'unit') {
       const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
@@ -32034,9 +32066,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           changed = true;
         }
       });
-      return changed;
+      return changed ? indices : [];
     }
-    return false;
+    return [];
   };
 
   const chooseTerrainTransitionSecondary = (neighbors, preferred) => {
@@ -32431,7 +32463,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     normalizeTundraTransitionsAround(normalizationSeeds, changedIndexes);
     normalizeInvalidDesertTransitionQuartetsAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes);
     normalizeCoastlineAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes);
-    const result = Array.from(changedIndexes.size > 0 ? changedIndexes : new Set(seeds));
+    const result = Array.from(changedIndexes);
     appendDebugLog('biq-map:terrain-apply-end', {
       terrainCode: parseIntLoose(terrainCode, -1),
       bonusMask: parseIntLoose(bonusMask, 0) >>> 0,
@@ -33847,6 +33879,37 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       };
     });
   };
+  const expandTileIndexesForRedraw = (indexes, options = {}) => {
+    const seeds = Array.isArray(indexes) ? indexes : Array.from(indexes || []);
+    const includeNeighbors = options.includeNeighbors !== false;
+    const expanded = new Set();
+    seeds.forEach((rawIdx) => {
+      const idx = parseIntLoose(rawIdx, NaN);
+      if (!Number.isFinite(idx) || idx < 0 || idx > maxIdx) return;
+      expanded.add(idx);
+      if (!includeNeighbors) return;
+      mapTileNeighborIndexes(idx).forEach((neighborIdx) => {
+        if (neighborIdx >= 0 && neighborIdx <= maxIdx) expanded.add(neighborIdx);
+      });
+    });
+    return Array.from(expanded);
+  };
+  const redrawMapAfterTileChanges = (changedIndexes, options = {}) => {
+    const expandedIndexes = expandTileIndexesForRedraw(changedIndexes, options);
+    if (expandedIndexes.length === 0) return false;
+    const redrawRects = expandedIndexes.flatMap((idx) => tileEditRedrawRects(idx) || []);
+    appendDebugLog('biq-map:paint-redraw', {
+      changedSummary: summarizeTileIndexes(changedIndexes),
+      redrawSummary: summarizeTileIndexes(expandedIndexes),
+      rectSummary: summarizeRects(redrawRects)
+    });
+    redrawMapCanvasInPlace(redrawRects);
+    renderMiniMap();
+    if (options.refreshTileInfo !== false && expandedIndexes.includes(state.biqMapSelectedTile)) {
+      renderTileInfoPanel();
+    }
+    return true;
+  };
   const redrawMapCanvasInPlace = (clipRects = null) => {
     if (!ctx) return;
     const redrawStartedAt = mapToolNowMs();
@@ -34503,11 +34566,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!paintStroke) paintStroke = { touched: new Set(), didEdit: false };
     if (paintStroke.touched.has(hit.index)) return false;
     paintStroke.touched.add(hit.index);
-    const didEdit = applyBrushAtIndex(hit.index);
-    if (didEdit) {
+    const changedIndexes = applyBrushAtIndex(hit.index);
+    if (Array.isArray(changedIndexes) && changedIndexes.length > 0) {
       paintStroke.didEdit = true;
+      redrawMapAfterTileChanges(changedIndexes, { refreshTileInfo: true });
+      return true;
     }
-    return didEdit;
+    return false;
   };
 
   canvas.addEventListener('pointerdown', (ev) => {
@@ -34516,9 +34581,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const interactionMode = getEffectiveInteractionMode();
     if (!isScenarioMode() || interactionMode !== 'paint') return;
     ev.preventDefault();
+    ev.stopPropagation();
     canvas.setPointerCapture(ev.pointerId);
     paintStroke = { touched: new Set(), didEdit: false };
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     const hit = readHitFromPointer(ev);
     appendDebugLog('biq-map:paint-start', {
       pointerId: ev.pointerId,
@@ -34527,25 +34593,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       hitTile: hit && tileGeom[hit.index] ? { xPos: tileGeom[hit.index].xPos, yPos: tileGeom[hit.index].yPos } : null,
       ...describePaintToolState()
     });
-    const changed = applyAtPointer(ev);
-    if (changed) {
-      appendDebugLog('biq-map:paint-rerender', { phase: 'pointerdown', pointerId: ev.pointerId });
-      rerenderMapView();
-    }
+    applyAtPointer(ev);
   });
   canvas.addEventListener('pointermove', (ev) => {
     updateHoverTooltip(ev);
     if (!paintStroke) return;
     ev.preventDefault();
-    const changed = applyAtPointer(ev);
-    if (changed) {
-      appendDebugLog('biq-map:paint-rerender', {
-        phase: 'pointermove',
-        pointerId: ev.pointerId,
-        touchedCount: paintStroke && paintStroke.touched ? paintStroke.touched.size : 0
-      });
-      rerenderMapView();
-    }
+    applyAtPointer(ev);
   });
   canvas.addEventListener('pointerleave', hideHoverTooltip);
   canvas.addEventListener('pointercancel', hideHoverTooltip);
@@ -34575,7 +34629,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const hit = readHitFromPointer(ev);
     if (isScenarioMode() && mode === 'relocate_city') {
       if (hit && Number.isFinite(state.mapEditorTool.relocateCityIndex)) {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         if (relocateCityToTile(state.mapEditorTool.relocateCityIndex, hit.index, false)) {
           state.mapEditorTool.mode = 'select';
           delete state.mapEditorTool.relocateCityIndex;
@@ -34587,7 +34641,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     if (isScenarioMode() && mode === 'relocate_city_units') {
       if (hit && Number.isFinite(state.mapEditorTool.relocateCityIndex)) {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         if (relocateCityToTile(state.mapEditorTool.relocateCityIndex, hit.index, true)) {
           state.mapEditorTool.mode = 'select';
           delete state.mapEditorTool.relocateCityIndex;
@@ -35308,7 +35362,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!isScenarioMode()) return false;
     const tile = tiles[state.biqMapSelectedTile] || null;
     if (!tile || typeof editFn !== 'function') return false;
-    rememberUndoSnapshot();
+    rememberMapUndoSnapshot();
     const selectedGeom = tileGeom[state.biqMapSelectedTile] || null;
     appendDebugLog('biq-map:tile-edit-start', {
       index: state.biqMapSelectedTile,
@@ -35339,6 +35393,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const setSelectedTileTerrain = (terrainCode) => applySelectedTileEdit((_tile) => {
     const variantMask = sanitizeTerrainBonusMask(terrainCode, getTileBonusMask(_tile));
     const changedIndexes = smartApplyTerrainToIndexes([state.biqMapSelectedTile], terrainCode, variantMask);
+    if (changedIndexes.length === 0) return false;
     recalculateTerrainFileImageAround(changedIndexes);
     return changedIndexes;
   });
@@ -35634,7 +35689,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const previousTrimmed = String((findNamedTileAtCoords(geom.xPos, geom.yPos)?.name) || getMapFieldValue(tile, 'namedtile', '') || '').trim();
       if (trimmed === previousTrimmed) return;
       if (!undoRememberedForEdit) {
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         undoRememberedForEdit = true;
       }
       const changed = trimmed
@@ -35674,7 +35729,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         if (!geom) return;
         if (namedTileCommitTimer) window.clearTimeout(namedTileCommitTimer);
         namedTileCommitTimer = 0;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         input.value = '';
         if (removeNamedTileAtCoords(geom.xPos, geom.yPos)) {
           setDirty(true);
@@ -35791,7 +35846,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const nextOwnerType = parseIntLoose(ownerTypeInput.value, 0);
         const fallbackOwner = nextOwnerType === 1 ? -1 : 0;
         const nextOwner = parseIntLoose(ownerInput.value, fallbackOwner);
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         if (addStartingLocationAtCoords(geom.xPos, geom.yPos, nextOwner, nextOwnerType)) {
           setDirty(true);
           rerenderMapView();
@@ -35809,7 +35864,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       clear.disabled = !slocRecord;
       clear.addEventListener('click', () => {
         if (!geom) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         if (removeStartingLocationAtCoords(geom.xPos, geom.yPos)) {
           setDirty(true);
           rerenderMapView();
@@ -35837,7 +35892,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       btn.disabled = !isScenarioMode();
       btn.addEventListener('click', () => {
         if (!isScenarioMode()) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         setMapFieldValue(tile, 'fogofwar', opt.value, 'Fog Of War');
         setDirty(true);
         rerenderMapView();
@@ -35924,7 +35979,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         add.textContent = 'Add City Here';
         add.addEventListener('click', () => {
           if (!citySection || !mapCore || typeof mapCore.addCity !== 'function') return;
-          rememberUndoSnapshot();
+          rememberMapUndoSnapshot();
           const ref = uniqueRecordRef('CITY');
           const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
           const ownerType = parseIntLoose(state.mapEditorTool && state.mapEditorTool.ownerType, 1);
@@ -41529,8 +41584,8 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
   if (!state.bundle) {
     return false;
   }
-  const restoredEditableTabs = extractUndoSnapshotTabs(targetSnapshot);
   const nextUndoHistory = cloneUndoHistoryEntries(options.undoHistory);
+  const restoredEditableTabs = extractUndoSnapshotTabs(targetSnapshot);
   const restoredSearchFolder = Object.prototype.hasOwnProperty.call(restoredEditableTabs, 'scenarioSettings')
     ? getScenarioSearchFolderValueFromTabs(restoredEditableTabs)
     : getScenarioSearchFolderValueFromTabs(state.bundle && state.bundle.tabs ? state.bundle.tabs : {});
@@ -41546,6 +41601,18 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
       usePersistedView: true
     });
   }
+  return applyEditableSnapshotToCurrentBundle(targetSnapshot, {
+    undoHistory: nextUndoHistory,
+    statusMessage: options.statusMessage
+  });
+}
+
+function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
+  if (!state.bundle) {
+    return false;
+  }
+  const restoredEditableTabs = extractUndoSnapshotTabs(targetSnapshot);
+  const nextUndoHistory = cloneUndoHistoryEntries(options.undoHistory);
   const currentTabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
   const mergedTabs = Object.assign({}, currentTabs);
   const restoredKeys = Object.keys(restoredEditableTabs || {});
@@ -41571,6 +41638,9 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
   refreshDirtyUi();
   renderTabs();
   renderActiveTab({ preserveTabScroll: true });
+  if (state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
+    refreshOpenMapModalForTab(state.bundle.tabs.map);
+  }
   if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
     renderFilesReadModal();
   }
@@ -41606,9 +41676,8 @@ async function undoMapOneStep() {
   const restoredMapTabs = extractUndoSnapshotTabs(undoSnapshot);
   const restoredMapTab = restoredMapTabs && restoredMapTabs.map ? restoredMapTabs.map : null;
   try {
-    await restoreEditableSnapshot(undoSnapshot, {
+    applyEditableSnapshotToCurrentBundle(undoSnapshot, {
       undoHistory: buildUndoHistoryAfterScopedMapUndo(restoredMapTab),
-      loadingText: 'Restoring previous map change...',
       statusMessage: 'Undid the last map change.'
     });
     return true;
@@ -41647,9 +41716,8 @@ async function undoAllMapChanges() {
   const cleanMapTabs = extractUndoSnapshotTabs(cleanMapSnapshot);
   const cleanMapTab = cleanMapTabs && cleanMapTabs.map ? cleanMapTabs.map : null;
   try {
-    await restoreEditableSnapshot(cleanMapSnapshot, {
+    applyEditableSnapshotToCurrentBundle(cleanMapSnapshot, {
       undoHistory: buildUndoHistoryAfterScopedMapUndo(cleanMapTab, { removeAll: true }),
-      loadingText: 'Restoring clean map state...',
       statusMessage: 'Undid all unsaved map changes.'
     });
     return true;
