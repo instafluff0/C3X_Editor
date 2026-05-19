@@ -141,6 +141,37 @@
     return fixups;
   }
 
+  function collectGrasslandPlainsDesertCoastFixups(transitionQuartets, terrainEnum) {
+    if (!Array.isArray(transitionQuartets) || !terrainEnum) return [];
+    var fixupsByIndex = new Map();
+    transitionQuartets.forEach(function (quartet) {
+      if (!Array.isArray(quartet) || quartet.length === 0) return;
+      var hasGrassland = false;
+      var hasPlains = false;
+      var hasDesert = false;
+      var hasCoast = false;
+      quartet.forEach(function (entry) {
+        var terrain = Number(entry && entry.terrainCode);
+        if (terrain === terrainEnum.GRASSLAND) hasGrassland = true;
+        else if (terrain === terrainEnum.PLAINS) hasPlains = true;
+        else if (terrain === terrainEnum.DESERT) hasDesert = true;
+        else if (terrain === terrainEnum.COAST) hasCoast = true;
+      });
+      if (!(hasGrassland && hasPlains && hasDesert && hasCoast)) return;
+      var preferredOrder = [2, 1, 3, 0];
+      for (var i = 0; i < preferredOrder.length; i += 1) {
+        var entry = quartet[preferredOrder[i]];
+        var index = Number(entry && entry.index);
+        var terrain = Number(entry && entry.terrainCode);
+        if (!Number.isFinite(index) || index < 0) continue;
+        if (terrain !== terrainEnum.GRASSLAND) continue;
+        fixupsByIndex.set(index, { index: index, terrainCode: terrainEnum.PLAINS });
+        return;
+      }
+    });
+    return Array.from(fixupsByIndex.values());
+  }
+
   function resolveTerrainPaintCode(requestedTerrainCode, hasRiverConnection, terrainEnum) {
     var code = Number(requestedTerrainCode);
     if (!Number.isFinite(code) || !terrainEnum) return code;
@@ -148,9 +179,186 @@
     return hasRiverConnection ? terrainEnum.FLOODPLAIN : terrainEnum.DESERT;
   }
 
+  function sanitizeTerrainBonusMask(terrainCode, bonusMask, terrainEnum, tileBonusEnum) {
+    var code = Number(terrainCode);
+    var mask = Number(bonusMask) >>> 0;
+    if (!Number.isFinite(code) || !terrainEnum || !tileBonusEnum) return mask;
+    var allowed = 0;
+    if (
+      code === terrainEnum.DESERT
+      || code === terrainEnum.PLAINS
+      || code === terrainEnum.GRASSLAND
+      || code === terrainEnum.HILLS
+      || code === terrainEnum.MOUNTAIN
+      || code === terrainEnum.FOREST
+      || code === terrainEnum.SEA
+    ) {
+      allowed |= Number(tileBonusEnum.LANDMARK) >>> 0;
+    }
+    if (code === terrainEnum.GRASSLAND) allowed |= Number(tileBonusEnum.BONUS_GRASSLAND) >>> 0;
+    if (code === terrainEnum.FOREST) allowed |= Number(tileBonusEnum.PINE_FOREST) >>> 0;
+    if (code === terrainEnum.MOUNTAIN) allowed |= Number(tileBonusEnum.SNOW_CAPPED_MOUNTAIN) >>> 0;
+    return (mask & allowed) >>> 0;
+  }
+
+  var RIVER_MASK = {
+    NE: 2,
+    SE: 8,
+    SW: 32,
+    NW: 128
+  };
+
+  var RIVER_DIRECTIONS = [
+    { name: 'NE', dx: 1, dy: -1, mask: RIVER_MASK.NE, oppositeMask: RIVER_MASK.SW },
+    { name: 'SE', dx: 1, dy: 1, mask: RIVER_MASK.SE, oppositeMask: RIVER_MASK.NW },
+    { name: 'SW', dx: -1, dy: 1, mask: RIVER_MASK.SW, oppositeMask: RIVER_MASK.NE },
+    { name: 'NW', dx: -1, dy: -1, mask: RIVER_MASK.NW, oppositeMask: RIVER_MASK.SE }
+  ];
+
+  function getTileCoords(record) {
+    if (!record) return null;
+    var x = parseIntLoose(getField(record, 'xpos') && getField(record, 'xpos').value, NaN);
+    var y = parseIntLoose(getField(record, 'ypos') && getField(record, 'ypos').value, NaN);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { xPos: x, yPos: y };
+  }
+
+  function getRiverMask(record) {
+    return parseIntLoose(getField(record, 'riverconnectioninfo') && getField(record, 'riverconnectioninfo').value, 0) >>> 0;
+  }
+
+  function setRiverMask(record, mask) {
+    var next = Number(mask) >>> 0;
+    var current = getRiverMask(record);
+    if (next === current) return false;
+    setField(record, 'riverconnectioninfo', String(next), 'River Connection Info');
+    return true;
+  }
+
+  function decodeTerrain(record) {
+    var c3cPacked = getField(record, 'c3cbaserealterrain');
+    var legacyPacked = getField(record, 'baserealterrain');
+    var rawValue = c3cPacked && String(c3cPacked.value || '').trim()
+      ? c3cPacked.value
+      : (legacyPacked ? legacyPacked.value : '');
+    var packed = parseIntLoose(rawValue, 0) & 0xff;
+    if (packed >= 0 && packed <= 0x0f) return { baseTerrain: packed, realTerrain: packed };
+    return {
+      baseTerrain: packed & 0x0f,
+      realTerrain: (packed >>> 4) & 0x0f
+    };
+  }
+
+  function isWaterTile(record) {
+    return decodeTerrain(record).realTerrain >= 11;
+  }
+
+  function buildTileCoordLookup(records) {
+    var byCoord = new Map();
+    var indexByRecord = new Map();
+    var maxX = -1;
+    (Array.isArray(records) ? records : []).forEach(function (record, idx) {
+      if (!record) return;
+      var coords = getTileCoords(record);
+      if (!coords) return;
+      indexByRecord.set(record, idx);
+      byCoord.set(String(coords.xPos) + ',' + String(coords.yPos), record);
+      if (coords.xPos > maxX) maxX = coords.xPos;
+    });
+    return {
+      byCoord: byCoord,
+      indexByRecord: indexByRecord,
+      mapWidth: maxX + 1
+    };
+  }
+
+  function normalizeWrappedX(xPos, mapWidth) {
+    var width = Math.floor(Number(mapWidth) || 0);
+    if (width <= 0) return xPos;
+    var wrapped = xPos % width;
+    if (wrapped < 0) wrapped += width;
+    return wrapped;
+  }
+
+  function getNeighborRiverTile(lookup, coords, direction) {
+    if (!lookup || !lookup.byCoord || !coords || !direction) return null;
+    var xPos = normalizeWrappedX(coords.xPos + direction.dx, lookup.mapWidth);
+    var yPos = coords.yPos + direction.dy;
+    return lookup.byCoord.get(String(xPos) + ',' + String(yPos)) || null;
+  }
+
+  function connectRiverPair(tile, neighbor, direction, changedIndexes, indexByRecord) {
+    if (!tile || !neighbor || !direction) return false;
+    var changed = false;
+    var tileIndex = Number(indexByRecord && indexByRecord.get(tile));
+    var neighborIndex = Number(indexByRecord && indexByRecord.get(neighbor));
+    if (setRiverMask(tile, getRiverMask(tile) | direction.mask)) {
+      changed = true;
+      if (Number.isFinite(tileIndex) && changedIndexes) changedIndexes.add(tileIndex);
+    }
+    if (setRiverMask(neighbor, getRiverMask(neighbor) | direction.oppositeMask)) {
+      changed = true;
+      if (Number.isFinite(neighborIndex) && changedIndexes) changedIndexes.add(neighborIndex);
+    }
+    return changed;
+  }
+
+  function applyRiverOverlay(records, indexes, enabled) {
+    var selected = new Set((Array.isArray(indexes) ? indexes : []).filter(function (idx) {
+      return Number.isFinite(idx) && idx >= 0 && records && records[idx];
+    }));
+    if (selected.size === 0) return [];
+    var lookup = buildTileCoordLookup(records);
+    var changedIndexes = new Set();
+    if (!enabled) {
+      selected.forEach(function (idx) {
+        var tile = records[idx];
+        var coords = getTileCoords(tile);
+        if (!tile || !coords) return;
+        if (setRiverMask(tile, 0)) changedIndexes.add(idx);
+        RIVER_DIRECTIONS.forEach(function (direction) {
+          var neighbor = getNeighborRiverTile(lookup, coords, direction);
+          if (!neighbor) return;
+          var nextMask = getRiverMask(neighbor) & (~direction.oppositeMask);
+          if (setRiverMask(neighbor, nextMask)) {
+            var neighborIndex = Number(lookup.indexByRecord && lookup.indexByRecord.get(neighbor));
+            if (Number.isFinite(neighborIndex)) changedIndexes.add(neighborIndex);
+          }
+        });
+      });
+      return Array.from(changedIndexes);
+    }
+    selected.forEach(function (idx) {
+      var tile = records[idx];
+      var coords = getTileCoords(tile);
+      if (!tile || !coords || isWaterTile(tile)) return;
+      var connected = false;
+      RIVER_DIRECTIONS.forEach(function (direction) {
+        var neighbor = getNeighborRiverTile(lookup, coords, direction);
+        var neighborIndex = Number(neighbor && lookup.indexByRecord && lookup.indexByRecord.get(neighbor));
+        var shouldConnect = false;
+        if (neighbor && !isWaterTile(neighbor)) {
+          shouldConnect = selected.has(neighborIndex) || getRiverMask(neighbor) !== 0;
+        }
+        if (!shouldConnect) return;
+        if (connectRiverPair(tile, neighbor, direction, changedIndexes, lookup.indexByRecord)) connected = true;
+      });
+      if (connected || getRiverMask(tile) !== 0) return;
+      for (var i = 0; i < RIVER_DIRECTIONS.length; i += 1) {
+        var fallbackDirection = RIVER_DIRECTIONS[i];
+        var fallbackNeighbor = getNeighborRiverTile(lookup, coords, fallbackDirection);
+        if (!fallbackNeighbor || isWaterTile(fallbackNeighbor)) continue;
+        connectRiverPair(tile, fallbackNeighbor, fallbackDirection, changedIndexes, lookup.indexByRecord);
+        break;
+      }
+    });
+    return Array.from(changedIndexes);
+  }
+
   function overlayFieldKey(overlayType) {
     var key = String(overlayType || '').trim().toLowerCase();
     var map = {
+      river: { kind: 'river', field: 'riverconnectioninfo', label: 'River Connection Info' },
       road: { kind: 'mask', field: 'c3coverlays', mask: 0x00000001, label: 'C3C Overlays' },
       railroad: { kind: 'mask', field: 'c3coverlays', mask: 0x00000002, label: 'C3C Overlays' },
       mine: { kind: 'mask', field: 'c3coverlays', mask: 0x00000004, label: 'C3C Overlays' },
@@ -175,6 +383,7 @@
   function applyOverlay(records, indexes, overlayType, enabled) {
     var spec = overlayFieldKey(overlayType);
     if (!spec) return false;
+    if (spec.kind === 'river') return applyRiverOverlay(records, indexes, enabled).length > 0;
     var changed = false;
     indexes.forEach(function (idx) {
       var tile = records[idx];
@@ -328,7 +537,11 @@
     computeBrushTileIndexes: computeBrushTileIndexes,
     applyTerrain: applyTerrain,
     collectTundraTransitionNeighborFixups: collectTundraTransitionNeighborFixups,
+    collectGrasslandPlainsDesertCoastFixups: collectGrasslandPlainsDesertCoastFixups,
     resolveTerrainPaintCode: resolveTerrainPaintCode,
+    sanitizeTerrainBonusMask: sanitizeTerrainBonusMask,
+    RIVER_MASK: RIVER_MASK,
+    applyRiverOverlay: applyRiverOverlay,
     applyOverlay: applyOverlay,
     applyFog: applyFog,
     applyDistrict: applyDistrict,

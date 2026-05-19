@@ -472,7 +472,7 @@ textarea {
 
 .bool-toggle input[type="checkbox"] + span {
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 2px 8px 2px 0;
   transition: color 120ms ease, background-color 120ms ease, opacity 120ms ease;
   cursor: pointer;
 }
@@ -2276,6 +2276,38 @@ button.danger:hover {
   gap: 6px;
 }
 
+.biq-map-toolbar .map-terrain-variant-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.map-terrain-variant-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-terrain-variant-chip {
+  gap: 6px;
+}
+
+.map-terrain-variant-chip input[type="checkbox"] {
+  margin: 0;
+}
+
+.map-terrain-variant-chip input[type="checkbox"] + span {
+  border: 1px solid rgba(72, 84, 121, 0.18);
+  background: rgba(255, 255, 255, 0.94);
+  padding: 4px 12px;
+}
+
+.map-terrain-variant-empty {
+  color: #6f778f;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
 .biq-map-toolbar .map-toolbar-structured-picker .tech-picker {
   min-width: 190px;
 }
@@ -2359,7 +2391,10 @@ button.danger:hover {
   margin-top: -2px;
 }
 
-.map-tool-row > .bool-toggle:last-child {
+.map-display-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   margin-left: auto;
 }
 
@@ -2511,6 +2546,11 @@ button.danger:hover {
 
 .map-option-grid.resource {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.map-option-grid.terrain-variants {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: none;
 }
 
 .map-option-grid.district,
@@ -3275,6 +3315,37 @@ button.danger:hover {
 
 .biq-map-hover-tooltip.hidden {
   display: none;
+}
+
+.biq-map-tile-context-menu {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  display: block;
+}
+
+.biq-map-tile-context-menu.hidden {
+  display: none;
+}
+
+.biq-map-tile-context-menu .map-selection-category-context {
+  width: 180px;
+  min-width: 180px;
+  max-width: 180px;
+}
+
+.biq-map-tile-context-menu .map-selection-category-context.map-selection-category-context-collapsed {
+  width: 1px;
+  min-width: 1px;
+  max-width: 1px;
+  height: 1px;
+  min-height: 1px;
+  max-height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .biq-map-control-move-hint {

@@ -7,11 +7,14 @@ function makeTile(index, width) {
   const row = Math.floor(index / half);
   const x = ((index % half) * 2) + ((row & 1) === 1 ? 1 : 0);
   const y = row;
+  const terrain = packTerrain(2);
   return {
     index,
     fields: [
       { key: 'xpos', baseKey: 'xpos', value: String(x), originalValue: String(x) },
       { key: 'ypos', baseKey: 'ypos', value: String(y), originalValue: String(y) },
+      { key: 'baserealterrain', baseKey: 'baserealterrain', value: terrain, originalValue: terrain },
+      { key: 'c3cbaserealterrain', baseKey: 'c3cbaserealterrain', value: terrain, originalValue: terrain },
       { key: 'city', baseKey: 'city', value: '-1', originalValue: '-1' },
       { key: 'unit_on_tile', baseKey: 'unit_on_tile', value: '', originalValue: '' }
     ]
@@ -45,11 +48,12 @@ test('computeBrushTileIndexes keeps 3x3 paint brushes centered on Civ3 logical t
 
 test('applyTerrain writes baserealterrain and c3cbaserealterrain', () => {
   const tiles = [makeTile(0, 4), makeTile(1, 4), makeTile(2, 4)];
+  const untouched = packTerrain(2);
   mapCore.applyTerrain(tiles, [0, 2], 7);
   assert.equal(mapCore.getField(tiles[0], 'baserealterrain').value, packTerrain(7));
   assert.equal(mapCore.getField(tiles[0], 'c3cbaserealterrain').value, packTerrain(7));
   assert.equal(mapCore.getField(tiles[2], 'baserealterrain').value, packTerrain(7));
-  assert.equal(mapCore.getField(tiles[1], 'baserealterrain'), null);
+  assert.equal(mapCore.getField(tiles[1], 'baserealterrain').value, untouched);
 });
 
 test('collectTundraTransitionNeighborFixups forces tundra-adjacent plains and desert to grassland', () => {
@@ -90,9 +94,40 @@ test('collectTundraTransitionNeighborFixups forces tundra-adjacent plains and de
   ]);
 });
 
+test('collectGrasslandPlainsDesertCoastFixups promotes grassland edges to plains for invalid quartets', () => {
+  const BIQ_TERRAIN = {
+    DESERT: 0,
+    PLAINS: 1,
+    GRASSLAND: 2,
+    COAST: 11
+  };
+  const fixups = mapCore.collectGrasslandPlainsDesertCoastFixups([
+    [
+      { index: 10, terrainCode: BIQ_TERRAIN.DESERT },
+      { index: 11, terrainCode: BIQ_TERRAIN.PLAINS },
+      { index: 12, terrainCode: BIQ_TERRAIN.GRASSLAND },
+      { index: -1, terrainCode: BIQ_TERRAIN.COAST }
+    ],
+    [
+      { index: 20, terrainCode: BIQ_TERRAIN.DESERT },
+      { index: 21, terrainCode: BIQ_TERRAIN.GRASSLAND },
+      { index: 22, terrainCode: BIQ_TERRAIN.COAST },
+      { index: 23, terrainCode: BIQ_TERRAIN.PLAINS }
+    ]
+  ], BIQ_TERRAIN);
+  assert.deepEqual(fixups, [
+    { index: 12, terrainCode: BIQ_TERRAIN.PLAINS },
+    { index: 21, terrainCode: BIQ_TERRAIN.PLAINS }
+  ]);
+});
+
 test('resolveTerrainPaintCode only keeps floodplain on river tiles', () => {
   const BIQ_TERRAIN = {
     DESERT: 0,
+    PLAINS: 1,
+    GRASSLAND: 2,
+    FOREST: 7,
+    SEA: 12,
     FLOODPLAIN: 4
   };
   assert.equal(
@@ -106,6 +141,40 @@ test('resolveTerrainPaintCode only keeps floodplain on river tiles', () => {
   assert.equal(
     mapCore.resolveTerrainPaintCode(BIQ_TERRAIN.DESERT, true, BIQ_TERRAIN),
     BIQ_TERRAIN.DESERT
+  );
+});
+
+test('sanitizeTerrainBonusMask keeps only variants valid for the active terrain', () => {
+  const BIQ_TERRAIN = {
+    DESERT: 0,
+    PLAINS: 1,
+    GRASSLAND: 2,
+    MOUNTAIN: 6,
+    FOREST: 7,
+    SEA: 12
+  };
+  const BIQ_TILE_BONUS = {
+    BONUS_GRASSLAND: 0x01,
+    SNOW_CAPPED_MOUNTAIN: 0x10,
+    PINE_FOREST: 0x20,
+    LANDMARK: 0x2000
+  };
+  const all = BIQ_TILE_BONUS.BONUS_GRASSLAND | BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN | BIQ_TILE_BONUS.PINE_FOREST | BIQ_TILE_BONUS.LANDMARK;
+  assert.equal(
+    mapCore.sanitizeTerrainBonusMask(BIQ_TERRAIN.GRASSLAND, all, BIQ_TERRAIN, BIQ_TILE_BONUS),
+    BIQ_TILE_BONUS.BONUS_GRASSLAND | BIQ_TILE_BONUS.LANDMARK
+  );
+  assert.equal(
+    mapCore.sanitizeTerrainBonusMask(BIQ_TERRAIN.FOREST, all, BIQ_TERRAIN, BIQ_TILE_BONUS),
+    BIQ_TILE_BONUS.PINE_FOREST | BIQ_TILE_BONUS.LANDMARK
+  );
+  assert.equal(
+    mapCore.sanitizeTerrainBonusMask(BIQ_TERRAIN.MOUNTAIN, all, BIQ_TERRAIN, BIQ_TILE_BONUS),
+    BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN | BIQ_TILE_BONUS.LANDMARK
+  );
+  assert.equal(
+    mapCore.sanitizeTerrainBonusMask(BIQ_TERRAIN.SEA, all, BIQ_TERRAIN, BIQ_TILE_BONUS),
+    BIQ_TILE_BONUS.LANDMARK
   );
 });
 
@@ -131,6 +200,49 @@ test('applyOverlay supports special ruin/victory values', () => {
   mapCore.applyOverlay(tiles, [0], 'victorypoint', true);
   assert.equal(mapCore.getField(tiles[0], 'ruin').value, '1');
   assert.equal(mapCore.getField(tiles[0], 'victorypointlocation').value, '0');
+});
+
+test('applyRiverOverlay connects selected and existing neighboring river tiles reciprocally', () => {
+  const width = 6;
+  const tiles = Array.from({ length: 9 }, (_unused, idx) => makeTile(idx, width));
+  const center = 4;
+  const ne = 2;
+  const se = 8;
+  mapCore.setField(tiles[ne], 'riverconnectioninfo', String(mapCore.RIVER_MASK.SW), 'River Connection Info');
+
+  const changed = mapCore.applyRiverOverlay(tiles, [center, se], true);
+
+  assert.deepEqual(new Set(changed), new Set([center, se]));
+  assert.equal(
+    Number.parseInt(mapCore.getField(tiles[center], 'riverconnectioninfo').value, 10) >>> 0,
+    mapCore.RIVER_MASK.NE | mapCore.RIVER_MASK.SE
+  );
+  assert.equal(
+    Number.parseInt(mapCore.getField(tiles[ne], 'riverconnectioninfo').value, 10) >>> 0,
+    mapCore.RIVER_MASK.SW
+  );
+  assert.equal(
+    Number.parseInt(mapCore.getField(tiles[se], 'riverconnectioninfo').value, 10) >>> 0,
+    mapCore.RIVER_MASK.NW
+  );
+});
+
+test('applyRiverOverlay removal clears reciprocal bits on neighboring tiles', () => {
+  const width = 6;
+  const tiles = Array.from({ length: 9 }, (_unused, idx) => makeTile(idx, width));
+  const center = 4;
+  const ne = 2;
+  const se = 8;
+  mapCore.setField(tiles[center], 'riverconnectioninfo', String(mapCore.RIVER_MASK.NE | mapCore.RIVER_MASK.SE), 'River Connection Info');
+  mapCore.setField(tiles[ne], 'riverconnectioninfo', String(mapCore.RIVER_MASK.SW), 'River Connection Info');
+  mapCore.setField(tiles[se], 'riverconnectioninfo', String(mapCore.RIVER_MASK.NW), 'River Connection Info');
+
+  const changed = mapCore.applyRiverOverlay(tiles, [center], false);
+
+  assert.deepEqual(new Set(changed), new Set([center, ne, se]));
+  assert.equal(Number.parseInt(mapCore.getField(tiles[center], 'riverconnectioninfo').value, 10) >>> 0, 0);
+  assert.equal(Number.parseInt(mapCore.getField(tiles[ne], 'riverconnectioninfo').value, 10) >>> 0, 0);
+  assert.equal(Number.parseInt(mapCore.getField(tiles[se], 'riverconnectioninfo').value, 10) >>> 0, 0);
 });
 
 test('applyFog writes fogofwar as 0 for add, 1 for remove', () => {
@@ -233,10 +345,11 @@ test('applyOverlay ignores unknown overlay types', () => {
 
 test('applyTerrain ignores invalid terrain codes', () => {
   const tile = makeTile(0, 4);
+  const original = mapCore.getField(tile, 'baserealterrain').value;
   mapCore.applyTerrain([tile], [0], -1);
-  assert.equal(mapCore.getField(tile, 'baserealterrain'), null);
+  assert.equal(mapCore.getField(tile, 'baserealterrain').value, original);
   mapCore.applyTerrain([tile], [0], 'abc');
-  assert.equal(mapCore.getField(tile, 'baserealterrain'), null);
+  assert.equal(mapCore.getField(tile, 'baserealterrain').value, original);
 });
 
 test('applyDistrict ignores invalid type while enabled', () => {

@@ -39,8 +39,13 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const drawPaintPreview = \(hit\) => \{[\s\S]*?const previewIndexes = getBrushTileIndexes\(hit\.index\);[\s\S]*?previewIndexes\.forEach\(\(tileIdx\) => \{[\s\S]*?hoverCtx\.globalAlpha = 0\.52;[\s\S]*?drawTerrainSpriteToContext\(hoverCtx, previewRecord, geom, sx, diamondTop, tileW, tileH\)[\s\S]*?hoverCtx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, dx, dy, Math\.round\(cellW \* scale\), Math\.round\(cellH \* scale\)\)[\s\S]*?drawSheetSpriteScaledToContext\(hoverCtx, state\.biqMapArtCache\.roads, 16, 16, 0, sx, midY, tileW, tileH\)[\s\S]*?drawDistrictOverlay\(hoverCtx, previewRecord, geom, sx, sy, 'all'\);/,
-    'paint preview should render semi-transparent previews across the whole brush footprint for terrain, resources, overlays, and district art'
+    /const drawPaintPreview = \(hit\) => \{[\s\S]*?const previewIndexes = getBrushTileIndexes\(hit\.index\);[\s\S]*?previewIndexes\.forEach\(\(tileIdx\) => \{[\s\S]*?hoverCtx\.globalAlpha = 0\.52;[\s\S]*?drawTerrainSpriteToContext\(hoverCtx, previewRecord, geom, sx, sy, tileW, tileH\)[\s\S]*?hoverCtx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, dx, dy, Math\.round\(cellW \* scale\), Math\.round\(cellH \* scale\)\)[\s\S]*?drawDistrictOverlay\(hoverCtx, previewRecord, geom, sx, sy, 'all'\);/,
+    'paint preview should render semi-transparent previews across the whole brush footprint for terrain, resources, and district art'
+  );
+  assert.match(
+    rendererText,
+    /if \(mode === 'overlay'\) \{[\s\S]*?(drawSheetSpriteScaledToContext\(hoverCtx, state\.biqMapArtCache\.mtnRivers, 4, 4, 15, sx, midY, tileW, tileH\)|drawSheetSpriteScaledToContext\(hoverCtx, state\.biqMapArtCache\.roads, 16, 16, 0, sx, midY, tileW, tileH\))[\s\S]*?hoverCtx\.restore\(\);[\s\S]*?return;/,
+    'paint preview should render river and other overlay previews directly inside hovered tiles'
   );
   assert.match(
     rendererText,

@@ -108,6 +108,7 @@ const state = {
   biqMapZoom: 6,
   biqMapLayer: 'terrain',
   biqMapShowGrid: false,
+  biqMapShowLandmarks: true,
   biqMapShowOverlays: true,
   biqMapShowCityNames: true,
   biqMapSelectedTile: -1,
@@ -192,6 +193,10 @@ const state = {
     paintCategory: 'terrain',
     diameter: 1,
     terrainCode: 0,
+    terrainVariantLandmark: false,
+    terrainVariantBonusGrassland: false,
+    terrainVariantPineForest: false,
+    terrainVariantSnowCappedMountain: false,
     overlayType: 'road',
     resourceType: -1,
     fogMode: 'add',
@@ -649,6 +654,7 @@ const BIQ_TERRAIN = {
   OCEAN: 13
 };
 const BIQ_TILE_BONUS = {
+  BONUS_GRASSLAND: 0x01,
   SNOW_CAPPED_MOUNTAIN: 0x10,
   PINE_FOREST: 0x20,
   LANDMARK: 0x2000
@@ -4274,6 +4280,7 @@ function captureViewSnapshot() {
     biqMapLayer: String(state.biqMapLayer || 'terrain'),
     biqMapZoom: Number(state.biqMapZoom || 6),
     biqMapShowGrid: !!state.biqMapShowGrid,
+    biqMapShowLandmarks: state.biqMapShowLandmarks !== false,
     biqMapShowOverlays: state.biqMapShowOverlays !== false,
     biqMapShowCityNames: state.biqMapShowCityNames !== false,
     mapModalOpen: isMapModalVisible,
@@ -4473,6 +4480,7 @@ function applyViewSnapshot(snapshot) {
   state.biqMapLayer = String(snapshot.biqMapLayer || 'terrain');
   state.biqMapZoom = Number.isFinite(snapshot.biqMapZoom) ? snapshot.biqMapZoom : state.biqMapZoom;
   state.biqMapShowGrid = !!snapshot.biqMapShowGrid;
+  state.biqMapShowLandmarks = snapshot.biqMapShowLandmarks !== false;
   state.biqMapShowOverlays = snapshot.biqMapShowOverlays !== false;
   state.biqMapShowCityNames = snapshot.biqMapShowCityNames !== false;
   state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, snapshot.mapEditorTool || {});
@@ -28932,6 +28940,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   if (floatingUi) container.classList.add('floating-ui');
   appendDebugLog('biq-map:open', { sectionId: tileSection && tileSection.id, sourcePath: tab && tab.sourcePath });
   const rerenderMapView = () => {
+    appendDebugLog('biq-map:rerender-request', {
+      source: options && options.inModal ? 'modal-body' : 'active-tab',
+      mode: String(state.mapEditorTool && state.mapEditorTool.mode || ''),
+      interactionMode: String(state.mapEditorTool && state.mapEditorTool.interactionMode || '')
+    });
     if (options && options.inModal) {
       renderMapModalBody();
       return;
@@ -28944,6 +28957,50 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const width = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
   const height = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
   const tiles = Array.isArray(tileSection.records) ? tileSection.records : [];
+  const summarizeTileIndexes = (indexes, limit = 12) => {
+    const raw = Array.isArray(indexes) ? indexes : Array.from(indexes || []);
+    const normalized = raw
+      .map((value) => parseIntLoose(value, NaN))
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    const unique = Array.from(new Set(normalized));
+    return {
+      count: unique.length,
+      indexes: unique.slice(0, limit),
+      tiles: unique.slice(0, limit).map((idx) => {
+        const geom = tileGeom[idx] || null;
+        return {
+          index: idx,
+          xPos: geom ? geom.xPos : null,
+          yPos: geom ? geom.yPos : null
+        };
+      }),
+      truncated: unique.length > limit
+    };
+  };
+  const summarizeRects = (rects, limit = 8) => {
+    const list = Array.isArray(rects) ? rects : [];
+    return {
+      count: list.length,
+      rects: list.slice(0, limit).map((rect) => ({
+        x: Math.round(Number(rect && rect.x) || 0),
+        y: Math.round(Number(rect && rect.y) || 0),
+        w: Math.round(Number(rect && rect.w) || 0),
+        h: Math.round(Number(rect && rect.h) || 0)
+      })),
+      truncated: list.length > limit
+    };
+  };
+  const describePaintToolState = () => ({
+    mode: String(state.mapEditorTool && state.mapEditorTool.mode || ''),
+    interactionMode: String(state.mapEditorTool && state.mapEditorTool.interactionMode || ''),
+    paintCategory: String(state.mapEditorTool && state.mapEditorTool.paintCategory || ''),
+    diameter: parseIntLoose(state.mapEditorTool && state.mapEditorTool.diameter, 1),
+    terrainCode: parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, -1),
+    overlayType: String(state.mapEditorTool && state.mapEditorTool.overlayType || ''),
+    resourceType: parseIntLoose(state.mapEditorTool && state.mapEditorTool.resourceType, -1),
+    remove: !!(state.mapEditorTool && state.mapEditorTool.remove),
+    fogMode: String(state.mapEditorTool && state.mapEditorTool.fogMode || '')
+  });
 
   if (!width || !height || tiles.length === 0) {
     const note = document.createElement('p');
@@ -29010,6 +29067,32 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   gridWrap.appendChild(grid);
   gridWrap.appendChild(gridText);
 
+  const landmarksWrap = document.createElement('label');
+  landmarksWrap.className = 'bool-toggle';
+  landmarksWrap.title = 'Show Landmark markers';
+  const landmarksToggle = document.createElement('input');
+  landmarksToggle.type = 'checkbox';
+  landmarksToggle.checked = state.biqMapShowLandmarks !== false;
+  const setMapLandmarksVisible = (nextVisible, source = 'ui') => {
+    const enabled = !!nextVisible;
+    if (state.biqMapShowLandmarks === enabled && landmarksToggle.checked === enabled) return;
+    state.biqMapShowLandmarks = enabled;
+    landmarksToggle.checked = enabled;
+    appendDebugLog('biq-map:landmarks-toggle', { enabled: state.biqMapShowLandmarks, source });
+    rerenderMapView();
+  };
+  landmarksToggle.addEventListener('change', () => {
+    setMapLandmarksVisible(landmarksToggle.checked, 'checkbox');
+  });
+  const landmarksText = document.createElement('span');
+  landmarksText.textContent = 'Show Landmarks';
+  landmarksWrap.appendChild(landmarksToggle);
+  landmarksWrap.appendChild(landmarksText);
+  const displayTogglesWrap = document.createElement('div');
+  displayTogglesWrap.className = 'map-display-toggles';
+  displayTogglesWrap.appendChild(gridWrap);
+  displayTogglesWrap.appendChild(landmarksWrap);
+
   const tool = state.mapEditorTool || (state.mapEditorTool = {});
   const paintModeCategories = ['terrain', 'overlay', 'resource', 'district', 'visibility'];
   if (!tool.mode) tool.mode = 'select';
@@ -29026,6 +29109,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   tool.mode = tool.interactionMode === 'paint' ? tool.paintCategory : tool.interactionMode;
   if (!Number.isFinite(Number(tool.diameter))) tool.diameter = 1;
   if (!Number.isFinite(Number(tool.terrainCode))) tool.terrainCode = 0;
+  if (typeof tool.terrainVariantLandmark !== 'boolean') tool.terrainVariantLandmark = false;
+  if (typeof tool.terrainVariantBonusGrassland !== 'boolean') tool.terrainVariantBonusGrassland = false;
+  if (typeof tool.terrainVariantPineForest !== 'boolean') tool.terrainVariantPineForest = false;
+  if (typeof tool.terrainVariantSnowCappedMountain !== 'boolean') tool.terrainVariantSnowCappedMountain = false;
   if (!tool.overlayType) tool.overlayType = 'road';
   if (!Number.isFinite(Number(tool.resourceType))) tool.resourceType = -1;
   if (!tool.fogMode) tool.fogMode = 'add';
@@ -29133,6 +29220,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const toolRow = document.createElement('div');
   toolRow.className = 'biq-map-toolbar map-tool-row';
   const mapPaintOverlayOptions = [
+    { value: 'river', label: 'River', artName: 'River', icon: '≈', kind: 'river', field: 'riverconnectioninfo' },
     { value: 'road', label: 'Road', artName: 'Road', icon: '🛣', kind: 'mask', field: 'c3coverlays', mask: 0x00000001 },
     { value: 'railroad', label: 'Railroad', artName: 'Railroad', icon: '🚆', kind: 'mask', field: 'c3coverlays', mask: 0x00000002 },
     { value: 'mine', label: 'Mine', artName: 'Mine', icon: '⛏', kind: 'mask', field: 'c3coverlays', mask: 0x00000004 },
@@ -29180,6 +29268,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   let tabModeFlashTimer = 0;
   let mapEditRerenderTimer = 0;
   let mapToolTimingCounter = 0;
+  let terrainVariantHelpersReady = false;
   let refreshMapToolChrome = () => {};
   let refreshMapInteractionOverlay = () => {};
   let renderTileInfoPanel = () => {};
@@ -29361,9 +29450,77 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     onJump: (hit) => navigateToTerrainRecordSelection(hit),
     onSelect: (value) => {
       state.mapEditorTool.terrainCode = parseIntLoose(value, 0);
+      syncMapToolTerrainVariants(state.mapEditorTool.terrainCode);
+      refreshMapToolChrome();
     }
   });
   toolRow.appendChild(terrainWrap);
+
+  const terrainVariantWrap = document.createElement('div');
+  terrainVariantWrap.className = 'map-terrain-variant-wrap';
+  const terrainVariantControls = document.createElement('div');
+  terrainVariantControls.className = 'map-terrain-variant-controls';
+  terrainVariantWrap.appendChild(terrainVariantControls);
+  const setMapToolTerrainVariant = (key, enabled) => {
+    if (!state.mapEditorTool) return;
+    state.mapEditorTool[key] = !!enabled;
+    syncMapToolTerrainVariants(state.mapEditorTool.terrainCode);
+    refreshMapToolChrome();
+  };
+  const rebuildTerrainVariantToolbar = () => {
+    terrainVariantControls.innerHTML = '';
+    const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, BIQ_TERRAIN.GRASSLAND);
+    syncMapToolTerrainVariants(terrainCode);
+    const variantSpecs = [
+      {
+        key: 'terrainVariantLandmark',
+        label: 'Landmark',
+        enabled: terrainSupportsLandmark(terrainCode),
+        checked: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantLandmark)
+      },
+      {
+        key: 'terrainVariantBonusGrassland',
+        label: 'Bonus Grassland',
+        enabled: terrainSupportsBonusGrassland(terrainCode),
+        checked: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantBonusGrassland)
+      },
+      {
+        key: 'terrainVariantPineForest',
+        label: 'Pine Forest',
+        enabled: terrainSupportsPineForest(terrainCode),
+        checked: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantPineForest)
+      },
+      {
+        key: 'terrainVariantSnowCappedMountain',
+        label: 'Snow-Capped',
+        enabled: terrainSupportsSnowCappedMountain(terrainCode),
+        checked: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantSnowCappedMountain)
+      }
+    ].filter((spec) => spec.enabled);
+    if (!variantSpecs.length) {
+      const none = document.createElement('span');
+      none.className = 'map-terrain-variant-empty';
+      none.textContent = 'No variants';
+      terrainVariantControls.appendChild(none);
+      return;
+    }
+    variantSpecs.forEach((spec) => {
+      const chip = document.createElement('label');
+      chip.className = 'bool-toggle map-terrain-variant-chip';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = spec.checked;
+      input.addEventListener('change', () => {
+        setMapToolTerrainVariant(spec.key, input.checked);
+      });
+      const text = document.createElement('span');
+      text.textContent = spec.label;
+      chip.appendChild(input);
+      chip.appendChild(text);
+      terrainVariantControls.appendChild(chip);
+    });
+  };
+  toolRow.appendChild(terrainVariantWrap);
 
   const overlayPickerOptions = mapPaintOverlayOptions.map((spec) => {
     const found = findTerrainPreviewEntry(String(spec && (spec.artName || spec.label) || ''));
@@ -29645,7 +29802,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   toolRow.appendChild(unitWrap);
 
-  toolRow.appendChild(gridWrap);
+  toolRow.appendChild(displayTogglesWrap);
 
   const showForMode = (elNode, modes) => {
     elNode.classList.toggle('hidden', !modes.includes(getEffectiveToolMode()));
@@ -29667,7 +29824,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       categoryWrap.remove();
     }
     sizeWrap.classList.toggle('hidden', interactionMode !== 'paint');
+    if (terrainVariantHelpersReady) {
+      rebuildTerrainVariantToolbar();
+      terrainVariantWrap.classList.remove('hidden');
+    } else {
+      terrainVariantWrap.classList.add('hidden');
+    }
     showForMode(terrainWrap, ['terrain']);
+    showForMode(terrainVariantWrap, ['terrain']);
     showForMode(overlayWrap, ['overlay']);
     showForMode(resourceWrap, ['resource']);
     showForMode(fogWrap, ['visibility', 'fog']);
@@ -29856,8 +30020,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   };
   mapPane.addEventListener('pointerdown', (ev) => {
+    if (isTileContextMenuOpen() && !tileContextMenu.contains(ev.target)) {
+      closeTileContextMenu();
+    }
     container.focus({ preventScroll: true });
     if (ev.button !== 0) return;
+    if (ev.ctrlKey && isTileContextMenuOpen()) {
+      closeTileContextMenu();
+      setControlMoveActive(true);
+    }
     const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
     const interactionMode = getEffectiveInteractionMode();
     if (interactionMode !== 'move') {
@@ -30065,15 +30236,24 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     flashTabModeHint();
     timing.end('tab-cycle-complete', { nextMode });
   };
-  const mapControlKeyTargetIsEditable = (target) => !!(target && (
-    target.tagName === 'INPUT'
-    || target.tagName === 'SELECT'
-    || target.tagName === 'TEXTAREA'
-    || target.isContentEditable
-  ));
+  const mapControlKeyTargetIsEditable = (target) => {
+    if (!target) return false;
+    if (target.classList && target.classList.contains('map-selection-category-context')) return false;
+    return !!(
+      target.tagName === 'INPUT'
+      || target.tagName === 'SELECT'
+      || target.tagName === 'TEXTAREA'
+      || target.isContentEditable
+    );
+  };
   const onMapControlKeyDown = (ev) => {
-    if (mapControlKeyTargetIsEditable(ev.target)) return;
     if (ev.key !== 'Control') return;
+    if (isTileContextMenuOpen()) {
+      closeTileContextMenu();
+      setControlMoveActive(true);
+      return;
+    }
+    if (mapControlKeyTargetIsEditable(ev.target)) return;
     setControlMoveActive(true);
   };
   const onMapControlKeyUp = (ev) => {
@@ -30338,6 +30518,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('grasslandForests', 'Art/Terrain/grassland forests.pcx');
   requestBiqMapArtAsset('plainsForests', 'Art/Terrain/plains forests.pcx');
   requestBiqMapArtAsset('tundraForests', 'Art/Terrain/tundra forests.pcx');
+  requestBiqMapArtAsset('lmForests', 'Art/Terrain/LMForests.pcx');
   requestBiqMapArtAsset('territory', 'Art/Terrain/Territory.pcx', { transparentIndexes: [1, 254, 255] });
   requestBiqMapArtAsset('hills', 'Art/Terrain/xhills.pcx');
   requestBiqMapArtAsset('lmHills', 'Art/Terrain/LMHills.pcx');
@@ -30355,6 +30536,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('mtnRivers', 'Art/Terrain/mtnRivers.pcx');
   requestBiqMapArtAsset('deltaRivers', 'Art/Terrain/deltaRivers.pcx');
   requestBiqMapArtAsset('floodplains', 'Art/Terrain/floodplains.pcx');
+  requestBiqMapArtAsset('tntTerrain', 'Art/Terrain/tnt.pcx');
   requestBiqMapArtAsset('marsh', 'Art/Terrain/marsh.pcx');
   requestBiqMapArtAsset('goodyHuts', 'Art/Terrain/goodyhuts.pcx');
   requestBiqMapArtAsset('pollution', 'Art/Terrain/pollution.pcx');
@@ -31036,12 +31218,20 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       addAt(geom.xPos - 1, geom.yPos + 1);
       addAt(geom.xPos, geom.yPos + 2);
     });
+    appendDebugLog('biq-map:terrain-recalc-start', {
+      seedSummary: summarizeTileIndexes(seedIndexes),
+      targetCount: targets.size
+    });
     targets.forEach((coordKey) => {
       const [xRaw, yRaw] = String(coordKey).split(',');
       const x = Number(xRaw);
       const y = Number(yRaw);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
       recalculateTerrainFileAndImageAt(x, y);
+    });
+    appendDebugLog('biq-map:terrain-recalc-end', {
+      seedSummary: summarizeTileIndexes(seedIndexes),
+      targetCount: targets.size
     });
   };
 
@@ -31288,6 +31478,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const cleared = current & (~0xE0000000);
     if (cleared !== current) setMapFieldValue(tile, 'c3coverlays', String(cleared >>> 0), 'C3C Overlays');
   };
+  const applyRiverOverlayToIndexes = (indexes, enabled) => {
+    if (!mapCore || typeof mapCore.applyRiverOverlay !== 'function') return [];
+    return mapCore.applyRiverOverlay(tiles, indexes, enabled);
+  };
   const removeColonyByIndex = (colonyIndex) => {
     const idx = Number(colonyIndex);
     if (!Number.isFinite(idx) || idx < 0 || !colonySection || !Array.isArray(colonySection.records)) return false;
@@ -31491,25 +31685,67 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const applyBrushAtIndex = (centerIndex) => {
     if (!isScenarioMode()) return false;
-    const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
-    if (mode === 'select') return false;
+    const interactionMode = String(state.mapEditorTool && state.mapEditorTool.interactionMode || 'select');
+    if (interactionMode !== 'paint') return false;
+    const mode = String(state.mapEditorTool && state.mapEditorTool.paintCategory || 'terrain');
     const indices = getBrushTileIndexes(centerIndex);
     if (indices.length === 0) return false;
+    const centerGeom = tileGeom[centerIndex] || null;
+    appendDebugLog('biq-map:paint-apply-start', {
+      ...describePaintToolState(),
+      resolvedPaintMode: mode,
+      centerIndex,
+      centerTile: centerGeom ? { xPos: centerGeom.xPos, yPos: centerGeom.yPos } : null,
+      brushSummary: summarizeTileIndexes(indices)
+    });
     if (mode === 'terrain') {
       const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
-      const changedIndexes = smartApplyTerrainToIndexes(indices, terrainCode);
+      const variantMask = terrainBonusMaskFromVariantState(terrainCode, getMapToolTerrainVariantState(terrainCode));
+      const changedIndexes = smartApplyTerrainToIndexes(indices, terrainCode, variantMask);
       recalculateTerrainFileImageAround(changedIndexes);
+      appendDebugLog('biq-map:paint-apply-result', {
+        mode,
+        terrainCode,
+        variantMask,
+        changedSummary: summarizeTileIndexes(changedIndexes)
+      });
       return true;
     }
     if (mode === 'overlay') {
       const overlayType = String(state.mapEditorTool && state.mapEditorTool.overlayType || 'road');
       const enabled = !(state.mapEditorTool && state.mapEditorTool.remove);
       const overlaySpec = mapInfoOverlayOptions.find((spec) => spec.value === overlayType) || null;
+      if (overlaySpec && overlaySpec.kind === 'river') {
+        const changedIndexes = applyRiverOverlayToIndexes(indices, enabled);
+        const changed = changedIndexes.length > 0;
+        appendDebugLog('biq-map:paint-apply-result', {
+          mode,
+          overlayType,
+          enabled,
+          changed,
+          changedSummary: summarizeTileIndexes(changedIndexes)
+        });
+        return changed;
+      }
       if (overlaySpec && overlaySpec.kind === 'colony') {
-        return applyColonyOverlayToIndexes(indices, overlaySpec, enabled);
+        const changed = applyColonyOverlayToIndexes(indices, overlaySpec, enabled);
+        appendDebugLog('biq-map:paint-apply-result', {
+          mode,
+          overlayType,
+          enabled,
+          changed
+        });
+        return changed;
       }
       if (mapCore && typeof mapCore.applyOverlay === 'function') {
-        return !!mapCore.applyOverlay(tiles, indices, overlayType, enabled);
+        const changed = !!mapCore.applyOverlay(tiles, indices, overlayType, enabled);
+        appendDebugLog('biq-map:paint-apply-result', {
+          mode,
+          overlayType,
+          enabled,
+          changed
+        });
+        return changed;
       }
       return false;
     }
@@ -31520,6 +31756,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         if (!tiles[idx]) return;
         setMapFieldValue(tiles[idx], 'resource', remove ? '-1' : String(resourceId), 'Resource');
       });
+      appendDebugLog('biq-map:paint-apply-result', {
+        mode,
+        resourceId,
+        remove,
+        changedSummary: summarizeTileIndexes(indices)
+      });
       return true;
     }
     if (mode === 'visibility' || mode === 'fog') {
@@ -31529,6 +31771,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       } else {
         indices.forEach((idx) => setMapFieldValue(tiles[idx], 'fogofwar', addFog ? '0' : '1', 'Fog Of War'));
       }
+      appendDebugLog('biq-map:paint-apply-result', {
+        mode,
+        addFog,
+        changedSummary: summarizeTileIndexes(indices)
+      });
       return true;
     }
     if (mode === 'startingLocation') {
@@ -31544,6 +31791,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           return;
         }
         if (addStartingLocationAtCoords(g.xPos, g.yPos, owner, ownerType)) changed = true;
+      });
+      appendDebugLog('biq-map:paint-apply-result', {
+        mode,
+        owner,
+        ownerType,
+        remove,
+        changed
       });
       return changed;
     }
@@ -31731,6 +31985,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return (c3cOverlays & mask) === mask;
   };
 
+  const getTileRiverMask = (record) => parseIntLoose(
+    (getFieldByBaseKey(record, 'riverconnectioninfo') || getFieldByBaseKey(record, 'river_connection_info'))?.value,
+    0
+  ) >>> 0;
+
   const decodePackedTerrain = (rawValue) => {
     const parsed = parseIntLoose(rawValue, NaN);
     if (!Number.isFinite(parsed)) return { baseTerrain: BIQ_TERRAIN.GRASSLAND, realTerrain: BIQ_TERRAIN.GRASSLAND };
@@ -31748,6 +32007,97 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (String(c3cPacked || '').trim()) return decodePackedTerrain(c3cPacked);
     if (String(legacyPacked || '').trim()) return decodePackedTerrain(legacyPacked);
     return { baseTerrain: BIQ_TERRAIN.GRASSLAND, realTerrain: BIQ_TERRAIN.GRASSLAND };
+  };
+
+  const getTileBonusMask = (record) => parseIntLoose(getFieldByBaseKey(record, 'c3cbonuses')?.value, 0) >>> 0;
+
+  const terrainSupportsLandmark = (terrainCode) => (
+    terrainCode === BIQ_TERRAIN.DESERT
+    || terrainCode === BIQ_TERRAIN.PLAINS
+    || terrainCode === BIQ_TERRAIN.GRASSLAND
+    || terrainCode === BIQ_TERRAIN.HILLS
+    || terrainCode === BIQ_TERRAIN.MOUNTAIN
+    || terrainCode === BIQ_TERRAIN.FOREST
+    || terrainCode === BIQ_TERRAIN.SEA
+  );
+
+  const terrainSupportsBonusGrassland = (terrainCode) => terrainCode === BIQ_TERRAIN.GRASSLAND;
+  const terrainSupportsPineForest = (terrainCode) => terrainCode === BIQ_TERRAIN.FOREST;
+  const terrainSupportsSnowCappedMountain = (terrainCode) => terrainCode === BIQ_TERRAIN.MOUNTAIN;
+
+  const sanitizeTerrainBonusMask = (terrainCode, bonusMask) => {
+    const code = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
+    const mask = parseIntLoose(bonusMask, 0) >>> 0;
+    if (mapCore && typeof mapCore.sanitizeTerrainBonusMask === 'function') {
+      return mapCore.sanitizeTerrainBonusMask(code, mask, BIQ_TERRAIN, BIQ_TILE_BONUS) >>> 0;
+    }
+    let allowed = 0;
+    if (terrainSupportsLandmark(code)) allowed |= BIQ_TILE_BONUS.LANDMARK;
+    if (terrainSupportsBonusGrassland(code)) allowed |= BIQ_TILE_BONUS.BONUS_GRASSLAND;
+    if (terrainSupportsPineForest(code)) allowed |= BIQ_TILE_BONUS.PINE_FOREST;
+    if (terrainSupportsSnowCappedMountain(code)) allowed |= BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN;
+    return (mask & allowed) >>> 0;
+  };
+
+  const terrainVariantStateFromBonusMask = (terrainCode, bonusMask) => {
+    const safeMask = sanitizeTerrainBonusMask(terrainCode, bonusMask);
+    return {
+      landmark: (safeMask & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK,
+      bonusGrassland: (safeMask & BIQ_TILE_BONUS.BONUS_GRASSLAND) === BIQ_TILE_BONUS.BONUS_GRASSLAND,
+      pineForest: (safeMask & BIQ_TILE_BONUS.PINE_FOREST) === BIQ_TILE_BONUS.PINE_FOREST,
+      snowCappedMountain: (safeMask & BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN) === BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN
+    };
+  };
+
+  const terrainVariantStateForTile = (record, terrainCode = null) => {
+    const info = terrainCode == null ? terrainInfo(record) : { realTerrain: parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND) };
+    return terrainVariantStateFromBonusMask(info.realTerrain, getTileBonusMask(record));
+  };
+
+  const terrainBonusMaskFromVariantState = (terrainCode, variantState) => {
+    let mask = 0;
+    if (variantState && variantState.landmark) mask |= BIQ_TILE_BONUS.LANDMARK;
+    if (variantState && variantState.bonusGrassland) mask |= BIQ_TILE_BONUS.BONUS_GRASSLAND;
+    if (variantState && variantState.pineForest) mask |= BIQ_TILE_BONUS.PINE_FOREST;
+    if (variantState && variantState.snowCappedMountain) mask |= BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN;
+    return sanitizeTerrainBonusMask(terrainCode, mask);
+  };
+
+  const getMapToolTerrainVariantState = (terrainCode = null) => {
+    const code = parseIntLoose(
+      terrainCode == null ? (state.mapEditorTool && state.mapEditorTool.terrainCode) : terrainCode,
+      BIQ_TERRAIN.GRASSLAND
+    );
+    return terrainVariantStateFromBonusMask(code, terrainBonusMaskFromVariantState(code, {
+      landmark: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantLandmark),
+      bonusGrassland: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantBonusGrassland),
+      pineForest: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantPineForest),
+      snowCappedMountain: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantSnowCappedMountain)
+    }));
+  };
+
+  const syncMapToolTerrainVariants = (terrainCode = null) => {
+    const code = parseIntLoose(
+      terrainCode == null ? (state.mapEditorTool && state.mapEditorTool.terrainCode) : terrainCode,
+      BIQ_TERRAIN.GRASSLAND
+    );
+    const nextState = getMapToolTerrainVariantState(code);
+    state.mapEditorTool.terrainVariantLandmark = nextState.landmark;
+    state.mapEditorTool.terrainVariantBonusGrassland = nextState.bonusGrassland;
+    state.mapEditorTool.terrainVariantPineForest = nextState.pineForest;
+    state.mapEditorTool.terrainVariantSnowCappedMountain = nextState.snowCappedMountain;
+  };
+  terrainVariantHelpersReady = true;
+
+  const setTileBonusMask = (tileIndex, terrainCode, bonusMask, changedIndexes) => {
+    const tile = tiles[tileIndex];
+    if (!tile) return false;
+    const nextMask = sanitizeTerrainBonusMask(terrainCode, bonusMask);
+    const currentMask = getTileBonusMask(tile);
+    if (currentMask === nextMask) return false;
+    setMapFieldValue(tile, 'c3cbonuses', String(nextMask >>> 0), 'C3C Bonuses');
+    if (changedIndexes) changedIndexes.add(tileIndex);
+    return true;
   };
 
   const isHillyTerrain = (terrainCode) => (
@@ -31782,7 +32132,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return ((code & 0x0f) << 4) | (base & 0x0f);
   };
 
-  const setTileTerrainForPaint = (tileIndex, terrainCode, changedIndexes) => {
+  const setTileTerrainForPaint = (tileIndex, terrainCode, changedIndexes, bonusMask = null) => {
     const tile = tiles[tileIndex];
     if (!tile) return false;
     const riverMask = parseIntLoose(
@@ -31797,12 +32147,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const current = terrainInfo(tile);
     const nextBase = packedTerrain & 0x0f;
     const nextReal = (packedTerrain >>> 4) & 0x0f;
-    const alreadySet = current.baseTerrain === nextBase && current.realTerrain === nextReal;
-    if (alreadySet) return false;
-    setMapFieldValue(tile, 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
-    setMapFieldValue(tile, 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
-    if (changedIndexes) changedIndexes.add(tileIndex);
-    return true;
+    const nextBonusMask = sanitizeTerrainBonusMask(
+      effectiveCode,
+      bonusMask == null ? getTileBonusMask(tile) : bonusMask
+    );
+    const terrainChanged = !(current.baseTerrain === nextBase && current.realTerrain === nextReal);
+    if (terrainChanged) {
+      setMapFieldValue(tile, 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
+      setMapFieldValue(tile, 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
+      if (changedIndexes) changedIndexes.add(tileIndex);
+    }
+    const bonusChanged = setTileBonusMask(tileIndex, effectiveCode, nextBonusMask, changedIndexes);
+    return terrainChanged || bonusChanged;
   };
 
   const mapTileNeighborIndexes = (tileIndex) => {
@@ -31859,14 +32215,82 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
   };
 
-  const smartApplyTerrainToIndexes = (indexes, terrainCode) => {
+  const normalizeInvalidDesertTransitionQuartetsAround = (seedIndexes, changedIndexes) => {
+    if (!mapCore || typeof mapCore.collectGrasslandPlainsDesertCoastFixups !== 'function') return;
+    const anchorKeys = new Set();
+    const addAnchor = (xPos, yPos) => anchorKeys.add(`${xPos},${yPos}`);
+    const addAnchorsForTileIndex = (idx) => {
+      const geom = tileGeom[idx];
+      if (!geom) return;
+      addAnchor(geom.xPos, geom.yPos);
+      addAnchor(geom.xPos + 1, geom.yPos + 1);
+      addAnchor(geom.xPos - 1, geom.yPos + 1);
+      addAnchor(geom.xPos, geom.yPos + 2);
+    };
+    seedIndexes.forEach((idx) => {
+      addAnchorsForTileIndex(idx);
+    });
+    for (let pass = 0; pass < 10; pass += 1) {
+      const quartets = [];
+      anchorKeys.forEach((coordKey) => {
+        const [xRaw, yRaw] = String(coordKey).split(',');
+        const xPos = Number(xRaw);
+        const yPos = Number(yRaw);
+        if (!Number.isFinite(xPos) || !Number.isFinite(yPos)) return;
+        const southIdx = getTileIndexAtCoord(xPos, yPos);
+        if (southIdx < 0) return;
+        const southTile = tiles[southIdx];
+        if (!southTile) return;
+        const westIdx = getTileIndexAtCoord(xPos - 1, yPos - 1);
+        const northIdx = getTileIndexAtCoord(xPos, yPos - 2);
+        const eastIdx = getTileIndexAtCoord(xPos + 1, yPos - 1);
+        quartets.push([
+          { index: southIdx, terrainCode: terrainInfo(southTile).baseTerrain },
+          westIdx >= 0 && tiles[westIdx]
+            ? { index: westIdx, terrainCode: terrainInfo(tiles[westIdx]).baseTerrain }
+            : { index: -1, terrainCode: BIQ_TERRAIN.COAST },
+          northIdx >= 0 && tiles[northIdx]
+            ? { index: northIdx, terrainCode: terrainInfo(tiles[northIdx]).baseTerrain }
+            : { index: -1, terrainCode: BIQ_TERRAIN.COAST },
+          eastIdx >= 0 && tiles[eastIdx]
+            ? { index: eastIdx, terrainCode: terrainInfo(tiles[eastIdx]).baseTerrain }
+            : { index: -1, terrainCode: BIQ_TERRAIN.COAST }
+        ]);
+      });
+      const fixups = mapCore.collectGrasslandPlainsDesertCoastFixups(quartets, BIQ_TERRAIN);
+      if (!Array.isArray(fixups) || fixups.length === 0) break;
+      let applied = false;
+      fixups.forEach(({ index, terrainCode }) => {
+        if (setTileTerrainForPaint(index, terrainCode, changedIndexes)) {
+          applied = true;
+          addAnchorsForTileIndex(index);
+          mapTileNeighborIndexes(index).forEach((neighborIdx) => addAnchorsForTileIndex(neighborIdx));
+        }
+      });
+      if (!applied) break;
+    }
+  };
+
+  const smartApplyTerrainToIndexes = (indexes, terrainCode, bonusMask = null) => {
     const seeds = Array.isArray(indexes) ? indexes : [];
     const changedIndexes = new Set();
-    seeds.forEach((idx) => setTileTerrainForPaint(idx, terrainCode, changedIndexes));
+    appendDebugLog('biq-map:terrain-apply-start', {
+      terrainCode: parseIntLoose(terrainCode, -1),
+      bonusMask: parseIntLoose(bonusMask, 0) >>> 0,
+      seedSummary: summarizeTileIndexes(seeds)
+    });
+    seeds.forEach((idx) => setTileTerrainForPaint(idx, terrainCode, changedIndexes, bonusMask));
     const normalizationSeeds = new Set([...seeds, ...changedIndexes]);
     normalizeTundraTransitionsAround(normalizationSeeds, changedIndexes);
+    normalizeInvalidDesertTransitionQuartetsAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes);
     normalizeCoastlineAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes);
-    return Array.from(changedIndexes.size > 0 ? changedIndexes : new Set(seeds));
+    const result = Array.from(changedIndexes.size > 0 ? changedIndexes : new Set(seeds));
+    appendDebugLog('biq-map:terrain-apply-end', {
+      terrainCode: parseIntLoose(terrainCode, -1),
+      bonusMask: parseIntLoose(bonusMask, 0) >>> 0,
+      changedSummary: summarizeTileIndexes(result)
+    });
+    return result;
   };
 
   const calculateRoadImageIndex = (geom, mask) => {
@@ -32605,6 +33029,64 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ctx.fillRect(sx + Math.round(tileW * 0.58), midY + Math.round(tileH * 0.10), Math.max(2, Math.round(tileW * 0.04)), Math.max(4, Math.round(tileH * 0.20)));
     };
 
+    const drawVariantBadgeCentered = (text, tone = 'rgba(73, 69, 98, 0.88)') => {
+      const badgeW = Math.max(16, Math.round(tileW * 0.24));
+      const badgeH = Math.max(12, Math.round(tileH * 0.18));
+      const logicalCenter = tileLogicalCenter(sx, sy);
+      const markerCenterX = Math.round(logicalCenter.cx);
+      const markerCenterY = Math.round(logicalCenter.cy);
+      const badgeX = Math.round(markerCenterX - (badgeW / 2));
+      const badgeY = Math.round(markerCenterY - (badgeH / 2));
+      ctx.save();
+      ctx.fillStyle = tone;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+      ctx.font = `${Math.max(8, Math.round(tilePx * 0.42))}px Georgia, serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(text || ''), badgeX + Math.round(badgeW / 2), badgeY + Math.round(badgeH / 2) + 0.5);
+      ctx.restore();
+    };
+
+    const drawCenteredTerrainMarker = (sheet, cols, rows, index) => {
+      if (!sheet || !Number.isFinite(index) || index < 0) return false;
+      const srcW = Math.max(1, Math.floor(sheet.width / cols));
+      const srcH = Math.max(1, Math.floor(sheet.height / rows));
+      const scaleFactor = Math.max(0.5, Math.min(tileW / srcW, tileH / srcH, 1));
+      const drawW = Math.max(1, Math.round(srcW * scaleFactor));
+      const drawH = Math.max(1, Math.round(srcH * scaleFactor));
+      const logicalCenter = tileLogicalCenter(sx, sy);
+      const markerCenterX = Math.round(logicalCenter.cx);
+      const markerCenterY = Math.round(logicalCenter.cy);
+      const drawX = Math.round(markerCenterX - (drawW / 2));
+      const drawY = Math.round(markerCenterY - (drawH / 2));
+      return drawSheetSpriteScaled(sheet, cols, rows, index, drawX, drawY, drawW, drawH);
+    };
+
+    const drawCenteredTerrainMarkerCell = (sheet, cellW, cellH, index) => {
+      if (!sheet || !Number.isFinite(index) || index < 0 || !Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return false;
+      const cols = Math.max(1, Math.floor(sheet.width / cellW));
+      const rows = Math.max(1, Math.floor(sheet.height / cellH));
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      if (row >= rows) return false;
+      const scaleFactor = Math.max(0.5, Math.min(tileW / cellW, tileH / cellH, 1));
+      const drawW = Math.max(1, Math.round(cellW * scaleFactor));
+      const drawH = Math.max(1, Math.round(cellH * scaleFactor));
+      const logicalCenter = tileLogicalCenter(sx, sy);
+      const markerCenterX = Math.round(logicalCenter.cx);
+      const markerCenterY = Math.round(logicalCenter.cy);
+      const drawX = Math.round(markerCenterX - (drawW / 2));
+      const drawY = Math.round(markerCenterY - (drawH / 2));
+      ctx.drawImage(sheet, col * cellW, row * cellH, cellW, cellH, drawX, drawY, drawW, drawH);
+      return true;
+    };
+
     const drawHillyTerrainOverlay = () => {
       if (!isHillyTerrain(realTerrain)) return;
       const connectivityIndex = getMountainIndex();
@@ -32678,6 +33160,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const isPine = (c3cBonuses & BIQ_TILE_BONUS.PINE_FOREST) === BIQ_TILE_BONUS.PINE_FOREST;
       if (isPine) {
         const pineIdx = tileVariant % 12;
+        if ((c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK) {
+          if (srcFromSheet(state.biqMapArtCache.lmForests, 6, 8, pineIdx)) return;
+        }
         if (baseTerrain === BIQ_TERRAIN.PLAINS) {
           if (srcFromSheet(state.biqMapArtCache.plainsForests, 6, 8, pineIdx)) return;
         } else if (baseTerrain === BIQ_TERRAIN.TUNDRA) {
@@ -32689,6 +33174,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         return;
       }
       const forestIdx = tileVariant % 8;
+      if ((c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK) {
+        if (srcFromSheet(state.biqMapArtCache.lmForests, 4, 4, forestIdx)) return;
+      }
       if (baseTerrain === BIQ_TERRAIN.PLAINS) {
         if (srcFromSheet(state.biqMapArtCache.plainsForests, 4, 4, forestIdx)) return;
       } else if (baseTerrain === BIQ_TERRAIN.TUNDRA) {
@@ -32708,45 +33196,51 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return (rawMask & directionMask) === directionMask;
     };
 
-    const getRiverImageIndex = (tileRecord) => {
-      if (!tileRecord) return 0;
-      const mask = parseIntLoose(
-        (getFieldByBaseKey(tileRecord, 'riverconnectioninfo') || getFieldByBaseKey(tileRecord, 'river_connection_info'))?.value,
-        0
-      ) >>> 0;
-      let idx = 0;
-      if ((mask & 128) === 128) idx |= 1;
-      if ((mask & 2) === 2) idx |= 2;
-      if ((mask & 32) === 32) idx |= 4;
-      if ((mask & 8) === 8) idx |= 8;
-      return idx;
+    const getRiverIntersectionImageIndex = (northTile, eastTile, westTile, southTile) => {
+      let riverImageIndex = 0;
+      if (hasRiverConnection(northTile, 32)) riverImageIndex += 1;
+      if (hasRiverConnection(eastTile, 128)) riverImageIndex += 2;
+      if (hasRiverConnection(westTile, 8)) riverImageIndex += 4;
+      if (hasRiverConnection(southTile, 2)) riverImageIndex += 8;
+      return riverImageIndex;
     };
 
-    const isRiverDelta = (riverImageIndex, geom) => {
-      if (riverImageIndex !== 1 && riverImageIndex !== 2 && riverImageIndex !== 4 && riverImageIndex !== 8) return false;
-      const nw = getTileAtCoord(geom.xPos - 1, geom.yPos - 1);
-      const ne = getTileAtCoord(geom.xPos + 1, geom.yPos - 1);
-      const sw = getTileAtCoord(geom.xPos - 1, geom.yPos + 1);
-      const se = getTileAtCoord(geom.xPos + 1, geom.yPos + 1);
-      if (riverImageIndex === 1) return isWaterTerrain(terrainInfo(nw).realTerrain) || isWaterTerrain(terrainInfo(ne).realTerrain);
-      if (riverImageIndex === 2) return isWaterTerrain(terrainInfo(ne).realTerrain) || isWaterTerrain(terrainInfo(se).realTerrain);
-      if (riverImageIndex === 4) return isWaterTerrain(terrainInfo(nw).realTerrain) || isWaterTerrain(terrainInfo(sw).realTerrain);
-      return isWaterTerrain(terrainInfo(sw).realTerrain) || isWaterTerrain(terrainInfo(se).realTerrain);
+    const isRiverDeltaAtIntersection = (riverImageIndex, westTile, northTile, eastTile, southTile) => {
+      if (![1, 2, 4, 8].includes(riverImageIndex)) return false;
+      if (!westTile || !northTile || !eastTile || !southTile) return false;
+      if (riverImageIndex === 1) return isWaterTerrain(terrainInfo(eastTile).realTerrain) && isWaterTerrain(terrainInfo(southTile).realTerrain);
+      if (riverImageIndex === 2) return isWaterTerrain(terrainInfo(westTile).realTerrain) && isWaterTerrain(terrainInfo(southTile).realTerrain);
+      if (riverImageIndex === 4) return isWaterTerrain(terrainInfo(northTile).realTerrain) && isWaterTerrain(terrainInfo(eastTile).realTerrain);
+      return isWaterTerrain(terrainInfo(westTile).realTerrain) && isWaterTerrain(terrainInfo(northTile).realTerrain);
     };
 
     const drawRivers = () => {
       if (riverMask === 0) return;
-      const riverImageIndex = getRiverImageIndex(record);
-      if (riverImageIndex === 0) return;
-      const isDelta = isRiverDelta(riverImageIndex, geom);
-      drawSheetSprite(
-        isDelta ? (state.biqMapArtCache.deltaRivers || state.biqMapArtCache.mtnRivers) : state.biqMapArtCache.mtnRivers,
-        4,
-        4,
-        riverImageIndex,
-        sx,
-        midY
-      );
+      const drawRiverIntersection = (drawX, northTile, eastTile, westTile, southTile) => {
+        const riverImageIndex = getRiverIntersectionImageIndex(northTile, eastTile, westTile, southTile);
+        if (riverImageIndex === 0) return;
+        const isDelta = isRiverDeltaAtIntersection(riverImageIndex, westTile, northTile, eastTile, southTile);
+        drawSheetSprite(
+          isDelta ? (state.biqMapArtCache.deltaRivers || state.biqMapArtCache.mtnRivers) : state.biqMapArtCache.mtnRivers,
+          4,
+          4,
+          riverImageIndex,
+          drawX,
+          midY
+        );
+      };
+
+      if (geom.xPos === 1) {
+        const northTile = getTileAtCoord(geom.xPos - 1, geom.yPos - 1);
+        const eastTile = record;
+        const southTile = getTileAtCoord(geom.xPos - 1, geom.yPos + 1);
+        drawRiverIntersection(sx - tileW, northTile, eastTile, null, southTile);
+      }
+
+      const northTile = geom.yPos > 1 ? getTileAtCoord(geom.xPos + 1, geom.yPos - 1) : null;
+      const eastTile = geom.xPos < (width - 2) ? getTileAtCoord(geom.xPos + 2, geom.yPos) : null;
+      const southTile = geom.yPos < (height - 2) ? getTileAtCoord(geom.xPos + 1, geom.yPos + 1) : null;
+      drawRiverIntersection(sx + Math.round(tileW / 2), northTile, eastTile, record, southTile);
     };
 
     const drawTerritoryBorders = () => {
@@ -32811,10 +33305,19 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
       if (realTerrain === BIQ_TERRAIN.FLOODPLAIN) {
         const floodplainSheet = state.biqMapArtCache.floodplains;
-        const riverImageIndex = getRiverImageIndex(record);
+        const northTile = geom.yPos > 1 ? getTileAtCoord(geom.xPos + 1, geom.yPos - 1) : null;
+        const eastTile = geom.xPos < (width - 2) ? getTileAtCoord(geom.xPos + 2, geom.yPos) : null;
+        const southTile = geom.yPos < (height - 2) ? getTileAtCoord(geom.xPos + 1, geom.yPos + 1) : null;
+        const riverImageIndex = getRiverIntersectionImageIndex(northTile, eastTile, record, southTile);
         if (floodplainSheet && riverImageIndex >= 0) {
-          drawSheetSprite(floodplainSheet, 4, 4, riverImageIndex, sx, midY);
+          drawSheetSprite(floodplainSheet, 4, 4, riverImageIndex, sx + Math.round(tileW / 2), midY);
         }
+      }
+      if ((c3cBonuses & BIQ_TILE_BONUS.BONUS_GRASSLAND) === BIQ_TILE_BONUS.BONUS_GRASSLAND) {
+        drawCenteredTerrainMarkerCell(state.biqMapArtCache.tntTerrain, 128, 64, 0);
+      }
+      if ((c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK && state.biqMapShowLandmarks !== false) {
+        drawVariantBadgeCentered('LM', 'rgba(122, 84, 179, 0.92)');
       }
     }
     if (pass === 'all' || pass === 'flat') {
@@ -33199,6 +33702,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const redrawMapCanvasInPlace = (clipRects = null) => {
     if (!ctx) return;
+    const redrawStartedAt = mapToolNowMs();
     const clips = Array.isArray(clipRects) && clipRects.length > 0 ? clipRects : null;
     if (clips) {
       ctx.save();
@@ -33307,6 +33811,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ctx.stroke();
     }
     if (clips) ctx.restore();
+    appendDebugLog('biq-map:canvas-redraw', {
+      clipped: !!clips,
+      clipSummary: summarizeRects(clips || []),
+      overlayPassCount: overlayPassItems.length,
+      layer: String(state.biqMapLayer || ''),
+      showOverlays: state.biqMapShowOverlays !== false,
+      showGrid: !!state.biqMapShowGrid,
+      durationMs: Number((mapToolNowMs() - redrawStartedAt).toFixed(2))
+    });
   };
   refreshMapViewForToolChange = (options = {}) => {
     const startedAt = mapToolNowMs();
@@ -33376,7 +33889,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   const drawPaintPreview = (hit) => {
     if (!hoverCtx || !hit) return;
-    const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
+    const mode = String(state.mapEditorTool && state.mapEditorTool.paintCategory || 'terrain');
     if (getEffectiveInteractionMode() !== 'paint') return;
     const previewIndexes = getBrushTileIndexes(hit.index);
     previewIndexes.forEach((tileIdx) => {
@@ -33401,46 +33914,21 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
             ? mapCore.resolveTerrainPaintCode(terrainCode, riverMask !== 0, BIQ_TERRAIN)
             : terrainCode;
           const packedTerrain = packedTerrainForPaint(effectiveTerrainCode);
+          const variantMask = terrainBonusMaskFromVariantState(effectiveTerrainCode, getMapToolTerrainVariantState(effectiveTerrainCode));
           const previewRecord = baseTile
             ? JSON.parse(JSON.stringify(baseTile))
             : { fields: [] };
           setMapFieldValue(previewRecord, 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
           setMapFieldValue(previewRecord, 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
+          setMapFieldValue(previewRecord, 'c3cbonuses', String(variantMask >>> 0), 'C3C Bonuses');
           hoverCtx.save();
           drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
           hoverCtx.clip();
-          const diamondTop = Math.round(logical.cy - Math.floor(tileH / 2));
-          if (!drawTerrainSpriteToContext(hoverCtx, previewRecord, geom, sx, diamondTop, tileW, tileH)) {
-            hoverCtx.fillStyle = colorFromNumber(terrainCode);
-            drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
-            hoverCtx.fill();
-          }
-          hoverCtx.restore();
-          const midY = sy + Math.floor(tileH / 2);
-          if (effectiveTerrainCode === BIQ_TERRAIN.HILLS) {
-            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.hills, 4, 4, 0, sx, midY - Math.round(12 * scale), tileW, Math.max(1, Math.round(72 * scale)));
-          } else if (effectiveTerrainCode === BIQ_TERRAIN.MOUNTAIN) {
-            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.mountains, 4, 4, 0, sx, midY - Math.round(24 * scale), tileW, Math.max(1, Math.round(88 * scale)));
-          } else if (effectiveTerrainCode === BIQ_TERRAIN.VOLCANO) {
-            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.volcanos, 4, 4, 0, sx, midY - Math.round(24 * scale), tileW, Math.max(1, Math.round(88 * scale)));
-          } else if (effectiveTerrainCode === BIQ_TERRAIN.FOREST) {
-            const forestSheet = state.biqMapArtCache.grasslandForests;
-            if (forestSheet) {
-              hoverCtx.drawImage(forestSheet, 0, 4 * 88, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
-            }
-          } else if (effectiveTerrainCode === BIQ_TERRAIN.JUNGLE) {
-            const jungleSheet = state.biqMapArtCache.grasslandForests;
-            if (jungleSheet) {
-              hoverCtx.drawImage(jungleSheet, 0, 0, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
-            }
-          } else if (effectiveTerrainCode === BIQ_TERRAIN.MARSH) {
-            const marshSheet = state.biqMapArtCache.marsh;
-            if (marshSheet) {
-              hoverCtx.drawImage(marshSheet, 0, 0, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
-            }
-          } else if (effectiveTerrainCode === BIQ_TERRAIN.FLOODPLAIN) {
-            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.floodplains, 4, 4, getRiverImageIndex(previewRecord), sx, midY, tileW, tileH);
-          }
+          hoverCtx.fillStyle = colorFromNumber(effectiveTerrainCode);
+          drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
+          hoverCtx.fill();
+          drawTileFeatureOverlays(previewRecord, geom, sx, sy, 'tall');
+          drawTileFeatureOverlays(previewRecord, geom, sx, sy, 'flat');
           hoverCtx.restore();
           return;
         }
@@ -33466,7 +33954,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           const overlaySpec = mapInfoOverlayOptions.find((spec) => spec.value === overlayType) || null;
           const midY = sy + Math.floor(tileH / 2);
           let drewOverlay = false;
-          if (overlayType === 'road') {
+          if (overlayType === 'river') {
+            drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.mtnRivers, 4, 4, 15, sx, midY, tileW, tileH);
+          } else if (overlayType === 'road') {
             drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.roads, 16, 16, 0, sx, midY, tileW, tileH);
           } else if (overlayType === 'railroad') {
             drewOverlay = drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, 0, sx, midY, tileW, tileH);
@@ -33547,8 +34037,125 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       drawSelectedSpecialTileLabelsOverlay(hoverCtx);
     }
   };
+  const tileContextMenu = document.createElement('div');
+  tileContextMenu.className = 'biq-map-tile-context-menu hidden';
+  const isTileContextMenuOpen = () => !tileContextMenu.classList.contains('hidden');
+  let collapseTileContextSelectTimer = 0;
+  const closeTileContextMenu = () => {
+    if (collapseTileContextSelectTimer) {
+      window.clearTimeout(collapseTileContextSelectTimer);
+      collapseTileContextSelectTimer = 0;
+    }
+    if (document.activeElement && tileContextMenu.contains(document.activeElement) && typeof document.activeElement.blur === 'function') {
+      try { document.activeElement.blur(); } catch (_err) {}
+    }
+    tileContextMenu.classList.add('hidden');
+    tileContextMenu.innerHTML = '';
+  };
+  let pendingTileInfoRenderTimer = 0;
+  const scheduleTileInfoRender = (delay = 0) => {
+    if (pendingTileInfoRenderTimer) window.clearTimeout(pendingTileInfoRenderTimer);
+    pendingTileInfoRenderTimer = window.setTimeout(() => {
+      pendingTileInfoRenderTimer = 0;
+      renderTileInfoPanel();
+    }, delay);
+  };
+  const buildMapSelectionCategorySelect = (value, options = {}) => {
+    const select = document.createElement('select');
+    select.className = 'map-selection-category-select';
+    if (options.contextMenu) select.classList.add('map-selection-category-context');
+    mapSelectCategoryOptions.forEach((opt) => {
+      const optionNode = document.createElement('option');
+      optionNode.value = opt.value;
+      optionNode.textContent = opt.label;
+      select.appendChild(optionNode);
+    });
+    select.value = String(value || 'terrain');
+    select.addEventListener('change', () => {
+      state.mapEditorTool.selectionCategory = select.value;
+      state.mapEditorTool.mode = 'select';
+      scheduleTileInfoRender();
+      refreshMapViewForToolChange();
+      Array.from(container.querySelectorAll('.map-selection-category-select')).forEach((node) => {
+        if (node !== select) node.value = select.value;
+      });
+      if (options.closeOnChange) closeTileContextMenu();
+    });
+    return select;
+  };
+  const tryOpenMapSelectionCategoryPicker = (select) => {
+    if (!select) return;
+    const attemptOpen = () => {
+      if (!select.isConnected) return true;
+      try {
+        select.focus({ preventScroll: true });
+      } catch (_err) {
+        try { select.focus(); } catch (_err2) {}
+      }
+      if (typeof select.showPicker === 'function') {
+        try {
+          select.showPicker();
+          return true;
+        } catch (_err) {}
+      }
+      try {
+        select.click();
+        return true;
+      } catch (_err) {}
+      return false;
+    };
+    attemptOpen();
+    window.requestAnimationFrame(() => {
+      attemptOpen();
+    });
+    window.setTimeout(() => {
+      attemptOpen();
+    }, 100);
+  };
+  const showTileContextMenu = (clientX, clientY) => {
+    const frameRect = mapFrame.getBoundingClientRect();
+    const pad = 12;
+    if (collapseTileContextSelectTimer) {
+      window.clearTimeout(collapseTileContextSelectTimer);
+      collapseTileContextSelectTimer = 0;
+    }
+    tileContextMenu.innerHTML = '';
+    const select = buildMapSelectionCategorySelect(
+      String(state.mapEditorTool && state.mapEditorTool.selectionCategory || 'terrain'),
+      { contextMenu: true, closeOnChange: true }
+    );
+    const allowBlurCloseAt = Date.now() + 220;
+    select.addEventListener('blur', () => {
+      const attemptClose = () => {
+        if (!select.isConnected || !isTileContextMenuOpen()) return;
+        if (document.activeElement && tileContextMenu.contains(document.activeElement)) return;
+        closeTileContextMenu();
+      };
+      const remaining = allowBlurCloseAt - Date.now();
+      if (remaining > 0) {
+        window.setTimeout(attemptClose, remaining);
+      } else {
+        window.setTimeout(attemptClose, 0);
+      }
+    });
+    tileContextMenu.appendChild(select);
+    tileContextMenu.classList.remove('hidden');
+    const menuWidth = tileContextMenu.offsetWidth || 220;
+    const menuHeight = tileContextMenu.offsetHeight || 52;
+    const left = Math.max(pad, Math.min(frameRect.width - menuWidth - pad, clientX - frameRect.left + 6));
+    const top = Math.max(pad, Math.min(frameRect.height - menuHeight - pad, clientY - frameRect.top + 6));
+    tileContextMenu.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+    tryOpenMapSelectionCategoryPicker(select);
+    collapseTileContextSelectTimer = window.setTimeout(() => {
+      collapseTileContextSelectTimer = 0;
+      if (!select.isConnected || !isTileContextMenuOpen()) return;
+      select.classList.add('map-selection-category-context-collapsed');
+    }, 140);
+  };
+  registerOutsideClickDismiss(tileContextMenu, closeTileContextMenu);
   refreshMapInteractionOverlay = () => {
     hideHoverTooltip();
+    closeTileContextMenu();
   };
   const drawHoverBorder = (hit) => {
     if (!hoverCtx || !hit) return;
@@ -33632,20 +34239,43 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     canvas.setPointerCapture(ev.pointerId);
     paintStroke = { touched: new Set(), didEdit: false };
     rememberUndoSnapshot();
+    const hit = readHitFromPointer(ev);
+    appendDebugLog('biq-map:paint-start', {
+      pointerId: ev.pointerId,
+      button: ev.button,
+      hitIndex: hit ? hit.index : null,
+      hitTile: hit && tileGeom[hit.index] ? { xPos: tileGeom[hit.index].xPos, yPos: tileGeom[hit.index].yPos } : null,
+      ...describePaintToolState()
+    });
     const changed = applyAtPointer(ev);
-    if (changed) rerenderMapView();
+    if (changed) {
+      appendDebugLog('biq-map:paint-rerender', { phase: 'pointerdown', pointerId: ev.pointerId });
+      rerenderMapView();
+    }
   });
   canvas.addEventListener('pointermove', (ev) => {
     updateHoverTooltip(ev);
     if (!paintStroke) return;
     ev.preventDefault();
     const changed = applyAtPointer(ev);
-    if (changed) rerenderMapView();
+    if (changed) {
+      appendDebugLog('biq-map:paint-rerender', {
+        phase: 'pointermove',
+        pointerId: ev.pointerId,
+        touchedCount: paintStroke && paintStroke.touched ? paintStroke.touched.size : 0
+      });
+      rerenderMapView();
+    }
   });
   canvas.addEventListener('pointerleave', hideHoverTooltip);
   canvas.addEventListener('pointercancel', hideHoverTooltip);
   const onPaintEnd = (ev) => {
     if (!paintStroke) return;
+    appendDebugLog('biq-map:paint-end', {
+      pointerId: ev && typeof ev.pointerId === 'number' ? ev.pointerId : null,
+      didEdit: !!paintStroke.didEdit,
+      touchedSummary: summarizeTileIndexes(paintStroke.touched)
+    });
     if (paintStroke.didEdit) setDirty(true);
     paintStroke = null;
     if (ev && typeof ev.pointerId === 'number') {
@@ -33656,6 +34286,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   canvas.addEventListener('pointercancel', onPaintEnd);
 
   canvas.addEventListener('click', (ev) => {
+    closeTileContextMenu();
     if (Date.now() < (state.biqMapSuppressClickUntilTs || 0)) {
       return;
     }
@@ -33702,6 +34333,28 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return;
     }
   });
+  canvas.addEventListener('contextmenu', (ev) => {
+    const interactionMode = getEffectiveInteractionMode();
+    if (interactionMode !== 'select') return;
+    const hit = readHitFromPointer(ev);
+    if (!hit) {
+      closeTileContextMenu();
+      return;
+    }
+    ev.preventDefault();
+    const selectedTileChanged = state.biqMapSelectedTile !== hit.index;
+    state.biqMapSelectedTile = hit.index;
+    const g = tileGeom[hit.index] || null;
+    appendDebugLog('biq-map:tile-context-select', { index: hit.index, xPos: g ? g.xPos : null, yPos: g ? g.yPos : null });
+    if (hoverCtx) {
+      hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+      drawHoverBorder(hit);
+    }
+    showTileContextMenu(ev.clientX, ev.clientY);
+    if (selectedTileChanged) {
+      scheduleTileInfoRender(140);
+    }
+  });
   canvas.addEventListener('dblclick', (ev) => {
     ev.preventDefault();
     const paneRect = mapPane.getBoundingClientRect();
@@ -33723,6 +34376,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   mapPane.appendChild(mapCanvasStack);
   mapFrame.appendChild(mapPane);
   mapFrame.appendChild(hoverTooltip);
+  mapFrame.appendChild(tileContextMenu);
   mapFrame.appendChild(controlMoveHint);
   mapFrame.appendChild(zoomControls);
   const minimapPanel = document.createElement('div');
@@ -33821,6 +34475,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   tileInfoPanel.className = 'section-card biq-map-inspector biq-map-tile-info-panel';
   mapInspector = tileInfoPanel;
   const mapInfoOverlayOptions = [
+    { value: 'river', label: 'River', artName: 'River', icon: '≈', kind: 'river', field: 'riverconnectioninfo' },
     { value: 'road', label: 'Road', artName: 'Road', icon: '🛣', kind: 'mask', field: 'c3coverlays', mask: 0x00000001 },
     { value: 'railroad', label: 'Railroad', artName: 'Railroad', icon: '🚆', kind: 'mask', field: 'c3coverlays', mask: 0x00000002 },
     { value: 'mine', label: 'Mine', artName: 'Mine', icon: '⛏', kind: 'mask', field: 'c3coverlays', mask: 0x00000004 },
@@ -34188,6 +34843,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (spec.kind === 'colony') {
       return getColonyTypeForTile(tile) === Number(spec.improvementType);
     }
+    if (spec.kind === 'river') {
+      return getTileRiverMask(tile) !== 0;
+    }
     if (spec.kind === 'scalar') {
       return String(getMapFieldValue(tile, spec.field, spec.off)).trim() === String(spec.on);
     }
@@ -34222,6 +34880,71 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const dx = Math.floor((canvasNode.width - drawW) / 2);
       const dy = Math.floor((canvasNode.height - drawH) / 2);
       thumbCtx.drawImage(atlas, 0, 0, atlas.width, atlas.height, dx, dy, drawW, drawH);
+    }
+    holder.appendChild(canvasNode);
+    return holder;
+  };
+  const makeTerrainVariantBadgeThumb = (text, tone = 'rgba(122, 84, 179, 0.92)') => {
+    const holder = document.createElement('span');
+    holder.className = 'map-option-thumb';
+    const canvasNode = document.createElement('canvas');
+    canvasNode.width = 42;
+    canvasNode.height = 42;
+    const thumbCtx = canvasNode.getContext('2d');
+    if (thumbCtx) {
+      const badgeW = 26;
+      const badgeH = 16;
+      const badgeX = Math.round((canvasNode.width - badgeW) / 2);
+      const badgeY = Math.round((canvasNode.height - badgeH) / 2);
+      thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
+      thumbCtx.fillStyle = tone;
+      thumbCtx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+      thumbCtx.lineWidth = 1;
+      thumbCtx.beginPath();
+      if (typeof thumbCtx.roundRect === 'function') {
+        thumbCtx.roundRect(badgeX, badgeY, badgeW, badgeH, 5);
+      } else {
+        thumbCtx.rect(badgeX, badgeY, badgeW, badgeH);
+      }
+      thumbCtx.fill();
+      thumbCtx.stroke();
+      thumbCtx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+      thumbCtx.font = 'bold 9px Georgia, serif';
+      thumbCtx.textAlign = 'center';
+      thumbCtx.textBaseline = 'middle';
+      thumbCtx.fillText(String(text || ''), badgeX + Math.round(badgeW / 2), badgeY + Math.round(badgeH / 2) + 0.5);
+    }
+    holder.appendChild(canvasNode);
+    return holder;
+  };
+  const makeTerrainVariantSpriteThumb = (assetKey, cellW, cellH, index, fallbackGlyph = '?') => {
+    const holder = document.createElement('span');
+    holder.className = 'map-option-thumb';
+    const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
+    if (!atlas || !atlas.width || !atlas.height) {
+      holder.textContent = fallbackGlyph;
+      return holder;
+    }
+    const cols = Math.max(1, Math.floor(atlas.width / cellW));
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    if (((col + 1) * cellW) > atlas.width || ((row + 1) * cellH) > atlas.height) {
+      holder.textContent = fallbackGlyph;
+      return holder;
+    }
+    const canvasNode = document.createElement('canvas');
+    canvasNode.width = 42;
+    canvasNode.height = 42;
+    const thumbCtx = canvasNode.getContext('2d');
+    if (thumbCtx) {
+      thumbCtx.clearRect(0, 0, canvasNode.width, canvasNode.height);
+      thumbCtx.imageSmoothingEnabled = false;
+      const scaleRatio = Math.min(canvasNode.width / cellW, canvasNode.height / cellH);
+      const drawW = Math.max(1, Math.round(cellW * scaleRatio));
+      const drawH = Math.max(1, Math.round(cellH * scaleRatio));
+      const dx = Math.floor((canvasNode.width - drawW) / 2);
+      const dy = Math.floor((canvasNode.height - drawH) / 2);
+      thumbCtx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, drawW, drawH);
     }
     holder.appendChild(canvasNode);
     return holder;
@@ -34301,27 +35024,65 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	    });
 	    return count;
 	  };
-	  const applySelectedTileEdit = (editFn) => {
+  const applySelectedTileEdit = (editFn) => {
     if (!isScenarioMode()) return false;
     const tile = tiles[state.biqMapSelectedTile] || null;
     if (!tile || typeof editFn !== 'function') return false;
     rememberUndoSnapshot();
+    const selectedGeom = tileGeom[state.biqMapSelectedTile] || null;
+    appendDebugLog('biq-map:tile-edit-start', {
+      index: state.biqMapSelectedTile,
+      tile: selectedGeom ? { xPos: selectedGeom.xPos, yPos: selectedGeom.yPos } : null
+    });
     const editResult = editFn(tile);
-    if (editResult === false) return false;
+    if (editResult === false) {
+      appendDebugLog('biq-map:tile-edit-noop', {
+        index: state.biqMapSelectedTile
+      });
+      return false;
+    }
     setDirty(true);
     const redrawIndexes = Array.isArray(editResult) && editResult.length > 0
       ? editResult
       : [state.biqMapSelectedTile];
-    redrawMapCanvasInPlace(redrawIndexes.flatMap((idx) => tileEditRedrawRects(idx) || []));
+    const redrawRects = redrawIndexes.flatMap((idx) => tileEditRedrawRects(idx) || []);
+    appendDebugLog('biq-map:tile-edit-result', {
+      redrawSummary: summarizeTileIndexes(redrawIndexes),
+      rectSummary: summarizeRects(redrawRects)
+    });
+    redrawMapCanvasInPlace(redrawRects);
     renderMiniMap();
     renderTileInfoPanel();
     hideHoverTooltip();
     return true;
   };
   const setSelectedTileTerrain = (terrainCode) => applySelectedTileEdit((_tile) => {
-    const changedIndexes = smartApplyTerrainToIndexes([state.biqMapSelectedTile], terrainCode);
+    const variantMask = sanitizeTerrainBonusMask(terrainCode, getTileBonusMask(_tile));
+    const changedIndexes = smartApplyTerrainToIndexes([state.biqMapSelectedTile], terrainCode, variantMask);
     recalculateTerrainFileImageAround(changedIndexes);
     return changedIndexes;
+  });
+  const setSelectedTileTerrainVariants = (nextVariantState) => applySelectedTileEdit((_tile) => {
+    const currentTerrain = terrainInfo(_tile).realTerrain;
+    const currentState = terrainVariantStateForTile(_tile, currentTerrain);
+    const mergedState = {
+      landmark: nextVariantState && Object.prototype.hasOwnProperty.call(nextVariantState, 'landmark')
+        ? !!nextVariantState.landmark
+        : currentState.landmark,
+      bonusGrassland: nextVariantState && Object.prototype.hasOwnProperty.call(nextVariantState, 'bonusGrassland')
+        ? !!nextVariantState.bonusGrassland
+        : currentState.bonusGrassland,
+      pineForest: nextVariantState && Object.prototype.hasOwnProperty.call(nextVariantState, 'pineForest')
+        ? !!nextVariantState.pineForest
+        : currentState.pineForest,
+      snowCappedMountain: nextVariantState && Object.prototype.hasOwnProperty.call(nextVariantState, 'snowCappedMountain')
+        ? !!nextVariantState.snowCappedMountain
+        : currentState.snowCappedMountain
+    };
+    const nextMask = terrainBonusMaskFromVariantState(currentTerrain, mergedState);
+    const changedIndexes = new Set();
+    if (!setTileBonusMask(state.biqMapSelectedTile, currentTerrain, nextMask, changedIndexes)) return false;
+    return Array.from(changedIndexes);
   });
   const setSelectedTileResource = (resourceId) => applySelectedTileEdit((tile) => {
     setMapFieldValue(tile, 'resource', String(parseIntLoose(resourceId, -1)), 'Resource');
@@ -34329,6 +35090,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   const toggleSelectedTileOverlay = (spec) => applySelectedTileEdit((_tile) => {
     const enabled = !isTileOverlayActive(_tile, spec);
+    if (spec.kind === 'river') {
+      return applyRiverOverlayToIndexes([state.biqMapSelectedTile], enabled);
+    }
     if (spec.kind === 'colony') {
       return applyColonyOverlayToIndexes([state.biqMapSelectedTile], spec, enabled);
     }
@@ -34451,6 +35215,60 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }));
     });
     host.appendChild(grid);
+    const variantState = terrainVariantStateForTile(tile, current.realTerrain);
+    const variantRows = [
+      {
+        label: 'Landmark',
+        key: 'landmark',
+        supported: terrainSupportsLandmark(current.realTerrain),
+        selected: variantState.landmark
+      },
+      {
+        label: 'Bonus',
+        key: 'bonusGrassland',
+        supported: terrainSupportsBonusGrassland(current.realTerrain),
+        selected: variantState.bonusGrassland
+      },
+      {
+        label: 'Pine Forest',
+        key: 'pineForest',
+        supported: terrainSupportsPineForest(current.realTerrain),
+        selected: variantState.pineForest
+      },
+      {
+        label: 'Snow-Capped',
+        key: 'snowCappedMountain',
+        supported: terrainSupportsSnowCappedMountain(current.realTerrain),
+        selected: variantState.snowCappedMountain
+      }
+    ].filter((entry) => entry.supported);
+    if (variantRows.length > 0) {
+      const summary = variantRows.filter((entry) => entry.selected).map((entry) => entry.label);
+      addOptionSummary(host, summary.length > 0 ? `Variants: ${summary.join(', ')}` : 'Variants: none');
+      const variantGrid = document.createElement('div');
+      variantGrid.className = 'map-option-grid terrain-variants';
+      variantRows.forEach((entry) => {
+        let thumb = makeMapGlyphIcon('?', entry.label, 'category');
+        if (entry.key === 'landmark') {
+          thumb = makeTerrainVariantBadgeThumb('LM', 'rgba(122, 84, 179, 0.92)');
+        } else if (entry.key === 'bonusGrassland') {
+          thumb = makeTerrainVariantSpriteThumb('tntTerrain', 128, 64, 0, '✦');
+        } else if (entry.key === 'pineForest') {
+          thumb = makeMapGlyphIcon('PF', entry.label, 'category');
+        } else if (entry.key === 'snowCappedMountain') {
+          thumb = makeMapGlyphIcon('SC', entry.label, 'category');
+        }
+        variantGrid.appendChild(makeOptionButton({
+          label: entry.label,
+          thumb,
+          selected: entry.selected,
+          disabled: !isScenarioMode(),
+          multi: true,
+          onClick: () => setSelectedTileTerrainVariants({ [entry.key]: !entry.selected })
+        }));
+      });
+      host.appendChild(variantGrid);
+    }
   };
   const renderResourceOptions = (host, tile) => {
     const currentResource = parseIntLoose(getMapFieldValue(tile, 'resource', '-1'), -1);
@@ -35408,19 +36226,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
     const categoryRow = document.createElement('div');
     categoryRow.className = 'map-info-category';
-    const infoCategorySelect = document.createElement('select');
-    mapSelectCategoryOptions.forEach((opt) => {
-      const o = document.createElement('option');
-      o.value = opt.value;
-      o.textContent = opt.label;
-      infoCategorySelect.appendChild(o);
-    });
-    infoCategorySelect.value = activeCategory;
-    infoCategorySelect.addEventListener('change', () => {
-      state.mapEditorTool.selectionCategory = infoCategorySelect.value;
-      state.mapEditorTool.mode = 'select';
-      refreshMapViewForToolChange();
-    });
+    const infoCategorySelect = buildMapSelectionCategorySelect(activeCategory);
     categoryRow.appendChild(infoCategorySelect);
     tileInfoPanel.appendChild(categoryRow);
 
@@ -36868,6 +37674,8 @@ function makeMapLargeAtlasThumb(assetKey, spriteW, spriteH, spriteIndex, fallbac
 function makeMapOverlayArtThumb(spec) {
   if (!spec) return null;
   switch (spec.value) {
+    case 'river':
+      return makeMapCroppedAssetThumb('mtnRivers', 384, 192, 128, 64, spec.icon || '•');
     case 'goodyhut':
       return makeMapCroppedAssetThumb('goodyHuts', 0, 0, 128, 64, spec.icon || '•');
     case 'pollution':
