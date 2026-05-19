@@ -34661,6 +34661,44 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
     }
 
+    if (usesSpecificWonderDistrictArt) {
+      const cacheKey = requestBiqMapWonderDistrictCanvas(districtSection);
+      const previewCanvas = cacheKey ? state.biqMapArtCache[cacheKey] : null;
+      const crop = getCropDimensions(districtSection, { w: 128, h: 64 });
+      if (shouldLogWonderDistrictRender) {
+        appendDebugLog('biq-map:wonder-district-render-preview', {
+          tileIndex,
+          cacheKey,
+          hasPreviewCanvas: !!previewCanvas,
+          hasFallbackCanvas: !!previewCanvas,
+          crop,
+          xOffset: parseConfigInteger(getFieldValue(districtSection, 'x_offset'), 0),
+          yOffset: parseConfigInteger(getFieldValue(districtSection, 'y_offset'), 0),
+          renderMode: 'specific-wonder-district'
+        });
+      }
+      if (previewCanvas) {
+        drawDistrictCanvasAtTile(
+          drawCtx,
+          previewCanvas,
+          sx,
+          sy,
+          crop.w,
+          crop.h,
+          parseConfigInteger(getFieldValue(districtSection, 'x_offset'), 0),
+          parseConfigInteger(getFieldValue(districtSection, 'y_offset'), 0)
+        );
+        return;
+      }
+      if (shouldLogWonderDistrictRender) {
+        appendDebugLog('biq-map:wonder-district-render-miss', {
+          tileIndex,
+          reason: 'no-specific-wonder-preview-canvas'
+        });
+      }
+      return;
+    }
+
     const visual = getDistrictVisualContext(districtSection, record, geom, tileIndex);
     const cacheKey = requestBiqMapDistrictCanvas(districtSection, visual);
     const previewCanvas = cacheKey ? state.biqMapArtCache[cacheKey] : null;
@@ -34725,6 +34763,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
       const districtSection = districtMeta && (districtMeta.renderDistrictSection || districtMeta.districtSection);
       if (!districtSection) continue;
+      const usesSpecificWonderDistrictArt = !!(
+        districtMeta
+        && districtMeta.renderDistrictSection
+        && districtMeta.districtSection
+        && districtMeta.renderDistrictSection !== districtMeta.districtSection
+      );
+      if (usesSpecificWonderDistrictArt) {
+        requestBiqMapWonderDistrictCanvas(districtSection);
+        queued += 1;
+        continue;
+      }
       const territoryInfo = resolveTileTerritoryInfo(item.record, item.geom);
       const hasTerritoryOwner = !!(territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0);
       if (!hasTerritoryOwner) {
@@ -36373,6 +36422,42 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const canvas = preview ? (rgbaToCanvas(preview) || null) : null;
       state.biqMapArtCache[cacheKey] = canvas;
       if (canvas) storeMapDistrictFallbackCanvas(section, context, canvas);
+    }).catch(() => {
+      state.biqMapArtCache[cacheKey] = null;
+    }).finally(() => {
+      delete state.biqMapArtLoading[cacheKey];
+      biqMapArtRerender();
+    });
+    return cacheKey;
+  }
+  function requestBiqMapWonderDistrictCanvas(section) {
+    if (!section || !state.settings || !state.settings.c3xPath) return null;
+    const fileName = normalizeConfigToken(getFieldValue(section, 'img_path') || 'Wonders.pcx');
+    const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
+    const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
+    const crop = getCropDimensions(section, { w: 128, h: 64 });
+    const cacheKey = JSON.stringify({
+      kind: 'map-wonder-district',
+      c3xPath: state.settings.c3xPath,
+      scenarioPath: state.settings.scenarioPath,
+      district: normalizeConfigToken(getFieldValue(section, 'name') || ''),
+      fileName,
+      row,
+      col,
+      w: crop.w,
+      h: crop.h
+    });
+    if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) return cacheKey;
+    state.biqMapArtLoading[cacheKey] = true;
+    window.c3xManager.getPreview({
+      kind: 'wonder',
+      c3xPath: state.settings.c3xPath,
+      fileName,
+      crop: { row, col, w: crop.w, h: crop.h },
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths()
+    }).then((preview) => {
+      state.biqMapArtCache[cacheKey] = preview ? (rgbaToCanvas(preview) || null) : null;
     }).catch(() => {
       state.biqMapArtCache[cacheKey] = null;
     }).finally(() => {
