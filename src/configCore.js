@@ -1024,7 +1024,10 @@ function enrichBridgeSections(sections) {
           else if (k === 'colony') field.value = maybeFormatIdReference(colonyIndex, v);
           else if (k === 'continent') field.value = maybeFormatIdReference(contIndex, v);
           else if (k === 'owner') field.value = formatOwnerField(record, v);
-          else if (k === 'fogofwar' || k === 'ruin') field.value = toBoolStringFromInt(v);
+          else if (k === 'fogofwar' || k === 'ruin') {
+            field.originalValue = String(v == null ? '' : v);
+            field.value = toBoolStringFromInt(v);
+          }
         } else if (code === 'CONT') {
           if (k === 'continentclass') {
             const cls = { '0': 'Water (0)', '1': 'Land (1)' };

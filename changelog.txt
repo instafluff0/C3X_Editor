@@ -1,4 +1,12 @@
 * RELEASE 27.11
+- Tightened the Map editor top-bar structured picker sizing so the terrain/overlay/resource/district dropdown no longer renders taller than neighboring controls or expands the toolbar row.
+- Fixed slow Map editor mode-button clicks by routing the Move/Select/Paint buttons through the same optimized mode-switch path as `Tab`, instead of using an older click handler that always forced a full canvas redraw.
+- Fixed slow Map editor `Tab` mode cycling by skipping the expensive full map redraw on pure interaction-mode changes that do not affect Fog of War rendering, and corrected the Paint-mode state so cycling into Paint preserves a real paint category instead of writing the invalid category value `paint`.
+- Added detailed Map editor `Tab` mode-cycle timing logs so debug output now shows where time is spent across the hotkey handler, `setToolMode`, toolbar refresh, interaction overlay refresh, and in-place map redraw.
+- Restored instant-feeling `Tab` mode cycling in the Map editor by preventing repeated Tab auto-cycles, intercepting the hotkey earlier, and making the mode-flash hint update without rerendering the full toolbar.
+- Restored Map editor Select-mode Tile Info `Units` editing so the category again shows a real unit stack editor with owner selection, inline unit adding, experience/quantity controls, per-unit veteran dropdowns, and remove actions; the add flow now uses real BIQ unit indexes so clicking `+` immediately creates units on the selected tile and in the list.
+- Restored Map editor Fog of War support after a renderer regression: Select and Paint `Fog of War` categories again use raw BIQ fog values, Paint mode exposes Add Fog / Remove Fog in the top toolbar, and gray fog overlays only draw while the active category is Fog of War.
+- Restored the Map editor city Population/Culture delayed-rerender fix so each scheduled redraw preserves its own captured viewport snapshot instead of falling back to the upper-left scroll position.
 - Added Select-mode Tile Info editing for starting locations, with immediate assignment updates, clearer player/civ labels, and automatic removal of any previous start already assigned to that same civilization or player.
 - Added Select-mode Tile Info visibility controls that edit each tile's scenario fog-of-war state and clarify that Quint renders fogged tiles with the gray `EditFog` overlay.
 - Added a confirmed `Remove City` action to the Map editor Tile Info City panel so scenario users can delete cities directly from the selected tile.

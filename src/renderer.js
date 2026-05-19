@@ -17607,6 +17607,22 @@ function createReferencePicker(config) {
   const parsedCurrent = parseIntFromDisplayValue(rawCurrentValue);
   const currentValue = parsedCurrent == null ? rawCurrentValue : String(parsedCurrent);
   const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
+  const getScrollBounds = (node) => {
+    let parent = node && node.parentElement;
+    while (parent) {
+      const style = window.getComputedStyle(parent);
+      const overflowY = String(style.overflowY || style.overflow || '').toLowerCase();
+      if ((overflowY.includes('auto') || overflowY.includes('scroll') || overflowY.includes('overlay'))
+        && parent.scrollHeight > parent.clientHeight + 4) {
+        return parent.getBoundingClientRect();
+      }
+      parent = parent.parentElement;
+    }
+    return {
+      top: 8,
+      bottom: window.innerHeight - 8
+    };
+  };
 
   const normalizedOptions = [];
   if (includeNone) normalizedOptions.push({ value: '-1', label: noneLabel, displayLabel: noneLabel, entry: null });
@@ -17872,6 +17888,19 @@ function createReferencePicker(config) {
     ev.preventDefault();
     menu.classList.toggle('hidden');
     if (!menu.classList.contains('hidden')) {
+      menu.classList.remove('open-upward');
+      menu.style.maxHeight = '';
+      const wrapRect = wrap.getBoundingClientRect();
+      const scrollBounds = getScrollBounds(wrap);
+      const desiredMenuHeight = Math.min(280, Math.max(120, listWrap.scrollHeight + 48));
+      const availableBelow = Math.max(0, scrollBounds.bottom - wrapRect.bottom - 8);
+      const availableAbove = Math.max(0, wrapRect.top - scrollBounds.top - 8);
+      const openUpward = availableBelow < Math.min(desiredMenuHeight, 220) && availableAbove > availableBelow;
+      const availableHeight = openUpward ? availableAbove : availableBelow;
+      if (openUpward) {
+        menu.classList.add('open-upward');
+      }
+      menu.style.maxHeight = `${Math.max(120, Math.min(desiredMenuHeight, availableHeight || desiredMenuHeight))}px`;
       search.value = '';
       Array.from(listWrap.querySelectorAll('.tech-picker-row')).forEach((row) => row.classList.remove('hidden'));
       hydrateVisibleOptionThumbs(28);
@@ -28157,6 +28186,32 @@ function getFieldByBaseKey(record, baseKey) {
   }) || null;
 }
 
+function getRecordDirectValueByBaseKey(record, baseKey) {
+  if (!record || typeof record !== 'object') return undefined;
+  const toCanonical = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetCanon = toCanonical(baseKey);
+  const keys = Object.keys(record);
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    if (toCanonical(key) === targetCanon) return record[key];
+  }
+  return undefined;
+}
+
+function setRecordDirectValueByBaseKey(record, baseKey, value) {
+  if (!record || typeof record !== 'object') return false;
+  const toCanonical = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetCanon = toCanonical(baseKey);
+  const keys = Object.keys(record);
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    if (toCanonical(key) !== targetCanon) continue;
+    record[key] = String(value == null ? '' : value);
+    return true;
+  }
+  return false;
+}
+
 const BIQ_MAP_SECTION_CODES = ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'];
 const BIQ_MAP_SECTION_CODE_SET = new Set(BIQ_MAP_SECTION_CODES);
 const MAP_GENERATION_SEED_FALLBACK = 12461875;
@@ -28612,6 +28667,8 @@ function setRecordFieldValue(record, key, value) {
 }
 
 function getMapFieldValue(record, key, fallback = '') {
+  const direct = getRecordDirectValueByBaseKey(record, key);
+  if (direct != null) return String(direct);
   if (mapCore && typeof mapCore.getField === 'function') {
     const field = mapCore.getField(record, key);
     if (field) return String(field.value || '');
@@ -28621,10 +28678,23 @@ function getMapFieldValue(record, key, fallback = '') {
   return String(field.value || '');
 }
 
+function getMapFieldStoredValue(record, key, fallback = '') {
+  const direct = getRecordDirectValueByBaseKey(record, key);
+  if (direct != null) return String(direct);
+  const field = getFieldByBaseKey(record, key);
+  if (!field) return String(fallback);
+  if (field.mapEditorValueEdited) return String(field.value || '');
+  const original = String(field.originalValue == null ? '' : field.originalValue).trim();
+  if (original) return original;
+  return String(field.value || '');
+}
+
 function setMapFieldValue(record, key, value, label = '') {
   if (!record) return false;
+  const normalizedValue = String(value == null ? '' : value);
+  setRecordDirectValueByBaseKey(record, key, normalizedValue);
   if (mapCore && typeof mapCore.setField === 'function') {
-    mapCore.setField(record, key, value, label || toFriendlyKey(key));
+    mapCore.setField(record, key, normalizedValue, label || toFriendlyKey(key));
     const field = mapCore.getField(record, key);
     if (field) field.mapEditorValueEdited = true;
     return true;
@@ -28632,7 +28702,7 @@ function setMapFieldValue(record, key, value, label = '') {
   if (!Array.isArray(record.fields)) record.fields = [];
   const existing = getFieldByBaseKey(record, key);
   if (existing) {
-    existing.value = String(value == null ? '' : value);
+    existing.value = normalizedValue;
     existing.mapEditorValueEdited = true;
     return true;
   }
@@ -28640,7 +28710,7 @@ function setMapFieldValue(record, key, value, label = '') {
     key: String(key || ''),
     baseKey: String(key || ''),
     label: String(label || toFriendlyKey(key)),
-    value: String(value == null ? '' : value),
+    value: normalizedValue,
     originalValue: '',
     mapEditorValueEdited: true
   });
@@ -28941,7 +29011,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   gridWrap.appendChild(gridText);
 
   const tool = state.mapEditorTool || (state.mapEditorTool = {});
-  const paintModeCategories = ['terrain', 'overlay', 'resource', 'district'];
+  const paintModeCategories = ['terrain', 'overlay', 'resource', 'district', 'visibility'];
   if (!tool.mode) tool.mode = 'select';
   if (!tool.interactionMode) tool.interactionMode = String(tool.mode || 'select') === 'select' ? 'select' : 'paint';
   if (!['move', 'select', 'paint'].includes(String(tool.interactionMode || ''))) tool.interactionMode = 'select';
@@ -29087,6 +29157,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ? String(state.mapEditorTool && state.mapEditorTool.paintCategory || 'terrain')
       : active;
   };
+  const getShouldShowVisibilityFogOverlayForState = (toolState) => {
+    const interactionMode = String(toolState && toolState.interactionMode || 'select');
+    if (interactionMode === 'select') {
+      return String(toolState && toolState.selectionCategory || 'terrain') === 'visibility';
+    }
+    if (interactionMode === 'paint') {
+      return String(toolState && toolState.paintCategory || 'terrain') === 'visibility';
+    }
+    return false;
+  };
   const modeSelect = document.createElement('select');
   modeSelect.className = 'hidden';
   modeSelect.value = String(tool.mode || 'select');
@@ -29099,9 +29179,45 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   let tabModeFlashActive = false;
   let tabModeFlashTimer = 0;
   let mapEditRerenderTimer = 0;
+  let mapToolTimingCounter = 0;
   let refreshMapToolChrome = () => {};
   let refreshMapInteractionOverlay = () => {};
   let renderTileInfoPanel = () => {};
+  let refreshMapViewForToolChange = (_options = {}) => {
+    rerenderMapView();
+  };
+  const mapToolNowMs = () => (
+    (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now()
+  );
+  const beginMapToolTiming = (label, meta = {}) => {
+    const id = ++mapToolTimingCounter;
+    const startedAt = mapToolNowMs();
+    appendDebugLog('biq-map:tool-timing:start', { id, label, ...meta });
+    return {
+      id,
+      label,
+      mark(stage, extra = {}) {
+        appendDebugLog('biq-map:tool-timing:mark', {
+          id,
+          label,
+          stage,
+          elapsedMs: Number((mapToolNowMs() - startedAt).toFixed(2)),
+          ...extra
+        });
+      },
+      end(result = 'done', extra = {}) {
+        appendDebugLog('biq-map:tool-timing:end', {
+          id,
+          label,
+          result,
+          elapsedMs: Number((mapToolNowMs() - startedAt).toFixed(2)),
+          ...extra
+        });
+      }
+    };
+  };
   const rememberMapPaneScroll = () => {
     if (!mapPane) return;
     state.biqMapScrollLeft = mapPane.scrollLeft;
@@ -29113,10 +29229,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const scheduleMapEditRerender = (delay = 180) => {
     rememberMapPaneScroll();
+    const scheduledLeft = Number.isFinite(state.biqMapScrollLeft) ? Number(state.biqMapScrollLeft) : 0;
+    const scheduledTop = Number.isFinite(state.biqMapScrollTop) ? Number(state.biqMapScrollTop) : 0;
     if (mapEditRerenderTimer) window.clearTimeout(mapEditRerenderTimer);
     mapEditRerenderTimer = window.setTimeout(() => {
       mapEditRerenderTimer = 0;
       rememberMapPaneScroll();
+      state.biqMapScrollLeft = scheduledLeft;
+      state.biqMapScrollTop = scheduledTop;
       rerenderMapView();
     }, delay);
   };
@@ -29140,11 +29260,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     btn.classList.toggle('active', String(tool.interactionMode || 'select') === opt.value);
     btn.innerHTML = `<span class="btn-icon">${opt.icon}</span>${opt.label}`;
     btn.addEventListener('click', () => {
-      state.mapEditorTool.interactionMode = opt.value;
-      state.mapEditorTool.mode = opt.value === 'paint' ? String(state.mapEditorTool.paintCategory || 'terrain') : opt.value;
-      modeSelect.value = state.mapEditorTool.mode;
-      refreshMapToolChrome();
-      refreshMapInteractionOverlay();
+      const nextMode = opt.value === 'paint'
+        ? String(state.mapEditorTool.paintCategory || 'terrain')
+        : opt.value;
+      setToolMode(nextMode, { source: `mode-button:${opt.value}` });
     });
     modeGroup.appendChild(btn);
   });
@@ -29154,7 +29273,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     { value: 'terrain', label: 'Terrain' },
     { value: 'overlay', label: 'Overlays' },
     { value: 'resource', label: 'Resources' },
-    { value: 'district', label: 'Districts' }
+    { value: 'district', label: 'Districts' },
+    { value: 'visibility', label: 'Fog of War' }
   ];
   const mapSelectCategoryOptions = [
     { value: 'terrain', label: 'Terrain' },
@@ -29164,7 +29284,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     { value: 'naturalWonder', label: 'Natural Wonders' },
     { value: 'namedTile', label: 'Named Tiles' },
     { value: 'city', label: 'Cities' },
-    { value: 'visibility', label: 'Visibility' },
+    { value: 'visibility', label: 'Fog of War' },
     { value: 'startingLocation', label: 'Starting Locations' },
     { value: 'unit', label: 'Units' }
   ];
@@ -29190,7 +29310,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     modeSelect.value = state.mapEditorTool.mode;
     refreshMapToolChrome();
     refreshMapInteractionOverlay();
-    renderTileInfoPanel();
+    refreshMapViewForToolChange();
   });
   categoryWrap.appendChild(categorySelect);
   if (String(tool.interactionMode || 'select') === 'paint') toolRow.appendChild(categoryWrap);
@@ -29321,7 +29441,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   const fogWrap = document.createElement('label');
   fogWrap.className = 'hint';
-  fogWrap.textContent = 'Visibility';
+  fogWrap.textContent = 'Fog of War';
   const fogSelect = document.createElement('select');
   [{ value: 'add', label: 'Add Fog' }, { value: 'remove', label: 'Remove Fog' }].forEach((opt) => {
     const o = document.createElement('option');
@@ -29841,30 +29961,92 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   zoomControls.appendChild(zoomInBtn);
   zoomControls.appendChild(zoomOutBtn);
 
-  const setToolMode = (mode) => {
+  const setToolMode = (mode, options = {}) => {
+    const timing = options && options.timing ? options.timing : null;
+    const source = String(options && options.source || 'ui');
     const nextMode = String(mode || 'select');
     const nextInteraction = ['move', 'select'].includes(nextMode) ? nextMode : 'paint';
-    if (state.mapEditorTool.mode === nextMode && state.mapEditorTool.interactionMode === nextInteraction) return;
+    const previousToolState = {
+      interactionMode: String(state.mapEditorTool.interactionMode || 'select'),
+      mode: String(state.mapEditorTool.mode || 'select'),
+      paintCategory: String(state.mapEditorTool.paintCategory || 'terrain'),
+      selectionCategory: String(state.mapEditorTool.selectionCategory || 'terrain')
+    };
+    timing?.mark('setToolMode:enter', {
+      source,
+      nextMode,
+      nextInteraction,
+      currentMode: String(state.mapEditorTool.mode || ''),
+      currentInteraction: String(state.mapEditorTool.interactionMode || '')
+    });
+    if (state.mapEditorTool.mode === nextMode && state.mapEditorTool.interactionMode === nextInteraction) {
+      timing?.end('no-op', { source, nextMode, nextInteraction });
+      return;
+    }
     state.mapEditorTool.interactionMode = nextInteraction;
-    if (nextInteraction === 'paint') state.mapEditorTool.paintCategory = nextMode;
+    if (nextInteraction === 'paint' && paintModeCategories.includes(nextMode)) {
+      state.mapEditorTool.paintCategory = nextMode;
+    } else if (nextInteraction === 'paint' && !paintModeCategories.includes(String(state.mapEditorTool.paintCategory || ''))) {
+      state.mapEditorTool.paintCategory = 'terrain';
+    }
     state.mapEditorTool.mode = nextMode;
     modeSelect.value = nextMode;
+    const nextToolState = {
+      interactionMode: String(state.mapEditorTool.interactionMode || 'select'),
+      mode: String(state.mapEditorTool.mode || 'select'),
+      paintCategory: String(state.mapEditorTool.paintCategory || 'terrain'),
+      selectionCategory: String(state.mapEditorTool.selectionCategory || 'terrain')
+    };
+    const fogOverlayChanged = getShouldShowVisibilityFogOverlayForState(previousToolState) !== getShouldShowVisibilityFogOverlayForState(nextToolState);
+    timing?.mark('setToolMode:state-updated', {
+      source,
+      paintCategory: String(state.mapEditorTool.paintCategory || ''),
+      selectionCategory: String(state.mapEditorTool.selectionCategory || ''),
+      fogOverlayChanged
+    });
+    const chromeStart = mapToolNowMs();
     refreshMapToolChrome();
+    timing?.mark('setToolMode:after-tool-chrome', {
+      source,
+      durationMs: Number((mapToolNowMs() - chromeStart).toFixed(2))
+    });
+    const overlayStart = mapToolNowMs();
     refreshMapInteractionOverlay();
+    timing?.mark('setToolMode:after-interaction-overlay', {
+      source,
+      durationMs: Number((mapToolNowMs() - overlayStart).toFixed(2))
+    });
+    const viewStart = mapToolNowMs();
+    refreshMapViewForToolChange({ redrawCanvas: fogOverlayChanged });
+    timing?.mark('setToolMode:after-view-refresh', {
+      source,
+      durationMs: Number((mapToolNowMs() - viewStart).toFixed(2))
+    });
+    timing?.end('applied', { source, nextMode, nextInteraction });
   };
   const flashTabModeHint = () => {
     tabModeFlashActive = true;
     if (tabModeFlashTimer) window.clearTimeout(tabModeFlashTimer);
-    refreshMapToolChrome();
+    if (controlMoveHint) controlMoveHint.classList.add('tab-flash');
     tabModeFlashTimer = window.setTimeout(() => {
       tabModeFlashTimer = 0;
       tabModeFlashActive = false;
-      refreshMapToolChrome();
+      if (controlMoveHint) controlMoveHint.classList.remove('tab-flash');
     }, 380);
   };
   const cycleInteractionMode = () => {
-    setToolMode(getNextInteractionMode(getStoredInteractionMode()));
+    const nextMode = getNextInteractionMode(getStoredInteractionMode());
+    const timing = beginMapToolTiming('tab-cycle', {
+      trigger: 'Tab',
+      fromInteractionMode: getStoredInteractionMode(),
+      effectiveInteractionMode: getEffectiveInteractionMode(),
+      nextMode
+    });
+    timing.mark('cycleInteractionMode:before-setToolMode');
+    setToolMode(nextMode, { source: 'tab', timing });
+    timing.mark('cycleInteractionMode:before-flash-hint');
     flashTabModeHint();
+    timing.end('tab-cycle-complete', { nextMode });
   };
   const mapControlKeyTargetIsEditable = (target) => !!(target && (
     target.tagName === 'INPUT'
@@ -29890,7 +30072,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     container.focus({ preventScroll: true });
   });
   const cleanupControlMoveListeners = () => {
-    document.removeEventListener('keydown', onMapHotkeyDown);
+    document.removeEventListener('keydown', onMapHotkeyDown, true);
     document.removeEventListener('keydown', onMapControlKeyDown);
     document.removeEventListener('keyup', onMapControlKeyUp);
     window.removeEventListener('blur', onMapControlWindowBlur);
@@ -29937,7 +30119,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const hasCommandModifier = !!(ev.metaKey || ev.ctrlKey);
     if (hotkeyMap[key]) {
       ev.preventDefault();
-      setToolMode(hotkeyMap[key]);
+      setToolMode(hotkeyMap[key], { source: `hotkey:${key}` });
       return;
     }
     if (hasCommandModifier && key === 'g') {
@@ -29948,7 +30130,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (key === 'f') {
       ev.preventDefault();
       if (state.mapEditorTool.mode !== 'visibility') {
-        setToolMode('visibility');
+        setToolMode('visibility', { source: 'hotkey:f' });
         state.mapEditorTool.fogMode = 'add';
       } else {
         state.mapEditorTool.fogMode = String(state.mapEditorTool.fogMode || 'add') === 'add' ? 'remove' : 'add';
@@ -29963,7 +30145,19 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return;
     }
     if (ev.key === 'Tab') {
+      if (ev.repeat) return;
+      appendDebugLog('biq-map:tab-hotkey', {
+        mode: String(state.mapEditorTool.mode || ''),
+        interactionMode: getStoredInteractionMode(),
+        effectiveInteractionMode: getEffectiveInteractionMode(),
+        targetTag: ev.target && ev.target.tagName ? ev.target.tagName : '',
+        shiftKey: !!ev.shiftKey,
+        metaKey: !!ev.metaKey,
+        ctrlKey: !!ev.ctrlKey,
+        altKey: !!ev.altKey
+      });
       ev.preventDefault();
+      ev.stopPropagation();
       cycleInteractionMode();
       return;
     }
@@ -29977,7 +30171,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       setMapZoom(stepZoomLevel(Number(state.biqMapZoom || 6), -1), 'hotkey-mod-');
     }
   };
-  document.addEventListener('keydown', onMapHotkeyDown);
+  document.addEventListener('keydown', onMapHotkeyDown, true);
 
   const scaleForZoom = (z) => Math.max(0.18, clampZoom(z) / 16);
   const readBoolField = (record, keys) => {
@@ -30968,6 +31162,48 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return [];
   };
+  const getMapUnitOwnerOptions = () => leadRecordsForOwner.map((record, idx) => {
+    const leaderName = String((record && (getFieldByBaseKey(record, 'leadername')?.value || record.name)) || `Player ${idx + 1}`).trim();
+    const civIndex = parseIntLoose(getFieldByBaseKey(record, 'civ')?.value, NaN);
+    const civRecord = raceRecordsForOwner[civIndex] || null;
+    const civName = String(civRecord && civRecord.name || '').trim();
+    return {
+      value: String(idx),
+      label: civName || leaderName || `Player ${idx + 1}`
+    };
+  });
+  const getUnifiedUnitOwnerChoice = (units) => {
+    const list = Array.isArray(units) ? units : [];
+    if (!list.length) return '';
+    let owner = '';
+    for (let i = 0; i < list.length; i += 1) {
+      const next = String(getMapFieldValue(list[i], 'owner', '') || '').trim();
+      if (!next) continue;
+      if (!owner) {
+        owner = next;
+        continue;
+      }
+      if (owner !== next) return 'mixed';
+    }
+    return owner;
+  };
+  const getUnitExperienceOptions = () => ([
+    { value: '0', label: 'Conscript' },
+    { value: '1', label: 'Regular' },
+    { value: '2', label: 'Veteran' },
+    { value: '3', label: 'Elite' }
+  ]);
+  const getUnitTypeEntryByRecord = (record) => {
+    const prtoNumber = parseIntLoose(getMapFieldValue(record, 'prtonumber', '-1'), -1);
+    if (!Number.isFinite(prtoNumber) || prtoNumber < 0) return null;
+    return resolveReferenceEntryForPicker('units', String(prtoNumber)) || null;
+  };
+  const getUnitTypeName = (record) => {
+    const entry = getUnitTypeEntryByRecord(record);
+    if (entry && entry.name) return String(entry.name);
+    const prtoNumber = parseIntLoose(getMapFieldValue(record, 'prtonumber', '-1'), -1);
+    return Number.isFinite(prtoNumber) && prtoNumber >= 0 ? `Unit ${prtoNumber}` : 'Unknown Unit';
+  };
   const addStartingLocationAtCoords = (xPos, yPos, owner, ownerType) => {
     if (!slocSection) return false;
     if (!Array.isArray(slocSection.records)) slocSection.records = [];
@@ -31013,6 +31249,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const ref = getBiqStructureRecordRef(target);
     if (ref) pushStructureDeleteOp('SLOC', ref);
     slocSection.records = slocSection.records.filter((record) => record !== target);
+    return true;
+  };
+  const addUnitAtCoords = (tileRecord, xPos, yPos, owner, prtoNumber, experienceLevel) => {
+    if (!unitSection || !mapCore || typeof mapCore.addUnit !== 'function' || !tileRecord) return false;
+    const ref = uniqueRecordRef('UNIT');
+    const unit = mapCore.addUnit(unitSection, tileRecord, xPos, yPos, owner, 3, prtoNumber, ref);
+    if (!unit) return false;
+    setMapFieldValue(unit, 'experiencelevel', String(experienceLevel), 'Experience Level');
+    pushStructureAddOp('UNIT', ref);
     return true;
   };
   const clearLegacyColonyOverlayBits = (tile) => {
@@ -32689,15 +32934,30 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   };
 
+  const shouldShowVisibilityFogOverlay = () => {
+    const interactionMode = getStoredInteractionMode();
+    if (interactionMode === 'select') {
+      return String(state.mapEditorTool && state.mapEditorTool.selectionCategory || 'terrain') === 'visibility';
+    }
+    if (interactionMode === 'paint') {
+      return String(state.mapEditorTool && state.mapEditorTool.paintCategory || 'terrain') === 'visibility';
+    }
+    return false;
+  };
+
   const drawFogOverlay = (record, sx, sy) => {
-    const fog = parseIntLoose(getMapFieldValue(record, 'fogofwar', '1'), 1);
+    if (!shouldShowVisibilityFogOverlay()) return;
+    const fog = parseIntLoose(getMapFieldStoredValue(record, 'fogofwar', '1'), 1);
     if (fog !== 0) return;
+    const logical = tileLogicalCenter(sx, sy);
+    const cx = Math.round(logical.cx);
+    const cy = Math.round(logical.cy);
     ctx.fillStyle = 'rgba(20, 26, 40, 0.34)';
     ctx.beginPath();
-    ctx.moveTo(sx + Math.floor(tileW / 2), sy);
-    ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
-    ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
-    ctx.lineTo(sx, sy + Math.floor(tileH / 2));
+    ctx.moveTo(cx, cy - Math.floor(tileH / 2));
+    ctx.lineTo(cx + Math.floor(tileW / 2), cy);
+    ctx.lineTo(cx, cy + Math.floor(tileH / 2));
+    ctx.lineTo(cx - Math.floor(tileW / 2), cy);
     ctx.closePath();
     ctx.fill();
   };
@@ -32939,6 +33199,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         drawRuinsOverlay(item.record, item.sx, item.sy);
         drawColonyOverlay(item.record, item.sx, item.sy);
         drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
+      }
+    }
+
+    if (shouldShowVisibilityFogOverlay()) {
+      for (let i = 0; i < overlayPassItems.length; i += 1) {
+        const item = overlayPassItems[i];
         drawFogOverlay(item.record, item.sx, item.sy);
       }
     }
@@ -32977,6 +33243,26 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ctx.stroke();
     }
     if (clips) ctx.restore();
+  };
+  refreshMapViewForToolChange = (options = {}) => {
+    const startedAt = mapToolNowMs();
+    const shouldRedrawCanvas = options.redrawCanvas !== false;
+    if (shouldRedrawCanvas) redrawMapCanvasInPlace();
+    const redrawMs = Number((mapToolNowMs() - startedAt).toFixed(2));
+    hideHoverTooltip();
+    const hideTooltipMs = Number((mapToolNowMs() - startedAt - redrawMs).toFixed(2));
+    renderTileInfoPanel();
+    const totalMs = Number((mapToolNowMs() - startedAt).toFixed(2));
+    appendDebugLog('biq-map:tool-refresh-view', {
+      redrawCanvas: shouldRedrawCanvas,
+      redrawMs,
+      hideTooltipMs,
+      renderTileInfoMs: Number((totalMs - redrawMs - hideTooltipMs).toFixed(2)),
+      totalMs,
+      mode: String(state.mapEditorTool && state.mapEditorTool.mode || ''),
+      interactionMode: getStoredInteractionMode(),
+      effectiveInteractionMode: getEffectiveInteractionMode()
+    });
   };
   redrawMapCanvasInPlace();
 
@@ -34364,15 +34650,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     host.appendChild(card);
   };
   const renderVisibilityOptions = (host, tile) => {
-    const hasFog = getMapFieldValue(tile, 'fogofwar', '1') === '0';
+    const hasFog = parseIntLoose(getMapFieldStoredValue(tile, 'fogofwar', '1'), 1) === 0;
     const card = document.createElement('div');
     card.className = 'map-city-editor';
-    addOptionSummary(
-      card,
-      hasFog
-        ? 'Fog of war is present on this tile. Quint renders this as the gray EditFog overlay.'
-        : 'This tile starts visible.'
-    );
     const actions = document.createElement('div');
     actions.className = 'inline-btn-row';
     [
@@ -34756,6 +35036,280 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     editor.appendChild(buildingWrap);
     host.appendChild(editor);
   };
+  const renderUnitOptions = (host, tile, geom) => {
+    const units = getUnitRecordsForTile(geom);
+    const card = document.createElement('div');
+    card.className = 'map-city-editor map-unit-editor';
+
+    const ownerOptions = getMapUnitOwnerOptions();
+    const realUnitOwnerValue = getUnifiedUnitOwnerChoice(units);
+    const storedTileInfoOwner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitOwner, NaN);
+    let activeOwnerValue = '';
+    if (realUnitOwnerValue !== 'mixed' && realUnitOwnerValue !== '') {
+      activeOwnerValue = String(realUnitOwnerValue);
+    } else if (Number.isFinite(storedTileInfoOwner) && ownerOptions.some((opt) => parseIntLoose(opt.value, NaN) === storedTileInfoOwner)) {
+      activeOwnerValue = String(storedTileInfoOwner);
+    } else if (ownerOptions.length > 0) {
+      activeOwnerValue = String(ownerOptions[0].value);
+    }
+    if (ownerOptions.length > 0) {
+      const ownerRow = document.createElement('label');
+      ownerRow.className = 'map-city-field map-city-field-wide';
+      const ownerText = document.createElement('span');
+      ownerText.className = 'field-meta';
+      ownerText.textContent = 'Owner';
+      const ownerSelect = document.createElement('select');
+      if (realUnitOwnerValue === 'mixed') {
+        const mixedNode = document.createElement('option');
+        mixedNode.value = 'mixed';
+        mixedNode.textContent = '(mixed owners)';
+        ownerSelect.appendChild(mixedNode);
+      }
+      ownerOptions.forEach((opt) => {
+        const node = document.createElement('option');
+        node.value = opt.value;
+        node.textContent = opt.label;
+        ownerSelect.appendChild(node);
+      });
+      ownerSelect.value = realUnitOwnerValue === 'mixed' ? 'mixed' : activeOwnerValue;
+      ownerSelect.disabled = !isScenarioMode();
+      ownerSelect.addEventListener('change', () => {
+        state.mapEditorTool.tileInfoUnitOwner = ownerSelect.value;
+        const parsedOwner = parseIntLoose(ownerSelect.value, NaN);
+        activeOwnerValue = Number.isFinite(parsedOwner) && parsedOwner >= 0 ? ownerSelect.value : '';
+        syncAddButton();
+        if (!isScenarioMode()) return;
+        if (!Number.isFinite(parsedOwner) || parsedOwner < 0) return;
+        rememberUndoSnapshot();
+        units.forEach((record) => {
+          setMapFieldValue(record, 'ownertype', '3', 'Owner Type');
+          setMapFieldValue(record, 'owner', String(parsedOwner), 'Owner');
+        });
+        setDirty(true);
+        rerenderMapViewPreservingScroll();
+      });
+      ownerRow.appendChild(ownerText);
+      ownerRow.appendChild(ownerSelect);
+      card.appendChild(ownerRow);
+    }
+
+    const addUnitOptions = ((state.bundle && state.bundle.tabs && state.bundle.tabs.units && state.bundle.tabs.units.entries) || [])
+      .map((entry, idx) => {
+        const biqIndex = getReferenceEntryIndexForOption('units', entry, idx, { allowFallback: true });
+        if (!Number.isFinite(biqIndex) || biqIndex < 0) return null;
+        return {
+          value: String(biqIndex),
+          label: String(entry && entry.name || `Unit ${biqIndex}`),
+          entry
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+    const experienceOptions = getUnitExperienceOptions();
+    const rawStoredTileInfoUnitType = normalizeConfigToken(
+      (state.mapEditorTool && (state.mapEditorTool.tileInfoUnitType ?? state.mapEditorTool.unitType)) ?? '-1'
+    );
+    const normalizedStoredUnitType = addUnitOptions.some((opt) => normalizeConfigToken(opt.value) === rawStoredTileInfoUnitType)
+      ? rawStoredTileInfoUnitType
+      : '-1';
+    state.mapEditorTool.tileInfoUnitType = normalizedStoredUnitType;
+    const initialExperienceValue = (() => {
+      const raw = normalizeConfigToken((state.mapEditorTool && state.mapEditorTool.tileInfoUnitExperience) ?? '1');
+      if (experienceOptions.some((opt) => normalizeConfigToken(opt.value) === raw)) return raw;
+      return '1';
+    })();
+    state.mapEditorTool.tileInfoUnitExperience = initialExperienceValue;
+    const storedQuantity = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitQuantity, 1);
+    const initialQuantity = Number.isFinite(storedQuantity) && storedQuantity > 0 ? Math.min(99, storedQuantity) : 1;
+    state.mapEditorTool.tileInfoUnitQuantity = initialQuantity;
+
+    const addPanel = document.createElement('section');
+    addPanel.className = 'map-unit-add-panel';
+    const addRow = document.createElement('div');
+    addRow.className = 'map-unit-add';
+
+    const addExperienceWrap = document.createElement('label');
+    addExperienceWrap.className = 'map-unit-add-meta';
+    const addExperienceText = document.createElement('span');
+    addExperienceText.className = 'field-meta';
+    addExperienceText.textContent = 'Experience';
+    const addExperienceSelect = document.createElement('select');
+    experienceOptions.forEach((opt) => {
+      const node = document.createElement('option');
+      node.value = opt.value;
+      node.textContent = opt.label;
+      addExperienceSelect.appendChild(node);
+    });
+    addExperienceSelect.value = initialExperienceValue;
+    addExperienceSelect.disabled = !isScenarioMode();
+    addExperienceSelect.addEventListener('change', () => {
+      state.mapEditorTool.tileInfoUnitExperience = addExperienceSelect.value;
+    });
+    addExperienceWrap.appendChild(addExperienceText);
+    addExperienceWrap.appendChild(addExperienceSelect);
+    addRow.appendChild(addExperienceWrap);
+
+    const addQuantityWrap = document.createElement('label');
+    addQuantityWrap.className = 'map-unit-add-meta map-unit-add-quantity';
+    const addQuantityText = document.createElement('span');
+    addQuantityText.className = 'field-meta';
+    addQuantityText.textContent = 'Qty';
+    const addQuantityInput = document.createElement('input');
+    addQuantityInput.type = 'number';
+    addQuantityInput.min = '1';
+    addQuantityInput.max = '99';
+    addQuantityInput.step = '1';
+    addQuantityInput.value = String(initialQuantity);
+    addQuantityInput.disabled = !isScenarioMode();
+    const syncQuantityState = () => {
+      const parsed = parseIntLoose(addQuantityInput.value, 1);
+      const safe = Number.isFinite(parsed) && parsed > 0 ? Math.min(99, parsed) : 1;
+      state.mapEditorTool.tileInfoUnitQuantity = safe;
+      addQuantityInput.value = String(safe);
+    };
+    addQuantityInput.addEventListener('change', syncQuantityState);
+    addQuantityInput.addEventListener('blur', syncQuantityState);
+    addQuantityInput.addEventListener('input', syncQuantityState);
+    addQuantityWrap.appendChild(addQuantityText);
+    addQuantityWrap.appendChild(addQuantityInput);
+    addRow.appendChild(addQuantityWrap);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'civilization-name-list-add-btn map-unit-add-btn';
+    addBtn.textContent = '+';
+    addBtn.title = 'Add unit to this tile';
+    addBtn.setAttribute('aria-label', 'Add unit to this tile');
+    const canAddUnitToTile = () => {
+      if (!isScenarioMode()) return false;
+      if (!tile || !geom || !unitSection || !mapCore || typeof mapCore.addUnit !== 'function') return false;
+      const unitType = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitType, NaN);
+      if (!Number.isFinite(unitType) || unitType < 0) return false;
+      const quantity = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitQuantity, 1);
+      if (!Number.isFinite(quantity) || quantity < 1) return false;
+      const ownerValue = parseIntLoose(activeOwnerValue, NaN);
+      return Number.isFinite(ownerValue) && ownerValue >= 0;
+    };
+    function syncAddButton() {
+      const enabled = canAddUnitToTile();
+      addBtn.disabled = !enabled;
+      addBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    }
+    addBtn.addEventListener('click', () => {
+      if (!canAddUnitToTile()) return;
+      const prtoNumber = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitType, NaN);
+      const experienceLevel = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitExperience, 1);
+      const quantity = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitQuantity, 1);
+      const owner = parseIntLoose(activeOwnerValue, NaN);
+      if (!Number.isFinite(prtoNumber) || prtoNumber < 0 || !Number.isFinite(owner) || owner < 0 || !Number.isFinite(quantity) || quantity < 1) return;
+      rememberUndoSnapshot();
+      let changed = false;
+      for (let i = 0; i < quantity; i += 1) {
+        if (addUnitAtCoords(tile, geom.xPos, geom.yPos, owner, prtoNumber, experienceLevel)) changed = true;
+      }
+      if (changed) {
+        setDirty(true);
+        rerenderMapViewPreservingScroll();
+      }
+    });
+    addRow.appendChild(addBtn);
+    addPanel.appendChild(addRow);
+
+    const unitPicker = createReferencePicker({
+      options: addUnitOptions,
+      targetTabKey: 'units',
+      currentValue: normalizedStoredUnitType,
+      searchPlaceholder: 'Search unit...',
+      noneLabel: 'Choose unit...',
+      onSelect: (next) => {
+        state.mapEditorTool.tileInfoUnitType = normalizeConfigToken(next || '-1');
+        syncAddButton();
+      }
+    });
+    unitPicker.classList.add('map-unit-add-picker');
+    const unitPickerMenu = unitPicker.querySelector('.tech-picker-menu');
+    if (unitPickerMenu && typeof MutationObserver === 'function') {
+      const syncPickerOpenState = () => {
+        card.classList.toggle('map-unit-picker-open', !unitPickerMenu.classList.contains('hidden'));
+      };
+      syncPickerOpenState();
+      const pickerObserver = new MutationObserver(syncPickerOpenState);
+      pickerObserver.observe(unitPickerMenu, { attributes: true, attributeFilter: ['class'] });
+    }
+    addPanel.appendChild(unitPicker);
+    card.appendChild(addPanel);
+    syncAddButton();
+
+    if (!units.length) {
+      const summary = document.createElement('div');
+      summary.className = 'map-info-summary';
+      summary.textContent = 'No units on this tile.';
+      card.appendChild(summary);
+      host.appendChild(card);
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'map-unit-list';
+    units.forEach((record) => {
+      const row = document.createElement('div');
+      row.className = 'map-unit-row';
+
+      const thumb = document.createElement('span');
+      thumb.className = 'map-unit-thumb';
+      const unitEntry = getUnitTypeEntryByRecord(record);
+      if (unitEntry) loadReferenceListThumbnail('units', unitEntry, thumb);
+      row.appendChild(thumb);
+
+      const name = document.createElement('div');
+      name.className = 'map-unit-name';
+      name.textContent = getUnitTypeName(record);
+      row.appendChild(name);
+
+      const veteranWrap = document.createElement('div');
+      veteranWrap.className = 'map-unit-veteran';
+      const veteranSelect = document.createElement('select');
+      experienceOptions.forEach((opt) => {
+        const node = document.createElement('option');
+        node.value = opt.value;
+        node.textContent = opt.label;
+        veteranSelect.appendChild(node);
+      });
+      const currentExperience = String(parseIntLoose(getMapFieldValue(record, 'experiencelevel', '1'), 1));
+      veteranSelect.value = currentExperience;
+      veteranSelect.disabled = !isScenarioMode();
+      veteranSelect.addEventListener('change', () => {
+        if (!isScenarioMode()) return;
+        rememberUndoSnapshot();
+        setMapFieldValue(record, 'experiencelevel', veteranSelect.value, 'Experience Level');
+        setDirty(true);
+        rerenderMapViewPreservingScroll();
+      });
+      veteranWrap.appendChild(veteranSelect);
+      row.appendChild(veteranWrap);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'civilization-name-list-remove-btn map-unit-remove';
+      withRemoveIcon(removeBtn, '');
+      removeBtn.title = `Remove ${name.textContent}`;
+      removeBtn.setAttribute('aria-label', `Remove ${name.textContent}`);
+      removeBtn.disabled = !isScenarioMode();
+      removeBtn.addEventListener('click', () => {
+        const unitRef = Number.isFinite(Number(record && record.index)) ? Number(record.index) : NaN;
+        if (!Number.isFinite(unitRef) || unitRef < 0) return;
+        rememberUndoSnapshot();
+        if (removeUnitByIndex(unitRef)) {
+          setDirty(true);
+          rerenderMapViewPreservingScroll();
+        }
+      });
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    host.appendChild(card);
+  };
   renderTileInfoPanel = () => {
     if (getStoredInteractionMode() !== 'select') {
       tileInfoPanel.classList.add('hidden');
@@ -34792,7 +35346,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     infoCategorySelect.addEventListener('change', () => {
       state.mapEditorTool.selectionCategory = infoCategorySelect.value;
       state.mapEditorTool.mode = 'select';
-      renderTileInfoPanel();
+      refreshMapViewForToolChange();
     });
     categoryRow.appendChild(infoCategorySelect);
     tileInfoPanel.appendChild(categoryRow);
@@ -34819,8 +35373,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     } else if (activeOption.value === 'startingLocation') {
       renderStartingLocationOptions(body, tile, geom);
     } else if (activeOption.value === 'unit') {
-      const units = getUnitRecordsForTile(geom);
-      addOptionSummary(body, units.length ? `${units.length} unit${units.length === 1 ? '' : 's'} on this tile.` : 'No units on this tile.');
+      renderUnitOptions(body, tile, geom);
     }
     tileInfoPanel.appendChild(body);
   };
@@ -39624,7 +40177,16 @@ function markReferenceTabsAsSaved() {
           const fields = Array.isArray(record.fields) ? record.fields : [];
           fields.forEach((field) => {
             if (!field) return;
-            field.originalValue = String(field.value || '');
+            const baseKey = String(field.baseKey || field.key || '').trim().toLowerCase();
+            const preserveTileRawBool = String(section && section.code || '').trim().toUpperCase() === 'TILE'
+              && (baseKey === 'fogofwar' || baseKey === 'ruin')
+              && !field.mapEditorValueEdited
+              && field.originalValue != null
+              && String(field.originalValue).trim() !== '';
+            if (!preserveTileRawBool) {
+              field.originalValue = String(field.value || '');
+            }
+            delete field.mapEditorValueEdited;
           });
         });
       });
