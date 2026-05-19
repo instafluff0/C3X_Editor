@@ -472,7 +472,7 @@ textarea {
 
 .bool-toggle input[type="checkbox"] + span {
   border-radius: 999px;
-  padding: 2px 8px 2px 0;
+  padding: 2px 8px;
   transition: color 120ms ease, background-color 120ms ease, opacity 120ms ease;
   cursor: pointer;
 }
@@ -6938,6 +6938,18 @@ details > summary:focus-visible {
   padding: 10px 12px;
   border-bottom: 1px solid rgba(72, 84, 121, 0.18);
   background: linear-gradient(145deg, rgba(250, 252, 255, 0.97), rgba(240, 246, 255, 0.97));
+}
+
+.map-editor-modal-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.map-editor-modal-actions button {
+  min-height: 34px;
 }
 
 .map-editor-modal-body {

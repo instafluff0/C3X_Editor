@@ -300,6 +300,8 @@ const mapModal = {
   node: null,
   body: null,
   title: null,
+  undoBtn: null,
+  undoAllBtn: null,
   tab: null,
   tileSection: null
 };
@@ -2142,6 +2144,7 @@ function refreshDirtyUi() {
   const hasUndoHistory = Array.isArray(state.undoHistory) && state.undoHistory.length > 0;
   if (el.undoBtn) el.undoBtn.disabled = !hasUndoHistory || state.isLoading;
   if (el.undoAllBtn) el.undoAllBtn.disabled = !state.isDirty || state.isLoading;
+  refreshMapModalUndoButtons();
 }
 
 function getLatestUndoSnapshot() {
@@ -2181,18 +2184,26 @@ function snapshotEditableTabsFromBundle(bundle) {
 }
 
 function snapshotSelectedEditableTabs(tabKeys) {
+  let options = {};
+  let keysInput = tabKeys;
+  if (tabKeys && typeof tabKeys === 'object' && !Array.isArray(tabKeys)) {
+    options = tabKeys;
+    keysInput = tabKeys.tabKeys;
+  }
   if (!state.bundle || !state.bundle.tabs) return 'null';
-  const keys = Array.isArray(tabKeys) ? tabKeys.map((key) => String(key || '').trim()).filter(Boolean) : [];
+  const keys = Array.isArray(keysInput) ? keysInput.map((key) => String(key || '').trim()).filter(Boolean) : [];
   if (keys.length === 0) return 'null';
   const tabs = {};
   keys.forEach((key) => {
     if (state.bundle.tabs[key]) tabs[key] = JSON.parse(JSON.stringify(state.bundle.tabs[key]));
   });
   if (Object.keys(tabs).length === 0) return 'null';
-  return {
+  const snapshot = {
     kind: 'partial-tabs',
     tabs
   };
+  if (options && options.scope) snapshot.scope = String(options.scope);
+  return snapshot;
 }
 
 function getUndoSnapshotForKey(key = '') {
@@ -2200,7 +2211,38 @@ function getUndoSnapshotForKey(key = '') {
   if (normalizedKey.startsWith('BASE:')) {
     return snapshotSelectedEditableTabs(['base']);
   }
+  if (normalizedKey === 'MAP' || normalizedKey.startsWith('MAP:')) {
+    return snapshotSelectedEditableTabs({ tabKeys: ['map'], scope: 'map' });
+  }
   return snapshotTabs();
+}
+
+function getUndoSnapshotScope(snapshot) {
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'partial-tabs') {
+    const explicitScope = String(snapshot.scope || '').trim().toLowerCase();
+    if (explicitScope) return explicitScope;
+    const keys = Object.keys(snapshot.tabs || {});
+    if (keys.length === 1 && keys[0] === 'map') return 'map';
+  }
+  return '';
+}
+
+function isMapUndoSnapshot(snapshot) {
+  return getUndoSnapshotScope(snapshot) === 'map';
+}
+
+function findLatestUndoSnapshotIndex(predicate) {
+  const items = Array.isArray(state.undoHistory) ? state.undoHistory : [];
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    if (predicate(items[i], i)) return i;
+  }
+  return -1;
+}
+
+function getLatestScopedUndoSnapshot(scope) {
+  const normalizedScope = String(scope || '').trim().toLowerCase();
+  const idx = findLatestUndoSnapshotIndex((entry) => getUndoSnapshotScope(entry) === normalizedScope);
+  return idx >= 0 ? state.undoHistory[idx] : null;
 }
 
 function rememberUndoSnapshotForKey(key = '') {
@@ -2214,6 +2256,15 @@ function rememberUndoSnapshotForKey(key = '') {
 
 function rememberUndoSnapshot() {
   rememberUndoSnapshotForKey('');
+}
+
+function rememberMapUndoSnapshot() {
+  if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
+  const snapshot = getUndoSnapshotForKey('MAP');
+  const latestMapSnapshot = getLatestScopedUndoSnapshot('map');
+  if (getUndoSnapshotSignature(snapshot) === getUndoSnapshotSignature(latestMapSnapshot)) return;
+  state.undoHistory.push(cloneUndoSnapshotEntry(snapshot));
+  refreshDirtyUi();
 }
 
 function pushUndoSnapshot(snapshot) {
@@ -2349,6 +2400,69 @@ function getCleanTabsObject() {
   if (state.cleanTabsCache && typeof state.cleanTabsCache === 'object') return state.cleanTabsCache;
   state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
   return state.cleanTabsCache;
+}
+
+function buildScopedSnapshotFromTabs(scope, tabsByKey) {
+  const keys = Object.keys(tabsByKey || {});
+  if (keys.length === 0) return 'null';
+  return {
+    kind: 'partial-tabs',
+    scope: String(scope || '').trim().toLowerCase() || undefined,
+    tabs: JSON.parse(JSON.stringify(tabsByKey))
+  };
+}
+
+function getCleanMapUndoSnapshot() {
+  const cleanTabs = getCleanTabsObject();
+  if (!cleanTabs || !cleanTabs.map) return 'null';
+  return buildScopedSnapshotFromTabs('map', { map: cleanTabs.map });
+}
+
+function isMapDirty() {
+  const currentMap = state.bundle && state.bundle.tabs ? state.bundle.tabs.map : null;
+  const cleanMap = getCleanTabsObject().map || null;
+  return hasChangedFromClean(currentMap, cleanMap);
+}
+
+function replaceMapTabInSnapshot(snapshot, mapTab) {
+  const nextMapTab = mapTab ? JSON.parse(JSON.stringify(mapTab)) : null;
+  if (typeof snapshot === 'string') {
+    const tabs = parseSnapshotTabs(snapshot);
+    if (nextMapTab) tabs.map = nextMapTab;
+    else delete tabs.map;
+    return JSON.stringify(tabs);
+  }
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'partial-tabs' && snapshot.tabs && typeof snapshot.tabs === 'object') {
+    const nextSnapshot = cloneUndoSnapshotEntry(snapshot);
+    if (Object.prototype.hasOwnProperty.call(nextSnapshot.tabs, 'map')) {
+      if (nextMapTab) nextSnapshot.tabs.map = nextMapTab;
+      else delete nextSnapshot.tabs.map;
+    }
+    return nextSnapshot;
+  }
+  return cloneUndoSnapshotEntry(snapshot);
+}
+
+function buildUndoHistoryAfterScopedMapUndo(restoredMapTab, { removeAll = false } = {}) {
+  const source = cloneUndoHistoryEntries(state.undoHistory);
+  if (source.length === 0) return source;
+  if (removeAll) {
+    return source
+      .filter((entry) => !isMapUndoSnapshot(entry))
+      .map((entry) => replaceMapTabInSnapshot(entry, restoredMapTab));
+  }
+  const targetIndex = (() => {
+    for (let i = source.length - 1; i >= 0; i -= 1) {
+      if (isMapUndoSnapshot(source[i])) return i;
+    }
+    return -1;
+  })();
+  if (targetIndex < 0) return source;
+  source.splice(targetIndex, 1);
+  for (let i = targetIndex; i < source.length; i += 1) {
+    source[i] = replaceMapTabInSnapshot(source[i], restoredMapTab);
+  }
+  return source;
 }
 
 function hasChangedFromClean(currentValue, cleanValue) {
@@ -4519,6 +4633,7 @@ function navigateForward() {
 
 function navigateWithHistory(mutateState, renderOptions = { preserveTabScroll: true }) {
   if (!state.bundle || !state.bundle.tabs) return;
+  syncCurrentNavigationSnapshot();
   const before = captureViewSnapshot();
   mutateState();
   if (mapModal.node && mapModal.node.isConnected && !mapModal.node.classList.contains('hidden') && state.activeTab !== 'map') {
@@ -20377,7 +20492,11 @@ function ensureMapModalNode() {
     <div class="map-editor-modal-panel" role="dialog" aria-modal="true" aria-label="Map Editor">
       <div class="map-editor-modal-header">
         <strong id="map-editor-modal-title">Map Editor</strong>
-        <button type="button" class="ghost" data-act="close">Close</button>
+        <div class="map-editor-modal-actions">
+          <button type="button" class="ghost map-editor-modal-undo-btn" data-act="undo"><span class="btn-icon">↶</span>Undo</button>
+          <button type="button" class="ghost map-editor-modal-undo-all-btn" data-act="undo-all"><span class="btn-icon">↺</span>Undo All</button>
+          <button type="button" class="ghost" data-act="close">Close</button>
+        </div>
       </div>
       <div id="map-editor-modal-body" class="map-editor-modal-body"></div>
     </div>
@@ -20386,12 +20505,41 @@ function ensureMapModalNode() {
   mapModal.node = overlay;
   mapModal.body = overlay.querySelector('#map-editor-modal-body');
   mapModal.title = overlay.querySelector('#map-editor-modal-title');
+  mapModal.undoBtn = overlay.querySelector('[data-act="undo"]');
+  mapModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
   const closeBtn = overlay.querySelector('[data-act="close"]');
   if (closeBtn) closeBtn.addEventListener('click', () => closeMapModal());
+  if (mapModal.undoBtn) {
+    mapModal.undoBtn.addEventListener('click', async () => {
+      if (!isScenarioMode() || !getLatestScopedUndoSnapshot('map')) return;
+      const changed = await undoMapOneStep();
+      if (changed && state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
+        reopenMapModalForTab(state.bundle.tabs.map);
+      }
+    });
+  }
+  if (mapModal.undoAllBtn) {
+    mapModal.undoAllBtn.addEventListener('click', async () => {
+      if (!isScenarioMode() || !isMapDirty()) return;
+      const changed = await undoAllMapChanges();
+      if (changed && state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
+        reopenMapModalForTab(state.bundle.tabs.map);
+      }
+    });
+  }
   overlay.addEventListener('click', (ev) => {
     if (ev.target === overlay) closeMapModal();
   });
   return overlay;
+}
+
+function refreshMapModalUndoButtons() {
+  if (mapModal.undoBtn) {
+    mapModal.undoBtn.disabled = !isScenarioMode() || !getLatestScopedUndoSnapshot('map') || state.isLoading;
+  }
+  if (mapModal.undoAllBtn) {
+    mapModal.undoAllBtn.disabled = !isScenarioMode() || !isMapDirty() || state.isLoading;
+  }
 }
 
 function renderMapModalBody() {
@@ -20427,6 +20575,7 @@ function closeMapModal() {
   if (mapModal.body) mapModal.body.innerHTML = '';
   mapModal.tab = null;
   mapModal.tileSection = null;
+  refreshMapModalUndoButtons();
   syncCurrentNavigationSnapshot();
 }
 
@@ -20444,6 +20593,7 @@ function openMapModal(config) {
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
   renderMapModalBody();
+  refreshMapModalUndoButtons();
   syncCurrentNavigationSnapshot();
 }
 
@@ -20688,7 +20838,7 @@ function openGenerateMapModal(tab) {
             mapSeedEnabled: !!mapSeedEnabled?.checked,
             mapSeed: mapSeedInput ? mapSeedInput.value : modalSeed
           };
-          rememberUndoSnapshot();
+          rememberMapUndoSnapshot();
           const generatedSections = await buildGeneratedMapSections(tab, generation);
           applyGeneratedMapSectionsToTab(tab, generatedSections, 'set');
           setDirty(true);
@@ -29039,9 +29189,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return BIQ_MAP_ZOOM_LEVELS[Math.max(0, safeIdx - 1)];
   };
 
-  state.biqMapShowOverlays = true;
-  state.biqMapShowCityNames = true;
-
   const gridWrap = document.createElement('label');
   gridWrap.className = 'bool-toggle';
   gridWrap.title = 'Show Grid (Ctrl+G)';
@@ -33858,6 +34005,138 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     drawCtx.closePath();
   };
 
+  const terrainPreviewFillStyle = (terrainCode) => {
+    switch (parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND)) {
+      case BIQ_TERRAIN.DESERT: return 'rgba(228, 214, 166, 0.92)';
+      case BIQ_TERRAIN.PLAINS: return 'rgba(189, 179, 112, 0.92)';
+      case BIQ_TERRAIN.GRASSLAND: return 'rgba(119, 156, 88, 0.92)';
+      case BIQ_TERRAIN.TUNDRA: return 'rgba(196, 207, 200, 0.92)';
+      case BIQ_TERRAIN.FLOODPLAIN: return 'rgba(205, 192, 130, 0.92)';
+      case BIQ_TERRAIN.HILLS: return 'rgba(143, 128, 101, 0.92)';
+      case BIQ_TERRAIN.MOUNTAIN: return 'rgba(122, 126, 134, 0.92)';
+      case BIQ_TERRAIN.FOREST: return 'rgba(90, 135, 80, 0.92)';
+      case BIQ_TERRAIN.JUNGLE: return 'rgba(61, 134, 66, 0.92)';
+      case BIQ_TERRAIN.MARSH: return 'rgba(102, 119, 92, 0.92)';
+      case BIQ_TERRAIN.VOLCANO: return 'rgba(132, 116, 114, 0.92)';
+      case BIQ_TERRAIN.COAST: return 'rgba(106, 188, 190, 0.92)';
+      case BIQ_TERRAIN.SEA: return 'rgba(71, 150, 173, 0.92)';
+      case BIQ_TERRAIN.OCEAN: return 'rgba(55, 112, 154, 0.92)';
+      default: return 'rgba(140, 146, 150, 0.92)';
+    }
+  };
+
+  const terrainPreviewUsesFeatureOnly = (terrainCode) => {
+    const code = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
+    return (
+      code === BIQ_TERRAIN.MARSH
+      || code === BIQ_TERRAIN.HILLS
+      || code === BIQ_TERRAIN.MOUNTAIN
+      || code === BIQ_TERRAIN.FOREST
+      || code === BIQ_TERRAIN.JUNGLE
+      || code === BIQ_TERRAIN.VOLCANO
+    );
+  };
+
+  const terrainPreviewUsesTallArt = (terrainCode) => {
+    const code = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
+    return (
+      code === BIQ_TERRAIN.HILLS
+      || code === BIQ_TERRAIN.MOUNTAIN
+      || code === BIQ_TERRAIN.VOLCANO
+      || code === BIQ_TERRAIN.FOREST
+      || code === BIQ_TERRAIN.JUNGLE
+      || code === BIQ_TERRAIN.MARSH
+    );
+  };
+
+  const drawSimpleTerrainPreviewOverlay = (drawCtx, terrainCode, sx, sy, logical) => {
+    if (!drawCtx) return;
+    const effectiveCode = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
+    const cx = Math.round(logical.cx);
+    const cy = Math.round(logical.cy);
+    const midY = sy + Math.floor(tileH / 2);
+    if (effectiveCode === BIQ_TERRAIN.FOREST || effectiveCode === BIQ_TERRAIN.JUNGLE) {
+      const forestSheet = state.biqMapArtCache.grasslandForests;
+      if (forestSheet) {
+        const cellW = 128;
+        const cellH = 88;
+        const variant = 0;
+        const cols = 4;
+        const startRow = effectiveCode === BIQ_TERRAIN.JUNGLE ? 0 : 4;
+        const srcX = (variant % cols) * cellW;
+        const srcY = (startRow + Math.floor(variant / cols)) * cellH;
+        const drawH = Math.max(1, Math.round(cellH * scale));
+        drawCtx.drawImage(forestSheet, srcX, srcY, cellW, cellH, sx, midY, tileW, drawH);
+        return;
+      }
+      drawCtx.fillStyle = effectiveCode === BIQ_TERRAIN.JUNGLE ? 'rgba(48, 120, 52, 0.92)' : 'rgba(56, 122, 68, 0.92)';
+      drawCtx.beginPath();
+      drawCtx.arc(cx - Math.round(tileW * 0.14), cy + Math.round(tileH * 0.04), Math.max(5, Math.round(tileW * 0.13)), 0, Math.PI * 2);
+      drawCtx.arc(cx, cy - Math.round(tileH * 0.04), Math.max(6, Math.round(tileW * 0.15)), 0, Math.PI * 2);
+      drawCtx.arc(cx + Math.round(tileW * 0.14), cy + Math.round(tileH * 0.05), Math.max(5, Math.round(tileW * 0.13)), 0, Math.PI * 2);
+      drawCtx.fill();
+      drawCtx.fillStyle = 'rgba(73, 53, 24, 0.90)';
+      drawCtx.fillRect(cx - Math.max(2, Math.round(tileW * 0.02)), cy + Math.round(tileH * 0.08), Math.max(3, Math.round(tileW * 0.04)), Math.max(5, Math.round(tileH * 0.18)));
+      drawCtx.fillRect(cx + Math.round(tileW * 0.10), cy + Math.round(tileH * 0.09), Math.max(2, Math.round(tileW * 0.03)), Math.max(5, Math.round(tileH * 0.16)));
+      return;
+    }
+    if (effectiveCode === BIQ_TERRAIN.MARSH) {
+      const marshSheet = state.biqMapArtCache.marsh;
+      if (marshSheet) {
+        const cellW = 128;
+        const cellH = 88;
+        const drawH = Math.max(1, Math.round(cellH * scale));
+        drawCtx.drawImage(marshSheet, 0, 0, cellW, cellH, sx, midY, tileW, drawH);
+        return;
+      }
+      drawCtx.fillStyle = 'rgba(74, 102, 76, 0.84)';
+      drawCtx.beginPath();
+      drawCtx.ellipse(cx, cy + Math.round(tileH * 0.04), Math.max(10, Math.round(tileW * 0.26)), Math.max(5, Math.round(tileH * 0.15)), 0, 0, Math.PI * 2);
+      drawCtx.fill();
+      return;
+    }
+    if (effectiveCode === BIQ_TERRAIN.HILLS || effectiveCode === BIQ_TERRAIN.MOUNTAIN || effectiveCode === BIQ_TERRAIN.VOLCANO) {
+      if (effectiveCode === BIQ_TERRAIN.HILLS) {
+        const drawH = Math.max(1, Math.round(72 * scale));
+        const drawY = midY - Math.round(12 * scale);
+        if (drawSheetSpriteScaledToContext(drawCtx, state.biqMapArtCache.hills, 4, 4, 0, sx, drawY, tileW, drawH)) return;
+      } else if (effectiveCode === BIQ_TERRAIN.VOLCANO) {
+        const drawH = Math.max(1, Math.round(88 * scale));
+        const drawY = midY - Math.round(24 * scale);
+        if (drawSheetSpriteScaledToContext(drawCtx, state.biqMapArtCache.volcanos, 4, 4, 0, sx, drawY, tileW, drawH)) return;
+      } else {
+        const drawH = Math.max(1, Math.round(88 * scale));
+        const drawY = midY - Math.round(24 * scale);
+        if (drawSheetSpriteScaledToContext(drawCtx, state.biqMapArtCache.mountains, 4, 4, 0, sx, drawY, tileW, drawH)) return;
+      }
+      drawCtx.fillStyle = effectiveCode === BIQ_TERRAIN.HILLS
+        ? 'rgba(150, 122, 88, 0.90)'
+        : (effectiveCode === BIQ_TERRAIN.VOLCANO ? 'rgba(118, 90, 80, 0.94)' : 'rgba(110, 116, 124, 0.94)');
+      drawCtx.beginPath();
+      drawCtx.moveTo(cx - Math.round(tileW * 0.28), cy + Math.round(tileH * 0.18));
+      drawCtx.lineTo(cx - Math.round(tileW * 0.08), cy - Math.round(tileH * (effectiveCode === BIQ_TERRAIN.HILLS ? 0.18 : 0.30)));
+      drawCtx.lineTo(cx + Math.round(tileW * 0.04), cy + Math.round(tileH * 0.00));
+      drawCtx.lineTo(cx + Math.round(tileW * 0.18), cy - Math.round(tileH * (effectiveCode === BIQ_TERRAIN.HILLS ? 0.10 : 0.22)));
+      drawCtx.lineTo(cx + Math.round(tileW * 0.30), cy + Math.round(tileH * 0.18));
+      drawCtx.lineTo(cx - Math.round(tileW * 0.28), cy + Math.round(tileH * 0.18));
+      drawCtx.closePath();
+      drawCtx.fill();
+      if (effectiveCode === BIQ_TERRAIN.VOLCANO) {
+        drawCtx.fillStyle = 'rgba(210, 90, 48, 0.88)';
+        drawCtx.beginPath();
+        drawCtx.arc(cx + Math.round(tileW * 0.02), cy - Math.round(tileH * 0.12), Math.max(3, Math.round(tileW * 0.05)), 0, Math.PI * 2);
+        drawCtx.fill();
+      }
+      return;
+    }
+    if (effectiveCode === BIQ_TERRAIN.FLOODPLAIN) {
+      drawCtx.fillStyle = 'rgba(114, 176, 74, 0.72)';
+      drawCtx.beginPath();
+      drawCtx.ellipse(cx, cy + Math.round(tileH * 0.02), Math.max(10, Math.round(tileW * 0.30)), Math.max(3, Math.round(tileH * 0.09)), 0, 0, Math.PI * 2);
+      drawCtx.fill();
+    }
+  };
+
   const drawSelectedTileBorder = (drawCtx = hoverCtx) => {
     if (!drawCtx) return;
     if (getEffectiveInteractionMode() !== 'select') return;
@@ -33902,7 +34181,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const sy = basePos.sy + wrapOffset.dy;
         const logical = tileLogicalCenter(sx, sy);
         hoverCtx.save();
-        hoverCtx.globalAlpha = 0.52;
+        hoverCtx.globalAlpha = 0.84;
         if (mode === 'terrain') {
           const baseTile = tiles[tileIdx] || null;
           const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
@@ -33913,23 +34192,24 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           const effectiveTerrainCode = (mapCore && typeof mapCore.resolveTerrainPaintCode === 'function')
             ? mapCore.resolveTerrainPaintCode(terrainCode, riverMask !== 0, BIQ_TERRAIN)
             : terrainCode;
-          const packedTerrain = packedTerrainForPaint(effectiveTerrainCode);
-          const variantMask = terrainBonusMaskFromVariantState(effectiveTerrainCode, getMapToolTerrainVariantState(effectiveTerrainCode));
-          const previewRecord = baseTile
-            ? JSON.parse(JSON.stringify(baseTile))
-            : { fields: [] };
-          setMapFieldValue(previewRecord, 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
-          setMapFieldValue(previewRecord, 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
-          setMapFieldValue(previewRecord, 'c3cbonuses', String(variantMask >>> 0), 'C3C Bonuses');
-          hoverCtx.save();
-          drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
-          hoverCtx.clip();
-          hoverCtx.fillStyle = colorFromNumber(effectiveTerrainCode);
-          drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
-          hoverCtx.fill();
-          drawTileFeatureOverlays(previewRecord, geom, sx, sy, 'tall');
-          drawTileFeatureOverlays(previewRecord, geom, sx, sy, 'flat');
-          hoverCtx.restore();
+          if (!terrainPreviewUsesFeatureOnly(effectiveTerrainCode)) {
+            hoverCtx.save();
+            drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
+            hoverCtx.clip();
+            hoverCtx.fillStyle = terrainPreviewFillStyle(baseTerrainForPaint(effectiveTerrainCode));
+            drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
+            hoverCtx.fill();
+            hoverCtx.restore();
+          } else if (!terrainPreviewUsesTallArt(effectiveTerrainCode)) {
+            hoverCtx.save();
+            drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
+            hoverCtx.clip();
+            hoverCtx.fillStyle = terrainPreviewFillStyle(baseTerrainForPaint(effectiveTerrainCode));
+            drawTileDiamondPath(hoverCtx, Math.round(logical.cx), Math.round(logical.cy), Math.max(2, Math.round(tilePx / 8)));
+            hoverCtx.fill();
+            hoverCtx.restore();
+          }
+          drawSimpleTerrainPreviewOverlay(hoverCtx, effectiveTerrainCode, sx, sy, logical);
           return;
         }
         if (mode === 'resource') {
@@ -35691,7 +35971,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           const nextValue = input.value.trim() || previousValue;
           cityTop.classList.remove('editing');
           if (shouldCommit && nextValue !== previousValue) {
-            rememberUndoSnapshot();
+            rememberMapUndoSnapshot();
             setMapFieldValue(cityRecord, 'name', nextValue, 'Name');
             setDirty(true);
             scheduleMapEditRerender();
@@ -35726,7 +36006,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const cityName = getCityName();
         const confirmed = await promptMapCityDeleteAction(cityName);
         if (!confirmed) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         if (removeCityByIndex(cityRef)) {
           setDirty(true);
           rerenderMapViewPreservingScroll();
@@ -35786,7 +36066,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         targetTabKey: 'civilizations',
         onSelect: (value) => {
           if (!isScenarioMode()) return;
-          rememberUndoSnapshot();
+          rememberMapUndoSnapshot();
           setMapFieldValue(cityRecord, 'ownertype', '3', 'Owner Type');
           setMapFieldValue(cityRecord, 'owner', String(parseIntLoose(value, 0)), 'Owner');
           setDirty(true);
@@ -35823,7 +36103,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const commitCityField = () => {
         if (!isScenarioMode()) return;
         if (!undoRememberedForEdit) {
-          rememberUndoSnapshot();
+          rememberMapUndoSnapshot();
           undoRememberedForEdit = true;
         }
         setMapFieldValue(cityRecord, key, input.value.trim(), label);
@@ -35891,7 +36171,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         btn.appendChild(name);
 	        btn.addEventListener('click', () => {
 	          if (!isScenarioMode()) return;
-	          rememberUndoSnapshot();
+	          rememberMapUndoSnapshot();
 	          if (currentSet.has(idx)) currentSet.delete(idx);
 	          else currentSet.add(idx);
 	          setCityBuildingSet(cityRecord, currentSet);
@@ -35971,7 +36251,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         syncAddButton();
         if (!isScenarioMode()) return;
         if (!Number.isFinite(parsedOwner) || parsedOwner < 0) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         units.forEach((record) => {
           setMapFieldValue(record, 'ownertype', '3', 'Owner Type');
           setMapFieldValue(record, 'owner', String(parsedOwner), 'Owner');
@@ -36093,7 +36373,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const quantity = parseIntLoose(state.mapEditorTool && state.mapEditorTool.tileInfoUnitQuantity, 1);
       const owner = parseIntLoose(activeOwnerValue, NaN);
       if (!Number.isFinite(prtoNumber) || prtoNumber < 0 || !Number.isFinite(owner) || owner < 0 || !Number.isFinite(quantity) || quantity < 1) return;
-      rememberUndoSnapshot();
+      rememberMapUndoSnapshot();
       let changed = false;
       for (let i = 0; i < quantity; i += 1) {
         if (addUnitAtCoords(tile, geom.xPos, geom.yPos, owner, prtoNumber, experienceLevel)) changed = true;
@@ -36171,7 +36451,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       veteranSelect.disabled = !isScenarioMode();
       veteranSelect.addEventListener('change', () => {
         if (!isScenarioMode()) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         setMapFieldValue(record, 'experiencelevel', veteranSelect.value, 'Experience Level');
         setDirty(true);
         rerenderMapViewPreservingScroll();
@@ -36189,7 +36469,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       removeBtn.addEventListener('click', () => {
         const unitRef = Number.isFinite(Number(record && record.index)) ? Number(record.index) : NaN;
         if (!Number.isFinite(unitRef) || unitRef < 0) return;
-        rememberUndoSnapshot();
+        rememberMapUndoSnapshot();
         if (removeUnitByIndex(unitRef)) {
           setDirty(true);
           rerenderMapViewPreservingScroll();
@@ -39760,8 +40040,15 @@ async function loadBundleAndRender(options = {}) {
       state.techTreeCivFilterByTab = cloneStateMap(persistedView.techTreeCivFilterByTab);
       state.techTreeShowNonEraByTab = cloneStateMap(persistedView.techTreeShowNonEraByTab);
       state.biqMapSelectedTile = Number.isFinite(persistedView.biqMapSelectedTile) ? persistedView.biqMapSelectedTile : -1;
+      state.biqMapScrollLeft = Number.isFinite(persistedView.biqMapScrollLeft) ? Number(persistedView.biqMapScrollLeft) : null;
+      state.biqMapScrollTop = Number.isFinite(persistedView.biqMapScrollTop) ? Number(persistedView.biqMapScrollTop) : null;
       state.biqMapLayer = String(persistedView.biqMapLayer || 'terrain');
       state.biqMapZoom = Number.isFinite(persistedView.biqMapZoom) ? persistedView.biqMapZoom : state.biqMapZoom;
+      state.biqMapShowGrid = !!persistedView.biqMapShowGrid;
+      state.biqMapShowLandmarks = persistedView.biqMapShowLandmarks !== false;
+      state.biqMapShowOverlays = persistedView.biqMapShowOverlays !== false;
+      state.biqMapShowCityNames = persistedView.biqMapShowCityNames !== false;
+      state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, persistedView.mapEditorTool || {});
       state.tabContentScrollTop = Number.isFinite(persistedView.tabContentScrollTop) ? persistedView.tabContentScrollTop : 0;
     } else {
       state.tabContentScrollTop = 0;
@@ -39788,9 +40075,11 @@ async function loadBundleAndRender(options = {}) {
     state.civSlotUiColorListeners = {};
     state.biqMapColoredUnitIconCache = new Map();
     state.biqMapColoredStartLocCache = new Map();
-    state.biqMapSelectedTile = -1;
-    state.biqMapScrollLeft = null;
-    state.biqMapScrollTop = null;
+    if (!persistedView || !bundle.tabs[persistedView.activeTab]) {
+      state.biqMapSelectedTile = -1;
+      state.biqMapScrollLeft = null;
+      state.biqMapScrollTop = null;
+    }
     state.biqMapZoomAnchor = null;
     state.biqMapSuppressClickUntilTs = 0;
     el.workspace.classList.remove('hidden');
@@ -41308,6 +41597,27 @@ async function undoOneStep() {
   }
 }
 
+async function undoMapOneStep() {
+  const undoSnapshot = getLatestScopedUndoSnapshot('map');
+  if (!state.bundle || !undoSnapshot) {
+    setStatus('No unsaved map changes to undo.');
+    return false;
+  }
+  const restoredMapTabs = extractUndoSnapshotTabs(undoSnapshot);
+  const restoredMapTab = restoredMapTabs && restoredMapTabs.map ? restoredMapTabs.map : null;
+  try {
+    await restoreEditableSnapshot(undoSnapshot, {
+      undoHistory: buildUndoHistoryAfterScopedMapUndo(restoredMapTab),
+      loadingText: 'Restoring previous map change...',
+      statusMessage: 'Undid the last map change.'
+    });
+    return true;
+  } catch (_err) {
+    setStatus('Map undo failed.', true);
+    return false;
+  }
+}
+
 async function undoAllChanges() {
   if (!state.bundle || !state.isDirty) {
     setStatus('No unsaved changes to undo.');
@@ -41323,6 +41633,29 @@ async function undoAllChanges() {
     });
   } catch (_err) {
     setStatus('Undo all failed.', true);
+  }
+}
+
+async function undoAllMapChanges() {
+  if (!state.bundle || !isMapDirty()) {
+    setStatus('No unsaved map changes to undo.');
+    return false;
+  }
+  const confirmed = await promptUndoAllModal();
+  if (!confirmed) return false;
+  const cleanMapSnapshot = getCleanMapUndoSnapshot();
+  const cleanMapTabs = extractUndoSnapshotTabs(cleanMapSnapshot);
+  const cleanMapTab = cleanMapTabs && cleanMapTabs.map ? cleanMapTabs.map : null;
+  try {
+    await restoreEditableSnapshot(cleanMapSnapshot, {
+      undoHistory: buildUndoHistoryAfterScopedMapUndo(cleanMapTab, { removeAll: true }),
+      loadingText: 'Restoring clean map state...',
+      statusMessage: 'Undid all unsaved map changes.'
+    });
+    return true;
+  } catch (_err) {
+    setStatus('Map undo all failed.', true);
+    return false;
   }
 }
 

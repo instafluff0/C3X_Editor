@@ -1,4 +1,6 @@
 * RELEASE 27.11
+- Added `Undo` and `Undo All` buttons to the Map editor modal header, with map-scoped undo behavior so the modal rewinds map content edits like terrain, overlays, cities, units, and tile data without undoing camera movement or tool-mode changes.
+- Fixed Map editor navigation state so leaving the map for a linked reference and then using `Back` now restores the current map session instead of an older snapshot; scroll position, selected tile, zoom, modal reopen state, and display/tool settings persist correctly.
 - Simplified Map editor Terrain paint previews so the hover overlay now fills the full tile diamond with the selected terrain's representative color instead of trying to predict transition graphics from the hovered tile neighborhood.
 - Fixed Map editor desert-edge painting so terrain edits now repair invalid four-tile `desert + plains + grassland + coast` transition quartets by promoting the local grassland edge to plains, preventing the broken-looking desert/grassland blends that could appear after painting near coasts.
 - Added `River` to the Map editor overlay tools and Tile Info overlay picker, with river edits now updating `TILE.riverConnectionInfo` reciprocally on neighboring tiles so river sprites reconnect immediately when you paint or remove river segments.
