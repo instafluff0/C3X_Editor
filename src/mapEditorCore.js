@@ -111,6 +111,43 @@
     });
   }
 
+  function collectTundraTransitionNeighborFixups(seedIndexes, getTerrainCode, getNeighborIndexes, terrainEnum) {
+    if (!Array.isArray(seedIndexes) || typeof getTerrainCode !== 'function' || typeof getNeighborIndexes !== 'function' || !terrainEnum) return [];
+    var candidates = new Set();
+    seedIndexes.forEach(function (idx) {
+      if (!Number.isFinite(idx) || idx < 0) return;
+      candidates.add(idx);
+      var neighbors = getNeighborIndexes(idx);
+      if (!Array.isArray(neighbors)) return;
+      neighbors.forEach(function (neighborIdx) {
+        if (!Number.isFinite(neighborIdx) || neighborIdx < 0) return;
+        candidates.add(neighborIdx);
+      });
+    });
+    var fixups = [];
+    candidates.forEach(function (idx) {
+      var terrain = Number(getTerrainCode(idx));
+      if (!Number.isFinite(terrain)) return;
+      if (terrain === terrainEnum.TUNDRA || terrain === terrainEnum.GRASSLAND || terrain === terrainEnum.COAST || terrain === terrainEnum.SEA || terrain === terrainEnum.OCEAN) return;
+      if (terrain !== terrainEnum.PLAINS && terrain !== terrainEnum.DESERT) return;
+      var neighbors = getNeighborIndexes(idx);
+      if (!Array.isArray(neighbors) || neighbors.length === 0) return;
+      var touchesTundra = neighbors.some(function (neighborIdx) {
+        return Number(getTerrainCode(neighborIdx)) === terrainEnum.TUNDRA;
+      });
+      if (!touchesTundra) return;
+      fixups.push({ index: idx, terrainCode: terrainEnum.GRASSLAND });
+    });
+    return fixups;
+  }
+
+  function resolveTerrainPaintCode(requestedTerrainCode, hasRiverConnection, terrainEnum) {
+    var code = Number(requestedTerrainCode);
+    if (!Number.isFinite(code) || !terrainEnum) return code;
+    if (code !== terrainEnum.FLOODPLAIN) return code;
+    return hasRiverConnection ? terrainEnum.FLOODPLAIN : terrainEnum.DESERT;
+  }
+
   function overlayFieldKey(overlayType) {
     var key = String(overlayType || '').trim().toLowerCase();
     var map = {
@@ -290,6 +327,8 @@
     tileGridCoordsByIndex: tileGridCoordsByIndex,
     computeBrushTileIndexes: computeBrushTileIndexes,
     applyTerrain: applyTerrain,
+    collectTundraTransitionNeighborFixups: collectTundraTransitionNeighborFixups,
+    resolveTerrainPaintCode: resolveTerrainPaintCode,
     applyOverlay: applyOverlay,
     applyFog: applyFog,
     applyDistrict: applyDistrict,

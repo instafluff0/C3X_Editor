@@ -30354,6 +30354,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('jungleVolcanos', 'Art/Terrain/Volcanos jungles.pcx');
   requestBiqMapArtAsset('mtnRivers', 'Art/Terrain/mtnRivers.pcx');
   requestBiqMapArtAsset('deltaRivers', 'Art/Terrain/deltaRivers.pcx');
+  requestBiqMapArtAsset('floodplains', 'Art/Terrain/floodplains.pcx');
   requestBiqMapArtAsset('marsh', 'Art/Terrain/marsh.pcx');
   requestBiqMapArtAsset('goodyHuts', 'Art/Terrain/goodyhuts.pcx');
   requestBiqMapArtAsset('pollution', 'Art/Terrain/pollution.pcx');
@@ -31770,7 +31771,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   );
 
   const baseTerrainForPaint = (terrainCode) => (
-    terrainUsesGrasslandBase(terrainCode) ? BIQ_TERRAIN.GRASSLAND : terrainCode
+    terrainCode === BIQ_TERRAIN.FLOODPLAIN
+      ? BIQ_TERRAIN.DESERT
+      : (terrainUsesGrasslandBase(terrainCode) ? BIQ_TERRAIN.GRASSLAND : terrainCode)
   );
 
   const packedTerrainForPaint = (terrainCode) => {
@@ -31782,7 +31785,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const setTileTerrainForPaint = (tileIndex, terrainCode, changedIndexes) => {
     const tile = tiles[tileIndex];
     if (!tile) return false;
-    const packedTerrain = packedTerrainForPaint(terrainCode);
+    const riverMask = parseIntLoose(
+      (getFieldByBaseKey(tile, 'riverconnectioninfo') || getFieldByBaseKey(tile, 'river_connection_info'))?.value,
+      0
+    ) >>> 0;
+    const requestedCode = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
+    const effectiveCode = (mapCore && typeof mapCore.resolveTerrainPaintCode === 'function')
+      ? mapCore.resolveTerrainPaintCode(requestedCode, riverMask !== 0, BIQ_TERRAIN)
+      : requestedCode;
+    const packedTerrain = packedTerrainForPaint(effectiveCode);
     const current = terrainInfo(tile);
     const nextBase = packedTerrain & 0x0f;
     const nextReal = (packedTerrain >>> 4) & 0x0f;
@@ -31832,11 +31843,29 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
   };
 
+  const normalizeTundraTransitionsAround = (seedIndexes, changedIndexes) => {
+    if (!mapCore || typeof mapCore.collectTundraTransitionNeighborFixups !== 'function') return;
+    const fixups = mapCore.collectTundraTransitionNeighborFixups(
+      Array.from(seedIndexes || []),
+      (idx) => {
+        const tile = tiles[idx];
+        return tile ? terrainInfo(tile).baseTerrain : NaN;
+      },
+      mapTileNeighborIndexes,
+      BIQ_TERRAIN
+    );
+    fixups.forEach(({ index, terrainCode }) => {
+      setTileTerrainForPaint(index, terrainCode, changedIndexes);
+    });
+  };
+
   const smartApplyTerrainToIndexes = (indexes, terrainCode) => {
     const seeds = Array.isArray(indexes) ? indexes : [];
     const changedIndexes = new Set();
     seeds.forEach((idx) => setTileTerrainForPaint(idx, terrainCode, changedIndexes));
-    normalizeCoastlineAround(new Set([...seeds, ...changedIndexes]), changedIndexes);
+    const normalizationSeeds = new Set([...seeds, ...changedIndexes]);
+    normalizeTundraTransitionsAround(normalizationSeeds, changedIndexes);
+    normalizeCoastlineAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes);
     return Array.from(changedIndexes.size > 0 ? changedIndexes : new Set(seeds));
   };
 
@@ -32780,6 +32809,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           ctx.fill();
         }
       }
+      if (realTerrain === BIQ_TERRAIN.FLOODPLAIN) {
+        const floodplainSheet = state.biqMapArtCache.floodplains;
+        const riverImageIndex = getRiverImageIndex(record);
+        if (floodplainSheet && riverImageIndex >= 0) {
+          drawSheetSprite(floodplainSheet, 4, 4, riverImageIndex, sx, midY);
+        }
+      }
     }
     if (pass === 'all' || pass === 'flat') {
       if (hasIrrigation) {
@@ -33355,9 +33391,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         hoverCtx.save();
         hoverCtx.globalAlpha = 0.52;
         if (mode === 'terrain') {
-          const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
-          const packedTerrain = packedTerrainForPaint(terrainCode);
           const baseTile = tiles[tileIdx] || null;
+          const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
+          const riverMask = parseIntLoose(
+            (getFieldByBaseKey(baseTile, 'riverconnectioninfo') || getFieldByBaseKey(baseTile, 'river_connection_info'))?.value,
+            0
+          ) >>> 0;
+          const effectiveTerrainCode = (mapCore && typeof mapCore.resolveTerrainPaintCode === 'function')
+            ? mapCore.resolveTerrainPaintCode(terrainCode, riverMask !== 0, BIQ_TERRAIN)
+            : terrainCode;
+          const packedTerrain = packedTerrainForPaint(effectiveTerrainCode);
           const previewRecord = baseTile
             ? JSON.parse(JSON.stringify(baseTile))
             : { fields: [] };
@@ -33374,27 +33417,29 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           }
           hoverCtx.restore();
           const midY = sy + Math.floor(tileH / 2);
-          if (terrainCode === BIQ_TERRAIN.HILLS) {
+          if (effectiveTerrainCode === BIQ_TERRAIN.HILLS) {
             drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.hills, 4, 4, 0, sx, midY - Math.round(12 * scale), tileW, Math.max(1, Math.round(72 * scale)));
-          } else if (terrainCode === BIQ_TERRAIN.MOUNTAIN) {
+          } else if (effectiveTerrainCode === BIQ_TERRAIN.MOUNTAIN) {
             drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.mountains, 4, 4, 0, sx, midY - Math.round(24 * scale), tileW, Math.max(1, Math.round(88 * scale)));
-          } else if (terrainCode === BIQ_TERRAIN.VOLCANO) {
+          } else if (effectiveTerrainCode === BIQ_TERRAIN.VOLCANO) {
             drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.volcanos, 4, 4, 0, sx, midY - Math.round(24 * scale), tileW, Math.max(1, Math.round(88 * scale)));
-          } else if (terrainCode === BIQ_TERRAIN.FOREST) {
+          } else if (effectiveTerrainCode === BIQ_TERRAIN.FOREST) {
             const forestSheet = state.biqMapArtCache.grasslandForests;
             if (forestSheet) {
               hoverCtx.drawImage(forestSheet, 0, 4 * 88, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
             }
-          } else if (terrainCode === BIQ_TERRAIN.JUNGLE) {
+          } else if (effectiveTerrainCode === BIQ_TERRAIN.JUNGLE) {
             const jungleSheet = state.biqMapArtCache.grasslandForests;
             if (jungleSheet) {
               hoverCtx.drawImage(jungleSheet, 0, 0, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
             }
-          } else if (terrainCode === BIQ_TERRAIN.MARSH) {
+          } else if (effectiveTerrainCode === BIQ_TERRAIN.MARSH) {
             const marshSheet = state.biqMapArtCache.marsh;
             if (marshSheet) {
               hoverCtx.drawImage(marshSheet, 0, 0, 128, 88, sx, midY, tileW, Math.max(1, Math.round(88 * scale)));
             }
+          } else if (effectiveTerrainCode === BIQ_TERRAIN.FLOODPLAIN) {
+            drawSheetSpriteScaledToContext(hoverCtx, state.biqMapArtCache.floodplains, 4, 4, getRiverImageIndex(previewRecord), sx, midY, tileW, tileH);
           }
           hoverCtx.restore();
           return;

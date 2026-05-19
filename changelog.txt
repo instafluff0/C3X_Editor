@@ -1,4 +1,6 @@
 * RELEASE 27.11
+- Fixed Map editor floodplain painting so non-river tiles fall back to desert while river tiles write real floodplains with desert base terrain and draw the floodplain overlay art instead of looking like plain desert everywhere.
+- Made Map editor tundra painting normalize adjacent plains and desert tiles back to grassland before recalculating terrain transitions, matching Firaxis's tundra-edge behavior more closely.
 - Changed the Map editor modal's first-open camera target to the center of the canonical world area instead of the first tile near `0,0`, so maps open centered by default.
 - Fixed non-wrapping Map editor edge terrain rendering so missing border neighbors are treated as coast during terrain-sprite selection instead of incorrectly falling back to grassland, which had created false cutoff land on maps like `6 MP Age of Discovery.biq`.
 - Clamped Map editor panning to the canonical map window instead of the full padded wrap canvas, removing the upper-left overscroll gutter and aligning horizontal seam scrolling more closely with Firaxis's editor.

@@ -52,6 +52,63 @@ test('applyTerrain writes baserealterrain and c3cbaserealterrain', () => {
   assert.equal(mapCore.getField(tiles[1], 'baserealterrain'), null);
 });
 
+test('collectTundraTransitionNeighborFixups forces tundra-adjacent plains and desert to grassland', () => {
+  const BIQ_TERRAIN = {
+    DESERT: 0,
+    PLAINS: 1,
+    GRASSLAND: 2,
+    TUNDRA: 3,
+    COAST: 11,
+    SEA: 12,
+    OCEAN: 13
+  };
+  const terrainByIndex = [
+    BIQ_TERRAIN.TUNDRA,
+    BIQ_TERRAIN.PLAINS,
+    BIQ_TERRAIN.DESERT,
+    BIQ_TERRAIN.GRASSLAND,
+    BIQ_TERRAIN.COAST,
+    BIQ_TERRAIN.PLAINS
+  ];
+  const neighborsByIndex = [
+    [1, 2, 3, 4],
+    [0],
+    [0],
+    [0],
+    [0],
+    []
+  ];
+  const fixups = mapCore.collectTundraTransitionNeighborFixups(
+    [0],
+    (idx) => terrainByIndex[idx],
+    (idx) => neighborsByIndex[idx] || [],
+    BIQ_TERRAIN
+  );
+  assert.deepEqual(fixups, [
+    { index: 1, terrainCode: BIQ_TERRAIN.GRASSLAND },
+    { index: 2, terrainCode: BIQ_TERRAIN.GRASSLAND }
+  ]);
+});
+
+test('resolveTerrainPaintCode only keeps floodplain on river tiles', () => {
+  const BIQ_TERRAIN = {
+    DESERT: 0,
+    FLOODPLAIN: 4
+  };
+  assert.equal(
+    mapCore.resolveTerrainPaintCode(BIQ_TERRAIN.FLOODPLAIN, true, BIQ_TERRAIN),
+    BIQ_TERRAIN.FLOODPLAIN
+  );
+  assert.equal(
+    mapCore.resolveTerrainPaintCode(BIQ_TERRAIN.FLOODPLAIN, false, BIQ_TERRAIN),
+    BIQ_TERRAIN.DESERT
+  );
+  assert.equal(
+    mapCore.resolveTerrainPaintCode(BIQ_TERRAIN.DESERT, true, BIQ_TERRAIN),
+    BIQ_TERRAIN.DESERT
+  );
+});
+
 test('applyOverlay toggles bool-like overlay fields', () => {
   const tiles = [makeTile(0, 4), makeTile(1, 4)];
   mapCore.applyOverlay(tiles, [0, 1], 'road', true);
