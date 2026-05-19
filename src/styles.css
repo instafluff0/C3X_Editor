@@ -2276,6 +2276,19 @@ button.danger:hover {
   gap: 6px;
 }
 
+.biq-map-toolbar .map-toolbar-size-wrap,
+.biq-map-toolbar .map-toolbar-fog-wrap {
+  white-space: nowrap;
+}
+
+.biq-map-toolbar .map-toolbar-size-wrap {
+  min-width: 168px;
+}
+
+.biq-map-toolbar .map-toolbar-fog-wrap {
+  min-width: 290px;
+}
+
 .biq-map-toolbar .map-terrain-variant-wrap {
   display: inline-flex;
   align-items: center;
@@ -2884,12 +2897,12 @@ button.danger:hover {
 }
 
 .map-unit-editor {
-  gap: 10px;
+  gap: 8px;
 }
 
 .map-unit-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .map-unit-add-panel {
@@ -2918,10 +2931,10 @@ button.danger:hover {
 
 .map-unit-add {
   display: grid;
-  grid-template-columns: minmax(132px, 156px) 84px auto;
+  grid-template-columns: minmax(120px, 148px) 76px minmax(0, 1fr);
   gap: 8px;
   align-items: end;
-  justify-content: start;
+  justify-content: stretch;
 }
 
 .map-unit-add .tech-picker,
@@ -2944,9 +2957,13 @@ button.danger:hover {
   box-shadow: 0 18px 32px rgba(20, 24, 42, 0.22);
 }
 
+.tech-picker-menu-portaled {
+  position: fixed;
+  z-index: 100;
+}
+
 .map-unit-add-meta {
   display: grid;
-  gap: 4px;
   min-width: 0;
   padding: 0;
 }
@@ -2964,17 +2981,26 @@ button.danger:hover {
 
 .map-unit-add-btn {
   align-self: end;
-  width: 36px;
-  height: 36px;
-  box-shadow: 0 2px 8px rgba(54, 92, 162, 0.12);
+  width: 100%;
+  justify-self: stretch;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.map-unit-add-btn .btn-icon {
+  font-size: 0.9rem;
+  line-height: 1;
 }
 
 .map-unit-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) minmax(120px, 156px) auto;
-  gap: 8px;
+  grid-template-columns: 30px minmax(0, 1fr) minmax(108px, 138px) auto;
+  gap: 6px;
   align-items: center;
-  padding: 7px 8px;
+  padding: 5px 7px;
   border: 1px solid rgba(72, 84, 121, 0.16);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
@@ -2983,39 +3009,43 @@ button.danger:hover {
 .map-unit-thumb {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
 }
 
 .map-unit-name {
   min-width: 0;
   font-weight: 600;
   color: #202640;
+  font-size: 0.82rem;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .map-unit-veteran {
   display: grid;
-  gap: 4px;
   min-width: 0;
 }
 
 .map-unit-veteran select {
   width: 100%;
   min-width: 0;
-  min-height: 32px;
+  min-height: 28px;
+  padding: 4px 28px 4px 10px;
+  font-size: 0.82rem;
+  border-radius: 7px;
 }
 
 .map-unit-remove {
   justify-self: end;
-}
-
-.map-unit-picker-open .map-unit-list {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.map-unit-picker-open .map-info-summary {
-  opacity: 0;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  transform: scale(0.88);
+  transform-origin: center;
 }
 
 @media (max-width: 900px) {
@@ -3033,12 +3063,12 @@ button.danger:hover {
   }
 
   .map-unit-row {
-    grid-template-columns: 34px minmax(0, 1fr) auto;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
   }
 
   .map-unit-veteran {
     grid-column: 1 / -2;
-    margin-left: 42px;
+    margin-left: 36px;
   }
 }
 
