@@ -1,4 +1,14 @@
 * RELEASE 27.11
+- Added a right-click Map editor wonder-district completion menu in both Select and Paint modes, fed by nearby completed wonders from the current dynamic `city_work_radius`, and aligned wonder-district sidecar writes so incomplete vs completed map art stays in sync.
+- Added `Ctrl+Z` / `Cmd+Z` support in the Map modal so the shortcut triggers the same scoped map Undo action as the toolbar button.
+- Updated Tile Info `Units` add-picker count suffixes to read as totals, e.g. `(3 total)`.
+- Tile Info `Units` add pickers now show each available unit type's current count for the selected civ as a subtle suffix in the dropdown list.
+- Added map and trash icons to the Map tab `Open Map` and `Remove Map` actions so the buttons read more clearly at a glance.
+- Fixed flat-terrain paint previews in the Map editor so Terrain hover previews no longer draw half a tile too high relative to the selected Civ3 diamond.
+- Changed Map editor Select-mode Tile Info `Units` owner fallback so empty tiles in owned territory now default the owner picker to the territory owner before using the generic remembered/default owner.
+- Fixed Map editor landmark terrain rendering so LM-tagged base tiles now load and draw from the full landmark terrain PCX family (`lxtgc/lxpgc/lxdgc/lxdpc/lxdgp/lxggc/lwCSO/lwSSS/lwOOO`), while hover previews also use the landmark flat/tall art variants.
+- Fixed temporary Ctrl-based Zoom/Pan in the Map editor so Select-mode zoom rerenders no longer drop back out of move mode while Ctrl is still held.
+- Added Map editor wonder-district completion controls in the Tile Info modal, with nearby-city wonder assignment stored to `scenario.districts.txt` and immediate construction-vs-completed wonder art refresh on the map.
 - Fixed a Map editor modal startup regression where barbarian ownership helpers were referenced before initialization during map-open territory setup, causing `Cannot access 'getBarbarianCivilizationPickerEntry' before initialization`.
 - Added internal padding to the Map editor Select-mode empty `Cities` Tile Info message so `No city on this tile` no longer sits tight against the card edges.
 - Fixed barbarian-owned unit stacks on the BIQ map so their on-map civ dots and recolored unit art use barbarian colors instead of falling back to player/civ red, and corrected structured owner writes to use the BIQ barbarian owner type.

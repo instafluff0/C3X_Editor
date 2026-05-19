@@ -10,6 +10,8 @@ const {
   serializeCivilopediaDocumentWithOrder,
   parseSectionedConfig,
   serializeSectionedConfig,
+  parseScenarioDistrictsText,
+  serializeScenarioDistrictsText,
   parseBiqSectionsFromBuffer,
   resolveScenarioDir,
   resolvePaths,
@@ -110,6 +112,41 @@ test('resolvePaths applies replacement precedence for sectioned configs', () => 
 test('resolveScenarioDir supports scenarioPath as .biq file', () => {
   assert.equal(resolveScenarioDir('/tmp/MyScenario.biq'), '/tmp');
   assert.equal(resolveScenarioDir('/tmp/scenarios'), '/tmp/scenarios');
+});
+
+test('scenario districts codec preserves wonder completion fields and named tiles', () => {
+  const text = [
+    'DISTRICTS',
+    '',
+    '#District',
+    'coordinates  = 14,9',
+    'district     = "The Great Wall"',
+    'wonder_city  = Rome',
+    'wonder_name  = "The Great Wall"',
+    '',
+    '#NamedTile',
+    'coordinates  = 15,9',
+    'name         = Tiber River',
+    ''
+  ].join('\n');
+
+  const parsed = parseScenarioDistrictsText(text);
+  assert.equal(parsed.entries.length, 1);
+  assert.deepEqual(parsed.entries[0], {
+    x: 14,
+    y: 9,
+    district: 'The Great Wall',
+    wonderName: 'The Great Wall',
+    wonderCity: 'Rome'
+  });
+  assert.deepEqual(parsed.namedTiles, [{ x: 15, y: 9, name: 'Tiber River' }]);
+
+  const serialized = serializeScenarioDistrictsText(parsed);
+  assert.match(serialized, /#District/);
+  assert.match(serialized, /wonder_city\s+= Rome/);
+  assert.match(serialized, /wonder_name\s+= The Great Wall/);
+  assert.match(serialized, /#NamedTile/);
+  assert.ok(serialized.endsWith('\n'));
 });
 
 test('parseBiqSectionsFromBuffer reads basic BIQ section metadata', () => {

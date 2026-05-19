@@ -9138,6 +9138,8 @@ module.exports = {
   buildBaseModel,
   parseSectionedConfig,
   serializeSectionedConfig,
+  parseScenarioDistrictsText,
+  serializeScenarioDistrictsText,
   serializeBaseConfig,
   parseIniFieldDocs,
   parseIniSectionMap,

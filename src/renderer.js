@@ -652,6 +652,17 @@ const BIQ_TERRAIN_ATLAS_FILES = [
   'Art/Terrain/wSSS.pcx',
   'Art/Terrain/wOOO.pcx'
 ];
+const BIQ_TERRAIN_LM_ATLAS_FILES = [
+  'Art/Terrain/lxtgc.pcx',
+  'Art/Terrain/lxpgc.pcx',
+  'Art/Terrain/lxdgc.pcx',
+  'Art/Terrain/lxdpc.pcx',
+  'Art/Terrain/lxdgp.pcx',
+  'Art/Terrain/lxggc.pcx',
+  'Art/Terrain/lwCSO.pcx',
+  'Art/Terrain/lwSSS.pcx',
+  'Art/Terrain/lwOOO.pcx'
+];
 const BIQ_MAP_OVERLAY_ANCHORS = {
   resource: { x: 40, y: 41 },
   unit: { x: 48, y: 41 },
@@ -17893,6 +17904,7 @@ function createReferencePicker(config) {
   const targetTabKey = String(opts.targetTabKey || '').trim();
   const onJump = typeof opts.onJump === 'function' ? opts.onJump : null;
   const resolveJumpTarget = typeof opts.resolveJumpTarget === 'function' ? opts.resolveJumpTarget : null;
+  const getOptionMetaText = typeof opts.getOptionMetaText === 'function' ? opts.getOptionMetaText : null;
   const pickerClassName = String(opts.pickerClassName || '').trim();
   const thumbClassName = String(opts.thumbClassName || '').trim();
   const readOnly = !!opts.readOnly;
@@ -18169,9 +18181,20 @@ function createReferencePicker(config) {
       pendingThumbNodes.push(thumb);
     }
     selectBtn.appendChild(thumb);
+    const textWrap = document.createElement('span');
+    textWrap.className = 'tech-picker-row-text';
     const text = document.createElement('span');
+    text.className = 'tech-picker-row-label';
     text.textContent = String(opt.label || '');
-    selectBtn.appendChild(text);
+    textWrap.appendChild(text);
+    const metaText = getOptionMetaText ? String(getOptionMetaText(opt) || '').trim() : '';
+    if (metaText) {
+      const meta = document.createElement('span');
+      meta.className = 'tech-picker-row-meta';
+      meta.textContent = metaText;
+      textWrap.appendChild(meta);
+    }
+    selectBtn.appendChild(textWrap);
     selectBtn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -27048,7 +27071,7 @@ function renderBiqTab(tab) {
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
     openBtn.className = 'secondary';
-    openBtn.textContent = 'Open Map';
+    openBtn.innerHTML = '<span class="btn-icon">🗺</span>Open Map';
     openBtn.addEventListener('click', () => {
       openMapModal({ tab, tileSection: selected, title: `${tab.title || 'Map'} Editor` });
     });
@@ -28562,7 +28585,7 @@ function renderMapTab(tab) {
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
     openBtn.className = 'secondary';
-    openBtn.textContent = 'Open Map';
+    openBtn.innerHTML = '<span class="btn-icon">🗺</span>Open Map';
     openBtn.addEventListener('click', () => {
       openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
     });
@@ -28572,7 +28595,7 @@ function renderMapTab(tab) {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'ghost danger';
-    removeBtn.textContent = 'Remove Map';
+    removeBtn.innerHTML = '<span class="btn-icon">🗑</span>Remove Map';
     removeBtn.addEventListener('click', () => {
       void requestRemoveMap(tab);
     });
@@ -29504,7 +29527,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     setMapLandmarksVisible(landmarksToggle.checked, 'checkbox');
   });
   const landmarksText = document.createElement('span');
-  landmarksText.textContent = 'Show Landmarks';
+  landmarksText.textContent = 'Label Landmarks';
   landmarksWrap.appendChild(landmarksToggle);
   landmarksWrap.appendChild(landmarksText);
   const displayTogglesWrap = document.createElement('div');
@@ -29542,6 +29565,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   if (!Number.isFinite(Number(tool.owner))) tool.owner = 0;
   if (!Number.isFinite(Number(tool.unitType))) tool.unitType = 0;
   tool.remove = false;
+  if (typeof state.biqMapControlModifierHeld !== 'boolean') state.biqMapControlModifierHeld = false;
 
   function makeMapGlyphIcon(glyph, title = '', tone = '') {
     const icon = document.createElement('span');
@@ -29682,7 +29706,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   let mapPane = null;
   let mapInspector = null;
   let controlMoveHint = null;
-  let controlMoveActive = false;
+  let controlMoveActive = !!state.biqMapControlModifierHeld;
   let tabModeFlashActive = false;
   let tabModeFlashTimer = 0;
   let mapEditRerenderTimer = 0;
@@ -30789,6 +30813,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const onMapControlKeyDown = (ev) => {
     if (ev.key !== 'Control') return;
+    state.biqMapControlModifierHeld = true;
     if (isTileContextMenuOpen()) {
       closeTileContextMenu();
       setControlMoveActive(true);
@@ -30799,9 +30824,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const onMapControlKeyUp = (ev) => {
     if (ev.key !== 'Control') return;
+    state.biqMapControlModifierHeld = false;
     setControlMoveActive(false);
   };
-  const onMapControlWindowBlur = () => setControlMoveActive(false);
+  const onMapControlWindowBlur = () => {
+    state.biqMapControlModifierHeld = false;
+    setControlMoveActive(false);
+  };
   document.addEventListener('keydown', onMapControlKeyDown);
   document.addEventListener('keyup', onMapControlKeyUp);
   window.addEventListener('blur', onMapControlWindowBlur);
@@ -30855,6 +30884,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     )) return;
     const key = String(ev.key || '').toLowerCase();
     const hasCommandModifier = !!(ev.metaKey || ev.ctrlKey);
+    if (hasCommandModifier && key === 'z' && !ev.shiftKey && !ev.altKey) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      undoMapOneStep();
+      return;
+    }
     if (hotkeyMap[key]) {
       ev.preventDefault();
       setToolMode(hotkeyMap[key], { source: `hotkey:${key}` });
@@ -31046,6 +31081,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   BIQ_TERRAIN_ATLAS_FILES.forEach((assetPath, idx) => {
     requestBiqMapArtAsset(`terrain-${idx}`, assetPath);
+  });
+  BIQ_TERRAIN_LM_ATLAS_FILES.forEach((assetPath, idx) => {
+    requestBiqMapArtAsset(`terrain-lm-${idx}`, assetPath);
   });
   requestBiqMapArtAsset('resources', 'Art/resources.pcx');
   requestBiqMapArtAsset('units32', 'Art/Units/units_32.pcx', { returnIndexed: true });
@@ -32430,6 +32468,139 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const entries = Array.isArray(scenarioDistrictsMeta && scenarioDistrictsMeta.namedTiles) ? scenarioDistrictsMeta.namedTiles : [];
     return entries.find((entry) => Number(entry && entry.x) === Number(xPos) && Number(entry && entry.y) === Number(yPos)) || null;
   };
+  const findPlacedDistrictSections = (districtName) => {
+    const normalized = normalizeConfigToken(districtName);
+    return {
+      district: normalized ? findDistrictSectionByName(normalized) : null,
+      wonder: normalized ? findWonderDistrictSectionByName(normalized) : null,
+      natural: normalized ? findNaturalWonderSectionByName(normalized) : null
+    };
+  };
+  const isWonderDistrictSection = (section) => {
+    if (!section) return false;
+    return normalizeConfigToken(getFieldValue(section, 'name') || '').toLowerCase() === 'wonder district';
+  };
+  const getConfiguredCityWorkRadius = () => {
+    const parsed = parseIntLoose(getC3XBaseRow('city_work_radius')?.value, NaN);
+    if (!Number.isFinite(parsed)) return 2;
+    return Math.max(1, Math.min(7, parsed));
+  };
+  const getConfiguredCityWorkAreaOffsets = () => {
+    const radius = getConfiguredCityWorkRadius();
+    const offsets = [];
+    const seen = new Set();
+    for (let i = -radius; i <= radius; i += 1) {
+      for (let j = -radius; j <= radius; j += 1) {
+        const dx = i + j;
+        const dy = j - i;
+        const isExtremeCorner = radius > 1
+          && (
+            (dx === 0 && Math.abs(dy) === (radius * 2))
+            || (dy === 0 && Math.abs(dx) === (radius * 2))
+          );
+        if (isExtremeCorner) continue;
+        const key = `${dx},${dy}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        offsets.push([dx, dy]);
+      }
+    }
+    return offsets;
+  };
+  const resolvePlacedWonderDistrictMeta = (geomOrIndex) => {
+    const tileIndex = typeof geomOrIndex === 'number'
+      ? geomOrIndex
+      : findTileIndexByCoords(geomOrIndex && geomOrIndex.xPos, geomOrIndex && geomOrIndex.yPos);
+    const geom = tileIndex >= 0 ? (tileGeom[tileIndex] || null) : null;
+    const tile = tileIndex >= 0 ? (tiles[tileIndex] || null) : null;
+    if (!geom || !tile) return null;
+    const placedEntry = findScenarioDistrictEntryAtCoords(geom.xPos, geom.yPos);
+    const districtMeta = getDistrictRecordMeta(tile, geom);
+    const districtName = String(
+      (placedEntry && placedEntry.district)
+      || getMapFieldValue(tile, 'districtname', '')
+      || (districtMeta && districtMeta.districtSection && getFieldValue(districtMeta.districtSection, 'name'))
+      || ''
+    ).trim();
+    if (!districtName) return null;
+    const sections = findPlacedDistrictSections(districtName);
+    const districtSection = sections.district || (districtMeta && districtMeta.districtSection) || null;
+    if (!isWonderDistrictSection(districtSection)) return null;
+    return {
+      tileIndex,
+      tile,
+      geom,
+      placedEntry,
+      districtName,
+      districtSection,
+      sections,
+      currentWonderName: String((placedEntry && placedEntry.wonderName) || getMapFieldValue(tile, 'wondername', '') || '').trim(),
+      currentWonderCity: String((placedEntry && placedEntry.wonderCity) || getMapFieldValue(tile, 'wondercity', '') || '').trim()
+    };
+  };
+  const getWonderDistrictCompletionCandidates = (geom) => {
+    const wonderMeta = resolvePlacedWonderDistrictMeta(geom);
+    if (!wonderMeta) return [];
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (cityRecord, improvementEntry, wonderSection) => {
+      if (!cityRecord || !improvementEntry || !wonderSection) return;
+      const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || '').trim();
+      const wonderName = String(improvementEntry.name || '').trim();
+      if (!cityName || !wonderName) return;
+      const key = `${normalizeConfigToken(wonderName).toLowerCase()}::${normalizeConfigToken(cityName).toLowerCase()}`;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      candidates.push({
+        value: key,
+        wonderName,
+        cityName,
+        improvementEntry,
+        wonderSection,
+        cityRecord,
+        label: `${wonderName} — ${cityName}`,
+        detailLabel: cityName
+      });
+    };
+    getConfiguredCityWorkAreaOffsets().forEach(([dx, dy]) => {
+      const coord = normalizeWrappedCoord(wonderMeta.geom.xPos + dx, wonderMeta.geom.yPos + dy);
+      if (!coord) return;
+      const cityRecord = cityRecordByCoord.get(`${coord.xPos},${coord.yPos}`) || null;
+      if (!cityRecord) return;
+      getCityBuildingSet(cityRecord).forEach((buildingId) => {
+        const improvementEntry = resolveReferenceEntryForPicker('improvements', String(buildingId));
+        const kind = String(improvementEntry && improvementEntry.improvementKind || '').trim().toLowerCase();
+        if (kind !== 'wonder' && kind !== 'small_wonder') return;
+        const wonderSection = findWonderDistrictSectionByName(String(improvementEntry && improvementEntry.name || '').trim());
+        if (!wonderSection) return;
+        addCandidate(cityRecord, improvementEntry, wonderSection);
+      });
+    });
+    candidates.sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+    return candidates;
+  };
+  const getNearbyWonderCityOptions = (geom) => {
+    if (!geom) return [];
+    const seen = new Set();
+    const options = [];
+    const pushCity = (cityRecord) => {
+      if (!cityRecord) return;
+      const name = String(getFieldByBaseKey(cityRecord, 'name')?.value || '').trim();
+      if (!name) return;
+      const key = normalizeConfigToken(name).toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      options.push({ value: name, label: name });
+    };
+    pushCity(cityRecordByCoord.get(`${geom.xPos},${geom.yPos}`) || null);
+    getConfiguredCityWorkAreaOffsets().forEach(([dx, dy]) => {
+      const coord = normalizeWrappedCoord(geom.xPos + dx, geom.yPos + dy);
+      if (!coord) return;
+      pushCity(cityRecordByCoord.get(`${coord.xPos},${coord.yPos}`) || null);
+    });
+    options.sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+    return options;
+  };
   const upsertScenarioDistrictEntry = (xPos, yPos, values) => {
     if (!scenarioDistrictsMeta) return false;
     if (!Array.isArray(scenarioDistrictsMeta.entries)) scenarioDistrictsMeta.entries = [];
@@ -32445,11 +32616,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     entry.district = districtName;
     entry.wonderName = String(values && values.wonderName || '').trim();
     entry.wonderCity = String(values && values.wonderCity || '').trim();
+    const districtStateOverride = parseIntLoose(values && values.districtState, NaN);
     const tileIndex = findTileIndexByCoords(xPos, yPos);
     const tile = tileIndex >= 0 ? tiles[tileIndex] : null;
     if (tile) {
       const districtIndex = districtEntries.findIndex((candidate) => normalizeConfigToken(candidate.name).toLowerCase() === normalizeConfigToken(districtName).toLowerCase());
-      if (districtIndex >= 0) setMapFieldValue(tile, 'district', `${districtIndex},2`, 'District');
+      if (districtIndex >= 0) {
+        const districtState = Number.isFinite(districtStateOverride) && districtStateOverride >= 0
+          ? districtStateOverride
+          : 2;
+        setMapFieldValue(tile, 'district', `${districtIndex},${districtState}`, 'District');
+      }
       else setMapFieldValue(tile, 'district', '', 'District');
       setMapFieldValue(tile, 'districtname', districtName, 'District Name');
       if (entry.wonderName) setMapFieldValue(tile, 'wondername', entry.wonderName, 'Wonder Name');
@@ -32461,21 +32638,49 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return true;
   };
+  const applyWonderDistrictCompletionSelection = (geom, selection = null) => {
+    const wonderMeta = resolvePlacedWonderDistrictMeta(geom);
+    appendDebugLog('biq-map:wonder-district-apply-selection', {
+      tileCoords: geom ? { xPos: geom.xPos, yPos: geom.yPos } : null,
+      foundWonderMeta: !!wonderMeta,
+      districtName: wonderMeta ? wonderMeta.districtName : '',
+      currentWonderName: wonderMeta ? wonderMeta.currentWonderName : '',
+      currentWonderCity: wonderMeta ? wonderMeta.currentWonderCity : '',
+      nextWonderName: String(selection && selection.wonderName || '').trim(),
+      nextWonderCity: String(selection && selection.cityName || '').trim()
+    });
+    if (!wonderMeta) return false;
+    const nextWonderName = String(selection && selection.wonderName || '').trim();
+    const nextWonderCity = String(selection && selection.cityName || '').trim();
+    return upsertScenarioDistrictEntry(wonderMeta.geom.xPos, wonderMeta.geom.yPos, {
+      district: wonderMeta.districtName,
+      wonderName: nextWonderName,
+      wonderCity: nextWonderCity,
+      districtState: nextWonderName && nextWonderCity ? 2 : 1
+    });
+  };
   const removeScenarioDistrictEntryAtCoords = (xPos, yPos) => {
-    if (!scenarioDistrictsMeta || !Array.isArray(scenarioDistrictsMeta.entries)) return false;
-    const before = scenarioDistrictsMeta.entries.length;
-    scenarioDistrictsMeta.entries = scenarioDistrictsMeta.entries.filter((entry) => Number(entry && entry.x) !== Number(xPos) || Number(entry && entry.y) !== Number(yPos));
-    if (scenarioDistrictsMeta.entries.length === before) return false;
+    let changed = false;
+    if (scenarioDistrictsMeta && Array.isArray(scenarioDistrictsMeta.entries)) {
+      const before = scenarioDistrictsMeta.entries.length;
+      scenarioDistrictsMeta.entries = scenarioDistrictsMeta.entries.filter((entry) => Number(entry && entry.x) !== Number(xPos) || Number(entry && entry.y) !== Number(yPos));
+      if (scenarioDistrictsMeta.entries.length !== before) changed = true;
+    }
     const tileIndex = findTileIndexByCoords(xPos, yPos);
     const tile = tileIndex >= 0 ? tiles[tileIndex] : null;
     if (tile) {
+      if (String(getMapFieldValue(tile, 'district', '')).trim()) changed = true;
+      if (String(getMapFieldValue(tile, 'districtname', '')).trim()) changed = true;
+      if (String(getMapFieldValue(tile, 'wondername', '')).trim()) changed = true;
+      if (String(getMapFieldValue(tile, 'wondercity', '')).trim()) changed = true;
+      if (String(getMapFieldValue(tile, 'naturalwonder', '')).trim()) changed = true;
       setMapFieldValue(tile, 'district', '', 'District');
       setMapFieldValue(tile, 'districtname', '', 'District Name');
       setMapFieldValue(tile, 'wondername', '', 'Wonder Name');
       setMapFieldValue(tile, 'wondercity', '', 'Wonder City');
       setMapFieldValue(tile, 'naturalwonder', '', 'Natural Wonder');
     }
-    return true;
+    return changed;
   };
   const upsertNamedTileAtCoords = (xPos, yPos, name) => {
     if (!scenarioDistrictsMeta) return false;
@@ -32698,6 +32903,21 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const type = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtType, 0);
       const enabled = type >= 0 && !(state.mapEditorTool && state.mapEditorTool.remove);
       const dState = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtState, 1);
+      if (!enabled) {
+        const changedIndexes = [];
+        indices.forEach((idx) => {
+          const tile = tiles[idx];
+          const g = tileGeom[idx];
+          let changed = false;
+          if (g) changed = removeScenarioDistrictEntryAtCoords(g.xPos, g.yPos) || changed;
+          if (tile && String(getMapFieldValue(tile, 'district', '')).trim()) {
+            setMapFieldValue(tile, 'district', '', 'District');
+            changed = true;
+          }
+          if (changed) changedIndexes.push(idx);
+        });
+        return changedIndexes;
+      }
       if (mapCore && typeof mapCore.applyDistrict === 'function') {
         const changedIndexes = [];
         indices.forEach((idx) => {
@@ -32809,6 +33029,28 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     record ? terrainInfo(record) : coastTerrainInfo()
   );
 
+  const getTerrainAtlasCacheKey = (fileIdx, useLandmarkAtlas = false) => {
+    const idx = parseIntLoose(fileIdx, -1);
+    if (idx < 0) return '';
+    if (useLandmarkAtlas && idx < BIQ_TERRAIN_LM_ATLAS_FILES.length) return `terrain-lm-${idx}`;
+    return `terrain-${idx}`;
+  };
+
+  const computeTerrainSpriteImageIdx = (southBase, westBase, northBase, eastBase, spec) => {
+    if (!spec) return -1;
+    if (!spec.needImage) return spec.image;
+    let sum = 0;
+    if (northBase === spec.terr2) sum += 1;
+    if (northBase === spec.terr3) sum += 2;
+    if (westBase === spec.terr2) sum += 3;
+    if (westBase === spec.terr3) sum += 6;
+    if (eastBase === spec.terr2) sum += 9;
+    if (eastBase === spec.terr3) sum += 18;
+    if (southBase === spec.terr2) sum += 27;
+    if (southBase === spec.terr3) sum += 54;
+    return sum;
+  };
+
   const resolveTerrainSpriteSpec = (record, geom) => {
     const storedFile = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
     const storedImage = parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1);
@@ -32832,25 +33074,33 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       };
     }
     if (!spec) return { fileIdx: storedFile, imageIdx: storedImage };
-    if (!spec.needImage) return { fileIdx: spec.file, imageIdx: spec.image };
-    let sum = 0;
-    if (northBase === spec.terr2) sum += 1;
-    if (northBase === spec.terr3) sum += 2;
-    if (westBase === spec.terr2) sum += 3;
-    if (westBase === spec.terr3) sum += 6;
-    if (eastBase === spec.terr2) sum += 9;
-    if (eastBase === spec.terr3) sum += 18;
-    if (southBase === spec.terr2) sum += 27;
-    if (southBase === spec.terr3) sum += 54;
-    return { fileIdx: spec.file, imageIdx: sum };
+    return {
+      fileIdx: spec.file,
+      imageIdx: computeTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec)
+    };
   };
 
-  const drawTerrainSpriteToContext = (drawCtx, record, geom, sx, sy, drawW = tileW, drawH = tileH) => {
+  const resolveTerrainPreviewSpriteSpec = (terrainCode) => {
+    const baseCode = parseIntLoose(baseTerrainForPaint(terrainCode), BIQ_TERRAIN.GRASSLAND);
+    let spec = mapUtilsTerrainSpec(baseCode, baseCode, baseCode, baseCode);
+    if (baseCode === BIQ_TERRAIN.TUNDRA) {
+      spec = {
+        file: 0,
+        needImage: true,
+        terr2: BIQ_TERRAIN.PLAINS,
+        terr3: BIQ_TERRAIN.COAST
+      };
+    }
+    if (!spec) return { fileIdx: -1, imageIdx: -1 };
+    return {
+      fileIdx: spec.file,
+      imageIdx: computeTerrainSpriteImageIdx(baseCode, baseCode, baseCode, baseCode, spec)
+    };
+  };
+
+  const drawTerrainAtlasSpriteToContext = (drawCtx, fileIdx, imageIdx, sx, sy, drawW = tileW, drawH = tileH, useLandmarkAtlas = false) => {
     if (!drawCtx) return false;
-    const spriteSpec = resolveTerrainSpriteSpec(record, geom);
-    const fileIdx = spriteSpec.fileIdx;
-    const imageIdx = spriteSpec.imageIdx;
-    const atlas = state.biqMapArtCache[`terrain-${fileIdx}`];
+    const atlas = state.biqMapArtCache[getTerrainAtlasCacheKey(fileIdx, useLandmarkAtlas)];
     if (!atlas || imageIdx < 0) return false;
     const cols = 9;
     const rows = 9;
@@ -32871,6 +33121,22 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       drawH
     );
     return true;
+  };
+
+  const drawTerrainSpriteToContext = (drawCtx, record, geom, sx, sy, drawW = tileW, drawH = tileH) => {
+    if (!drawCtx) return false;
+    const spriteSpec = resolveTerrainSpriteSpec(record, geom);
+    const useLandmarkAtlas = terrainVariantStateForTile(record).landmark;
+    return drawTerrainAtlasSpriteToContext(
+      drawCtx,
+      spriteSpec.fileIdx,
+      spriteSpec.imageIdx,
+      sx,
+      sy,
+      drawW,
+      drawH,
+      useLandmarkAtlas
+    );
   };
 
   const drawTerrainSprite = (record, geom, sx, sy) => drawTerrainSpriteToContext(ctx, record, geom, sx, sy, tileW, tileH);
@@ -34309,6 +34575,19 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!drawCtx) return;
     const tileIndex = geom ? getTileIndexAtCoord(geom.xPos, geom.yPos) : -1;
     const districtMeta = getDistrictRecordMeta(record, geom);
+    const shouldLogWonderDistrictRender = !!(
+      phase === 'all'
+      && geom
+      && districtMeta
+      && state.biqMapSelectedTile === tileIndex
+      && (
+        districtMeta.wonderDistrictSection
+        || (
+          districtMeta.districtSection
+          && isWonderDistrictSection(districtMeta.districtSection)
+        )
+      )
+    );
     const naturalWonderSection = districtMeta && districtMeta.naturalWonderSection;
     if (naturalWonderSection) {
       if (phase !== 'all' && phase !== 'over') return;
@@ -34322,7 +34601,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return;
     }
 
-    const districtSection = districtMeta && districtMeta.districtSection;
+    const districtSection = districtMeta && (districtMeta.renderDistrictSection || districtMeta.districtSection);
     if (!districtSection) {
       if (!(districtMeta && districtMeta.raw)) return;
       if (phase !== 'all' && phase !== 'over') return;
@@ -34347,9 +34626,35 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
     const territoryInfo = resolveTileTerritoryInfo(record, geom);
     const hasTerritoryOwner = !!(territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0);
-    if (!hasTerritoryOwner) {
+    const usesSpecificWonderDistrictArt = !!(
+      districtMeta
+      && districtMeta.renderDistrictSection
+      && districtMeta.districtSection
+      && districtMeta.renderDistrictSection !== districtMeta.districtSection
+    );
+    if (shouldLogWonderDistrictRender) {
+      appendDebugLog('biq-map:wonder-district-render', {
+        tileIndex,
+        tileCoords: { xPos: geom.xPos, yPos: geom.yPos },
+        districtState: districtMeta && districtMeta.districtState,
+        placedDistrict: String((districtMeta && districtMeta.placedEntry && districtMeta.placedEntry.district) || getMapFieldValue(record, 'districtname', '') || ''),
+        wonderName: String((districtMeta && districtMeta.placedEntry && districtMeta.placedEntry.wonderName) || getMapFieldValue(record, 'wondername', '') || ''),
+        districtSectionName: districtMeta && districtMeta.districtSection ? String(getFieldValue(districtMeta.districtSection, 'name') || '') : '',
+        renderSectionName: districtMeta && districtMeta.renderDistrictSection ? String(getFieldValue(districtMeta.renderDistrictSection, 'name') || '') : '',
+        hasTerritoryOwner,
+        usesSpecificWonderDistrictArt
+      });
+    }
+    if (!hasTerritoryOwner && !usesSpecificWonderDistrictArt) {
       const abandonedKey = requestBiqMapAbandonedDistrictCanvas();
       const abandonedCanvas = abandonedKey ? state.biqMapArtCache[abandonedKey] : null;
+      if (shouldLogWonderDistrictRender) {
+        appendDebugLog('biq-map:wonder-district-render-abandoned', {
+          tileIndex,
+          abandonedKey,
+          hasAbandonedCanvas: !!abandonedCanvas
+        });
+      }
       if (abandonedCanvas) {
         drawDistrictCanvasAtTile(drawCtx, abandonedCanvas, sx, sy, 128, 64, 0, 0);
         return;
@@ -34361,6 +34666,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const previewCanvas = cacheKey ? state.biqMapArtCache[cacheKey] : null;
     const fallbackCanvas = previewCanvas || getCachedMapDistrictFallbackCanvas(districtSection, visual);
     const crop = getCropDimensions(districtSection, { w: 128, h: 64 });
+    if (shouldLogWonderDistrictRender) {
+      appendDebugLog('biq-map:wonder-district-render-preview', {
+        tileIndex,
+        cacheKey,
+        hasPreviewCanvas: !!previewCanvas,
+        hasFallbackCanvas: !!fallbackCanvas,
+        crop,
+        xOffset: parseConfigInteger(getFieldValue(districtSection, 'x_offset'), 0),
+        yOffset: parseConfigInteger(getFieldValue(districtSection, 'y_offset'), 0)
+      });
+    }
     if (fallbackCanvas) {
       drawDistrictCanvasAtTile(
         drawCtx,
@@ -34375,6 +34691,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return;
     }
 
+    if (shouldLogWonderDistrictRender) {
+      appendDebugLog('biq-map:wonder-district-render-miss', {
+        tileIndex,
+        reason: 'no-preview-canvas'
+      });
+    }
     if (phase !== 'all' && phase !== 'over') return;
     const districtType = districtMeta && Number.isFinite(districtMeta.districtType) ? districtMeta.districtType : 0;
     const cx = sx + Math.floor(tileW / 2);
@@ -34401,7 +34723,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         queued += 1;
         continue;
       }
-      const districtSection = districtMeta && districtMeta.districtSection;
+      const districtSection = districtMeta && (districtMeta.renderDistrictSection || districtMeta.districtSection);
       if (!districtSection) continue;
       const territoryInfo = resolveTileTerritoryInfo(item.record, item.geom);
       const hasTerritoryOwner = !!(territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0);
@@ -34855,15 +35177,23 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const drawSimpleTerrainPreviewOverlay = (drawCtx, terrainCode, sx, sy, logical, variantState = null) => {
     if (!drawCtx) return;
     const effectiveCode = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
+    const previewVariant = variantState || {};
     const cx = Math.round(logical.cx);
     const cy = Math.round(logical.cy);
     const midY = sy + Math.floor(tileH / 2);
+    if (!terrainPreviewUsesTallArt(effectiveCode) && effectiveCode !== BIQ_TERRAIN.FLOODPLAIN) {
+      const spriteSpec = resolveTerrainPreviewSpriteSpec(effectiveCode);
+      if (drawTerrainAtlasSpriteToContext(drawCtx, spriteSpec.fileIdx, spriteSpec.imageIdx, sx, midY, tileW, tileH, !!previewVariant.landmark)) {
+        return;
+      }
+    }
     if (effectiveCode === BIQ_TERRAIN.FOREST || effectiveCode === BIQ_TERRAIN.JUNGLE) {
-      const forestSheet = state.biqMapArtCache.grasslandForests;
+      const forestSheet = previewVariant.landmark
+        ? (state.biqMapArtCache.lmForests || state.biqMapArtCache.grasslandForests)
+        : state.biqMapArtCache.grasslandForests;
       if (forestSheet) {
         const cellW = 128;
         const cellH = 88;
-        const previewVariant = variantState || {};
         const isPine = effectiveCode === BIQ_TERRAIN.FOREST && !!previewVariant.pineForest;
         const variant = 0;
         const cols = isPine ? 6 : 4;
@@ -34906,7 +35236,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (effectiveCode === BIQ_TERRAIN.HILLS) {
         const drawH = Math.max(1, Math.round(72 * scale));
         const drawY = midY - Math.round(12 * scale);
-        if (drawSheetSpriteScaledToContext(drawCtx, state.biqMapArtCache.hills, 4, 4, 0, sx, drawY, tileW, drawH)) return;
+        const hillSheet = previewVariant.landmark
+          ? (state.biqMapArtCache.lmHills || state.biqMapArtCache.hills)
+          : state.biqMapArtCache.hills;
+        if (drawSheetSpriteScaledToContext(drawCtx, hillSheet, 4, 4, 0, sx, drawY, tileW, drawH)) return;
       } else if (effectiveCode === BIQ_TERRAIN.VOLCANO) {
         const drawH = Math.max(1, Math.round(88 * scale));
         const drawY = midY - Math.round(24 * scale);
@@ -34914,10 +35247,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       } else {
         const drawH = Math.max(1, Math.round(88 * scale));
         const drawY = midY - Math.round(24 * scale);
-        const previewVariant = variantState || {};
-        const mountainSheet = previewVariant.snowCappedMountain
-          ? (state.biqMapArtCache.snowMountains || state.biqMapArtCache.mountains)
-          : state.biqMapArtCache.mountains;
+        const mountainSheet = previewVariant.landmark
+          ? (state.biqMapArtCache.lmMountains || state.biqMapArtCache.mountains)
+          : (
+            previewVariant.snowCappedMountain
+              ? (state.biqMapArtCache.snowMountains || state.biqMapArtCache.mountains)
+              : state.biqMapArtCache.mountains
+          );
         if (drawSheetSpriteScaledToContext(drawCtx, mountainSheet, 4, 4, 0, sx, drawY, tileW, drawH)) return;
       }
       drawCtx.fillStyle = effectiveCode === BIQ_TERRAIN.HILLS
@@ -35162,6 +35498,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   tileContextMenu.className = 'biq-map-tile-context-menu hidden';
   const isTileContextMenuOpen = () => !tileContextMenu.classList.contains('hidden');
   let collapseTileContextSelectTimer = 0;
+  const positionTileContextMenu = (clientX, clientY, fallbackWidth = 220, fallbackHeight = 52) => {
+    const frameRect = mapFrame.getBoundingClientRect();
+    const pad = 12;
+    const menuWidth = tileContextMenu.offsetWidth || fallbackWidth;
+    const menuHeight = tileContextMenu.offsetHeight || fallbackHeight;
+    const left = Math.max(pad, Math.min(frameRect.width - menuWidth - pad, clientX - frameRect.left + 6));
+    const top = Math.max(pad, Math.min(frameRect.height - menuHeight - pad, clientY - frameRect.top + 6));
+    tileContextMenu.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+  };
   const closeTileContextMenu = () => {
     if (collapseTileContextSelectTimer) {
       window.clearTimeout(collapseTileContextSelectTimer);
@@ -35244,8 +35589,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }, 100);
   };
   const showTileContextMenu = (clientX, clientY) => {
-    const frameRect = mapFrame.getBoundingClientRect();
-    const pad = 12;
     if (collapseTileContextSelectTimer) {
       window.clearTimeout(collapseTileContextSelectTimer);
       collapseTileContextSelectTimer = 0;
@@ -35271,17 +35614,82 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
     tileContextMenu.appendChild(select);
     tileContextMenu.classList.remove('hidden');
-    const menuWidth = tileContextMenu.offsetWidth || 220;
-    const menuHeight = tileContextMenu.offsetHeight || 52;
-    const left = Math.max(pad, Math.min(frameRect.width - menuWidth - pad, clientX - frameRect.left + 6));
-    const top = Math.max(pad, Math.min(frameRect.height - menuHeight - pad, clientY - frameRect.top + 6));
-    tileContextMenu.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+    positionTileContextMenu(clientX, clientY, 220, 52);
     tryOpenMapSelectionCategoryPicker(select);
     collapseTileContextSelectTimer = window.setTimeout(() => {
       collapseTileContextSelectTimer = 0;
       if (!select.isConnected || !isTileContextMenuOpen()) return;
       select.classList.add('map-selection-category-context-collapsed');
     }, 140);
+  };
+  const showWonderDistrictCompletionContextMenu = (wonderMeta, clientX, clientY) => {
+    if (collapseTileContextSelectTimer) {
+      window.clearTimeout(collapseTileContextSelectTimer);
+      collapseTileContextSelectTimer = 0;
+    }
+    tileContextMenu.innerHTML = '';
+    const candidates = getWonderDistrictCompletionCandidates(wonderMeta.geom);
+    const currentKey = `${normalizeConfigToken(wonderMeta.currentWonderName).toLowerCase()}::${normalizeConfigToken(wonderMeta.currentWonderCity).toLowerCase()}`;
+    const menu = document.createElement('div');
+    menu.className = 'map-option-grid wonder-context-menu';
+    const title = document.createElement('div');
+    title.className = 'map-city-editor-title wonder-context-menu-title';
+    title.textContent = 'Set Wonder District';
+    menu.appendChild(title);
+    menu.appendChild(makeOptionButton({
+      label: 'No Completed Wonder',
+      thumb: makeEmptyButtonThumb(),
+      selected: !(wonderMeta.currentWonderName && wonderMeta.currentWonderCity),
+      disabled: !isScenarioMode(),
+      onClick: () => {
+        if (!isScenarioMode()) return;
+        rememberMapUndoSnapshot();
+        if (!applyWonderDistrictCompletionSelection(wonderMeta.geom, null)) return;
+        setDirty(true);
+        closeTileContextMenu();
+        redrawMapAfterTileChanges([wonderMeta.tileIndex], { refreshTileInfo: true });
+      }
+    }));
+    const hasCurrentCandidate = currentKey && candidates.some((candidate) => candidate.value === currentKey);
+    if (wonderMeta.currentWonderName && wonderMeta.currentWonderCity && !hasCurrentCandidate) {
+      const thumb = document.createElement('span');
+      thumb.className = 'map-option-thumb';
+      const currentSection = findWonderDistrictSectionByName(wonderMeta.currentWonderName);
+      if (currentSection) loadWonderCompletedThumbnail(currentSection, thumb, 35);
+      else thumb.textContent = '★';
+      menu.appendChild(makeOptionButton({
+        label: wonderMeta.currentWonderName,
+        detailText: `${wonderMeta.currentWonderCity} (current)`,
+        thumb,
+        selected: true,
+        disabled: !isScenarioMode(),
+        onClick: () => closeTileContextMenu()
+      }));
+    }
+    candidates.forEach((candidate) => {
+      const thumb = document.createElement('span');
+      thumb.className = 'map-option-thumb';
+      if (candidate.wonderSection) loadWonderCompletedThumbnail(candidate.wonderSection, thumb, 35);
+      else thumb.textContent = '★';
+      menu.appendChild(makeOptionButton({
+        label: candidate.wonderName,
+        detailText: candidate.cityName,
+        thumb,
+        selected: candidate.value === currentKey,
+        disabled: !isScenarioMode(),
+        onClick: () => {
+          if (!isScenarioMode()) return;
+          rememberMapUndoSnapshot();
+          if (!applyWonderDistrictCompletionSelection(wonderMeta.geom, candidate)) return;
+          setDirty(true);
+          closeTileContextMenu();
+          redrawMapAfterTileChanges([wonderMeta.tileIndex], { refreshTileInfo: true });
+        }
+      }));
+    });
+    tileContextMenu.appendChild(menu);
+    tileContextMenu.classList.remove('hidden');
+    positionTileContextMenu(clientX, clientY, 320, Math.max(120, 72 + (candidates.length * 58)));
   };
   registerOutsideClickDismiss(tileContextMenu, closeTileContextMenu);
   refreshMapInteractionOverlay = () => {
@@ -35457,7 +35865,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   canvas.addEventListener('contextmenu', (ev) => {
     const interactionMode = getEffectiveInteractionMode();
-    if (interactionMode !== 'select') return;
     const hit = readHitFromPointer(ev);
     if (!hit) {
       closeTileContextMenu();
@@ -35467,12 +35874,25 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const selectedTileChanged = state.biqMapSelectedTile !== hit.index;
     state.biqMapSelectedTile = hit.index;
     const g = tileGeom[hit.index] || null;
-    appendDebugLog('biq-map:tile-context-select', { index: hit.index, xPos: g ? g.xPos : null, yPos: g ? g.yPos : null });
+    const wonderMeta = resolvePlacedWonderDistrictMeta(hit.index);
+    appendDebugLog('biq-map:tile-context-select', {
+      index: hit.index,
+      xPos: g ? g.xPos : null,
+      yPos: g ? g.yPos : null,
+      interactionMode,
+      wonderDistrict: !!wonderMeta
+    });
     if (hoverCtx) {
       hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
       drawHoverBorder(hit);
     }
-    showTileContextMenu(ev.clientX, ev.clientY);
+    if (wonderMeta) {
+      showWonderDistrictCompletionContextMenu(wonderMeta, ev.clientX, ev.clientY);
+    } else if (interactionMode === 'select') {
+      showTileContextMenu(ev.clientX, ev.clientY);
+    } else {
+      closeTileContextMenu();
+    }
     if (selectedTileChanged) {
       scheduleTileInfoRender(140);
     }
@@ -35776,12 +36196,50 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const naturalWonderSection = wonderNameCandidates
       .map((name) => findNaturalWonderSectionByName(name))
       .find(Boolean) || null;
+    const wonderDistrictSection = wonderNameCandidates
+      .map((name) => findWonderDistrictSectionByName(name))
+      .find(Boolean) || null;
+    const renderDistrictSection = (!naturalWonderSection && isWonderDistrictSection(districtSection) && wonderDistrictSection)
+      ? wonderDistrictSection
+      : districtSection;
+    const selectedTileIndex = geom ? getTileIndexAtCoord(geom.xPos, geom.yPos) : -1;
+    if (
+      geom
+      && selectedTileIndex >= 0
+      && selectedTileIndex === state.biqMapSelectedTile
+      && (
+        raw
+        || (placedEntry && (placedEntry.district || placedEntry.wonderName || placedEntry.wonderCity))
+        || getMapFieldValue(record, 'districtname', '')
+        || getMapFieldValue(record, 'wondername', '')
+      )
+    ) {
+      appendDebugLog('biq-map:selected-tile-district-meta', {
+        tileIndex: selectedTileIndex,
+        tileCoords: { xPos: geom.xPos, yPos: geom.yPos },
+        raw,
+        districtType,
+        districtState,
+        placedDistrict: String((placedEntry && placedEntry.district) || ''),
+        placedWonderName: String((placedEntry && placedEntry.wonderName) || ''),
+        placedWonderCity: String((placedEntry && placedEntry.wonderCity) || ''),
+        tileDistrictName: String(getMapFieldValue(record, 'districtname', '') || ''),
+        tileWonderName: String(getMapFieldValue(record, 'wondername', '') || ''),
+        tileWonderCity: String(getMapFieldValue(record, 'wondercity', '') || ''),
+        districtSectionName: districtSection ? String(getFieldValue(districtSection, 'name') || '') : '',
+        wonderDistrictSectionName: wonderDistrictSection ? String(getFieldValue(wonderDistrictSection, 'name') || '') : '',
+        naturalWonderSectionName: naturalWonderSection ? String(getFieldValue(naturalWonderSection, 'name') || '') : '',
+        renderDistrictSectionName: renderDistrictSection ? String(getFieldValue(renderDistrictSection, 'name') || '') : ''
+      });
+    }
     return {
       raw,
       districtType,
       districtState,
       placedEntry,
       districtSection,
+      wonderDistrictSection,
+      renderDistrictSection,
       naturalWonderSection
     };
   }
@@ -36283,7 +36741,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return upsertScenarioDistrictEntry(geom.xPos, geom.yPos, {
       district: String(entry.name || '').trim(),
       wonderName: '',
-      wonderCity: ''
+      wonderCity: '',
+      districtState: 1
     });
   });
   const setSelectedTileNaturalWonder = (entry) => applySelectedTileEdit((_tile) => {
@@ -36737,6 +37196,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return;
     }
     const placedEntry = findScenarioDistrictEntryAtCoords(geom.xPos, geom.yPos);
+    const placedSections = findPlacedDistrictSections(placedEntry && placedEntry.district);
+    const wonderMeta = resolvePlacedWonderDistrictMeta(geom);
     const currentDistrict = normalizeConfigToken(placedEntry && placedEntry.district);
     const grid = document.createElement('div');
     grid.className = 'map-option-grid district';
@@ -36760,6 +37221,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }));
     });
     host.appendChild(grid);
+    if (wonderMeta) {
+      renderWonderDistrictCompletionOptions(host, _tile, geom, placedEntry || { district: wonderMeta.districtName, wonderName: wonderMeta.currentWonderName, wonderCity: wonderMeta.currentWonderCity }, wonderMeta.districtSection);
+    }
   };
   const renderNaturalWonderOptions = (host, _tile, geom) => {
     if (!scenarioDistrictsMeta) {
@@ -36790,6 +37254,127 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }));
     });
     host.appendChild(grid);
+  };
+  const renderWonderDistrictCompletionOptions = (host, tile, geom, placedEntry, wonderSection) => {
+    if (!geom || !placedEntry || !wonderSection) return;
+    const candidates = getWonderDistrictCompletionCandidates(geom);
+    const card = document.createElement('div');
+    card.className = 'map-city-editor';
+    const top = document.createElement('div');
+    top.className = 'section-top compact';
+    const title = document.createElement('strong');
+    title.textContent = 'Wonder Completion';
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = String(placedEntry.district || '').trim() || 'Wonder District';
+    top.appendChild(title);
+    top.appendChild(hint);
+    card.appendChild(top);
+
+    const currentWonderName = String(placedEntry.wonderName || '').trim();
+    const currentWonderCity = String(placedEntry.wonderCity || '').trim();
+    const currentKey = `${normalizeConfigToken(currentWonderName).toLowerCase()}::${normalizeConfigToken(currentWonderCity).toLowerCase()}`;
+    const currentCandidate = currentKey
+      ? candidates.find((candidate) => candidate.value === currentKey) || null
+      : null;
+    const wonderOptions = [];
+    const cityOptions = [];
+    const seenWonderNames = new Set();
+    const seenCityNames = new Set();
+    const pushWonderOption = (wonderName, entry = null) => {
+      const key = normalizeConfigToken(wonderName).toLowerCase();
+      if (!key || seenWonderNames.has(key)) return;
+      seenWonderNames.add(key);
+      wonderOptions.push({ value: wonderName, label: wonderName, entry });
+    };
+    const pushCityOption = (cityName, suffix = '') => {
+      const key = normalizeConfigToken(cityName).toLowerCase();
+      if (!key || seenCityNames.has(key)) return;
+      seenCityNames.add(key);
+      cityOptions.push({ value: cityName, label: suffix ? `${cityName} ${suffix}` : cityName });
+    };
+    if (currentWonderName) pushWonderOption(currentWonderName, findImprovementEntryByName(currentWonderName));
+    candidates.forEach((candidate) => {
+      pushWonderOption(candidate.wonderName, candidate.improvementEntry);
+    });
+    const defaultWonderName = currentWonderName || String(wonderOptions[0] && wonderOptions[0].value || '').trim();
+    const isCompleted = !!(currentWonderName && currentWonderCity);
+
+    const actions = document.createElement('div');
+    actions.className = 'inline-btn-row';
+    const inactiveBtn = document.createElement('button');
+    inactiveBtn.type = 'button';
+    inactiveBtn.className = isCompleted ? 'ghost' : 'secondary';
+    inactiveBtn.textContent = 'Not Completed';
+    inactiveBtn.disabled = !isScenarioMode();
+    const activeBtn = document.createElement('button');
+    activeBtn.type = 'button';
+    activeBtn.className = isCompleted ? 'secondary' : 'ghost';
+    activeBtn.textContent = 'Completed in Nearby City';
+    activeBtn.disabled = !isScenarioMode();
+    actions.appendChild(inactiveBtn);
+    actions.appendChild(activeBtn);
+    card.appendChild(actions);
+
+    const fields = document.createElement('div');
+    fields.className = 'map-city-fields';
+    fields.classList.toggle('hidden', !isCompleted);
+    const buildPickerRow = (label, picker) => {
+      const row = document.createElement('div');
+      row.className = 'map-city-field map-city-field-wide';
+      const text = document.createElement('span');
+      text.className = 'field-meta';
+      text.textContent = label;
+      row.appendChild(text);
+      row.appendChild(picker);
+      return row;
+    };
+    const applyWonderCompletion = (nextState) => {
+      rememberMapUndoSnapshot();
+      let selection = null;
+      if (nextState && nextState.completed) {
+        const nextWonderName = String(nextState.wonderName || '').trim();
+        selection = candidates.find((candidate) => normalizeConfigToken(candidate.wonderName) === normalizeConfigToken(nextWonderName)) || null;
+      }
+      if (!applyWonderDistrictCompletionSelection(geom, selection)) return;
+      setDirty(true);
+      redrawMapCanvasInPlace(tileEditRedrawRects(state.biqMapSelectedTile) || null);
+      refreshMapInteractionOverlay();
+      renderTileInfoPanel();
+    };
+    const wonderPicker = createReferencePicker({
+      currentValue: defaultWonderName || String(wonderOptions[0] && wonderOptions[0].value || '-1'),
+      includeNone: false,
+      options: wonderOptions,
+      readOnly: !isScenarioMode(),
+      searchPlaceholder: 'Search wonders...',
+      showOptionThumbs: true,
+      targetTabKey: 'improvements',
+      onSelect: (value) => {
+        if (!isScenarioMode()) return;
+        const nextWonderName = String(value || '').trim();
+        applyWonderCompletion({ completed: !!nextWonderName, wonderName: nextWonderName });
+      }
+    });
+    fields.appendChild(buildPickerRow('Wonder', wonderPicker));
+    card.appendChild(fields);
+
+    if (candidates.length === 0) {
+      addOptionSummary(card, 'No nearby cities are available for a completed-wonder assignment yet.');
+      activeBtn.disabled = true;
+    }
+
+    inactiveBtn.addEventListener('click', () => {
+      if (!isScenarioMode() || !isCompleted) return;
+      applyWonderCompletion({ completed: false, wonderName: '', wonderCity: '' });
+    });
+    activeBtn.addEventListener('click', () => {
+      if (!isScenarioMode() || candidates.length === 0) return;
+      const nextWonderName = defaultWonderName || String(wonderOptions[0] && wonderOptions[0].value || '').trim();
+      if (!nextWonderName) return;
+      applyWonderCompletion({ completed: true, wonderName: nextWonderName });
+    });
+    host.appendChild(card);
   };
   const renderCityOptions = (host, tile, geom) => {
     const cityRef = getMapFieldValue(tile, 'city', '-1');
@@ -37202,9 +37787,21 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const ownerOptions = getMapUnitOwnerOptions();
     const realUnitOwnerValue = getUnifiedUnitOwnerChoice(units);
     const storedTileInfoOwner = String((state.mapEditorTool && state.mapEditorTool.tileInfoUnitOwner) || '').trim();
+    const territoryOwnerValue = (() => {
+      if (!tile || !geom) return '';
+      const territoryInfo = resolveTileTerritoryInfo(tile, geom);
+      if (!territoryInfo || !territoryInfo.hasOwner) return '';
+      let ownerRaw = '';
+      if (territoryInfo.ownerType === 1) ownerRaw = '0';
+      else if (Number.isFinite(territoryInfo.ownerId) && territoryInfo.ownerId >= 0) ownerRaw = String(territoryInfo.ownerId);
+      else if (Number.isFinite(territoryInfo.civId) && territoryInfo.civId >= 0) ownerRaw = String(territoryInfo.civId);
+      return ownerRaw ? getMapOwnerPickerValueFromOwnership(String(territoryInfo.ownerType || ''), ownerRaw) : '';
+    })();
     let activeOwnerValue = '';
     if (realUnitOwnerValue !== 'mixed' && realUnitOwnerValue !== '') {
       activeOwnerValue = String(realUnitOwnerValue);
+    } else if (!units.length && territoryOwnerValue && ownerOptions.some((opt) => String(opt.value) === territoryOwnerValue)) {
+      activeOwnerValue = territoryOwnerValue;
     } else if (storedTileInfoOwner && ownerOptions.some((opt) => String(opt.value) === storedTileInfoOwner)) {
       activeOwnerValue = storedTileInfoOwner;
     } else if (ownerOptions.length > 0) {
@@ -37497,6 +38094,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       searchPlaceholder: 'Search unit...',
       noneLabel: 'Choose unit...',
       menuPortalRoot: tileInfoMenuPortalRoot,
+      getOptionMetaText: (opt) => Number.isFinite(opt && opt.mapFrequency) ? `(${opt.mapFrequency} total)` : '',
       onSelect: (next) => {
         state.mapEditorTool.tileInfoUnitType = normalizeConfigToken(next || '-1');
         state.mapEditorTool.tileInfoUnitTypeExplicit = true;
@@ -39045,6 +39643,18 @@ function findDistrictSectionByName(name) {
   return tab.model.sections.find((section, index) => {
     const internalName = normalizeConfigToken(getFieldValue(section, 'name')).toLowerCase();
     const displayName = normalizeConfigToken(getDistrictSectionDisplay(section, index).primary).toLowerCase();
+    return internalName === target || displayName === target;
+  }) || null;
+}
+
+function findWonderDistrictSectionByName(name) {
+  const target = normalizeConfigToken(name).toLowerCase();
+  if (!target) return null;
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.wonders;
+  if (!tab || !tab.model || !Array.isArray(tab.model.sections)) return null;
+  return tab.model.sections.find((section, index) => {
+    const internalName = normalizeConfigToken(getFieldValue(section, 'name')).toLowerCase();
+    const displayName = normalizeConfigToken(getSectionTitle(section, SECTION_SCHEMAS.wonders, index)).toLowerCase();
     return internalName === target || displayName === target;
   }) || null;
 }

@@ -3059,6 +3059,7 @@ button.danger:hover {
   padding: 4px 28px 4px 10px;
   font-size: 0.82rem;
   border-radius: 7px;
+  cursor: pointer;
 }
 
 .map-unit-remove {
@@ -3376,10 +3377,35 @@ button.danger:hover {
   top: 0;
   z-index: 6;
   display: block;
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 32px));
 }
 
 .biq-map-tile-context-menu.hidden {
   display: none;
+}
+
+.biq-map-tile-context-menu .map-option-grid.wonder-context-menu {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 300px;
+  max-width: 340px;
+  padding: 8px;
+  border: 1px solid rgba(61, 74, 112, 0.18);
+  border-radius: 12px;
+  background: rgba(252, 253, 255, 0.98);
+  box-shadow: 0 12px 28px rgba(21, 29, 47, 0.22);
+  backdrop-filter: blur(6px);
+}
+
+.biq-map-tile-context-menu .map-option-grid.wonder-context-menu .map-info-summary {
+  margin-bottom: 2px;
+}
+
+.biq-map-tile-context-menu .wonder-context-menu-title {
+  font-size: 1.05rem;
+  line-height: 1.2;
+  margin-bottom: 2px;
 }
 
 .biq-map-tile-context-menu .map-selection-category-context {
@@ -7705,6 +7731,28 @@ details > summary:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tech-picker-row-text {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tech-picker-row-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tech-picker-row-meta {
+  flex: 0 0 auto;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: rgba(36, 31, 68, 0.45);
 }
 
 .tech-picker-row-main:hover {

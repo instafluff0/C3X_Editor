@@ -39,18 +39,63 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const BIQ_TERRAIN_LM_ATLAS_FILES = \[[\s\S]*?'Art\/Terrain\/lxtgc\.pcx'[\s\S]*?'Art\/Terrain\/lxpgc\.pcx'[\s\S]*?'Art\/Terrain\/lxdgc\.pcx'[\s\S]*?'Art\/Terrain\/lxdpc\.pcx'[\s\S]*?'Art\/Terrain\/lxdgp\.pcx'[\s\S]*?'Art\/Terrain\/lxggc\.pcx'[\s\S]*?'Art\/Terrain\/lwCSO\.pcx'[\s\S]*?'Art\/Terrain\/lwSSS\.pcx'[\s\S]*?'Art\/Terrain\/lwOOO\.pcx'[\s\S]*?\];[\s\S]*?BIQ_TERRAIN_LM_ATLAS_FILES\.forEach\(\(assetPath, idx\) => \{[\s\S]*?requestBiqMapArtAsset\(`terrain-lm-\$\{idx\}`, assetPath\);[\s\S]*?\}\);/,
+    'map renderer should load the full landmark terrain atlas family alongside the standard base terrain atlases'
+  );
+  assert.match(
+    rendererText,
+    /const getTerrainAtlasCacheKey = \(fileIdx, useLandmarkAtlas = false\) => \{[\s\S]*?if \(useLandmarkAtlas && idx < BIQ_TERRAIN_LM_ATLAS_FILES\.length\) return `terrain-lm-\$\{idx\}`;[\s\S]*?return `terrain-\$\{idx\}`;[\s\S]*?\};[\s\S]*?const drawTerrainSpriteToContext = \(drawCtx, record, geom, sx, sy, drawW = tileW, drawH = tileH\) => \{[\s\S]*?const useLandmarkAtlas = terrainVariantStateForTile\(record\)\.landmark;[\s\S]*?drawTerrainAtlasSpriteToContext\([\s\S]*?useLandmarkAtlas[\s\S]*?\);/,
+    'map terrain rendering should switch flat tile atlases to the landmark sheets when the tile has the LM variant'
+  );
+  assert.match(
+    rendererText,
     /const drawPaintPreview = \(hit\) => \{[\s\S]*?const previewIndexes = getBrushTileIndexes\(hit\.index\);[\s\S]*?previewIndexes\.forEach\(\(tileIdx\) => \{[\s\S]*?hoverCtx\.globalAlpha = 0\.84;[\s\S]*?if \(mode === 'terrain'\) \{[\s\S]*?const previewVariantState = getMapToolTerrainVariantState\(effectiveTerrainCode\);[\s\S]*?drawTileDiamondPath\(hoverCtx, Math\.round\(logical\.cx\), Math\.round\(logical\.cy\), Math\.max\(2, Math\.round\(tilePx \/ 8\)\)\);[\s\S]*?hoverCtx\.fillStyle = terrainPreviewFillStyle\(baseTerrainForPaint\(effectiveTerrainCode\)\);[\s\S]*?drawSimpleTerrainPreviewOverlay\(hoverCtx, effectiveTerrainCode, sx, sy, logical, previewVariantState\);[\s\S]*?if \(mode === 'resource'\) \{[\s\S]*?hoverCtx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, dx, dy, Math\.round\(cellW \* scale\), Math\.round\(cellH \* scale\)\)[\s\S]*?if \(mode === 'district'\) \{[\s\S]*?drawDistrictOverlay\(hoverCtx, previewRecord, geom, sx, sy, 'all'\);/,
     'paint preview should render semi-transparent previews across the whole brush footprint for terrain, resources, and district art'
   );
   assert.match(
     rendererText,
-    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const isPine = effectiveCode === BIQ_TERRAIN\.FOREST && !!previewVariant\.pineForest;[\s\S]*?const cols = isPine \? 6 : 4;[\s\S]*?const startRow = effectiveCode === BIQ_TERRAIN\.JUNGLE[\s\S]*?\(isPine \? 8 : 4\);/,
+    /const getOptionMetaText = typeof opts\.getOptionMetaText === 'function' \? opts\.getOptionMetaText : null;[\s\S]*?const textWrap = document\.createElement\('span'\);[\s\S]*?textWrap\.className = 'tech-picker-row-text';[\s\S]*?const text = document\.createElement\('span'\);[\s\S]*?text\.className = 'tech-picker-row-label';[\s\S]*?const metaText = getOptionMetaText \? String\(getOptionMetaText\(opt\) \|\| ''\)\.trim\(\) : '';[\s\S]*?meta\.className = 'tech-picker-row-meta';/,
+    'reference pickers should support a subtle secondary meta label for dropdown row entries'
+  );
+  assert.match(
+    rendererText,
+    /const unitPicker = createReferencePicker\({[\s\S]*?searchPlaceholder: 'Search unit\.\.\.',[\s\S]*?noneLabel: 'Choose unit\.\.\.',[\s\S]*?getOptionMetaText: \(opt\) => Number\.isFinite\(opt && opt\.mapFrequency\) \? `\(\$\{opt\.mapFrequency\} total\)` : '',/,
+    'Tile Info unit-add picker should show each unit type count for the selected owner in the dropdown list'
+  );
+  assert.match(
+    stylesText,
+    /\.tech-picker-row-text \{[\s\S]*?display: inline-flex;[\s\S]*?gap: 6px;[\s\S]*?\}[\s\S]*?\.tech-picker-row-meta \{[\s\S]*?font-size: 0\.82em;[\s\S]*?color: rgba\(36, 31, 68, 0\.45\);[\s\S]*?\}/,
+    'picker row meta labels should render as subtle inline suffixes'
+  );
+  assert.match(
+    rendererText,
+    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const midY = sy \+ Math\.floor\(tileH \/ 2\);[\s\S]*?if \(!terrainPreviewUsesTallArt\(effectiveCode\) && effectiveCode !== BIQ_TERRAIN\.FLOODPLAIN\) \{[\s\S]*?drawTerrainAtlasSpriteToContext\(drawCtx, spriteSpec\.fileIdx, spriteSpec\.imageIdx, sx, midY, tileW, tileH, !!previewVariant\.landmark\)[\s\S]*?const isPine = effectiveCode === BIQ_TERRAIN\.FOREST && !!previewVariant\.pineForest;[\s\S]*?const cols = isPine \? 6 : 4;[\s\S]*?const startRow = effectiveCode === BIQ_TERRAIN\.JUNGLE[\s\S]*?\(isPine \? 8 : 4\);/,
     'forest terrain preview should use the pine-forest sprite block when the Pine Forest variant is selected'
   );
   assert.match(
     rendererText,
-    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const previewVariant = variantState \|\| \{\};[\s\S]*?const mountainSheet = previewVariant\.snowCappedMountain[\s\S]*?\(state\.biqMapArtCache\.snowMountains \|\| state\.biqMapArtCache\.mountains\)[\s\S]*?: state\.biqMapArtCache\.mountains;/,
+    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const midY = sy \+ Math\.floor\(tileH \/ 2\);[\s\S]*?if \(!terrainPreviewUsesTallArt\(effectiveCode\) && effectiveCode !== BIQ_TERRAIN\.FLOODPLAIN\) \{[\s\S]*?const spriteSpec = resolveTerrainPreviewSpriteSpec\(effectiveCode\);[\s\S]*?drawTerrainAtlasSpriteToContext\(drawCtx, spriteSpec\.fileIdx, spriteSpec\.imageIdx, sx, midY, tileW, tileH, !!previewVariant\.landmark\)[\s\S]*?return;[\s\S]*?\}/,
+    'flat terrain paint previews should render from the same terrain atlases, including landmark variants'
+  );
+  assert.match(
+    rendererText,
+    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const forestSheet = previewVariant\.landmark[\s\S]*?\(state\.biqMapArtCache\.lmForests \|\| state\.biqMapArtCache\.grasslandForests\)[\s\S]*?: state\.biqMapArtCache\.grasslandForests;/,
+    'forest terrain preview should use LM forest art when the landmark variant is selected'
+  );
+  assert.match(
+    rendererText,
+    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const hillSheet = previewVariant\.landmark[\s\S]*?\(state\.biqMapArtCache\.lmHills \|\| state\.biqMapArtCache\.hills\)[\s\S]*?: state\.biqMapArtCache\.hills;/,
+    'hill terrain preview should use LM hill art when the landmark variant is selected'
+  );
+  assert.match(
+    rendererText,
+    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const previewVariant = variantState \|\| \{\};[\s\S]*?const mountainSheet = previewVariant\.landmark[\s\S]*?: \([\s\S]*?previewVariant\.snowCappedMountain[\s\S]*?\(state\.biqMapArtCache\.snowMountains \|\| state\.biqMapArtCache\.mountains\)[\s\S]*?: state\.biqMapArtCache\.mountains[\s\S]*?\);/,
     'mountain terrain preview should use snow-capped mountain art when the Snow-Capped variant is selected'
+  );
+  assert.match(
+    rendererText,
+    /const drawSimpleTerrainPreviewOverlay = \(drawCtx, terrainCode, sx, sy, logical, variantState = null\) => \{[\s\S]*?const mountainSheet = previewVariant\.landmark[\s\S]*?\(state\.biqMapArtCache\.lmMountains \|\| state\.biqMapArtCache\.mountains\)[\s\S]*?: \([\s\S]*?previewVariant\.snowCappedMountain/,
+    'mountain terrain preview should prefer LM mountain art over snow variants when the landmark variant is selected'
   );
   assert.match(
     rendererText,
@@ -76,6 +121,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     rendererText,
     /label:\s*'District',[\s\S]*?includeNone:\s*true,[\s\S]*?noneLabel:\s*'None'[\s\S]*?makeMapGlyphIcon\('⌫', 'Clear district', 'neutral'\)[\s\S]*?state\.mapEditorTool\.districtType = parseIntLoose\(value, -1\);[\s\S]*?const enabled = type >= 0 && !\(state\.mapEditorTool && state\.mapEditorTool\.remove\);[\s\S]*?if \(districtType < 0\) \{[\s\S]*?hoverCtx\.fillText\('⌫'/,
     'district paint picker should expose a None option with a clear glyph and treat negative district types as erase mode'
+  );
+  assert.match(
+    rendererText,
+    /const onMapHotkeyDown = \(ev\) => \{[\s\S]*?const key = String\(ev\.key \|\| ''\)\.toLowerCase\(\);[\s\S]*?const hasCommandModifier = !!\(ev\.metaKey \|\| ev\.ctrlKey\);[\s\S]*?if \(hasCommandModifier && key === 'z' && !ev\.shiftKey && !ev\.altKey\) \{[\s\S]*?ev\.preventDefault\(\);[\s\S]*?ev\.stopPropagation\(\);[\s\S]*?undoMapOneStep\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(hotkeyMap\[key\]\)/,
+    'map modal should bind Ctrl/Cmd+Z to the same scoped map undo action as the Undo button'
   );
   assert.match(
     rendererText,
@@ -114,6 +164,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /if \(typeof state\.biqMapControlModifierHeld !== 'boolean'\) state\.biqMapControlModifierHeld = false;[\s\S]*?let controlMoveActive = !!state\.biqMapControlModifierHeld;[\s\S]*?const onMapControlKeyDown = \(ev\) => \{[\s\S]*?state\.biqMapControlModifierHeld = true;[\s\S]*?const onMapControlKeyUp = \(ev\) => \{[\s\S]*?state\.biqMapControlModifierHeld = false;[\s\S]*?const onMapControlWindowBlur = \(\) => \{[\s\S]*?state\.biqMapControlModifierHeld = false;[\s\S]*?setControlMoveActive\(false\);[\s\S]*?\};/,
+    'temporary Ctrl-based zoom/pan mode should persist across map rerenders by storing the live Control-held state in shared map state'
+  );
+  assert.match(
+    rendererText,
     /floatingRight = document\.createElement\('div'\);[\s\S]*?floatingRight\.className = 'biq-map-floating-panel biq-map-floating-right';[\s\S]*?if \(state\.biqMapTileInfoDockLeft\) floatingRight\.classList\.add\('dock-left'\);[\s\S]*?const updateTileInfoDockSide = \(\) => \{[\s\S]*?if \(tileInfoPanel\.classList\.contains\('hidden'\)\) \{[\s\S]*?state\.biqMapTileInfoDockLeft = false;[\s\S]*?const shouldDockLeft = distanceFromRight <= flipThreshold;[\s\S]*?state\.biqMapTileInfoDockLeft = shouldDockLeft;[\s\S]*?floatingRight\.classList\.toggle\('dock-left', shouldDockLeft\);/,
     'tile-info dock side should persist across full map rerenders so a left-docked panel does not teleport right before re-docking'
   );
@@ -144,7 +199,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const renderUnitOptions = \(host, tile, geom\) => \{[\s\S]*?const units = getUnitRecordsForTile\(geom\);[\s\S]*?if \(!units\.length\) \{[\s\S]*?tileInfoPanel\.style\.removeProperty\('--tile-info-owner-tint'\);[\s\S]*?tileInfoPanel\.classList\.remove\('tile-info-owner-tinted'\);/,
+    /const renderUnitOptions = \(host, tile, geom\) => \{[\s\S]*?const units = getUnitRecordsForTile\(geom\);[\s\S]*?const territoryOwnerValue = \(\(\) => \{[\s\S]*?const territoryInfo = resolveTileTerritoryInfo\(tile, geom\);[\s\S]*?return ownerRaw \? getMapOwnerPickerValueFromOwnership\(String\(territoryInfo\.ownerType \|\| ''\), ownerRaw\) : '';[\s\S]*?\}\)\(\);[\s\S]*?if \(realUnitOwnerValue !== 'mixed' && realUnitOwnerValue !== ''\) \{[\s\S]*?activeOwnerValue = String\(realUnitOwnerValue\);[\s\S]*?\} else if \(!units\.length && territoryOwnerValue[\s\S]*?activeOwnerValue = territoryOwnerValue;[\s\S]*?if \(!units\.length\) \{[\s\S]*?tileInfoPanel\.style\.removeProperty\('--tile-info-owner-tint'\);[\s\S]*?tileInfoPanel\.classList\.remove\('tile-info-owner-tinted'\);/,
     'empty unit tile-info state should clear any prior civ tint before rendering its neutral no-units card'
   );
   assert.match(
