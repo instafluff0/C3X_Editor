@@ -1,4 +1,7 @@
 * RELEASE 27.11
+- Changed the Map editor modal's first-open camera target to the center of the canonical world area instead of the first tile near `0,0`, so maps open centered by default.
+- Fixed non-wrapping Map editor edge terrain rendering so missing border neighbors are treated as coast during terrain-sprite selection instead of incorrectly falling back to grassland, which had created false cutoff land on maps like `6 MP Age of Discovery.biq`.
+- Clamped Map editor panning to the canonical map window instead of the full padded wrap canvas, removing the upper-left overscroll gutter and aligning horizontal seam scrolling more closely with Firaxis's editor.
 - Tightened the Map editor top-bar structured picker sizing so the terrain/overlay/resource/district dropdown no longer renders taller than neighboring controls or expands the toolbar row.
 - Fixed slow Map editor mode-button clicks by routing the Move/Select/Paint buttons through the same optimized mode-switch path as `Tab`, instead of using an older click handler that always forced a full canvas redraw.
 - Fixed slow Map editor `Tab` mode cycling by skipping the expensive full map redraw on pure interaction-mode changes that do not affect Fog of War rendering, and corrected the Paint-mode state so cycling into Paint preserves a real paint category instead of writing the invalid category value `paint`.

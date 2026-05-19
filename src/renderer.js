@@ -29249,7 +29249,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return mapInteractionModeOrder[(idx >= 0 ? idx + 1 : 0) % mapInteractionModeOrder.length];
   };
   [
-    { value: 'move', label: 'Move', icon: '↕' },
+    { value: 'move', label: 'Zoom and Pan', icon: '↕' },
     { value: 'select', label: 'Select', icon: '⌖' },
     { value: 'paint', label: 'Paint', icon: '🖌' }
   ].forEach((opt) => {
@@ -29719,7 +29719,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   }
   controlMoveHint = document.createElement('div');
   controlMoveHint.className = 'biq-map-control-move-hint';
-  controlMoveHint.innerHTML = '<span class="hint-text">Hold <span class="keycap">Ctrl</span> to enter move mode temporarily. </span><span class="hint-text tab-hint">Press <span class="keycap tab-keycap">Tab</span> for next mode</span>';
+  controlMoveHint.innerHTML = '<span class="hint-text">Hold <span class="keycap">Ctrl</span> to enable Zoom and Pan temporarily. </span><span class="hint-text tab-hint">Press <span class="keycap tab-keycap">Tab</span> for next mode</span>';
   mapPane = document.createElement('div');
   mapPane.className = 'biq-map-canvas-wrap';
   refreshMapToolChrome();
@@ -29742,6 +29742,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   let horizontalWrapEnabled = false;
   let horizontalWrapSpan = 0;
   let horizontalWrapCenter = 0;
+  let canonicalWorldLeftPx = 0;
+  let canonicalWorldTopPx = 0;
+  let canonicalWorldWidthPx = 0;
+  let canonicalWorldHeightPx = 0;
   let renderMiniMap = null;
   let lastDragLogTs = 0;
   const DRAG_THRESHOLD = 4;
@@ -29761,30 +29765,43 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       maxTop
     };
   };
+  const getCanonicalPaneBounds = (metrics) => {
+    const paneMetrics = metrics || getPaneMetrics();
+    const minLeft = Math.max(0, Math.min(paneMetrics.maxLeft, Math.round(canonicalWorldLeftPx || 0)));
+    const minTop = Math.max(0, Math.min(paneMetrics.maxTop, Math.round(canonicalWorldTopPx || 0)));
+    const spanWidth = Math.max(0, Math.round(canonicalWorldWidthPx || 0));
+    const spanHeight = Math.max(0, Math.round(canonicalWorldHeightPx || 0));
+    const maxLeft = Math.max(minLeft, Math.min(
+      paneMetrics.maxLeft,
+      minLeft + Math.max(0, spanWidth - paneMetrics.clientWidth)
+    ));
+    const maxTop = Math.max(minTop, Math.min(
+      paneMetrics.maxTop,
+      minTop + Math.max(0, spanHeight - paneMetrics.clientHeight)
+    ));
+    return { minLeft, maxLeft, minTop, maxTop };
+  };
   const normalizeHorizontalWrapScroll = (leftValue, metrics) => {
     if (!horizontalWrapEnabled || horizontalWrapSpan <= 0) return Number(leftValue) || 0;
     const paneMetrics = metrics || getPaneMetrics();
     if (!paneMetrics || paneMetrics.maxLeft <= 0) return Math.max(0, Number(leftValue) || 0);
-    if (paneMetrics.maxLeft < horizontalWrapSpan) {
-      return Math.max(0, Math.min(paneMetrics.maxLeft, Number(leftValue) || 0));
-    }
-    const bandHalf = Math.max(1, Math.floor(horizontalWrapSpan / 2));
-    const minLeft = Math.max(0, horizontalWrapCenter - bandHalf);
-    const maxLeft = Math.min(paneMetrics.maxLeft, horizontalWrapCenter + bandHalf);
+    const { minLeft, maxLeft } = getCanonicalPaneBounds(paneMetrics);
     if (maxLeft <= minLeft) {
-      return Math.max(0, Math.min(paneMetrics.maxLeft, Number(leftValue) || 0));
+      return minLeft;
     }
     let normalized = Number(leftValue) || 0;
     if (normalized < minLeft || normalized > maxLeft) {
       normalized = ((normalized - minLeft) % horizontalWrapSpan + horizontalWrapSpan) % horizontalWrapSpan;
       normalized += minLeft;
+      if (normalized > maxLeft) normalized = maxLeft;
     }
     return Math.max(0, Math.min(paneMetrics.maxLeft, normalized));
   };
   const setMapPaneScroll = (nextLeft, nextTop, reason) => {
     const metrics = getPaneMetrics();
-    let clampedLeft = Math.max(0, Math.min(metrics.maxLeft, Number(nextLeft) || 0));
-    const clampedTop = Math.max(0, Math.min(metrics.maxTop, Number(nextTop) || 0));
+    const bounds = getCanonicalPaneBounds(metrics);
+    let clampedLeft = Math.max(bounds.minLeft, Math.min(bounds.maxLeft, Number(nextLeft) || 0));
+    const clampedTop = Math.max(bounds.minTop, Math.min(bounds.maxTop, Number(nextTop) || 0));
     clampedLeft = normalizeHorizontalWrapScroll(clampedLeft, metrics);
     mapPane.scrollLeft = clampedLeft;
     mapPane.scrollTop = clampedTop;
@@ -30279,6 +30296,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const baseWorldTopPx = originY + minSy;
   const baseWorldWidthPx = (maxSx - minSx) + tileW;
   const baseWorldHeightPx = (maxSy - minSy) + tileH;
+  canonicalWorldLeftPx = baseWorldLeftPx;
+  canonicalWorldTopPx = baseWorldTopPx;
+  canonicalWorldWidthPx = xWrap ? worldWrapSpan : baseWorldWidthPx;
+  canonicalWorldHeightPx = yWrap ? worldWrapHeight : baseWorldHeightPx;
   appendDebugLog('biq-map:geometry', {
     width,
     height,
@@ -31623,15 +31644,22 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return preferred[0];
   };
+  const coastTerrainInfo = () => ({
+    baseTerrain: BIQ_TERRAIN.COAST,
+    realTerrain: BIQ_TERRAIN.COAST
+  });
+  const terrainInfoForTransitionNeighbor = (record) => (
+    record ? terrainInfo(record) : coastTerrainInfo()
+  );
 
   const resolveTerrainSpriteSpec = (record, geom) => {
     const storedFile = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
     const storedImage = parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1);
     if (!geom) return { fileIdx: storedFile, imageIdx: storedImage };
     const southBase = terrainInfo(record).baseTerrain;
-    const westBase = terrainInfo(getTileAtCoord(geom.xPos - 1, geom.yPos - 1)).baseTerrain;
-    const northBase = terrainInfo(getTileAtCoord(geom.xPos, geom.yPos - 2)).baseTerrain;
-    const eastBase = terrainInfo(getTileAtCoord(geom.xPos + 1, geom.yPos - 1)).baseTerrain;
+    const westBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos - 1, geom.yPos - 1)).baseTerrain;
+    const northBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos, geom.yPos - 2)).baseTerrain;
+    const eastBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos + 1, geom.yPos - 1)).baseTerrain;
     const neighbors = [southBase, westBase, northBase, eastBase];
     let spec = mapUtilsTerrainSpec(southBase, westBase, northBase, eastBase);
     if (neighbors.some((t) => t === BIQ_TERRAIN.TUNDRA)) {
@@ -35400,8 +35428,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       setMapPaneScroll(state.biqMapScrollLeft, state.biqMapScrollTop, { reason: 'restore-scroll' });
       return;
     }
-    const targetLeft = Math.max(0, sx + Math.floor(tileW / 2) - Math.floor(mapPane.clientWidth / 2));
-    const targetTop = Math.max(0, sy + Math.floor(tileH / 2) - Math.floor(mapPane.clientHeight / 2));
+    const targetLeft = Math.max(0, canonicalWorldLeftPx + Math.floor(canonicalWorldWidthPx / 2) - Math.floor(mapPane.clientWidth / 2));
+    const targetTop = Math.max(0, canonicalWorldTopPx + Math.floor(canonicalWorldHeightPx / 2) - Math.floor(mapPane.clientHeight / 2));
     setMapPaneScroll(targetLeft, targetTop, { reason: 'init-scroll' });
     state.biqMapScrollLeft = mapPane.scrollLeft;
     state.biqMapScrollTop = mapPane.scrollTop;
