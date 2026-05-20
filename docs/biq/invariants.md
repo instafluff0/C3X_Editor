@@ -19,6 +19,18 @@ Checklist for safe BIQ mutations and robust import/export behavior.
 - TILE, CITY, UNIT, CLNY, SLOC links must remain mutually coherent.
 - TILE x/y/index mapping must remain deterministic and world-size consistent.
 - Owner fields (`owner`, `ownerType`) must remain valid after player/civ edits.
+- Shared map-section ownership rule:
+  - if a UI operation intentionally transfers ownership of a city stack on one tile, the colocated `CITY` and `UNIT` records must save and reload with matching `ownerType`/`owner` values.
+  - if a UI operation intentionally transfers ownership of a unit stack on one tile and a colocated city is part of that operation, the city must match the units after save/reload.
+- Shared map-section coordinate rule:
+  - `CITY`, `UNIT`, `CLNY`, and `SLOC` are coordinate-anchored records.
+  - `TILE.city` and `TILE.colony` add index-backed links that must still resolve to records at the same tile coordinates after any add/delete/reindex cascade.
+- Section-churn rule for surgical saves:
+  - tile-only terrain/overlay edits should only mutate `TILE`.
+  - non-structural city field edits should only mutate `CITY`, unless the action explicitly includes colocated unit transfer.
+  - non-structural unit field edits should only mutate `UNIT`, unless the action explicitly includes colocated city transfer.
+  - starting-location edits should only mutate `SLOC`.
+  - colony add/type edits may mutate `CLNY` and `TILE` together because visible colony-like type is coupled to tile overlay bits.
 - Preserve Quint tile-index math:
   - `index = (y/2)*width + (y odd ? width/2 : 0) + (x/2)` with x-wrap and y-bounds checks.
 - Keep logical and render terrain fields in sync:

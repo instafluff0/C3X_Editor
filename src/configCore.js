@@ -8003,7 +8003,7 @@ function collectBiqMapStructureOps(tabs) {
   return [{
     op: 'setmap',
     sections,
-    allowSetmapGeneration: ['generated', 'imported'].includes(String(tab && tab.mapMutationSource || '').trim().toLowerCase())
+    allowSetmapGeneration: ['generated', 'imported', 'custom'].includes(String(tab && tab.mapMutationSource || '').trim().toLowerCase())
   }];
 }
 
@@ -8027,9 +8027,14 @@ function collectBiqMapEdits(tabs) {
   };
   const getRawMapFieldValue = (record, field) => {
     if (!field) return '';
+    const originalValue = cleanDisplayText(field.originalValue);
     const direct = getDirectRecordValue(record, field.baseKey || field.key);
+    if (field && field.mapEditorValueEdited) {
+      return cleanDisplayText(field.value);
+    }
     if (direct != null) return cleanDisplayText(direct);
-    return cleanDisplayText(field.value);
+    const fieldValue = cleanDisplayText(field.value);
+    return fieldValue;
   };
   tab.sections.forEach((section) => {
     const sectionCode = String((section && section.code) || '').trim().toUpperCase();
@@ -9280,6 +9285,9 @@ module.exports = {
   loadBundle,
   saveBundle,
   previewSavePlan,
+  collectBiqMapStructureOps,
+  collectBiqMapRecordOps,
+  collectBiqMapEdits,
   previewFileDiff,
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,

@@ -4,7 +4,12 @@ const path = require('node:path');
 
 const TEST_DIR = path.resolve(__dirname, '..', 'test');
 
+const MAP_CRITICAL_TESTS = new Set([
+  'biqMapCritical.test.js'
+]);
+
 const BIQ_TESTS = new Set([
+  'biqMapCritical.test.js',
   'biqRoundtrip.test.js',
   'catalogParity.test.js',
   'civilizationsParity.test.js',
@@ -19,7 +24,7 @@ const BIQ_TESTS = new Set([
   'unitsParity.test.js'
 ]);
 
-const TIERS = new Set(['fast', 'biq', 'full']);
+const TIERS = new Set(['fast', 'map-critical', 'biq', 'full']);
 
 function listTestFiles() {
   return fs.readdirSync(TEST_DIR)
@@ -34,12 +39,13 @@ function listTestFiles() {
 function getTierFiles(tier) {
   const files = listTestFiles();
   if (tier === 'full') return files;
+  if (tier === 'map-critical') return files.filter((file) => MAP_CRITICAL_TESTS.has(file.name));
   if (tier === 'biq') return files.filter((file) => BIQ_TESTS.has(file.name));
   return files.filter((file) => !BIQ_TESTS.has(file.name));
 }
 
 function printUsage() {
-  console.error('Usage: node scripts/run-tests.js [fast|biq|full] [-- node --test args]');
+  console.error('Usage: node scripts/run-tests.js [fast|map-critical|biq|full] [-- node --test args]');
 }
 
 const separatorIndex = process.argv.indexOf('--');

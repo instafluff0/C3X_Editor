@@ -2473,6 +2473,15 @@ const OPTIONAL_SECTIONS = new Set(['FLAV', 'WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC
 
 const FIXED_SECTION_SIZES = { CONT: 12, SLOC: 20, CLNY: 20 };
 
+function getFixedSectionSize(code, io) {
+  const upper = String(code || '').trim().toUpperCase();
+  if (upper === 'TILE') return getTileRecordLength(io && io.versionTag, io && io.majorVersion);
+  if (upper === 'CLNY') {
+    return io && io.isConquests ? 24 : 20;
+  }
+  return FIXED_SECTION_SIZES[upper] || 0;
+}
+
 function getTileRecordLength(versionTag, majorVersion) {
   if (versionTag === 'BICX' && majorVersion === 12) return 49; // 4+45
   if (versionTag === 'BICX') return 33;
@@ -2568,8 +2577,7 @@ function parseAllSections(buf, options = {}) {
     }
 
     const isFixed = reg ? (reg.mode === 'fixed') : (FIXED_SECTION_SIZES[code] != null);
-    const fixedSize = code === 'TILE' ? getTileRecordLength(versionTag, majorVersion)
-      : (FIXED_SECTION_SIZES[code] || 0);
+    const fixedSize = getFixedSectionSize(code, io);
 
     const records = [];
     let pos = dataStart;
@@ -2669,8 +2677,7 @@ function serializeSection(section, io) {
   const isFixed = reg ? (reg.mode === 'fixed') : (FIXED_SECTION_SIZES[code] != null);
 
   if (isFixed) {
-    const fixedSize = code === 'TILE' ? getTileRecordLength(io.versionTag, io.majorVersion)
-      : (FIXED_SECTION_SIZES[code] || 0);
+    const fixedSize = getFixedSectionSize(code, io);
     for (const rec of records) {
       if (code === 'TILE') {
         // TILE always uses raw record (surgical edits done in-place)
@@ -3098,6 +3105,29 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     }
     if (ck === 'numstealthtargets' || ck === 'numlegalunittelepads' || ck === 'numlegalbuildingtelepads') {
       return true; // derived from array length on write; no-op
+    }
+  }
+
+  if (code === 'CLNY') {
+    if (ck === 'ownertype') {
+      rec.ownerType = parseEditInt(value, 0);
+      return true;
+    }
+    if (ck === 'owner') {
+      rec.owner = parseEditInt(value, -1);
+      return true;
+    }
+    if (ck === 'x') {
+      rec.x = parseEditInt(value, 0);
+      return true;
+    }
+    if (ck === 'y') {
+      rec.y = parseEditInt(value, 0);
+      return true;
+    }
+    if (ck === 'improvementtype') {
+      rec.improvementType = parseEditInt(value, 0);
+      return true;
     }
   }
 
@@ -4354,8 +4384,8 @@ function applyEdits(buf, edits, options = {}) {
     }
     if (op === 'setmap') {
       if (!options.allowSetmapGeneration || !edit.allowSetmapGeneration) {
-        log.error('BiqApplyEdits', 'op=setmap rejected: whole-map replacement is only allowed for explicit map generation or map import saves');
-        return { ok: false, error: 'Whole-map BIQ replacement is blocked for normal saves. Only explicit map generation or map import writes may replace all map sections.' };
+        log.error('BiqApplyEdits', 'op=setmap rejected: whole-map replacement is only allowed for explicit map generation, custom-map creation, or map import saves');
+        return { ok: false, error: 'Whole-map BIQ replacement is blocked for normal saves. Only explicit map generation, custom-map creation, or map import writes may replace all map sections.' };
       }
       const mapSecCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
       log.debug('BiqApplyEdits', `op=setmap: replacing map sections [${mapSecCodes}]`);

@@ -310,7 +310,8 @@ const mapModal = {
   undoBtn: null,
   undoAllBtn: null,
   tab: null,
-  tileSection: null
+  tileSection: null,
+  refreshVisuals: null
 };
 const generateMapModal = {
   node: null,
@@ -3361,12 +3362,31 @@ function refreshActiveBiqRecordListDirtyBadges() {
   });
 }
 
-function appendDebugLog(message, data) {
-  if (!el.debugLog) return;
+function appendDebugLog(message, data, options = null) {
   const stamp = new Date().toISOString().split('T')[1].replace('Z', '');
   const payload = data ? ` ${JSON.stringify(data)}` : '';
-  el.debugLog.textContent += `[${stamp}] ${message}${payload}\n`;
-  el.debugLog.scrollTop = el.debugLog.scrollHeight;
+  if (el.debugLog) {
+    el.debugLog.textContent += `[${stamp}] ${message}${payload}\n`;
+    el.debugLog.scrollTop = el.debugLog.scrollHeight;
+  }
+  const shouldMirrorExternally = !!(
+    options && options.external
+  ) || String(message || '').startsWith('biq-map:');
+  if (shouldMirrorExternally && window.c3xManager && typeof window.c3xManager.emitRendererDebugLog === 'function') {
+    try {
+      window.c3xManager.emitRendererDebugLog({
+        level: options && options.level ? options.level : 'debug',
+        category: options && options.category ? options.category : 'renderer-debug',
+        msg: `${message}${payload}`
+      });
+    } catch (_err) {}
+  }
+}
+
+function debugNowMs() {
+  return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
 }
 
 function isScenarioMode() {
@@ -20815,11 +20835,31 @@ function refreshMapModalUndoButtons() {
 }
 
 function renderMapModalBody() {
-  if (!mapModal.body || !mapModal.tab || !mapModal.tileSection) return;
+  if (!mapModal.body || !mapModal.tab || !mapModal.tileSection) {
+    appendDebugLog('biq-map:modal-render-skip', {
+      hasBody: !!mapModal.body,
+      hasTab: !!mapModal.tab,
+      hasTileSection: !!mapModal.tileSection
+    });
+    return;
+  }
+  const renderStartedAt = debugNowMs();
+  appendDebugLog('biq-map:modal-render-start', {
+    title: mapModal.title ? String(mapModal.title.textContent || '') : '',
+    sourcePath: mapModal.tab && mapModal.tab.sourcePath ? compactPathFromCiv3Root(mapModal.tab.sourcePath) : '',
+    tileSectionId: mapModal.tileSection && mapModal.tileSection.id != null ? mapModal.tileSection.id : null
+  });
   mapModal.body.innerHTML = '';
   try {
     mapModal.body.appendChild(renderBiqMapSection(mapModal.tab, mapModal.tileSection, { inModal: true }));
+    appendDebugLog('biq-map:modal-render-done', {
+      durationMs: Number((debugNowMs() - renderStartedAt).toFixed(2))
+    });
   } catch (err) {
+    appendDebugLog('biq-map:modal-render-error', {
+      durationMs: Number((debugNowMs() - renderStartedAt).toFixed(2)),
+      error: String(err && err.message || err || 'Unknown map modal render error')
+    });
     const card = document.createElement('div');
     card.className = 'section-card';
     const title = document.createElement('div');
@@ -20847,6 +20887,7 @@ function closeMapModal() {
   if (mapModal.body) mapModal.body.innerHTML = '';
   mapModal.tab = null;
   mapModal.tileSection = null;
+  mapModal.refreshVisuals = null;
   refreshMapModalUndoButtons();
   syncCurrentNavigationSnapshot();
 }
@@ -20856,6 +20897,11 @@ function openMapModal(config) {
   const tab = cfg.tab || null;
   const tileSection = cfg.tileSection || null;
   if (!tab || !tileSection) return;
+  appendDebugLog('biq-map:modal-open', {
+    title: String(cfg.title || `${tab.title || 'Map'} Editor`),
+    sourcePath: tab && tab.sourcePath ? compactPathFromCiv3Root(tab.sourcePath) : '',
+    tileSectionId: tileSection && tileSection.id != null ? tileSection.id : null
+  });
   const overlay = ensureMapModalNode();
   mapModal.tab = tab;
   mapModal.tileSection = tileSection;
@@ -21088,6 +21134,404 @@ async function promptImportMapAction() {
     };
     const onCancel = () => resolveEntityModal(null);
     if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
+    if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
+  });
+}
+
+const QUINT_CUSTOM_MAP_MIN_DIMENSION = 16;
+const QUINT_CUSTOM_MAP_MAX_TILES = 65536;
+const QUINT_CUSTOM_MAP_DEFAULT_WIDTH = 100;
+const QUINT_CUSTOM_MAP_DEFAULT_HEIGHT = 100;
+const QUINT_CUSTOM_MAP_DEFAULT_BASE_TERRAIN = BIQ_TERRAIN.DESERT;
+const QUINT_CUSTOM_MAP_WORLD_SIZE = 2;
+const QUINT_CUSTOM_MAP_FLAGS = 5;
+const QUINT_CUSTOM_MAP_NUM_CIVS = 8;
+const QUINT_CUSTOM_MAP_DISTANCE_BETWEEN_CIVS = 12;
+const QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS = Object.freeze([
+  { value: BIQ_TERRAIN.DESERT, label: 'Desert' },
+  { value: BIQ_TERRAIN.PLAINS, label: 'Plains' },
+  { value: BIQ_TERRAIN.GRASSLAND, label: 'Grassland' },
+  { value: BIQ_TERRAIN.TUNDRA, label: 'Tundra' },
+  { value: BIQ_TERRAIN.COAST, label: 'Coast' },
+  { value: BIQ_TERRAIN.SEA, label: 'Sea' },
+  { value: BIQ_TERRAIN.OCEAN, label: 'Ocean' }
+]);
+
+function normalizeQuintCustomMapDimension(rawValue, fallback) {
+  const parsed = Number.parseInt(String(rawValue ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed % 2 === 0 ? parsed : parsed + 1;
+}
+
+function getQuintCustomMapTileCount(width, height) {
+  return Math.floor((Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0)) / 2);
+}
+
+function getQuintCustomMapValidation(rawWidth, rawHeight) {
+  const width = normalizeQuintCustomMapDimension(rawWidth, QUINT_CUSTOM_MAP_DEFAULT_WIDTH);
+  const height = normalizeQuintCustomMapDimension(rawHeight, QUINT_CUSTOM_MAP_DEFAULT_HEIGHT);
+  const tileCount = getQuintCustomMapTileCount(width, height);
+  let reason = '';
+  if (width < QUINT_CUSTOM_MAP_MIN_DIMENSION || height < QUINT_CUSTOM_MAP_MIN_DIMENSION) {
+    reason = `Width and height must each be at least ${QUINT_CUSTOM_MAP_MIN_DIMENSION}.`;
+  } else if (tileCount > QUINT_CUSTOM_MAP_MAX_TILES) {
+    reason = `Civ 3 custom maps may contain at most ${QUINT_CUSTOM_MAP_MAX_TILES} tiles; this size would create ${tileCount}.`;
+  }
+  return {
+    width,
+    height,
+    tileCount,
+    isValid: !reason,
+    reason
+  };
+}
+
+function getQuintCustomMapTerrainFile(terrainId) {
+  switch (Number(terrainId)) {
+    case BIQ_TERRAIN.PLAINS: return 1;
+    case BIQ_TERRAIN.DESERT: return 2;
+    case BIQ_TERRAIN.GRASSLAND: return 5;
+    case BIQ_TERRAIN.COAST: return 6;
+    case BIQ_TERRAIN.SEA: return 7;
+    case BIQ_TERRAIN.OCEAN: return 8;
+    case BIQ_TERRAIN.TUNDRA:
+    default:
+      return 0;
+  }
+}
+
+function computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec) {
+  if (!spec) return -1;
+  if (!spec.needImage) return spec.image;
+  let sum = 0;
+  if (northBase === spec.terr2) sum += 1;
+  if (northBase === spec.terr3) sum += 2;
+  if (westBase === spec.terr2) sum += 3;
+  if (westBase === spec.terr3) sum += 6;
+  if (eastBase === spec.terr2) sum += 9;
+  if (eastBase === spec.terr3) sum += 18;
+  if (southBase === spec.terr2) sum += 27;
+  if (southBase === spec.terr3) sum += 54;
+  return sum;
+}
+
+function computeBiqStoredTerrainSpriteSpec(southBase, westBase, northBase, eastBase) {
+  const s = Number(southBase);
+  const w = Number(westBase);
+  const n = Number(northBase);
+  const e = Number(eastBase);
+  if (s === BIQ_TERRAIN.OCEAN && w === BIQ_TERRAIN.OCEAN && n === BIQ_TERRAIN.OCEAN && e === BIQ_TERRAIN.OCEAN) {
+    return { file: 8, image: 0, needImage: false, terr2: 0, terr3: 0 };
+  }
+  if (s === BIQ_TERRAIN.SEA && w === BIQ_TERRAIN.SEA && n === BIQ_TERRAIN.SEA && e === BIQ_TERRAIN.SEA) {
+    return { file: 7, image: 0, needImage: false, terr2: 0, terr3: 0 };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.TUNDRA)) {
+    return { file: 0, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.SEA)) {
+    return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+  }
+  if ([s, w, n, e].every((t) => t !== BIQ_TERRAIN.COAST)) {
+    return { file: 4, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.PLAINS };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.DESERT)) {
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+      return { file: 3, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+      return { file: 2, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+      return { file: 2, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+    }
+    return null;
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+    return { file: 1, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+    return { file: 5, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+    return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+  }
+  return null;
+}
+
+function finalizeGeneratedBlankMapTerrainFileImage(tileRecords, width, height) {
+  const half = Math.floor(Number(width) / 2);
+  if (!Array.isArray(tileRecords) || half <= 0 || !Number.isFinite(Number(height)) || Number(height) <= 0) return;
+  const tileRecordByCoord = new Map();
+  const coordsByIndex = new Array(tileRecords.length);
+  for (let i = 0; i < tileRecords.length; i += 1) {
+    const row = Math.floor(i / half);
+    const xPos = ((i % half) * 2) + (((row & 1) === 1) ? 1 : 0);
+    const yPos = row;
+    const coord = { xPos, yPos };
+    coordsByIndex[i] = coord;
+    tileRecordByCoord.set(`${xPos},${yPos}`, tileRecords[i]);
+  }
+  const coastFallback = { baseTerrain: BIQ_TERRAIN.COAST };
+  const getTerrainBaseForCoord = (xPos, yPos) => {
+    let x = Number(xPos);
+    const y = Number(yPos);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return coastFallback.baseTerrain;
+    if (y < 0 || y >= height) return coastFallback.baseTerrain;
+    x = ((x % width) + width) % width;
+    const record = tileRecordByCoord.get(`${x},${y}`) || null;
+    const packed = parseIntLoose(getFieldByBaseKey(record, 'c3cbaserealterrain')?.value, parseIntLoose(getFieldByBaseKey(record, 'baserealterrain')?.value, 0));
+    return packed & 0x0f;
+  };
+  for (let i = 0; i < tileRecords.length; i += 1) {
+    const coord = coordsByIndex[i];
+    const southBase = getTerrainBaseForCoord(coord.xPos, coord.yPos);
+    const westBase = getTerrainBaseForCoord(coord.xPos - 1, coord.yPos - 1);
+    const northBase = getTerrainBaseForCoord(coord.xPos, coord.yPos - 2);
+    const eastBase = getTerrainBaseForCoord(coord.xPos + 1, coord.yPos - 1);
+    const spec = computeBiqStoredTerrainSpriteSpec(southBase, westBase, northBase, eastBase);
+    if (!spec) continue;
+    setRecordFieldValue(tileRecords[i], 'file', String(spec.file));
+    setRecordFieldValue(tileRecords[i], 'image', String(computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec)));
+  }
+}
+
+async function buildBlankCustomMapSections(tab, options = {}) {
+  const validation = getQuintCustomMapValidation(options.width, options.height);
+  if (!validation.isValid) throw new Error(validation.reason || 'Invalid custom map size.');
+  const baseTerrain = parseIntLoose(options.baseTerrain, QUINT_CUSTOM_MAP_DEFAULT_BASE_TERRAIN);
+  const packedTerrain = ((baseTerrain & 0x0f) << 4) | (baseTerrain & 0x0f);
+  const resourceBundle = state.bundle && state.bundle.tabs ? state.bundle : await getMapGenerationRuleBundle();
+  const resourceDefs = getMapGenerationResourceDefs(resourceBundle);
+  const resourceCount = resourceDefs.length;
+  const wchrRecord = createGeneratedMapRecord(0, [
+    { baseKey: 'selectedclimate', value: 1, label: 'Selected Climate' },
+    { baseKey: 'actualclimate', value: 1, label: 'Actual Climate' },
+    { baseKey: 'selectedbarbarianactivity', value: 1, label: 'Selected Barbarian Activity' },
+    { baseKey: 'actualbarbarianactivity', value: 1, label: 'Actual Barbarian Activity' },
+    { baseKey: 'selectedlandform', value: 1, label: 'Selected Landform' },
+    { baseKey: 'actuallandform', value: 1, label: 'Actual Landform' },
+    { baseKey: 'selectedoceancoverage', value: 1, label: 'Selected Ocean Coverage' },
+    { baseKey: 'actualoceancoverage', value: 1, label: 'Actual Ocean Coverage' },
+    { baseKey: 'selectedtemperature', value: 1, label: 'Selected Temperature' },
+    { baseKey: 'actualtemperature', value: 1, label: 'Actual Temperature' },
+    { baseKey: 'selectedage', value: 1, label: 'Selected Age' },
+    { baseKey: 'actualage', value: 1, label: 'Actual Age' },
+    { baseKey: 'worldsize', value: QUINT_CUSTOM_MAP_WORLD_SIZE, label: 'World Size' }
+  ], 'World Parameters');
+  const wmapRecord = createGeneratedMapRecord(0, [
+    { baseKey: 'numresources', value: resourceCount, label: 'Number Of Resources' },
+    { baseKey: 'numcontinents', value: 0, label: 'Number Of Continents' },
+    { baseKey: 'height', value: validation.height, label: 'Map Height' },
+    { baseKey: 'distancebetweencivs', value: QUINT_CUSTOM_MAP_DISTANCE_BETWEEN_CIVS, label: 'Distance Between Civilizations' },
+    { baseKey: 'numcivs', value: QUINT_CUSTOM_MAP_NUM_CIVS, label: 'Number Of Civilizations' },
+    { baseKey: 'questionmark1', value: Math.floor(validation.height * 0.7), label: 'Question Mark 1' },
+    { baseKey: 'questionmark2', value: 0, label: 'Question Mark 2' },
+    { baseKey: 'width', value: validation.width, label: 'Map Width' },
+    { baseKey: 'questionmark3', value: -1, label: 'Question Mark 3' },
+    { baseKey: 'mapseed', value: 0, label: 'Map Seed' },
+    { baseKey: 'flags', value: QUINT_CUSTOM_MAP_FLAGS, label: 'Flags' }
+  ], 'World Map');
+  for (let idx = 0; idx < resourceCount; idx += 1) {
+    wmapRecord.fields.push(createGeneratedMapField(`resource_occurrence_${idx}`, 0, `Resource Occurrence ${idx + 1}`));
+  }
+  const tileRecords = [];
+  const tileFile = getQuintCustomMapTerrainFile(baseTerrain);
+  let tileIndex = 0;
+  for (let y = 0; y < validation.height; y += 1) {
+    for (let x = y % 2 === 0 ? 0 : 1; x < validation.width; x += 2) {
+      tileRecords.push(createGeneratedMapRecord(tileIndex, [
+        { baseKey: 'riverconnectioninfo', value: 0, label: 'River Connection Info' },
+        { baseKey: 'border', value: 0, label: 'Border' },
+        { baseKey: 'resource', value: -1, label: 'Resource' },
+        { baseKey: 'image', value: 0, label: 'Image' },
+        { baseKey: 'file', value: tileFile, label: 'File' },
+        { baseKey: 'questionmark', value: 0, label: 'Question Mark' },
+        { baseKey: 'overlays', value: 0, label: 'Overlays' },
+        { baseKey: 'baserealterrain', value: packedTerrain, label: 'Base Real Terrain' },
+        { baseKey: 'bonuses', value: 0, label: 'Bonuses' },
+        { baseKey: 'rivercrossingdata', value: 0, label: 'River Crossing Data' },
+        { baseKey: 'barbariantribe', value: -1, label: 'Barbarian Tribe' },
+        { baseKey: 'city', value: -1, label: 'City' },
+        { baseKey: 'colony', value: -1, label: 'Colony' },
+        { baseKey: 'continent', value: 0, label: 'Continent' },
+        { baseKey: 'qm2', value: 6, label: 'Question Mark 2' },
+        { baseKey: 'victorypointlocation', value: -1, label: 'Victory Point Location' },
+        { baseKey: 'ruin', value: 0, label: 'Ruin' },
+        { baseKey: 'c3coverlays', value: 0, label: 'C3C Overlays' },
+        { baseKey: 'qm3', value: 0, label: 'Question Mark 3' },
+        { baseKey: 'c3cbaserealterrain', value: packedTerrain, label: 'C3C Base Real Terrain' },
+        { baseKey: 'qm4', value: 0, label: 'Question Mark 4' },
+        { baseKey: 'fogofwar', value: 0, label: 'Fog Of War' },
+        { baseKey: 'c3cbonuses', value: 0, label: 'C3C Bonuses' },
+        { baseKey: 'qm5', value: 0, label: 'Question Mark 5' }
+      ], `Tile ${tileIndex + 1}`));
+      tileIndex += 1;
+    }
+  }
+  finalizeGeneratedBlankMapTerrainFileImage(tileRecords, validation.width, validation.height);
+  return [
+    createGeneratedMapSection('WCHR', [wchrRecord]),
+    createGeneratedMapSection('WMAP', [wmapRecord]),
+    createGeneratedMapSection('TILE', tileRecords),
+    createGeneratedMapSection('CONT', [createGeneratedMapRecord(0, [
+      { baseKey: 'continentclass', value: 1, label: 'Continent Class' },
+      { baseKey: 'numtiles', value: 0, label: 'Number Of Tiles' }
+    ], 'Continent 1')]),
+    createGeneratedMapSection('SLOC', []),
+    createGeneratedMapSection('CITY', []),
+    createGeneratedMapSection('UNIT', []),
+    createGeneratedMapSection('CLNY', [])
+  ];
+}
+
+async function promptAddCustomMapAction(tab) {
+  if (!el.entityModalOverlay || !el.entityModalContent) return null;
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Create New Map';
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = 'Create a new custom map. Width and height must be even, at least 16, and the map may contain at most 65,536 tiles.';
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Create New Map';
+    el.entityModalConfirm.disabled = false;
+  }
+  el.entityModalContent.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.className = 'entity-modal-content';
+  const warning = document.createElement('p');
+  warning.className = 'entity-modal-copy-warning';
+  warning.textContent = 'Custom maps require even dimensions and use the Civ 3 limit of 65,536 tiles.';
+  form.appendChild(warning);
+  const grid = document.createElement('div');
+  grid.className = 'entity-form-grid';
+  form.appendChild(grid);
+
+  const terrainField = document.createElement('div');
+  terrainField.className = 'entity-field';
+  const terrainLabel = document.createElement('label');
+  terrainLabel.textContent = 'Base Terrain';
+  const terrainSelect = document.createElement('select');
+  QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS.forEach((option) => {
+    const node = document.createElement('option');
+    node.value = String(option.value);
+    node.textContent = option.label;
+    terrainSelect.appendChild(node);
+  });
+  terrainSelect.value = String(QUINT_CUSTOM_MAP_DEFAULT_BASE_TERRAIN);
+  terrainField.appendChild(terrainLabel);
+  terrainField.appendChild(terrainSelect);
+  grid.appendChild(terrainField);
+
+  const widthField = document.createElement('div');
+  widthField.className = 'entity-field';
+  const widthLabel = document.createElement('label');
+  widthLabel.textContent = 'Map Width';
+  const widthInput = document.createElement('input');
+  widthInput.type = 'number';
+  widthInput.min = String(QUINT_CUSTOM_MAP_MIN_DIMENSION);
+  widthInput.step = '1';
+  widthInput.value = String(QUINT_CUSTOM_MAP_DEFAULT_WIDTH);
+  widthField.appendChild(widthLabel);
+  widthField.appendChild(widthInput);
+  grid.appendChild(widthField);
+
+  const heightField = document.createElement('div');
+  heightField.className = 'entity-field';
+  const heightLabel = document.createElement('label');
+  heightLabel.textContent = 'Map Height';
+  const heightInput = document.createElement('input');
+  heightInput.type = 'number';
+  heightInput.min = String(QUINT_CUSTOM_MAP_MIN_DIMENSION);
+  heightInput.step = '1';
+  heightInput.value = String(QUINT_CUSTOM_MAP_DEFAULT_HEIGHT);
+  heightField.appendChild(heightLabel);
+  heightField.appendChild(heightInput);
+  grid.appendChild(heightField);
+
+  const totalField = document.createElement('div');
+  totalField.className = 'entity-field';
+  const totalLabel = document.createElement('label');
+  totalLabel.textContent = 'Total Tiles';
+  const totalValue = document.createElement('div');
+  totalValue.className = 'hint';
+  totalField.appendChild(totalLabel);
+  totalField.appendChild(totalValue);
+  grid.appendChild(totalField);
+
+  const summary = document.createElement('p');
+  summary.className = 'hint';
+  form.appendChild(summary);
+  el.entityModalContent.appendChild(form);
+
+  let validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
+  const refreshValidation = () => {
+    validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
+    totalValue.textContent = `${validation.tileCount.toLocaleString()} (${validation.width}x${validation.height})`;
+    if (validation.width !== parseIntLoose(widthInput.value, validation.width) || validation.height !== parseIntLoose(heightInput.value, validation.height)) {
+      summary.textContent = validation.isValid
+        ? `Odd dimensions will be rounded up to the next even size before creating the map. Result: ${validation.width}x${validation.height}.`
+        : validation.reason;
+    } else {
+      summary.textContent = validation.isValid
+        ? 'This creates a blank custom map filled with the selected base terrain.'
+        : validation.reason;
+    }
+    if (el.entityModalConfirm) el.entityModalConfirm.disabled = !validation.isValid;
+  };
+  const normalizeInputsToEven = () => {
+    widthInput.value = String(normalizeQuintCustomMapDimension(widthInput.value, QUINT_CUSTOM_MAP_DEFAULT_WIDTH));
+    heightInput.value = String(normalizeQuintCustomMapDimension(heightInput.value, QUINT_CUSTOM_MAP_DEFAULT_HEIGHT));
+    refreshValidation();
+  };
+  widthInput.addEventListener('input', refreshValidation);
+  heightInput.addEventListener('input', refreshValidation);
+  widthInput.addEventListener('change', normalizeInputsToEven);
+  heightInput.addEventListener('change', normalizeInputsToEven);
+  widthInput.addEventListener('blur', normalizeInputsToEven);
+  heightInput.addEventListener('blur', normalizeInputsToEven);
+  refreshValidation();
+
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => terrainSelect.focus({ preventScroll: true }), 0);
+
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const onConfirm = async () => {
+      try {
+        normalizeInputsToEven();
+        if (!validation.isValid) {
+          setStatus(validation.reason || 'Choose a valid custom map size first.', true);
+          return;
+        }
+        if (el.entityModalConfirm) {
+          el.entityModalConfirm.disabled = true;
+          el.entityModalConfirm.textContent = 'Adding...';
+        }
+        const customSections = await buildBlankCustomMapSections(tab, {
+          baseTerrain: terrainSelect.value,
+          width: validation.width,
+          height: validation.height
+        });
+        resolveEntityModal({
+          width: validation.width,
+          height: validation.height,
+          tileCount: validation.tileCount,
+          customSections
+        });
+      } catch (err) {
+        if (el.entityModalConfirm) {
+          el.entityModalConfirm.disabled = false;
+          el.entityModalConfirm.textContent = 'Add Custom Map';
+        }
+        const message = err && err.message ? err.message : 'Could not create the custom map.';
+        setStatus(message, true);
+      }
+    };
+    const onCancel = () => resolveEntityModal(null);
+    if (el.entityModalConfirm) el.entityModalConfirm.onclick = () => { void onConfirm(); };
     if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
   });
 }
@@ -28787,6 +29231,23 @@ function renderMapTab(tab) {
   const actions = document.createElement('div');
   actions.className = 'section-actions';
   top.innerHTML = '<strong>Map Editor</strong>';
+  if (isScenarioMode() && !hasMapData(tab)) {
+    const addCustomBtn = document.createElement('button');
+    addCustomBtn.type = 'button';
+    addCustomBtn.className = 'secondary';
+    addCustomBtn.innerHTML = '<span class="btn-icon">＋</span>Create New Map';
+    addCustomBtn.addEventListener('click', async () => {
+      const result = await promptAddCustomMapAction(tab);
+      if (!result || !Array.isArray(result.customSections)) return;
+      rememberMapUndoSnapshot();
+      applyWholeMapSectionsToTab(tab, result.customSections, 'set', 'custom');
+      setDirty(true);
+      renderTabs();
+      renderActiveTab({ preserveTabScroll: true });
+      setStatus(`Created custom map (${result.width}x${result.height}, ${result.tileCount.toLocaleString()} tiles).`);
+    });
+    actions.appendChild(addCustomBtn);
+  }
   if (hasMapData(tab) && tileSection) {
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
@@ -29501,7 +29962,7 @@ function rgbaToCanvas(preview) {
   return canvas;
 }
 
-function biqMapArtRerender() {
+function biqMapArtRerender(meta = null) {
   if (state.biqMapRerenderTimer) window.clearTimeout(state.biqMapRerenderTimer);
   state.biqMapRerenderPending = true;
   state.biqMapRerenderTimer = window.setTimeout(() => {
@@ -29509,6 +29970,38 @@ function biqMapArtRerender() {
     state.biqMapRerenderTimer = 0;
     const mapOverlay = ensureMapModalNode();
     if (mapModal.tab && mapModal.tileSection && !mapOverlay.classList.contains('hidden')) {
+      if (typeof mapModal.refreshVisuals === 'function') {
+        const loadingCount = Object.keys(state.biqMapArtLoading || {}).length;
+        const reason = String(meta && meta.reason || 'asset-load');
+        const assetDrivenRefresh = reason === 'asset-load' || reason === 'palette-load';
+        if (assetDrivenRefresh && loadingCount > 0) {
+          appendDebugLog('biq-map:art-rerender', {
+            mode: 'deferred-until-idle',
+            assetKey: meta && meta.assetKey || '',
+            reason,
+            loadingCount
+          });
+          return;
+        }
+        appendDebugLog('biq-map:art-rerender', {
+          mode: 'light-refresh',
+          assetKey: meta && meta.assetKey || '',
+          reason,
+          loadingCount
+        });
+        mapModal.refreshVisuals({
+          assetKey: meta && meta.assetKey || '',
+          reason,
+          loadingCount
+        });
+        return;
+      }
+      appendDebugLog('biq-map:art-rerender', {
+        mode: 'full-modal-rerender',
+        assetKey: meta && meta.assetKey || '',
+        reason: meta && meta.reason || 'asset-load',
+        loadingCount: Object.keys(state.biqMapArtLoading || {}).length
+      });
       renderMapModalBody();
       return;
     }
@@ -29565,7 +30058,7 @@ function requestBiqMapArtAsset(assetKey, assetPath, previewOptions = null) {
     appendDebugLog('biq-map:asset-load-exception', { assetKey });
   }).finally(() => {
     delete state.biqMapArtLoading[assetKey];
-    biqMapArtRerender();
+    biqMapArtRerender({ reason: 'asset-load', assetKey });
   });
 }
 
@@ -29590,7 +30083,7 @@ function requestBiqMapNtpPalette(slot, assetPath) {
     }
   }).catch(() => {}).finally(() => {
     delete state.biqMapArtLoading[key];
-    biqMapArtRerender();
+    biqMapArtRerender({ reason: 'palette-load', assetKey: key });
   });
 }
 
@@ -33354,6 +33847,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const storedFile = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
     const storedImage = parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1);
     if (!geom) return { fileIdx: storedFile, imageIdx: storedImage };
+    if (storedFile >= 0 && storedImage >= 0) {
+      return { fileIdx: storedFile, imageIdx: storedImage };
+    }
     const southBase = terrainInfo(record).baseTerrain;
     const westBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos - 1, geom.yPos - 1)).baseTerrain;
     const northBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos, geom.yPos - 2)).baseTerrain;
@@ -33375,7 +33871,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!spec) return { fileIdx: storedFile, imageIdx: storedImage };
     return {
       fileIdx: spec.file,
-      imageIdx: computeTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec)
+      imageIdx: computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec)
     };
   };
 
@@ -33393,7 +33889,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!spec) return { fileIdx: -1, imageIdx: -1 };
     return {
       fileIdx: spec.file,
-      imageIdx: computeTerrainSpriteImageIdx(baseCode, baseCode, baseCode, baseCode, spec)
+      imageIdx: computeBiqTerrainSpriteImageIdx(baseCode, baseCode, baseCode, baseCode, spec)
     };
   };
 
@@ -35315,6 +35811,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       rectSummary: summarizeRects(redrawRects)
     });
     redrawMapCanvasInPlace(redrawRects);
+    minimapBaseDirty = true;
     renderMiniMap();
     if (options.refreshTileInfo !== false && expandedIndexes.includes(state.biqMapSelectedTile)) {
       renderTileInfoPanel();
@@ -35325,6 +35822,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!ctx) return;
     const redrawStartedAt = mapToolNowMs();
     const clips = Array.isArray(clipRects) && clipRects.length > 0 ? clipRects : null;
+    const logRedrawPhase = (phase, phaseStartedAt, extra = {}) => {
+      appendDebugLog('biq-map:canvas-redraw-phase', {
+        phase,
+        clipped: !!clips,
+        durationMs: Number((mapToolNowMs() - phaseStartedAt).toFixed(2)),
+        ...extra
+      });
+    };
     if (clips) {
       ctx.save();
       ctx.beginPath();
@@ -35334,28 +35839,64 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     } else {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
+    logRedrawPhase('clear', redrawStartedAt, {
+      clipCount: clips ? clips.length : 0
+    });
     const overlayPassItems = [];
+    let phaseStartedAt = mapToolNowMs();
+    appendDebugLog('biq-map:canvas-redraw-candidates', {
+      clipped: !!clips,
+      candidateCount: maxIdx + 1,
+      totalTiles: maxIdx + 1,
+      clipSummary: summarizeRects(clips || [])
+    });
     for (let i = 0; i <= maxIdx; i += 1) {
+      const drawPos = i;
+      if ((drawPos % 250) === 0) {
+        const progressGeom = tileGeom[i] || null;
+        const progressTile = tiles[i] || null;
+        const progressInfo = progressTile ? terrainInfo(progressTile) : null;
+        appendDebugLog('biq-map:canvas-redraw-progress', {
+          stage: 'base-loop',
+          drawPosition: drawPos,
+          candidateCount: maxIdx + 1,
+          tileIndex: i,
+          xPos: progressGeom ? progressGeom.xPos : null,
+          yPos: progressGeom ? progressGeom.yPos : null,
+          baseTerrain: progressInfo ? progressInfo.baseTerrain : null,
+          realTerrain: progressInfo ? progressInfo.realTerrain : null,
+          overlayPassCount: overlayPassItems.length
+        });
+      }
       const record = tiles[i];
       const geom = tileGeom[i];
+      const info = terrainInfo(record);
       const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
       const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
-      const terrain = terrainInfo(record).baseTerrain;
-      const resource = parseIntLoose(getFieldByBaseKey(record, 'resource')?.value, -1);
-      const owner = parseIntLoose(getFieldByBaseKey(record, 'owner')?.value, 0);
-      const continent = parseIntLoose(getFieldByBaseKey(record, 'continent')?.value, 0);
-
-      let value = terrain;
-      if (state.biqMapLayer === 'resource') value = resource;
-      if (state.biqMapLayer === 'owner') value = owner;
-      if (state.biqMapLayer === 'continent') value = continent;
+      let value = info.baseTerrain;
+      if (state.biqMapLayer === 'resource') value = parseIntLoose(getFieldByBaseKey(record, 'resource')?.value, -1);
+      if (state.biqMapLayer === 'owner') value = parseIntLoose(getFieldByBaseKey(record, 'owner')?.value, 0);
+      if (state.biqMapLayer === 'continent') value = parseIntLoose(getFieldByBaseKey(record, 'continent')?.value, 0);
 
       for (const wrapOffset of drawWrapOffsets) {
         const sx = basePos.sx + wrapOffset.dx;
         const sy = basePos.sy + wrapOffset.dy;
         if (clips && !clips.some((rect) => rectIntersects(tileDrawRect(sx, sy), rect))) continue;
         let drewSprite = false;
-        if (state.biqMapLayer === 'terrain') drewSprite = drawTerrainSprite(record, geom, sx, sy);
+        if (state.biqMapLayer === 'terrain') {
+          try {
+            drewSprite = drawTerrainSprite(record, geom, sx, sy);
+          } catch (error) {
+            appendDebugLog('biq-map:canvas-redraw-tile-error', {
+              phase: 'base-terrain',
+              tileIndex: i,
+              xPos: geom?.xPos ?? null,
+              yPos: geom?.yPos ?? null,
+              error: error && error.message ? error.message : String(error || 'Unknown terrain draw error')
+            });
+            throw error;
+          }
+        }
         if (!drewSprite) {
           ctx.fillStyle = value < 0 ? '#222831' : colorFromNumber(value);
           ctx.beginPath();
@@ -35369,13 +35910,25 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         overlayPassItems.push({ record, geom, sx, sy });
       }
     }
+    logRedrawPhase('base-terrain', phaseStartedAt, {
+      overlayPassCount: overlayPassItems.length
+    });
 
     if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+      phaseStartedAt = mapToolNowMs();
       prewarmVisibleDistrictArt(overlayPassItems);
+      logRedrawPhase('district-prewarm', phaseStartedAt, {
+        overlayPassCount: overlayPassItems.length
+      });
+      phaseStartedAt = mapToolNowMs();
       for (let i = 0; i < overlayPassItems.length; i += 1) {
         const item = overlayPassItems[i];
         drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'tall');
       }
+      logRedrawPhase('tall-overlays', phaseStartedAt, {
+        overlayPassCount: overlayPassItems.length
+      });
+      phaseStartedAt = mapToolNowMs();
       for (let i = 0; i < overlayPassItems.length; i += 1) {
         const item = overlayPassItems[i];
         drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
@@ -35389,16 +35942,24 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         drawColonyOverlay(item.record, item.sx, item.sy);
         drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
       }
+      logRedrawPhase('flat-overlays', phaseStartedAt, {
+        overlayPassCount: overlayPassItems.length
+      });
     }
 
     if (shouldShowVisibilityFogOverlay()) {
+      phaseStartedAt = mapToolNowMs();
       for (let i = 0; i < overlayPassItems.length; i += 1) {
         const item = overlayPassItems[i];
         drawFogOverlay(item.record, item.sx, item.sy);
       }
+      logRedrawPhase('fog', phaseStartedAt, {
+        overlayPassCount: overlayPassItems.length
+      });
     }
 
     if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+      phaseStartedAt = mapToolNowMs();
       for (let i = 0; i <= maxIdx; i += 1) {
         const record = tiles[i];
         const geom = tileGeom[i];
@@ -35412,9 +35973,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           drawCityNameOverlay(record, geom, sx, sy);
         }
       }
+      logRedrawPhase('labels', phaseStartedAt);
     }
 
     if (state.biqMapShowGrid && tilePx >= 5) {
+      phaseStartedAt = mapToolNowMs();
       ctx.strokeStyle = 'rgba(38, 44, 58, 0.72)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -35430,6 +35993,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         ctx.lineTo(leftX + stepX + 0.5, topVertexY - stepY + 0.5);
       }
       ctx.stroke();
+      logRedrawPhase('grid', phaseStartedAt, {
+        overlayPassCount: overlayPassItems.length
+      });
     }
     if (clips) ctx.restore();
     appendDebugLog('biq-map:canvas-redraw', {
@@ -36111,7 +36677,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!paintStroke) paintStroke = { touched: new Set(), didEdit: false };
     if (paintStroke.touched.has(hit.index)) return false;
     paintStroke.touched.add(hit.index);
-    const changedIndexes = applyBrushAtIndex(hit.index);
+      const changedIndexes = applyBrushAtIndex(hit.index);
     if (Array.isArray(changedIndexes) && changedIndexes.length > 0) {
       paintStroke.didEdit = true;
       redrawMapAfterTileChanges(changedIndexes, { refreshTileInfo: true });
@@ -36276,27 +36842,65 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   minimapCanvas.className = 'biq-map-minimap-canvas';
   minimapCanvas.width = 240;
   minimapCanvas.height = Math.max(120, Math.round((baseWorldHeightPx / Math.max(1, baseWorldWidthPx)) * 240));
+  const minimapBaseCanvas = document.createElement('canvas');
+  minimapBaseCanvas.width = minimapCanvas.width;
+  minimapBaseCanvas.height = minimapCanvas.height;
+  let minimapBaseDirty = true;
   minimapPanel.appendChild(minimapCanvas);
   mapFrame.appendChild(minimapPanel);
   container.appendChild(mapFrame);
 
+  const rebuildMiniMapBase = () => {
+    if (minimapBaseCanvas.width !== minimapCanvas.width) minimapBaseCanvas.width = minimapCanvas.width;
+    if (minimapBaseCanvas.height !== minimapCanvas.height) minimapBaseCanvas.height = minimapCanvas.height;
+    const baseStartedAt = mapToolNowMs();
+    const baseCtx = minimapBaseCanvas.getContext('2d');
+    if (!baseCtx) return false;
+    baseCtx.clearRect(0, 0, minimapBaseCanvas.width, minimapBaseCanvas.height);
+    baseCtx.fillStyle = '#113246';
+    baseCtx.fillRect(0, 0, minimapBaseCanvas.width, minimapBaseCanvas.height);
+    const scaleX = minimapBaseCanvas.width / Math.max(1, baseWorldWidthPx);
+    const scaleY = minimapBaseCanvas.height / Math.max(1, baseWorldHeightPx);
+    const miniTileW = Math.max(1, tileW * scaleX);
+    const miniTileH = Math.max(1, tileH * scaleY);
+    for (let i = 0; i <= maxIdx; i += 1) {
+      const record = tiles[i];
+      const geom = tileGeom[i];
+      if (!record || !geom) continue;
+      const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+      const sx = (basePosRaw.sx + originX - baseWorldLeftPx) * scaleX;
+      const sy = (basePosRaw.sy + originY - baseWorldTopPx) * scaleY;
+      const info = terrainInfo(record);
+      const drewSprite = drawTerrainSpriteToContext(baseCtx, record, geom, sx, sy, miniTileW, miniTileH);
+      if (!drewSprite) {
+        const midX = sx + (miniTileW / 2);
+        const midY = sy + (miniTileH / 2);
+        baseCtx.fillStyle = colorFromNumber(info.baseTerrain);
+        baseCtx.beginPath();
+        baseCtx.moveTo(midX, sy);
+        baseCtx.lineTo(sx + miniTileW, midY);
+        baseCtx.lineTo(midX, sy + miniTileH);
+        baseCtx.lineTo(sx, midY);
+        baseCtx.closePath();
+        baseCtx.fill();
+      }
+    }
+    minimapBaseDirty = false;
+    appendDebugLog('biq-map:minimap-base-rebuild', {
+      durationMs: Number((mapToolNowMs() - baseStartedAt).toFixed(2)),
+      width: minimapBaseCanvas.width,
+      height: minimapBaseCanvas.height
+    });
+    return true;
+  };
+
   renderMiniMap = () => {
+    const minimapStartedAt = mapToolNowMs();
     const mmCtx = minimapCanvas.getContext('2d');
     if (!mmCtx) return;
+    if (minimapBaseDirty) rebuildMiniMapBase();
     mmCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
-    mmCtx.fillStyle = '#113246';
-    mmCtx.fillRect(0, 0, minimapCanvas.width, minimapCanvas.height);
-    mmCtx.drawImage(
-      canvas,
-      baseWorldLeftPx,
-      baseWorldTopPx,
-      baseWorldWidthPx,
-      baseWorldHeightPx,
-      0,
-      0,
-      minimapCanvas.width,
-      minimapCanvas.height
-    );
+    mmCtx.drawImage(minimapBaseCanvas, 0, 0, minimapCanvas.width, minimapCanvas.height);
     const metrics = getPaneMetrics();
     const viewWidth = Math.max(12, (metrics.clientWidth / Math.max(1, baseWorldWidthPx)) * minimapCanvas.width);
     const viewHeight = Math.max(10, (metrics.clientHeight / Math.max(1, baseWorldHeightPx)) * minimapCanvas.height);
@@ -36321,6 +36925,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (yWrap && (rectY + viewHeight) > minimapCanvas.height) {
       mmCtx.strokeRect(rectX, 0, Math.min(minimapCanvas.width, viewWidth), (rectY + viewHeight) - minimapCanvas.height);
     }
+    appendDebugLog('biq-map:minimap-redraw', {
+      durationMs: Number((mapToolNowMs() - minimapStartedAt).toFixed(2)),
+      width: minimapCanvas.width,
+      height: minimapCanvas.height,
+      rebuiltBase: minimapBaseDirty
+    });
   };
   const jumpToMiniMapPointer = (ev) => {
     const rect = minimapCanvas.getBoundingClientRect();
@@ -36360,8 +36970,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   minimapCanvas.addEventListener('pointerup', releaseMiniMapPointer);
   minimapCanvas.addEventListener('pointercancel', releaseMiniMapPointer);
-  renderMiniMap();
-
   const tileInfoPanel = document.createElement('div');
   tileInfoPanel.className = 'section-card biq-map-inspector biq-map-tile-info-panel';
   mapInspector = tileInfoPanel;
@@ -38721,10 +39329,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       state.biqMapScrollLeft = mapPane.scrollLeft;
       state.biqMapScrollTop = mapPane.scrollTop;
       state.biqMapZoomAnchor = null;
+      redrawMapCanvasInPlace();
+      if (typeof renderMiniMap === 'function') renderMiniMap();
       return;
     }
     if (Number.isFinite(state.biqMapScrollLeft) && Number.isFinite(state.biqMapScrollTop)) {
       setMapPaneScroll(state.biqMapScrollLeft, state.biqMapScrollTop, { reason: 'restore-scroll' });
+      redrawMapCanvasInPlace();
+      if (typeof renderMiniMap === 'function') renderMiniMap();
       return;
     }
     const targetLeft = Math.max(0, canonicalWorldLeftPx + Math.floor(canonicalWorldWidthPx / 2) - Math.floor(mapPane.clientWidth / 2));
@@ -38737,8 +39349,24 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       top: mapPane.scrollTop,
       ...getPaneMetrics()
     });
+    redrawMapCanvasInPlace();
     if (typeof renderMiniMap === 'function') renderMiniMap();
   });
+
+  if (floatingUi) {
+    mapModal.refreshVisuals = (meta = null) => {
+      if (!container.isConnected) return false;
+      appendDebugLog('biq-map:light-refresh-run', {
+        assetKey: meta && meta.assetKey || '',
+        reason: meta && meta.reason || 'asset-load',
+        loadingCount: Number(meta && meta.loadingCount) || 0
+      });
+      minimapBaseDirty = true;
+      redrawMapCanvasInPlace();
+      if (typeof renderMiniMap === 'function') renderMiniMap();
+      return true;
+    };
+  }
 
   return container;
 }

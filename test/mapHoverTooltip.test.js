@@ -308,14 +308,101 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
   );
   assert.match(
     configCoreText,
-    /allowSetmapGeneration: \['generated', 'imported'\]\.includes\(String\(tab && tab\.mapMutationSource \|\| ''\)\.trim\(\)\.toLowerCase\(\)\)/,
-    'config save planning should allow explicit imported map replacements to emit setmap operations'
+    /allowSetmapGeneration: \['generated', 'imported', 'custom'\]\.includes\(String\(tab && tab\.mapMutationSource \|\| ''\)\.trim\(\)\.toLowerCase\(\)\)/,
+    'config save planning should allow explicit imported and custom-created map replacements to emit setmap operations'
   );
   assert.match(
     biqSectionsText,
-    /Whole-map BIQ replacement is blocked for normal saves\. Only explicit map generation or map import writes may replace all map sections\./,
-    'BIQ apply should still block arbitrary whole-map replacement while allowing the explicit import path'
+    /Whole-map BIQ replacement is blocked for normal saves\. Only explicit map generation, custom-map creation, or map import writes may replace all map sections\./,
+    'BIQ apply should still block arbitrary whole-map replacement while allowing the explicit import and custom-map paths'
   );
+});
+
+test('map tab exposes Quint-style Add Custom Map creation with even-size and tile-cap guardrails', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const QUINT_CUSTOM_MAP_MIN_DIMENSION = 16;[\s\S]*?const QUINT_CUSTOM_MAP_MAX_TILES = 65536;[\s\S]*?const QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS = Object\.freeze\(\[[\s\S]*?Desert[\s\S]*?Plains[\s\S]*?Grassland[\s\S]*?Tundra[\s\S]*?Coast[\s\S]*?Sea[\s\S]*?Ocean[\s\S]*?\]\);/,
+    'custom map creation should follow Quint guardrails and expose the same base-terrain choices'
+  );
+  assert.match(
+    rendererText,
+    /async function promptAddCustomMapAction\(tab\) \{[\s\S]*?el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Create New Map';[\s\S]*?Create a new custom map\.[\s\S]*?65,536 tiles[\s\S]*?Custom maps require even dimensions[\s\S]*?Odd dimensions will be rounded up to the next even size/,
+    'Add Custom Map should use the shared modal shell and explain Quint-style size validation clearly'
+  );
+  assert.match(
+    rendererText,
+    /async function buildBlankCustomMapSections\(tab, options = \{\}\) \{[\s\S]*?const resourceCount = resourceDefs\.length;[\s\S]*?baseKey: 'numresources', value: resourceCount[\s\S]*?baseKey: 'flags', value: QUINT_CUSTOM_MAP_FLAGS[\s\S]*?baseKey: 'continentclass', value: 1[\s\S]*?createGeneratedMapSection\('SLOC', \[\]\),[\s\S]*?createGeneratedMapSection\('CITY', \[\]\),[\s\S]*?createGeneratedMapSection\('UNIT', \[\]\),[\s\S]*?createGeneratedMapSection\('CLNY', \[\]\)/,
+    'custom map creation should seed Quint-style WCHR/WMAP/TILE/CONT sections while leaving map entities empty'
+  );
+  assert.match(
+    rendererText,
+    /function finalizeGeneratedBlankMapTerrainFileImage\(tileRecords, width, height\) \{[\s\S]*?setRecordFieldValue\(tileRecords\[i\], 'file', String\(spec\.file\)\);[\s\S]*?setRecordFieldValue\(tileRecords\[i\], 'image', String\(computeBiqTerrainSpriteImageIdx\(southBase, westBase, northBase, eastBase, spec\)\)\);[\s\S]*?\}[\s\S]*?finalizeGeneratedBlankMapTerrainFileImage\(tileRecords, validation\.width, validation\.height\);/,
+    'blank custom map creation should precompute stored TILE file/image sprite values once, so generated maps render like normal BIQs instead of recomputing terrain transitions every redraw'
+  );
+  assert.match(
+    rendererText,
+    /if \(isScenarioMode\(\) && !hasMapData\(tab\)\) \{[\s\S]*?addCustomBtn\.innerHTML = '<span class="btn-icon">＋<\/span>Create New Map';[\s\S]*?const result = await promptAddCustomMapAction\(tab\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.customSections, 'set', 'custom'\);/,
+    'the map tab should expose Add Custom Map only when no custom map exists and route it through the explicit whole-map custom-map path'
+  );
+});
+
+test('map art loads repaint an open map modal in place instead of rebuilding the whole modal body', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /function biqMapArtRerender\(meta = null\) \{[\s\S]*?if \(mapModal\.tab && mapModal\.tileSection && !mapOverlay\.classList\.contains\('hidden'\)\) \{[\s\S]*?if \(typeof mapModal\.refreshVisuals === 'function'\) \{[\s\S]*?const loadingCount = Object\.keys\(state\.biqMapArtLoading \|\| \{\}\)\.length;[\s\S]*?const reason = String\(meta && meta\.reason \|\| 'asset-load'\);[\s\S]*?if \(assetDrivenRefresh && loadingCount > 0\) \{[\s\S]*?mode: 'deferred-until-idle'[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'light-refresh'[\s\S]*?mapModal\.refreshVisuals\(\{[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'full-modal-rerender'[\s\S]*?renderMapModalBody\(\);/,
+    'asset-driven map rerenders should defer map repaints until the art queue drains, then use the lightweight in-place refresh path while keeping the old full rerender as a fallback'
+  );
+  assert.match(
+    rendererText,
+    /const resolveTerrainSpriteSpec = \(record, geom\) => \{[\s\S]*?const storedFile = parseIntLoose\(getFieldByBaseKey\(record, 'file'\)\?\.value, -1\);[\s\S]*?const storedImage = parseIntLoose\(getFieldByBaseKey\(record, 'image'\)\?\.value, -1\);[\s\S]*?if \(storedFile >= 0 && storedImage >= 0\) \{[\s\S]*?return \{ fileIdx: storedFile, imageIdx: storedImage \};[\s\S]*?\}/,
+    'terrain rendering should prefer stored BIQ TILE file/image values, matching Quint and avoiding per-redraw transition recomputation for generated maps'
+  );
+  assert.match(
+    rendererText,
+    /if \(floatingUi\) \{[\s\S]*?mapModal\.refreshVisuals = \(meta = null\) => \{[\s\S]*?minimapBaseDirty = true;[\s\S]*?redrawMapCanvasInPlace\(\);[\s\S]*?if \(typeof renderMiniMap === 'function'\) renderMiniMap\(\);[\s\S]*?return true;[\s\S]*?\};[\s\S]*?\}/,
+    'an open map modal should register a reusable visual refresh callback that repaints the canvas and minimap when art assets finish loading'
+  );
+});
+
+test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered canvas and limiting redraws to edits', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?const redrawRects = expandedIndexes\.flatMap\(\(idx\) => tileEditRedrawRects\(idx\) \|\| \[\]\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?minimapBaseDirty = true;[\s\S]*?renderMiniMap\(\);/,
+    'map edits should still use partial redraw rects and refresh the cached minimap base'
+  );
+  assert.match(
+    rendererText,
+    /const redrawMapCanvasInPlace = \(clipRects = null\) => \{[\s\S]*?const clips = Array\.isArray\(clipRects\) && clipRects\.length > 0 \? clipRects : null;[\s\S]*?if \(clips\) \{[\s\S]*?ctx\.clip\(\);[\s\S]*?clips\.forEach\(\(rect\) => ctx\.clearRect\(rect\.x, rect\.y, rect\.w, rect\.h\)\);[\s\S]*?\} else \{[\s\S]*?ctx\.clearRect\(0, 0, canvas\.width, canvas\.height\);[\s\S]*?\}[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{/,
+    'default redraws should repaint the whole map canvas, while edit-driven redraws may still clip to dirty rects'
+  );
+  assert.match(
+    rendererText,
+    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?const rebuildMiniMapBase = \(\) => \{[\s\S]*?const drewSprite = drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, miniTileW, miniTileH\);[\s\S]*?minimapBaseDirty = false;[\s\S]*?\};[\s\S]*?renderMiniMap = \(\) => \{[\s\S]*?if \(minimapBaseDirty\) rebuildMiniMapBase\(\);[\s\S]*?mmCtx\.drawImage\(minimapBaseCanvas, 0, 0, minimapCanvas\.width, minimapCanvas\.height\);/,
+    'minimap redraws should use a cached minimap base canvas instead of sampling the main canvas'
+  );
+  assert.match(
+    rendererText,
+    /mapPane\.addEventListener\('scroll', \(\) => \{[\s\S]*?state\.biqMapScrollLeft = mapPane\.scrollLeft;[\s\S]*?state\.biqMapScrollTop = mapPane\.scrollTop;[\s\S]*?if \(typeof renderMiniMap === 'function'\) renderMiniMap\(\);[\s\S]*?scheduleTileInfoDockSideUpdate\(\);[\s\S]*?\}\);/,
+    'scrolling the map should update persisted scroll state and the minimap without repainting the main canvas'
+  );
+  assert.match(
+    rendererText,
+    /const onDragMove = \(ev\) => \{[\s\S]*?const dx = ev\.clientX - dragLastX;[\s\S]*?const dy = ev\.clientY - dragLastY;[\s\S]*?setMapPaneScroll\([\s\S]*?mapPane\.scrollLeft - dx,[\s\S]*?mapPane\.scrollTop - dy,[\s\S]*?\{ reason: 'drag', logWhenNoHorizontal: true \}[\s\S]*?\);/,
+    'drag panning should apply scroll directly so the browser can move the already rendered canvas immediately'
+  );
+  assert.match(
+    rendererText,
+    /refreshMapViewForToolChange = \(options = \{\}\) => \{[\s\S]*?if \(shouldRedrawCanvas\) redrawMapCanvasInPlace\(\);[\s\S]*?\};[\s\S]*?redrawMapCanvasInPlace\(\);[\s\S]*?window\.requestAnimationFrame\(\(\) => \{[\s\S]*?redrawMapCanvasInPlace\(\);/,
+    'initial map open and tool-driven refreshes should use a synchronous whole-canvas redraw instead of the viewport scheduler'
+  );
+  assert.doesNotMatch(rendererText, /const scheduleViewportRedraw = \(/, 'the reverted smooth-pan renderer should not include the viewport redraw scheduler');
+  assert.doesNotMatch(rendererText, /let dragScrollRaf = 0;/, 'the reverted smooth-pan renderer should not coalesce drag scroll through an extra RAF queue');
 });
 
 test('map overlay rendering offsets colony-like overlays, draws barricades, and shifts ruins right/down', () => {

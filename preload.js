@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
     };
   },
   getPreview: (payload) => ipcRenderer.invoke('manager:get-preview', payload),
+  emitRendererDebugLog: (entry) => ipcRenderer.send('manager:renderer-debug-log', entry),
   loadBundle: (payload) => ipcRenderer.invoke('manager:load-bundle', payload),
   validateBundle: (payload) => ipcRenderer.invoke('manager:validate-bundle', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload),

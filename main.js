@@ -1096,3 +1096,17 @@ ipcMain.handle('manager:get-preview', async (_event, payload) => {
     return { ok: false, error: err.message };
   }
 });
+
+ipcMain.on('manager:renderer-debug-log', (_event, entry) => {
+  try {
+    const payload = entry && typeof entry === 'object' ? entry : {};
+    const level = String(payload.level || 'debug').trim().toLowerCase();
+    const category = String(payload.category || 'renderer-debug').trim() || 'renderer-debug';
+    const msg = String(payload.msg || '').trim();
+    if (!msg) return;
+    if (level === 'error') log.error(category, msg);
+    else if (level === 'warn' || level === 'warning') log.warn(category, msg);
+    else if (level === 'info') log.info(category, msg);
+    else log.debug(category, msg);
+  } catch (_err) {}
+});

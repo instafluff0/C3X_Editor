@@ -6,7 +6,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { loadBundle, saveBundle } = require('../src/configCore');
+const {
+  loadBundle,
+  saveBundle,
+  collectBiqMapStructureOps,
+  collectBiqMapRecordOps,
+  collectBiqMapEdits
+} = require('../src/configCore');
 const {
   applyEdits,
   parseAllSections,
@@ -16,6 +22,13 @@ const {
 } = require('../src/biq/biqSections');
 const { decompress } = require('../src/biq/decompress');
 const mapCore = require('../src/mapEditorCore');
+const {
+  DEFAULT_MAP_SECTION_CODES,
+  getChangedSectionCodes,
+  assertRawSectionsEqual,
+  assertNoMapReferenceIssues,
+  assertNoColonyOverlayIssues
+} = require('./biqMapAssertions');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-biq-map-critical-'));
@@ -33,6 +46,10 @@ function getStableMapUnitsFixturePath() {
   return path.resolve(__dirname, 'fixtures', 'biq_map_units_fixture.biq');
 }
 
+function getStableLeadNoMapFixturePath() {
+  return path.resolve(__dirname, 'fixtures', 'biq_lead_nomap_fixture.biq');
+}
+
 function getStableFixtureCiv3Root() {
   return path.resolve(__dirname, '..', '..');
 }
@@ -45,22 +62,6 @@ function parseBiqFileForRawSections(filePath) {
   const raw = fs.readFileSync(filePath);
   const inflated = decompress(raw);
   return parseAllSections(inflated.ok ? inflated.data : raw);
-}
-
-function getRawSectionBytesByCode(parsed, codes = ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']) {
-  const out = new Map();
-  codes.forEach((code) => {
-    const section = (parsed.sections || []).find((entry) => entry.code === code);
-    assert.ok(section, `expected ${code} section`);
-    out.set(code, serializeSection(section, parsed.io));
-  });
-  return out;
-}
-
-function getChangedSectionCodes(before, after, codes = ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']) {
-  const beforeBytes = getRawSectionBytesByCode(before, codes);
-  const afterBytes = getRawSectionBytesByCode(after, codes);
-  return codes.filter((code) => !beforeBytes.get(code).equals(afterBytes.get(code)));
 }
 
 function getSection(tab, code) {
@@ -105,6 +106,13 @@ function getMapSectionsOrSkip(t, mapTab) {
   return { tileSection, citySection, unitSection };
 }
 
+function getRecordsAtCoords(section, x, y) {
+  return ((section && section.records) || []).filter((record) => (
+    getRecordInt(record, 'x', -1) === Number(x)
+    && getRecordInt(record, 'y', -1) === Number(y)
+  ));
+}
+
 function addSeedCity(mapTab, citySection, tile, name, owner = 0, ownerType = 2) {
   if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
   const ref = `CITY_${String(name || 'seed').replace(/[^A-Z0-9]+/gi, '_').toUpperCase()}_${Date.now()}_${Math.floor(Math.random() * 10000)}`.slice(0, 28);
@@ -145,6 +153,82 @@ function createMapField(baseKey, value, label) {
   };
 }
 
+function buildGeneratedBlankMapSections(width = 16, height = 16) {
+  const safeWidth = Math.max(16, Number(width) || 16);
+  const safeHeight = Math.max(16, Number(height) || 16);
+  const tileCount = Math.floor(safeWidth / 2) * safeHeight;
+  const makeSection = (code, records) => ({ code, records });
+  const tileRecords = Array.from({ length: tileCount }, (_, index) => {
+    const row = Math.floor(index / Math.floor(safeWidth / 2));
+    const column = (index % Math.floor(safeWidth / 2)) * 2 + ((row & 1) === 1 ? 1 : 0);
+    return {
+      index,
+      fields: [
+        createMapField('xpos', column, 'X Pos'),
+        createMapField('ypos', row, 'Y Pos'),
+        createMapField('terrain', 0, 'Terrain'),
+        createMapField('baserealterrain', 0x22, 'Base Real Terrain'),
+        createMapField('c3cbaserealterrain', 0x22, 'C3C Base Real Terrain'),
+        createMapField('resource', -1, 'Resource'),
+        createMapField('city', -1, 'City'),
+        createMapField('colony', -1, 'Colony'),
+        createMapField('continent', 0, 'Continent'),
+        createMapField('overlay', 0, 'Overlay'),
+        createMapField('c3coverlays', 0, 'C3C Overlays'),
+        createMapField('file', 0, 'File'),
+        createMapField('image', 0, 'Image')
+      ]
+    };
+  });
+  return [
+    makeSection('WCHR', [{
+      index: 0,
+      fields: [
+        createMapField('selectedclimate', 1, 'Selected Climate'),
+        createMapField('actualclimate', 1, 'Actual Climate'),
+        createMapField('selectedbarbarianactivity', 1, 'Selected Barbarian Activity'),
+        createMapField('actualbarbarianactivity', 1, 'Actual Barbarian Activity'),
+        createMapField('selectedlandform', 1, 'Selected Landform'),
+        createMapField('actuallandform', 1, 'Actual Landform'),
+        createMapField('selectedoceancoverage', 1, 'Selected Ocean Coverage'),
+        createMapField('actualoceancoverage', 1, 'Actual Ocean Coverage'),
+        createMapField('selectedtemperature', 1, 'Selected Temperature'),
+        createMapField('actualtemperature', 1, 'Actual Temperature'),
+        createMapField('selectedage', 1, 'Selected Age'),
+        createMapField('actualage', 1, 'Actual Age'),
+        createMapField('worldsize', 2, 'World Size')
+      ]
+    }]),
+    makeSection('WMAP', [{
+      index: 0,
+      fields: [
+        createMapField('width', safeWidth, 'Width'),
+        createMapField('height', safeHeight, 'Height'),
+        createMapField('numcontinents', 1, 'Num Continents'),
+        createMapField('numcivs', 2, 'Num Civs'),
+        createMapField('distancebetweencivs', 20, 'Distance Between Civs'),
+        createMapField('questionmark1', 0, 'Question Mark 1'),
+        createMapField('questionmark2', 0, 'Question Mark 2'),
+        createMapField('questionmark3', -1, 'Question Mark 3'),
+        createMapField('mapseed', 12345, 'Map Seed'),
+        createMapField('flags', 0, 'Flags')
+      ]
+    }]),
+    makeSection('TILE', tileRecords),
+    makeSection('CONT', [{
+      index: 0,
+      fields: [
+        createMapField('continentclass', 1, 'Continent Class'),
+        createMapField('numtiles', tileCount, 'Num Tiles')
+      ]
+    }]),
+    makeSection('SLOC', []),
+    makeSection('CITY', []),
+    makeSection('UNIT', []),
+    makeSection('CLNY', [])
+  ];
+}
+
 function addSeedColony(mapTab, colonySection, tile, owner = 0, ownerType = 2, improvementType = 2, suffix = 'seed') {
   if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
   if (!Array.isArray(colonySection.records)) colonySection.records = [];
@@ -164,14 +248,13 @@ function addSeedColony(mapTab, colonySection, tile, owner = 0, ownerType = 2, im
     y,
     improvementType,
     fields: [
-      createMapField('ownerType', owner, 'Owner Type'),
+      createMapField('ownerType', ownerType, 'Owner Type'),
       createMapField('owner', owner, 'Owner'),
       createMapField('x', x, 'X'),
       createMapField('y', y, 'Y'),
       createMapField('improvementType', improvementType, 'Improvement Type')
     ]
   };
-  record.fields[0].value = String(ownerType);
   colonySection.records.push(record);
   mapTab.recordOps.push({ op: 'add', sectionCode: 'CLNY', newRecordRef: ref });
   mapCore.setField(tile, 'colony', String(nextIndex), 'Colony');
@@ -242,8 +325,7 @@ function assertMapReferenceIntegrityFromMapTab(mapTab, message = '') {
       }) : []
     })) : []
   };
-  const issues = collectMapReferenceIntegrityIssues(parsed);
-  assert.deepEqual(issues, [], message || `expected valid map references, got ${JSON.stringify(issues)}`);
+  assertNoMapReferenceIssues(parsed, message);
 }
 
 test('critical BIQ map: unchanged save preserves raw map section bytes', () => {
@@ -274,17 +356,24 @@ test('critical BIQ map: unchanged save preserves raw map section bytes', () => {
   assert.equal(before.ok, true, 'expected original BIQ parse');
   assert.equal(after.ok, true, 'expected saved BIQ parse');
 
-  ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].forEach((code) => {
-    const left = (before.sections || []).find((section) => section.code === code);
-    const right = (after.sections || []).find((section) => section.code === code);
-    assert.ok(left, `expected original ${code} section`);
-    assert.ok(right, `expected saved ${code} section`);
-    assert.deepEqual(
-      serializeSection(left, before.io),
-      serializeSection(right, after.io),
-      `expected unchanged save to preserve raw ${code} section bytes`
-    );
-  });
+  assertRawSectionsEqual(before, after, DEFAULT_MAP_SECTION_CODES);
+});
+
+test('critical BIQ map: unchanged loaded map bundle emits no collected map ops or field edits', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected loaded map tab');
+  assert.deepEqual(collectBiqMapStructureOps(bundle.tabs), [], 'expected unchanged map bundle to emit no map structure ops');
+  assert.deepEqual(collectBiqMapRecordOps(bundle.tabs), [], 'expected unchanged map bundle to emit no map record ops');
+  assert.deepEqual(collectBiqMapEdits(bundle.tabs), [], 'expected unchanged map bundle to emit no map field edits');
 });
 
 test('critical BIQ map: city delete round-trip preserves surviving tile references', (t) => {
@@ -349,6 +438,49 @@ test('critical BIQ map: city delete round-trip preserves surviving tile referenc
   const reSurvivor = (reCitySection.records || []).find((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === survivorName);
   assert.ok(reSurvivor, `expected survivor city ${survivorName} after delete/save`);
   assertMapReferenceIntegrityFromMapTab(reMap, 'expected all tile city/colony references to stay valid after city delete round-trip');
+});
+
+test('critical BIQ map: city delete only changes CITY and TILE sections', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const openTile = (sections.tileSection.records || []).find((tile) => getRecordInt(tile, 'city', -1) < 0);
+  assert.ok(openTile, 'expected empty tile for city-delete parity test');
+  addSeedCity(bundle.tabs.map, sections.citySection, openTile, 'Parity Delete City');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed delete city'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = seededReload.tabs.map;
+  const reCitySection = getSection(reMap, 'CITY');
+  const reTileSection = getSection(reMap, 'TILE');
+  const city = (reCitySection.records || []).find((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Parity Delete City');
+  assert.ok(city, 'expected seeded delete city after reload');
+  const cityIndex = Number(city.index);
+  assert.ok(Number.isFinite(cityIndex), 'expected finite city index for delete test');
+  if (!Array.isArray(reMap.recordOps)) reMap.recordOps = [];
+  reMap.recordOps.push({ op: 'delete', sectionCode: 'CITY', recordRef: `@INDEX:${cityIndex}` });
+  reCitySection.records = (reCitySection.records || []).filter((record) => record !== city);
+  (reTileSection.records || []).forEach((tile) => {
+    if (getRecordInt(tile, 'city', -1) !== cityIndex) return;
+    mapCore.setField(tile, 'city', '-1', 'City');
+  });
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CITY']);
 });
 
 test('critical BIQ map: scenario district sidecar round-trips entries and named tiles', () => {
@@ -491,6 +623,162 @@ test('critical BIQ map: whole-map replacement is blocked outside generated-map s
   assert.match(String(result.error || ''), /Whole-map BIQ replacement is blocked/i);
 });
 
+test('critical BIQ map: end-to-end save rejects whole-map replacement without explicit generated-map source', () => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected map tab for no-map fixture');
+  assert.equal(bundle.tabs.map.hasMapData, false, 'expected no-map fixture to start without map data');
+
+  bundle.tabs.map.sections = buildGeneratedBlankMapSections(16, 16);
+  bundle.tabs.map.mapMutation = 'set';
+  bundle.tabs.map.mapMutationSource = null;
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, false, 'expected ordinary whole-map replacement save to fail');
+  assert.match(String(saveResult.error || ''), /Whole-map BIQ replacement is blocked/i);
+});
+
+test('critical BIQ map: explicit custom generated-map save can replace all map sections end-to-end', () => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const before = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(before.ok, true, 'expected no-map fixture parse before generated-map save');
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected map tab for no-map fixture');
+  assert.equal(bundle.tabs.map.hasMapData, false, 'expected no-map fixture to start without map data');
+
+  bundle.tabs.map.sections = buildGeneratedBlankMapSections(16, 16);
+  bundle.tabs.map.mapMutation = 'set';
+  bundle.tabs.map.mapMutationSource = 'custom';
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'generated-map save failed'));
+
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(after.ok, true, 'expected generated-map BIQ parse after save');
+  const expectedMapCodes = DEFAULT_MAP_SECTION_CODES;
+  const beforeSectionCodes = new Set((before.sections || []).map((section) => String(section && section.code || '').toUpperCase()));
+  const afterSectionCodes = new Set((after.sections || []).map((section) => String(section && section.code || '').toUpperCase()));
+  expectedMapCodes.forEach((code) => {
+    assert.equal(beforeSectionCodes.has(code), false, `expected no-map fixture to omit ${code} before generated-map save`);
+    assert.equal(afterSectionCodes.has(code), true, `expected generated-map save to create ${code}`);
+  });
+  assertNoMapReferenceIssues(after, 'expected generated-map save to keep map references coherent');
+  assertNoColonyOverlayIssues(after, 'expected generated-map save to keep colony overlay coherence intact');
+});
+
+test('critical BIQ map: explicit imported whole-map save can replace all map sections end-to-end', () => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const before = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(before.ok, true, 'expected no-map fixture parse before imported-map save');
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected map tab for no-map fixture');
+  assert.equal(bundle.tabs.map.hasMapData, false, 'expected no-map fixture to start without map data');
+
+  bundle.tabs.map.sections = buildGeneratedBlankMapSections(16, 16);
+  bundle.tabs.map.mapMutation = 'set';
+  bundle.tabs.map.mapMutationSource = 'imported';
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'imported-map save failed'));
+
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(after.ok, true, 'expected imported-map BIQ parse after save');
+  const expectedMapCodes = DEFAULT_MAP_SECTION_CODES;
+  const beforeSectionCodes = new Set((before.sections || []).map((section) => String(section && section.code || '').toUpperCase()));
+  const afterSectionCodes = new Set((after.sections || []).map((section) => String(section && section.code || '').toUpperCase()));
+  expectedMapCodes.forEach((code) => {
+    assert.equal(beforeSectionCodes.has(code), false, `expected no-map fixture to omit ${code} before imported-map save`);
+    assert.equal(afterSectionCodes.has(code), true, `expected imported-map save to create ${code}`);
+  });
+  assertNoMapReferenceIssues(after, 'expected imported-map save to keep map references coherent');
+  assertNoColonyOverlayIssues(after, 'expected imported-map save to keep colony overlay coherence intact');
+});
+
+test('critical BIQ map: explicit removemap save removes all BIQ map sections end-to-end', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const before = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(before.ok, true, 'expected map fixture parse before removemap save');
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected map tab for map fixture');
+  assert.equal(bundle.tabs.map.hasMapData, true, 'expected fixture to start with map data');
+
+  bundle.tabs.map.mapMutation = 'remove';
+  bundle.tabs.map.mapMutationSource = null;
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'removemap save failed'));
+
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(after.ok, true, 'expected BIQ parse after removemap save');
+  const removedMapCodes = DEFAULT_MAP_SECTION_CODES;
+  const beforeSectionCodes = new Set((before.sections || []).map((section) => String(section && section.code || '').toUpperCase()));
+  const afterSectionCodes = new Set((after.sections || []).map((section) => String(section && section.code || '').toUpperCase()));
+  removedMapCodes.forEach((code) => {
+    assert.equal(beforeSectionCodes.has(code), true, `expected original fixture to contain ${code}`);
+    assert.equal(afterSectionCodes.has(code), false, `expected removemap save to remove ${code}`);
+  });
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.ok(reloaded && reloaded.tabs && reloaded.tabs.map, 'expected map tab after removemap reload');
+  assert.equal(reloaded.tabs.map.hasMapData, false, 'expected removemap save to reload without map data');
+});
+
 test('critical BIQ map: edited save preserves untouched structural map sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const resolvedCiv3Root = getStableFixtureCiv3Root();
@@ -583,7 +871,7 @@ test('critical BIQ map: add city only changes CITY and TILE sections', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CITY']);
 });
 
-test('critical BIQ map: city rename only changes CITY section', (t) => {
+test('critical BIQ map: tile terrain and overlay edit only changes TILE section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -597,11 +885,149 @@ test('critical BIQ map: city rename only changes CITY section', (t) => {
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
   if (!sections) return;
-  const city = (sections.citySection.records || [])[0];
-  assert.ok(city, 'expected existing city for city-rename parity test');
-  mapCore.setField(city, 'name', 'Parity Renamed City', 'Name');
+  const tile = (sections.tileSection.records || [])[0];
+  assert.ok(tile, 'expected tile for TILE-only parity test');
+  mapCore.applyTerrain(sections.tileSection.records, [tile.index], 7);
+  mapCore.applyOverlay(sections.tileSection.records, [tile.index], 'road', true);
 
   const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE']);
+});
+
+test('critical BIQ map: tile fog, ruin, and victory-point edits only change TILE section', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const before = parseBiqFileForRawSections(scenarioBiq);
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const tile = (sections.tileSection.records || [])[0];
+  assert.ok(tile, 'expected tile for scalar TILE-only parity test');
+  mapCore.applyFog(sections.tileSection.records, [tile.index], true);
+  mapCore.applyOverlay(sections.tileSection.records, [tile.index], 'ruins', true);
+  mapCore.applyOverlay(sections.tileSection.records, [tile.index], 'victorypoint', true);
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE']);
+});
+
+test('critical BIQ map: city rename only changes CITY section', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const openTile = (sections.tileSection.records || []).find((tile) => getRecordInt(tile, 'city', -1) < 0);
+  assert.ok(openTile, 'expected empty tile for city-rename parity test');
+  addSeedCity(bundle.tabs.map, sections.citySection, openTile, 'Parity Seed City');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed city'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const seededCitySection = getSection(seededReload.tabs.map, 'CITY');
+  const city = (seededCitySection.records || []).find((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Parity Seed City');
+  assert.ok(city, 'expected seeded city for city-rename parity test');
+  mapCore.setField(city, 'name', 'Parity Renamed City', 'Name');
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['CITY']);
+});
+
+test('critical BIQ map: city relocation only changes CITY and TILE sections', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const openTiles = (sections.tileSection.records || []).filter((tile) => getRecordInt(tile, 'city', -1) < 0).slice(0, 2);
+  assert.equal(openTiles.length >= 2, true, 'expected two empty tiles for city-relocation parity test');
+  const seededCity = addSeedCity(bundle.tabs.map, sections.citySection, openTiles[0], 'Parity Relocate City');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed relocation city'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = seededReload.tabs.map;
+  const reCitySection = getSection(reMap, 'CITY');
+  const reTileSection = getSection(reMap, 'TILE');
+  const city = (reCitySection.records || []).find((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Parity Relocate City');
+  assert.ok(city, 'expected seeded relocation city after reload');
+  const sourceTile = (reTileSection.records || []).find((tile) => getRecordInt(tile, 'xpos', -1) === seededCity.x && getRecordInt(tile, 'ypos', -1) === seededCity.y);
+  const destinationTile = (reTileSection.records || []).find((tile) => getRecordInt(tile, 'xpos', -1) === getRecordInt(openTiles[1], 'xpos', -1) && getRecordInt(tile, 'ypos', -1) === getRecordInt(openTiles[1], 'ypos', -1));
+  assert.ok(sourceTile, 'expected source tile for city relocation');
+  assert.ok(destinationTile, 'expected destination tile for city relocation');
+  const cityIndex = Number(city.index);
+  mapCore.setField(city, 'x', String(getRecordInt(destinationTile, 'xpos', seededCity.x)), 'X');
+  mapCore.setField(city, 'y', String(getRecordInt(destinationTile, 'ypos', seededCity.y)), 'Y');
+  mapCore.setField(sourceTile, 'city', '-1', 'City');
+  mapCore.setField(destinationTile, 'city', String(cityIndex), 'City');
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CITY']);
+});
+
+test('critical BIQ map: city improvements edit only changes CITY section', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const openTile = (sections.tileSection.records || []).find((tile) => getRecordInt(tile, 'city', -1) < 0);
+  assert.ok(openTile, 'expected empty tile for city-improvement parity test');
+  addSeedCity(bundle.tabs.map, sections.citySection, openTile, 'Parity Improvement City');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed improvement city'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reCitySection = getSection(seededReload.tabs.map, 'CITY');
+  const city = (reCitySection.records || []).find((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Parity Improvement City');
+  assert.ok(city, 'expected seeded city for improvement parity test');
+  mapCore.setField(city, 'numbuildings', '1', 'Number of Buildings');
+  mapCore.setField(city, 'buildings', '0', 'Buildings');
+  mapCore.setField(city, 'haswalls', 'true', 'Has Walls');
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const after = parseBiqFileForRawSections(scenarioBiq);
   assert.deepEqual(getChangedSectionCodes(before, after), ['CITY']);
@@ -657,6 +1083,153 @@ test('critical BIQ map: unit field edit only changes UNIT section', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['UNIT']);
 });
 
+test('critical BIQ map: unit delete only changes UNIT section', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const before = parseBiqFileForRawSections(scenarioBiq);
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const unit = (sections.unitSection.records || [])[0];
+  assert.ok(unit, 'expected existing unit for unit-delete parity test');
+  const unitIndex = Number(unit.index);
+  assert.ok(Number.isFinite(unitIndex), 'expected finite unit index for delete test');
+  if (!Array.isArray(bundle.tabs.map.recordOps)) bundle.tabs.map.recordOps = [];
+  bundle.tabs.map.recordOps.push({ op: 'delete', sectionCode: 'UNIT', recordRef: `@INDEX:${unitIndex}` });
+  sections.unitSection.records = (sections.unitSection.records || []).filter((record) => record !== unit);
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['UNIT']);
+});
+
+test('critical BIQ map: city owner transfer keeps colocated units coherent and only changes CITY and UNIT', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const openTile = (sections.tileSection.records || []).find((tile) => getRecordInt(tile, 'city', -1) < 0);
+  assert.ok(openTile, 'expected empty tile for owner-transfer parity test');
+  const seededCity = addSeedCity(bundle.tabs.map, sections.citySection, openTile, 'Parity Owner Transfer City', 0, 2);
+  addSeedUnit(bundle.tabs.map, sections.unitSection, openTile, 0, 2, 0, 'owner_transfer_a');
+  addSeedUnit(bundle.tabs.map, sections.unitSection, openTile, 0, 2, 1, 'owner_transfer_b');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed city/unit stack'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = seededReload.tabs.map;
+  const reCitySection = getSection(reMap, 'CITY');
+  const reUnitSection = getSection(reMap, 'UNIT');
+  const city = getRecordsAtCoords(reCitySection, seededCity.x, seededCity.y)[0];
+  assert.ok(city, 'expected seeded city after reload');
+  const stackUnits = getRecordsAtCoords(reUnitSection, seededCity.x, seededCity.y);
+  assert.equal(stackUnits.length >= 2, true, 'expected colocated seeded units after reload');
+
+  mapCore.setField(city, 'ownertype', '2', 'Owner Type');
+  mapCore.setField(city, 'owner', '1', 'Owner');
+  stackUnits.forEach((unit) => {
+    mapCore.setField(unit, 'ownertype', '2', 'Owner Type');
+    mapCore.setField(unit, 'owner', '1', 'Owner');
+  });
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['CITY', 'UNIT']);
+
+  const finalReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const finalMap = finalReload.tabs.map;
+  const finalCitySection = getSection(finalMap, 'CITY');
+  const finalUnitSection = getSection(finalMap, 'UNIT');
+  const finalCity = getRecordsAtCoords(finalCitySection, seededCity.x, seededCity.y)[0];
+  assert.ok(finalCity, 'expected transferred city after final reload');
+  assert.equal(getRecordInt(finalCity, 'ownertype', -1), 2);
+  assert.equal(getRecordInt(finalCity, 'owner', -1), 1);
+  const finalStackUnits = getRecordsAtCoords(finalUnitSection, seededCity.x, seededCity.y);
+  assert.equal(finalStackUnits.length >= 2, true, 'expected transferred unit stack after final reload');
+  finalStackUnits.forEach((unit) => {
+    assert.equal(getRecordInt(unit, 'ownertype', -1), 2);
+    assert.equal(getRecordInt(unit, 'owner', -1), 1);
+  });
+});
+
+test('critical BIQ map: unit owner transfer keeps colocated city coherent and only changes UNIT and CITY', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const sections = getMapSectionsOrSkip(t, bundle.tabs.map);
+  if (!sections) return;
+  const openTile = (sections.tileSection.records || []).find((tile) => getRecordInt(tile, 'city', -1) < 0);
+  assert.ok(openTile, 'expected empty tile for reciprocal owner-transfer parity test');
+  const seededCity = addSeedCity(bundle.tabs.map, sections.citySection, openTile, 'Parity Reciprocal Owner City', 0, 2);
+  addSeedUnit(bundle.tabs.map, sections.unitSection, openTile, 0, 2, 0, 'reciprocal_owner_transfer');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed reciprocal city/unit stack'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = seededReload.tabs.map;
+  const reCitySection = getSection(reMap, 'CITY');
+  const reUnitSection = getSection(reMap, 'UNIT');
+  const city = getRecordsAtCoords(reCitySection, seededCity.x, seededCity.y)[0];
+  assert.ok(city, 'expected seeded city after reload');
+  const stackUnits = getRecordsAtCoords(reUnitSection, seededCity.x, seededCity.y);
+  assert.equal(stackUnits.length >= 1, true, 'expected colocated seeded unit after reload');
+
+  stackUnits.forEach((unit) => {
+    mapCore.setField(unit, 'ownertype', '2', 'Owner Type');
+    mapCore.setField(unit, 'owner', '1', 'Owner');
+  });
+  mapCore.setField(city, 'ownertype', '2', 'Owner Type');
+  mapCore.setField(city, 'owner', '1', 'Owner');
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['CITY', 'UNIT']);
+
+  const finalReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const finalMap = finalReload.tabs.map;
+  const finalCitySection = getSection(finalMap, 'CITY');
+  const finalUnitSection = getSection(finalMap, 'UNIT');
+  const finalCity = getRecordsAtCoords(finalCitySection, seededCity.x, seededCity.y)[0];
+  assert.ok(finalCity, 'expected reciprocal transferred city after final reload');
+  assert.equal(getRecordInt(finalCity, 'ownertype', -1), 2);
+  assert.equal(getRecordInt(finalCity, 'owner', -1), 1);
+  const finalStackUnits = getRecordsAtCoords(finalUnitSection, seededCity.x, seededCity.y);
+  assert.equal(finalStackUnits.length >= 1, true, 'expected reciprocal transferred unit after final reload');
+  finalStackUnits.forEach((unit) => {
+    assert.equal(getRecordInt(unit, 'ownertype', -1), 2);
+    assert.equal(getRecordInt(unit, 'owner', -1), 1);
+  });
+});
+
 test('critical BIQ map: starting-location edit only changes SLOC section', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
@@ -675,6 +1248,41 @@ test('critical BIQ map: starting-location edit only changes SLOC section', () =>
   assert.ok(result && result.changed, 'expected starting-location mutation');
 
   const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['SLOC']);
+});
+
+test('critical BIQ map: starting-location delete only changes SLOC section', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const slocSection = getSection(bundle.tabs.map, 'SLOC');
+  assert.ok(slocSection, 'expected SLOC section');
+  const seeded = addSeedStartingLocation(bundle.tabs.map, slocSection, 4, 4, 0, 3, 'delete_parity');
+  assert.ok(seeded && seeded.changed, 'expected starting-location seed mutation');
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed starting location'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = seededReload.tabs.map;
+  const reSlocSection = getSection(reMap, 'SLOC');
+  const slocRecords = Array.isArray(reSlocSection.records) ? reSlocSection.records : [];
+  const idx = slocRecords.findIndex((record) => getRecordInt(record, 'x', -1) === 4 && getRecordInt(record, 'y', -1) === 4);
+  assert.ok(idx >= 0, 'expected seeded starting location after reload');
+  if (!Array.isArray(reMap.recordOps)) reMap.recordOps = [];
+  reMap.recordOps.push({ op: 'delete', sectionCode: 'SLOC', recordRef: `@INDEX:${idx}` });
+  reSlocSection.records = slocRecords.filter((_, recordIndex) => recordIndex !== idx);
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const after = parseBiqFileForRawSections(scenarioBiq);
   assert.deepEqual(getChangedSectionCodes(before, after), ['SLOC']);
@@ -706,6 +1314,47 @@ test('critical BIQ map: colony edit only changes CLNY and TILE sections', (t) =>
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CLNY']);
 });
 
+test('critical BIQ map: colony-like overlay transition only changes CLNY and TILE sections', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const tileSection = getSection(bundle.tabs.map, 'TILE');
+  const colonySection = getSection(bundle.tabs.map, 'CLNY');
+  assert.ok(tileSection && colonySection, 'expected TILE and CLNY sections for colony-like transition test');
+  const openTile = (tileSection.records || []).find((tile) => getRecordInt(tile, 'city', -1) < 0 && getRecordInt(tile, 'colony', -1) < 0);
+  assert.ok(openTile, 'expected empty tile for colony-like transition test');
+  addSeedColony(bundle.tabs.map, colonySection, openTile, 0, 2, 1, 'parity_colony_like_transition');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed colony-like transition colony'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = seededReload.tabs.map;
+  const reTileSection = getSection(reMap, 'TILE');
+  const reColonySection = getSection(reMap, 'CLNY');
+  const colony = (reColonySection.records || []).find((record) => getRecordInt(record, 'x', -1) === getRecordInt(openTile, 'xpos', -1) && getRecordInt(record, 'y', -1) === getRecordInt(openTile, 'ypos', -1));
+  const tile = (reTileSection.records || []).find((record) => getRecordInt(record, 'xpos', -1) === getRecordInt(openTile, 'xpos', -1) && getRecordInt(record, 'ypos', -1) === getRecordInt(openTile, 'ypos', -1));
+  assert.ok(colony, 'expected seeded colony after reload');
+  assert.ok(tile, 'expected seeded colony tile after reload');
+  mapCore.setField(colony, 'improvementType', '2', 'Improvement Type');
+  const currentOverlays = getRecordInt(tile, 'c3coverlays', 0) >>> 0;
+  const cleared = currentOverlays & ~((0x20000000 | 0x40000000 | 0x80000000) >>> 0);
+  mapCore.setField(tile, 'c3coverlays', String((cleared | 0x40000000) >>> 0), 'C3C Overlays');
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CLNY']);
+});
+
 test('critical BIQ map: colony owner edit only changes CLNY section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
@@ -723,7 +1372,7 @@ test('critical BIQ map: colony owner edit only changes CLNY section', (t) => {
   assert.ok(tileSection && colonySection, 'expected TILE and CLNY sections');
   const openTile = (tileSection.records || []).find((tile) => getRecordInt(tile, 'colony', -1) < 0 && getRecordInt(tile, 'city', -1) < 0);
   assert.ok(openTile, 'expected empty tile for colony-owner parity test');
-  addSeedColony(mapTab, colonySection, openTile, 1, 2, 2, 'owner_parity');
+  const seeded = addSeedColony(mapTab, colonySection, openTile, 1, 2, 2, 'owner_parity');
 
   const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
   assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed colony'));
@@ -732,8 +1381,7 @@ test('critical BIQ map: colony owner edit only changes CLNY section', (t) => {
   const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   const reColonySection = getSection(seededReload.tabs.map, 'CLNY');
   assert.ok(reColonySection, 'expected CLNY section after seed save');
-  const colony = (reColonySection.records || []).find((record) => getRecordInt(record, 'x', -1) === getRecordInt(openTile, 'xpos', -1)
-    && getRecordInt(record, 'y', -1) === getRecordInt(openTile, 'ypos', -1));
+  const colony = getRecordsAtCoords(reColonySection, seeded.x, seeded.y)[0];
   assert.ok(colony, 'expected seeded colony after reload');
   const currentOwner = getRecordInt(colony, 'owner', 0);
   mapCore.setField(colony, 'owner', String(currentOwner === 0 ? 1 : 0), 'Owner');
@@ -742,4 +1390,47 @@ test('critical BIQ map: colony owner edit only changes CLNY section', (t) => {
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const after = parseBiqFileForRawSections(scenarioBiq);
   assert.deepEqual(getChangedSectionCodes(before, after), ['CLNY']);
+});
+
+test('critical BIQ map: colony delete only changes CLNY and TILE sections', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle.tabs.map;
+  const tileSection = getSection(mapTab, 'TILE');
+  const colonySection = getSection(mapTab, 'CLNY');
+  assert.ok(tileSection && colonySection, 'expected TILE and CLNY sections');
+  const openTile = (tileSection.records || []).find((tile) => getRecordInt(tile, 'colony', -1) < 0 && getRecordInt(tile, 'city', -1) < 0);
+  assert.ok(openTile, 'expected empty tile for colony-delete parity test');
+  const seeded = addSeedColony(mapTab, colonySection, openTile, 1, 2, 2, 'delete_parity');
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed colony'));
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = seededReload.tabs.map;
+  const reTileSection = getSection(reMap, 'TILE');
+  const reColonySection = getSection(reMap, 'CLNY');
+  const colonyRecords = Array.isArray(reColonySection.records) ? reColonySection.records : [];
+  const idx = colonyRecords.findIndex((record) => getRecordInt(record, 'x', -1) === seeded.x && getRecordInt(record, 'y', -1) === seeded.y);
+  assert.ok(idx >= 0, 'expected seeded colony after reload');
+  if (!Array.isArray(reMap.recordOps)) reMap.recordOps = [];
+  reMap.recordOps.push({ op: 'delete', sectionCode: 'CLNY', recordRef: `@INDEX:${idx}` });
+  reColonySection.records = colonyRecords.filter((_, recordIndex) => recordIndex !== idx);
+  (reTileSection.records || []).forEach((tile) => {
+    if (getRecordInt(tile, 'colony', -1) !== idx) return;
+    mapCore.setField(tile, 'colony', '-1', 'Colony');
+  });
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CLNY']);
 });

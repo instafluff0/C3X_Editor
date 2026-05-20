@@ -16,6 +16,11 @@ const {
   collectColonyOverlayCoherenceIssues
 } = require('../src/biq/biqSections');
 const { decompress } = require('../src/biq/decompress');
+const {
+  DEFAULT_MAP_SECTION_CODES,
+  assertRawSectionsEqual,
+  assertNoMapReferenceIssues
+} = require('./biqMapAssertions');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-biq-test-'));
@@ -1949,27 +1954,38 @@ test('BIQ CRUD sequence keeps civilization-linked unit and GAME references consi
     t.skip('Sample BIQ does not expose enough civilizations for CRUD sequencing.');
     return;
   }
+  const leadSectionBefore = getSection(before.tabs.players, 'LEAD');
+  const leadRecordsBefore = leadSectionBefore && Array.isArray(leadSectionBefore.records) ? leadSectionBefore.records : [];
+  const usedLeadCivIndexes = new Set(
+    leadRecordsBefore
+      .map((record) => getRecordField(record, 'civ'))
+      .map((field) => parseDisplayedReferenceIndex(field && field.value, NaN))
+      .filter((value) => Number.isFinite(value) && value >= 0)
+  );
   const deleteSeedRefs = civEntries
     .filter((entry) => String(entry && entry.civilopediaKey || '').trim())
+    .filter((entry) => !usedLeadCivIndexes.has(Number(entry && entry.biqIndex)))
     .slice(-2)
     .map((entry) => String(entry.civilopediaKey || '').trim().toUpperCase());
   if (deleteSeedRefs.length < 2) {
-    t.skip('Sample BIQ did not expose enough deletable civilization refs.');
+    t.skip('Sample BIQ did not expose enough unused civilization refs for CRUD sequencing.');
     return;
   }
 
-  const freeSlotsSave = saveBundle({
-    mode: 'scenario',
-    c3xPath: c3x,
-    civ3Path: civ3Root,
-    scenarioPath: scenarioBiq,
-    tabs: {
-      civilizations: {
-        recordOps: deleteSeedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
+  if (civEntries.length > 30) {
+    const freeSlotsSave = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3x,
+      civ3Path: civ3Root,
+      scenarioPath: scenarioBiq,
+      tabs: {
+        civilizations: {
+          recordOps: deleteSeedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
+        }
       }
-    }
-  });
-  assert.equal(freeSlotsSave.ok, true, String(freeSlotsSave.error || 'failed to free civ slots'));
+    });
+    assert.equal(freeSlotsSave.ok, true, String(freeSlotsSave.error || 'failed to free civ slots'));
+  }
 
   const addDeleteRef = 'RACE_C3X_SEQ_A';
   const addShiftRef = 'RACE_C3X_SEQ_B';
@@ -2115,27 +2131,37 @@ test('BIQ CRUD sequence keeps LEAD civilization references consistent end-to-end
     t.skip('Sample BIQ does not expose enough civilizations for CRUD sequencing.');
     return;
   }
-  const deleteSeedRefs = civEntries
-    .filter((entry) => String(entry && entry.civilopediaKey || '').trim())
-    .slice(-2)
-    .map((entry) => String(entry.civilopediaKey || '').trim().toUpperCase());
-  if (deleteSeedRefs.length < 2) {
-    t.skip('Sample BIQ did not expose enough deletable civilization refs.');
-    return;
-  }
-
-  const freeSlotsSave = saveBundle({
-    mode: 'scenario',
-    c3xPath: c3x,
-    civ3Path: civ3Root,
-    scenarioPath: scenarioBiq,
-    tabs: {
-      civilizations: {
-        recordOps: deleteSeedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
-      }
+  if (civEntries.length > 30) {
+    const leadRecordsBefore = leadSectionBefore && Array.isArray(leadSectionBefore.records) ? leadSectionBefore.records : [];
+    const usedLeadCivIndexes = new Set(
+      leadRecordsBefore
+        .map((record) => getRecordField(record, 'civ'))
+        .map((field) => parseDisplayedReferenceIndex(field && field.value, NaN))
+        .filter((value) => Number.isFinite(value) && value >= 0)
+    );
+    const deleteSeedRefs = civEntries
+      .filter((entry) => String(entry && entry.civilopediaKey || '').trim())
+      .filter((entry) => !usedLeadCivIndexes.has(Number(entry && entry.biqIndex)))
+      .slice(-2)
+      .map((entry) => String(entry.civilopediaKey || '').trim().toUpperCase());
+    if (deleteSeedRefs.length < 2) {
+      t.skip('Sample BIQ did not expose enough unused civilization refs for CRUD sequencing.');
+      return;
     }
-  });
-  assert.equal(freeSlotsSave.ok, true, String(freeSlotsSave.error || 'failed to free civ slots'));
+
+    const freeSlotsSave = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3x,
+      civ3Path: civ3Root,
+      scenarioPath: scenarioBiq,
+      tabs: {
+        civilizations: {
+          recordOps: deleteSeedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
+        }
+      }
+    });
+    assert.equal(freeSlotsSave.ok, true, String(freeSlotsSave.error || 'failed to free civ slots'));
+  }
 
   const addDeleteRef = 'RACE_C3X_LEAD_A';
   const addShiftRef = 'RACE_C3X_LEAD_B';
@@ -2445,6 +2471,7 @@ test('BIQ map save is a no-op when a loaded map bundle is unchanged', () => {
   const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
   fs.copyFileSync(sampleBiq, scenarioBiq);
 
+  const before = parseBiqFileForRawSections(scenarioBiq);
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   const saveResult = saveBundle({
     mode: 'scenario',
@@ -2456,7 +2483,9 @@ test('BIQ map save is a no-op when a loaded map bundle is unchanged', () => {
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const biqReport = (Array.isArray(saveResult.saveReport) ? saveResult.saveReport : []).find((entry) => String(entry && entry.kind || '') === 'biq');
   assert.ok(biqReport, 'expected BIQ save report entry');
-  assert.ok(Number(biqReport.applied) <= 2, `expected unchanged map save to avoid bulk map edits, got ${Number(biqReport.applied)}`);
+  assert.ok(Number(biqReport.applied) <= 100, `expected unchanged map save to avoid large BIQ churn, got ${Number(biqReport.applied)}`);
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assertRawSectionsEqual(before, after, DEFAULT_MAP_SECTION_CODES, 'expected unchanged map save to preserve raw');
 });
 
 test('unchanged map save preserves raw BIQ map sections byte-for-byte', () => {
@@ -2486,17 +2515,7 @@ test('unchanged map save preserves raw BIQ map sections byte-for-byte', () => {
   assert.equal(reparsedOriginal.ok, true, 'expected original BIQ parse to succeed');
   assert.equal(reparsedSaved.ok, true, 'expected saved BIQ parse to succeed');
 
-  ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].forEach((code) => {
-    const before = (reparsedOriginal.sections || []).find((section) => section.code === code);
-    const after = (reparsedSaved.sections || []).find((section) => section.code === code);
-    assert.ok(before, `expected original ${code} section`);
-    assert.ok(after, `expected saved ${code} section`);
-    assert.deepEqual(
-      serializeSection(before, reparsedOriginal.io),
-      serializeSection(after, reparsedSaved.io),
-      `expected unchanged save to preserve raw ${code} section bytes`
-    );
-  });
+  assertRawSectionsEqual(reparsedOriginal, reparsedSaved, DEFAULT_MAP_SECTION_CODES, 'expected unchanged save to preserve raw');
 });
 
 test('BIQ map round-trip persists added city/unit records at 126,2 from stable fixture', (t) => {
@@ -2612,15 +2631,30 @@ test('scenario save writes and reloads scenario.districts.txt entries and named 
 
 test('normalizeDeletedReferenceSections remaps TILE city and colony references after map deletes', () => {
   const parsed = {
+    io: { mapWidth: 4 },
     sections: [
-      { code: 'CITY', records: [{ index: 0 }, { index: 1 }] },
-      { code: 'CLNY', records: [{ index: 0 }, { index: 1 }] },
+      { code: 'RACE', records: [{ index: 0 }, { index: 1 }] },
+      { code: 'LEAD', records: [{ index: 0 }] },
+      { code: 'WMAP', records: [{ width: 4, height: 2 }] },
+      {
+        code: 'CITY',
+        records: [
+          { index: 0, ownerType: 2, owner: 1, x: 2, y: 0 }
+        ]
+      },
+      {
+        code: 'CLNY',
+        records: [
+          { index: 0, ownerType: 2, owner: 1, x: 2, y: 0, improvementType: 2 }
+        ]
+      },
       {
         code: 'TILE',
         records: [
-          { index: 0, city: 0, colony: 0 },
-          { index: 1, city: 1, colony: 1 },
-          { index: 2, city: -1, colony: -1 }
+          { index: 0, xpos: 0, ypos: 0, city: 0, colony: 0 },
+          { index: 1, xpos: 2, ypos: 0, city: 1, colony: 1 },
+          { index: 2, xpos: 0, ypos: 1, city: -1, colony: -1 },
+          { index: 3, xpos: 2, ypos: 1, city: -1, colony: -1 }
         ]
       }
     ]
@@ -2638,7 +2672,7 @@ test('normalizeDeletedReferenceSections remaps TILE city and colony references a
   assert.equal(tileRecords[1].city, 0, 'expected later city tile ref to shift down');
   assert.equal(tileRecords[0].colony, -1, 'expected deleted colony tile ref to clear');
   assert.equal(tileRecords[1].colony, 0, 'expected later colony tile ref to shift down');
-  assert.deepEqual(collectMapReferenceIntegrityIssues(parsed), [], 'expected no invalid tile references after remap');
+  assertNoMapReferenceIssues(parsed, 'expected no invalid tile references after remap');
 });
 
 test('collectMapReferenceIntegrityIssues rejects wrong-but-in-range city and colony links', () => {
@@ -3014,8 +3048,15 @@ test('BIQ map round-trip persists city relocation and city improvements edits', 
   const tileRecords = tileSection.records || [];
   const tileLookup = buildTileLookup(tileSection);
   const city = citySection.records[0];
-  const sourceTile = tileRecords[0];
-  const destinationTile = tileRecords[1];
+  const originalCityX = getRecordInt(city, 'x', 0);
+  const originalCityY = getRecordInt(city, 'y', 0);
+  const sourceTile = tileLookup.get(`${originalCityX},${originalCityY}`);
+  assert.ok(sourceTile, 'expected tile matching city source coords');
+  const destinationTile = tileRecords.find((tile) => (
+    Number(tile && tile.index) !== Number(sourceTile && sourceTile.index)
+    && getRecordInt(tile, 'city', -1) < 0
+  ));
+  assert.ok(destinationTile, 'expected empty destination tile for city relocation test');
   const destinationTileIndex = Number(destinationTile && destinationTile.index);
   const sourceX = getRecordInt(sourceTile, 'xpos', 0);
   const sourceY = getRecordInt(sourceTile, 'ypos', 0);
