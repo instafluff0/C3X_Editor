@@ -1,4 +1,7 @@
 * RELEASE 27.11
+- Changed BIQ map unit overlays to choose the visible unit by tile context and defense strength: strongest land defender on land, strongest sea defender on water, then air or next strongest fallback, with Tile Info unit add/remove redraw checks using the same chooser.
+- Added a default-on `File -> Settings -> Map -> Auto-Dock Tile Info Left Near Right Edge` toggle so Tile Info only flips to the left near the extreme-right map edge when that behavior is enabled.
+- Unified BIQ map district building-influence rendering and city-triggered district refreshes onto the same dynamic `city_work_radius` footprint used by wonder-district nearby-city assignment.
 - Added a right-click Map editor wonder-district completion menu in both Select and Paint modes, fed by nearby completed wonders from the current dynamic `city_work_radius`, and aligned wonder-district sidecar writes so incomplete vs completed map art stays in sync.
 - Added `Ctrl+Z` / `Cmd+Z` support in the Map modal so the shortcut triggers the same scoped map Undo action as the toolbar button.
 - Updated Tile Info `Units` add-picker count suffixes to read as totals, e.g. `(3 total)`.

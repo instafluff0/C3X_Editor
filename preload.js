@@ -61,6 +61,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:log-settings-selected', listener);
     };
   },
+  onMapSettingsMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, settings) => handler(settings);
+    ipcRenderer.on('manager:map-settings-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:map-settings-selected', listener);
+    };
+  },
   onLog: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};

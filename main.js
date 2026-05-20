@@ -64,6 +64,21 @@ function readStartupTextFileEncoding() {
   }
 }
 
+function normalizeMapAutoDockTileInfoLeft(value) {
+  return value !== false;
+}
+
+function readStartupMapAutoDockTileInfoLeft() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeMapAutoDockTileInfoLeft(raw && raw.mapAutoDockTileInfoLeft);
+  } catch (_err) {
+    return true;
+  }
+}
+
 function getDefaultLogFolderUnsafe() {
   try {
     return path.join(app.getPath('userData'), 'logs');
@@ -140,11 +155,13 @@ function normalizeTextFileEncoding(value) {
 const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
 const startupTextFileEncoding = readStartupTextFileEncoding();
+const startupMapAutoDockTileInfoLeft = readStartupMapAutoDockTileInfoLeft();
 const startupWriteLogFiles = readStartupWriteLogFiles();
 const startupLogFolder = readStartupLogFolder();
 let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentTextFileEncoding = startupTextFileEncoding;
+let currentMapAutoDockTileInfoLeft = startupMapAutoDockTileInfoLeft;
 let currentWriteLogFiles = startupWriteLogFiles;
 let currentLogFolder = startupLogFolder;
 log.configureFileLogging({ enabled: currentWriteLogFiles, folder: currentLogFolder });
@@ -592,6 +609,21 @@ function buildLogMenuItems() {
   ];
 }
 
+function sendMapAutoDockTileInfoLeftSelection(enabled) {
+  currentMapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(enabled);
+  try {
+    persistSettingsPatch({ mapAutoDockTileInfoLeft: currentMapAutoDockTileInfoLeft });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:map-settings-selected', {
+    mapAutoDockTileInfoLeft: currentMapAutoDockTileInfoLeft
+  });
+}
+
 function buildAppMenu() {
   const fileMenu = {
     label: 'File',
@@ -608,6 +640,17 @@ function buildAppMenu() {
           {
             label: 'Logging',
             submenu: buildLogMenuItems()
+          },
+          {
+            label: 'Map',
+            submenu: [
+              {
+                label: 'Auto-Dock Tile Info Left Near Right Edge',
+                type: 'checkbox',
+                checked: currentMapAutoDockTileInfoLeft,
+                click: (item) => sendMapAutoDockTileInfoLeftSelection(item && item.checked)
+              }
+            ]
           },
           { type: 'separator' },
           {
@@ -702,6 +745,7 @@ ipcMain.handle('manager:get-settings', async () => {
     textFileEncoding: 'auto',
     performanceMode: 'high',
     runQualityChecks: true,
+    mapAutoDockTileInfoLeft: true,
     writeLogFiles: true,
     logFolder: getDefaultLogFolderUnsafe(),
     uiFontScale: 1,
@@ -713,6 +757,7 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
+  merged.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(merged.mapAutoDockTileInfoLeft);
   merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
   merged.logFolder = normalizeLogFolder(merged.logFolder);
   const parseReleaseNum = (v) => { const n = parseInt(String(v || '').replace(/^R/i, ''), 10); return isNaN(n) ? 0 : n; };
@@ -721,11 +766,13 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
+  inferred.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(inferred.mapAutoDockTileInfoLeft);
   inferred.writeLogFiles = normalizeWriteLogFiles(inferred.writeLogFiles);
   inferred.logFolder = normalizeLogFolder(inferred.logFolder);
   currentPerformanceMode = inferred.performanceMode;
   currentRunQualityChecks = inferred.runQualityChecks;
   currentTextFileEncoding = inferred.textFileEncoding;
+  currentMapAutoDockTileInfoLeft = inferred.mapAutoDockTileInfoLeft;
   currentWriteLogFiles = inferred.writeLogFiles;
   currentLogFolder = inferred.logFolder;
   log.configureFileLogging(getCurrentLogConfig());
@@ -755,6 +802,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode),
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
+    mapAutoDockTileInfoLeft: normalizeMapAutoDockTileInfoLeft(settings && settings.mapAutoDockTileInfoLeft),
     writeLogFiles: normalizeWriteLogFiles(settings && settings.writeLogFiles),
     logFolder: normalizeLogFolder(settings && settings.logFolder)
   };
@@ -778,6 +826,10 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentTextFileEncoding !== normalized.textFileEncoding) {
     currentTextFileEncoding = normalized.textFileEncoding;
+    buildAppMenu();
+  }
+  if (currentMapAutoDockTileInfoLeft !== normalized.mapAutoDockTileInfoLeft) {
+    currentMapAutoDockTileInfoLeft = normalized.mapAutoDockTileInfoLeft;
     buildAppMenu();
   }
   if (currentWriteLogFiles !== normalized.writeLogFiles || currentLogFolder !== normalized.logFolder) {

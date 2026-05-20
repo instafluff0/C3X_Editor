@@ -217,6 +217,7 @@ const state = {
   performanceMenuUnsubscribe: null,
   qualityChecksMenuUnsubscribe: null,
   logSettingsMenuUnsubscribe: null,
+  mapSettingsMenuUnsubscribe: null,
   textFileEncodingMenuUnsubscribe: null,
   startupPerformanceMode: 'high',
   sectionValidationError: '',
@@ -5301,6 +5302,10 @@ function fillInputsFromSettings() {
   el.scenarioPath.value = state.settings.scenarioPath || '';
   updateScenarioSelectValue();
   updatePathsSummary();
+}
+
+function shouldAutoDockTileInfoLeftNearRightEdge() {
+  return !state.settings || state.settings.mapAutoDockTileInfoLeft !== false;
 }
 
 function lockPathInputs() {
@@ -31145,12 +31150,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const prtoIconById = {};
   const prtoNameById = {};
   const prtoClassById = {};
+  const prtoDefenseById = {};
   (prtoSection?.records || []).forEach((record, idx) => {
     const name = String(record.name || '').trim();
     prtoIndexByName[name.toLowerCase()] = idx;
     prtoIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'iconindex')?.value, -1);
     prtoNameById[idx] = name;
     prtoClassById[idx] = normalizeUnitClassValue(getFieldByBaseKey(record, 'unitclass')?.value);
+    prtoDefenseById[idx] = parseIntLoose(getFieldByBaseKey(record, 'defence')?.value, 0);
   });
   const bldgSection = (tab.sections || []).find((s) => s.code === 'BLDG');
   const capitalBuildingIds = new Set();
@@ -32230,20 +32237,52 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const idx = parseIntLoose(tileIndex, NaN);
     return Number.isFinite(idx) && idx >= 0 ? `MAP:UNITSESSION:${idx}` : '';
   };
-  const getUnitOverlaySignatureForStack = (stack, ownerPickerOverride = null) => {
+  const getMapVisibleUnitRecordForStack = (stack, tileRecord = null) => {
+    const list = Array.isArray(stack) ? stack.filter(Boolean) : [];
+    if (!list.length) return null;
+    const realTerrain = tileRecord ? terrainInfo(tileRecord).realTerrain : NaN;
+    const isWaterTile = Number.isFinite(realTerrain) && realTerrain >= BIQ_TERRAIN.COAST;
+    const getUnitPriorityBucket = (record) => {
+      const prtoNumber = parseIntLoose(getMapFieldValue(record, 'prtonumber', '-1'), -1);
+      const classKey = prtoClassById[prtoNumber] || 'land';
+      if (isWaterTile) {
+        if (classKey === 'sea') return 0;
+        if (classKey === 'air') return 1;
+        return 2;
+      }
+      if (classKey === 'land') return 0;
+      if (classKey === 'air') return 1;
+      return 2;
+    };
+    const getUnitDefenseStrength = (record) => {
+      const prtoNumber = parseIntLoose(getMapFieldValue(record, 'prtonumber', '-1'), -1);
+      return Number.isFinite(prtoDefenseById[prtoNumber]) ? prtoDefenseById[prtoNumber] : 0;
+    };
+    const getStableUnitIndex = (record) => parseIntLoose(getMapFieldValue(record, 'index', '-1'), -1);
+    return list.slice().sort((left, right) => {
+      const bucketDiff = getUnitPriorityBucket(left) - getUnitPriorityBucket(right);
+      if (bucketDiff !== 0) return bucketDiff;
+      const defenseDiff = getUnitDefenseStrength(right) - getUnitDefenseStrength(left);
+      if (defenseDiff !== 0) return defenseDiff;
+      const prtoDiff = parseIntLoose(getMapFieldValue(right, 'prtonumber', '-1'), -1) - parseIntLoose(getMapFieldValue(left, 'prtonumber', '-1'), -1);
+      if (prtoDiff !== 0) return prtoDiff;
+      return getStableUnitIndex(left) - getStableUnitIndex(right);
+    })[0] || null;
+  };
+  const getUnitOverlaySignatureForStack = (stack, ownerPickerOverride = null, tileRecord = null) => {
     const list = Array.isArray(stack) ? stack : [];
     if (!list.length) return 'none';
-    const first = list[0] || null;
-    if (!first) return 'none';
-    const prtoNumber = parseIntLoose(getMapFieldValue(first, 'prtonumber', '-1'), -1);
+    const visibleUnit = getMapVisibleUnitRecordForStack(list, tileRecord);
+    if (!visibleUnit) return 'none';
+    const prtoNumber = parseIntLoose(getMapFieldValue(visibleUnit, 'prtonumber', '-1'), -1);
     const ownerValue = ownerPickerOverride == null || ownerPickerOverride === ''
-      ? getMapUnitOwnerPickerValue(first)
+      ? getMapUnitOwnerPickerValue(visibleUnit)
       : String(ownerPickerOverride);
     const ownerColorSlot = getMapOwnerColorSlotForPickerValue(ownerValue);
     return `${prtoNumber}|${ownerValue}|${ownerColorSlot}`;
   };
-  const getUnitOverlaySignatureForCoords = (xPos, yPos) => {
-    return getUnitOverlaySignatureForStack(listUnitsAtCoords(xPos, yPos));
+  const getUnitOverlaySignatureForCoords = (xPos, yPos, tileRecord = null) => {
+    return getUnitOverlaySignatureForStack(listUnitsAtCoords(xPos, yPos), null, tileRecord);
   };
   const getMapUnitEditSessionValue = (tileRecord, geom) => {
     if (!tileRecord || !geom) return '';
@@ -32252,10 +32291,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       units: listUnitsAtCoords(geom.xPos, geom.yPos)
     });
   };
-  const refreshTileInfoUnitsAfterEdit = ({ action, tileIndex, xPos, yPos, beforeOverlaySignature, afterOverlaySignature = null, extra = null, fullMapRerender = false } = {}) => {
+  const refreshTileInfoUnitsAfterEdit = ({ action, tileIndex, xPos, yPos, tileRecord = null, beforeOverlaySignature, afterOverlaySignature = null, extra = null, fullMapRerender = false } = {}) => {
     const startedAt = mapToolNowMs();
     const resolvedAfterOverlaySignature = afterOverlaySignature == null
-      ? getUnitOverlaySignatureForCoords(xPos, yPos)
+      ? getUnitOverlaySignatureForCoords(xPos, yPos, tileRecord)
       : String(afterOverlaySignature);
     const shouldRedrawTile = Number.isFinite(tileIndex) && tileIndex >= 0 && beforeOverlaySignature !== resolvedAfterOverlaySignature;
     appendDebugLog('biq-map:tile-info-unit-refresh-start', {
@@ -33552,9 +33591,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!atlas) return;
     const coordKey = geom ? `${geom.xPos},${geom.yPos}` : '';
     const stack = coordKey ? (unitRecordsByCoord.get(coordKey) || []) : [];
+    const visibleUnit = getMapVisibleUnitRecordForStack(stack, record);
     let unitId = NaN;
-    if (stack.length > 0) {
-      unitId = parseIntLoose(getFieldByBaseKey(stack[0], 'prtonumber')?.value, NaN);
+    if (visibleUnit) {
+      unitId = parseIntLoose(getFieldByBaseKey(visibleUnit, 'prtonumber')?.value, NaN);
     }
     if (!Number.isFinite(unitId)) {
       const rawUnit = String(getFieldByBaseKey(record, 'unit_on_tile')?.value || '').trim();
@@ -33575,9 +33615,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     // Resolve owner color for the civ dot
     let ownerTypeRaw = '';
     let ownerRaw = '';
-    if (stack.length > 0) {
-      ownerTypeRaw = String(getFieldRawValue(stack[0], 'ownertype') || getFieldDisplayValue(stack[0], 'ownertype') || '');
-      ownerRaw = String(getFieldRawValue(stack[0], 'owner') || getFieldDisplayValue(stack[0], 'owner') || '');
+    if (visibleUnit) {
+      ownerTypeRaw = String(getFieldRawValue(visibleUnit, 'ownertype') || getFieldDisplayValue(visibleUnit, 'ownertype') || '');
+      ownerRaw = String(getFieldRawValue(visibleUnit, 'owner') || getFieldDisplayValue(visibleUnit, 'owner') || '');
     }
     if (!ownerTypeRaw.trim()) ownerTypeRaw = String(getFieldRawValue(record, 'ownertype') || getFieldDisplayValue(record, 'ownertype') || '');
     if (!ownerRaw.trim()) ownerRaw = String(getFieldRawValue(record, 'owner') || getFieldDisplayValue(record, 'owner') || '');
@@ -36078,7 +36118,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const rightRange = Math.max(1, bounds.maxLeft - bounds.minLeft);
     const distanceFromRight = Math.max(0, bounds.maxLeft - mapPane.scrollLeft);
     const flipThreshold = Math.max(48, Math.round(Math.min(220, rightRange * 0.12)));
-    const shouldDockLeft = distanceFromRight <= flipThreshold;
+    const shouldDockLeft = shouldAutoDockTileInfoLeftNearRightEdge() && distanceFromRight <= flipThreshold;
     state.biqMapTileInfoDockLeft = shouldDockLeft;
     floatingRight.classList.toggle('dock-left', shouldDockLeft);
   };
@@ -36165,11 +36205,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return listUnitsAtCoords(geom.xPos, geom.yPos);
   };
   function getDistrictWorkAreaOffsets() {
-    return [
-      [0, 0],
-      [1, -1], [2, 0], [1, 1], [0, 2], [-1, 1], [-2, 0], [-1, -1], [0, -2],
-      [1, -3], [2, -2], [3, -1], [3, 1], [2, 2], [1, 3], [-1, 3], [-2, 2], [-3, 1], [-3, -1], [-2, -2], [-1, -3]
-    ];
+    return getConfiguredCityWorkAreaOffsets();
   }
   function getTileIndexesAroundCityForDistrictRefresh(cityRecord) {
     if (!cityRecord) return [];
@@ -37913,7 +37949,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         onSelect: (value) => {
           const unitTileIndex = state.biqMapSelectedTile;
           const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
-            ? getUnitOverlaySignatureForStack(units)
+            ? getUnitOverlaySignatureForStack(units, null, tile)
             : 'unknown';
           const startedAt = mapToolNowMs();
           state.mapEditorTool.tileInfoUnitOwner = value;
@@ -37952,8 +37988,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
             tileIndex: unitTileIndex,
             xPos: geom && geom.xPos,
             yPos: geom && geom.yPos,
+            tileRecord: tile,
             beforeOverlaySignature,
-            afterOverlaySignature: getUnitOverlaySignatureForStack(units),
+            afterOverlaySignature: getUnitOverlaySignatureForStack(units, null, tile),
             fullMapRerender: !!colocatedCity,
             extra: {
               owner: ownerSpec.owner,
@@ -38125,7 +38162,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const ownerSpec = resolveMapOwnerSelection(activeOwnerValue);
       if (!Number.isFinite(prtoNumber) || prtoNumber < 0 || !ownerSpec || !Number.isFinite(quantity) || quantity < 1) return;
       const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
-        ? getUnitOverlaySignatureForStack(units)
+        ? getUnitOverlaySignatureForStack(units, null, tile)
         : 'unknown';
       const startedAt = mapToolNowMs();
       appendDebugLog('biq-map:tile-info-unit-add', {
@@ -38154,10 +38191,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           tileIndex: unitTileIndex,
           xPos: geom && geom.xPos,
           yPos: geom && geom.yPos,
+          tileRecord: tile,
           beforeOverlaySignature,
-          afterOverlaySignature: units.length > 0
-            ? beforeOverlaySignature
-            : `${prtoNumber}|${ownerSpec.ownerType}:${ownerSpec.owner}|${getMapOwnerColorSlotForPickerValue(activeOwnerValue)}`,
           extra: {
             owner: ownerSpec.owner,
             ownerType: ownerSpec.ownerType,
@@ -38234,8 +38269,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       veteranSelect.addEventListener('change', () => {
         if (!isScenarioMode()) return;
         const unitTileIndex = state.biqMapSelectedTile;
-        const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
-          ? getUnitOverlaySignatureForStack(units)
+      const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
+          ? getUnitOverlaySignatureForStack(units, null, tile)
           : 'unknown';
         const startedAt = mapToolNowMs();
         appendDebugLog('biq-map:tile-info-unit-experience-change', {
@@ -38258,6 +38293,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           tileIndex: unitTileIndex,
           xPos: geom && geom.xPos,
           yPos: geom && geom.yPos,
+          tileRecord: tile,
           beforeOverlaySignature,
           afterOverlaySignature: beforeOverlaySignature,
           extra: {
@@ -38283,8 +38319,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const unitTileIndex = state.biqMapSelectedTile;
         const unitRef = Number.isFinite(Number(record && record.index)) ? Number(record.index) : NaN;
         if (!Number.isFinite(unitRef) || unitRef < 0) return;
-        const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
-          ? getUnitOverlaySignatureForStack(units)
+      const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
+          ? getUnitOverlaySignatureForStack(units, null, tile)
           : 'unknown';
         const startedAt = mapToolNowMs();
         appendDebugLog('biq-map:tile-info-unit-remove', {
@@ -38306,8 +38342,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
             tileIndex: unitTileIndex,
             xPos: geom && geom.xPos,
             yPos: geom && geom.yPos,
+            tileRecord: tile,
             beforeOverlaySignature,
-            afterOverlaySignature: getUnitOverlaySignatureForStack(units.filter((entry) => entry !== record)),
+            afterOverlaySignature: getUnitOverlaySignatureForStack(units.filter((entry) => entry !== record), null, tile),
             extra: {
               unitIndex: unitRef,
               unitName: name.textContent,
@@ -43692,6 +43729,9 @@ async function init() {
   if (typeof state.settings.runQualityChecks !== 'boolean') {
     state.settings.runQualityChecks = true;
   }
+  if (typeof state.settings.mapAutoDockTileInfoLeft !== 'boolean') {
+    state.settings.mapAutoDockTileInfoLeft = true;
+  }
   if (typeof state.settings.writeLogFiles !== 'boolean') {
     state.settings.writeLogFiles = true;
   }
@@ -43843,6 +43883,23 @@ async function init() {
       if (state.logSettingsMenuUnsubscribe) {
         state.logSettingsMenuUnsubscribe();
         state.logSettingsMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onMapSettingsMenuSelect === 'function') {
+    state.mapSettingsMenuUnsubscribe = window.c3xManager.onMapSettingsMenuSelect((settings) => {
+      if (!state.settings || !settings || typeof settings !== 'object') return;
+      if (!Object.prototype.hasOwnProperty.call(settings, 'mapAutoDockTileInfoLeft')) return;
+      state.settings.mapAutoDockTileInfoLeft = settings.mapAutoDockTileInfoLeft !== false;
+      void window.c3xManager.setSettings(state.settings);
+      if (state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
+        refreshOpenMapModalForTab(state.bundle.tabs.map);
+      }
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.mapSettingsMenuUnsubscribe) {
+        state.mapSettingsMenuUnsubscribe();
+        state.mapSettingsMenuUnsubscribe = null;
       }
     }, { once: true });
   }

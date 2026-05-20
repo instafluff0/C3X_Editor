@@ -6,6 +6,8 @@ const path = require('node:path');
 test('Map canvas hover tooltip shows current grid coordinates', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
+  const mainText = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const preloadText = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
 
   assert.match(
     rendererText,
@@ -169,8 +171,28 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /floatingRight = document\.createElement\('div'\);[\s\S]*?floatingRight\.className = 'biq-map-floating-panel biq-map-floating-right';[\s\S]*?if \(state\.biqMapTileInfoDockLeft\) floatingRight\.classList\.add\('dock-left'\);[\s\S]*?const updateTileInfoDockSide = \(\) => \{[\s\S]*?if \(tileInfoPanel\.classList\.contains\('hidden'\)\) \{[\s\S]*?state\.biqMapTileInfoDockLeft = false;[\s\S]*?const shouldDockLeft = distanceFromRight <= flipThreshold;[\s\S]*?state\.biqMapTileInfoDockLeft = shouldDockLeft;[\s\S]*?floatingRight\.classList\.toggle\('dock-left', shouldDockLeft\);/,
-    'tile-info dock side should persist across full map rerenders so a left-docked panel does not teleport right before re-docking'
+    /floatingRight = document\.createElement\('div'\);[\s\S]*?floatingRight\.className = 'biq-map-floating-panel biq-map-floating-right';[\s\S]*?if \(state\.biqMapTileInfoDockLeft\) floatingRight\.classList\.add\('dock-left'\);[\s\S]*?const updateTileInfoDockSide = \(\) => \{[\s\S]*?if \(tileInfoPanel\.classList\.contains\('hidden'\)\) \{[\s\S]*?state\.biqMapTileInfoDockLeft = false;[\s\S]*?const shouldDockLeft = shouldAutoDockTileInfoLeftNearRightEdge\(\) && distanceFromRight <= flipThreshold;[\s\S]*?state\.biqMapTileInfoDockLeft = shouldDockLeft;[\s\S]*?floatingRight\.classList\.toggle\('dock-left', shouldDockLeft\);/,
+    'tile-info dock side should persist across full map rerenders and honor the auto-dock setting before flipping left'
+  );
+  assert.match(
+    rendererText,
+    /function shouldAutoDockTileInfoLeftNearRightEdge\(\) \{[\s\S]*?return !state\.settings \|\| state\.settings\.mapAutoDockTileInfoLeft !== false;[\s\S]*?\}/,
+    'tile-info auto-docking should be controlled by a dedicated default-on map setting'
+  );
+  assert.match(
+    rendererText,
+    /if \(typeof state\.settings\.mapAutoDockTileInfoLeft !== 'boolean'\) \{[\s\S]*?state\.settings\.mapAutoDockTileInfoLeft = true;[\s\S]*?\}/,
+    'older saved settings should default tile-info auto-docking to enabled'
+  );
+  assert.match(
+    preloadText,
+    /onMapSettingsMenuSelect: \(handler\) => \{[\s\S]*?ipcRenderer\.on\('manager:map-settings-selected', listener\);/,
+    'preload should expose map settings menu updates to the renderer'
+  );
+  assert.match(
+    mainText,
+    /label: 'Map',[\s\S]*?label: 'Auto-Dock Tile Info Left Near Right Edge',[\s\S]*?checked: currentMapAutoDockTileInfoLeft,[\s\S]*?sendMapAutoDockTileInfoLeftSelection\(item && item\.checked\)/,
+    'File -> Settings should expose a default-on Map toggle for tile-info auto-docking'
   );
   assert.doesNotMatch(
     rendererText,
