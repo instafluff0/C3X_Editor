@@ -29133,6 +29133,10 @@ function getMapFieldStoredValue(record, key, fallback = '') {
   return String(field.value || '');
 }
 
+function getMapFieldRefIndex(record, key, fallback = -1) {
+  return parseIntLoose(getMapFieldStoredValue(record, key, String(fallback)), fallback);
+}
+
 function setMapFieldValue(record, key, value, label = '') {
   if (!record) return false;
   const normalizedValue = String(value == null ? '' : value);
@@ -32381,11 +32385,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     pushStructureAddOp('UNIT', ref);
     return true;
   };
-  const clearLegacyColonyOverlayBits = (tile) => {
+  const syncTileColonyOverlayBits = (tile, colonyType = -1) => {
     if (!tile) return;
-    const current = parseIntLoose(getMapFieldValue(tile, 'c3coverlays', '0'), 0) >>> 0;
-    const cleared = current & (~0xE0000000);
-    if (cleared !== current) setMapFieldValue(tile, 'c3coverlays', String(cleared >>> 0), 'C3C Overlays');
+    const current = parseIntLoose(getMapFieldStoredValue(tile, 'c3coverlays', '0'), 0) >>> 0;
+    let next = current & (~0xE0000000);
+    if (Number(colonyType) === 1) next |= 0x20000000;
+    else if (Number(colonyType) === 2) next |= 0x40000000;
+    else if (Number(colonyType) === 3) next |= 0x80000000;
+    if (next !== current) setMapFieldValue(tile, 'c3coverlays', String(next >>> 0), 'C3C Overlays');
   };
   const applyRiverOverlayToIndexes = (indexes, enabled) => {
     if (!mapCore || typeof mapCore.applyRiverOverlay !== 'function') return [];
@@ -32401,10 +32408,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     colonySection.records = colonySection.records.filter((record) => record !== target);
     tiles.forEach((candidateTile) => {
       if (!candidateTile) return;
-      const candidateValue = parseIntLoose(getMapFieldValue(candidateTile, 'colony', '-1'), -1);
+      const candidateValue = getMapFieldRefIndex(candidateTile, 'colony', -1);
       if (candidateValue === idx) {
         setMapFieldValue(candidateTile, 'colony', '-1', 'Colony');
-        clearLegacyColonyOverlayBits(candidateTile);
+        syncTileColonyOverlayBits(candidateTile, -1);
       }
     });
     return true;
@@ -32420,7 +32427,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       setMapFieldValue(existingColony, 'improvementtype', String(colonyType), 'Improvement Type');
       setMapFieldValue(existingColony, 'x', String(geom.xPos), 'X');
       setMapFieldValue(existingColony, 'y', String(geom.yPos), 'Y');
-      clearLegacyColonyOverlayBits(tile);
+      syncTileColonyOverlayBits(tile, colonyType);
       return true;
     }
     const tileOwnerRaw = String(getFieldRawValue(tile, 'owner') || '').trim();
@@ -32443,7 +32450,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     record.newRecordRef = ref;
     colonySection.records.push(record);
     setMapFieldValue(tile, 'colony', String(record.index), 'Colony');
-    clearLegacyColonyOverlayBits(tile);
+    syncTileColonyOverlayBits(tile, colonyType);
     pushStructureAddOp('CLNY', ref);
     return true;
   };
@@ -32460,7 +32467,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         return;
       }
       if (existingType !== Number(spec.improvementType)) return;
-      const colonyRef = parseIntLoose(getMapFieldValue(tile, 'colony', '-1'), -1);
+      const colonyRef = getMapFieldRefIndex(tile, 'colony', -1);
       if (removeColonyByIndex(colonyRef)) changed = true;
     });
     return changed;
@@ -32479,7 +32486,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const tile = tiles[idx] || null;
       if (!tile) return;
       if (getTileRiverMask(tile) !== 0) addChangedIndexes(applyRiverOverlayToIndexes([idx], false));
-      const colonyRef = parseIntLoose(getMapFieldValue(tile, 'colony', '-1'), -1);
+      const colonyRef = getMapFieldRefIndex(tile, 'colony', -1);
       if (colonyRef >= 0) {
         if (removeColonyByIndex(colonyRef)) addChangedIndex(idx);
       } else {
@@ -33015,13 +33022,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const g = tileGeom[idx];
         if (!g) return;
         if (remove) {
-          const cityValue = parseIntLoose(getMapFieldValue(tile, 'city', '-1'), -1);
+          const cityValue = getMapFieldRefIndex(tile, 'city', -1);
           setMapFieldValue(tile, 'city', '-1', 'City');
           if (cityValue >= 0) removeCityByIndex(cityValue);
           changed = true;
           return;
         }
-        const cityValue = parseIntLoose(getMapFieldValue(tile, 'city', '-1'), -1);
+        const cityValue = getMapFieldRefIndex(tile, 'city', -1);
         if (cityValue >= 0) return;
         if (!citySection) return;
         const ref = uniqueRecordRef('CITY');
@@ -34894,8 +34901,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const drawColonyOverlay = (record, sx, sy) => {
     const colonyRecord = getTileColonyRecord(record);
-    if (!colonyRecord) return;
-    const colonyType = parseIntLoose(getMapFieldValue(colonyRecord, 'improvementtype', '-1'), -1);
+    const colonyType = getColonyTypeForTile(record);
+    if (colonyType < 0) return;
     const colonyAge = resolveColonyAge(colonyRecord);
     const midY = sy + Math.floor(tileH / 2);
     if (colonyType === 0) {
@@ -36183,12 +36190,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return colonySection.records.find((entry) => Number(entry && entry.index) === idx) || null;
   }
   function getTileColonyRecord(tile) {
-    return getColonyRecordByRef(getMapFieldValue(tile, 'colony', '-1'));
+    return getColonyRecordByRef(getMapFieldStoredValue(tile, 'colony', '-1'));
   }
   function getColonyTypeForTile(tile) {
+    if (!tile) return -1;
+    const overlays = parseIntLoose(getMapFieldStoredValue(tile, 'c3coverlays', '0'), 0) >>> 0;
+    if (overlays & 0x20000000) return 1;
+    if (overlays & 0x40000000) return 2;
+    if (overlays & 0x80000000) return 3;
     const colonyRecord = getTileColonyRecord(tile);
     if (!colonyRecord) return -1;
-    return parseIntLoose(getMapFieldValue(colonyRecord, 'improvementtype', '-1'), -1);
+    return parseIntLoose(getMapFieldStoredValue(colonyRecord, 'improvementtype', '-1'), -1);
   }
   function resolveColonyAge(colonyRecord) {
     if (!colonyRecord) return 0;
@@ -37509,7 +37521,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     host.appendChild(card);
   };
   const renderCityOptions = (host, tile, geom) => {
-    const cityRef = getMapFieldValue(tile, 'city', '-1');
+    const cityRef = getMapFieldStoredValue(tile, 'city', '-1');
     const cityRecord = getCityRecordByRef(cityRef);
     if (!cityRecord) {
       const empty = document.createElement('div');
@@ -38386,7 +38398,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     tileInfoPanel.style.removeProperty('--tile-info-owner-tint');
     tileInfoPanel.classList.remove('tile-info-owner-tinted');
     if (activeOption.value === 'city' && tile) {
-      const cityRef = getMapFieldValue(tile, 'city', '-1');
+      const cityRef = getMapFieldStoredValue(tile, 'city', '-1');
       const cityRecord = getCityRecordByRef(cityRef);
       if (cityRecord) {
         syncActiveMapCityEditSession(getMapCityEditSessionKey(cityRef), () => getMapCityEditSessionValue(cityRecord));

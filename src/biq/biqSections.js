@@ -1375,6 +1375,26 @@ function serializeTILE(rec) {
   return Buffer.from(rec._rawRecord);
 }
 
+function setTileRecordFieldValue(rec, fieldName, value) {
+  if (!rec) return false;
+  const fd = TILE_FIELD_MAP.get(String(fieldName || '').trim().toLowerCase());
+  if (!fd) return false;
+  const raw = rec._rawRecord;
+  if (!raw) return false;
+  const n = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(n)) return false;
+  const bodyOff = 4 + fd.off;
+  switch (fd.type) {
+    case 'uint8': raw[bodyOff] = n & 0xff; break;
+    case 'int16': raw.writeInt16LE(n, bodyOff); break;
+    case 'uint16': raw.writeUInt16LE(n & 0xffff, bodyOff); break;
+    case 'int32': raw.writeInt32LE(n | 0, bodyOff); break;
+    default: raw[bodyOff] = n & 0xff;
+  }
+  rec[fd.name] = n;
+  return true;
+}
+
 function toEnglishTILE(rec, io) {
   const pairs = [
     ['xpos', String(rec.xpos | 0)],
@@ -2938,23 +2958,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
 
   // TILE: surgical raw edit
   if (code === 'TILE') {
-    const fd = [...TILE_FIELDS].find((f) => canonicalKey(f.name) === ck);
-    if (!fd) return false;
-    const raw = rec._rawRecord;
-    if (!raw) return false;
-    const bodyOff = 4 + fd.off; // 4-byte dataLen prefix
-    const n = Number.parseInt(value, 10);
-    if (!Number.isFinite(n)) return false;
-    switch (fd.type) {
-      case 'uint8': raw[bodyOff] = n & 0xff; break;
-      case 'int16': raw.writeInt16LE(n, bodyOff); break;
-      case 'uint16': raw.writeUInt16LE(n & 0xffff, bodyOff); break;
-      case 'int32': raw.writeInt32LE(n | 0, bodyOff); break;
-      default: raw[bodyOff] = n & 0xff;
-    }
-    // Update parsed field too
-    rec[fd.name] = n;
-    return true;
+    return setTileRecordFieldValue(rec, ck, value);
   }
 
   // CITY buildings list
@@ -3240,6 +3244,17 @@ function getRecordCivilopediaRef(record) {
   return String(record && record.civilopediaEntry || '').trim().toUpperCase();
 }
 
+function getRecordStructureRef(record) {
+  if (!record) return '';
+  const newRef = String(record.newRecordRef || '').trim().toUpperCase();
+  if (newRef) return newRef;
+  const civRef = getRecordCivilopediaRef(record);
+  if (civRef) return civRef;
+  const idx = Number.parseInt(String(record.index), 10);
+  if (Number.isFinite(idx) && idx >= 0) return `@INDEX:${idx}`;
+  return '';
+}
+
 function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
   const raceSection = getSectionByCode(parsed, 'RACE');
   if (!raceSection || !Array.isArray(raceSection.records)) return { ok: true };
@@ -3469,7 +3484,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       .map((edit) => originalRefs.indexOf(String(edit && edit.recordRef || '').trim().toUpperCase()))
       .filter((index) => index >= 0);
     const finalRefs = section && Array.isArray(section.records)
-      ? section.records.map((record) => getRecordCivilopediaRef(record))
+      ? section.records.map((record) => getRecordStructureRef(record))
       : [];
     remaps.set(code, buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices));
   });
@@ -3674,6 +3689,17 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     markModified(unitSection);
   }
 
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  const cityRemap = remaps.get('CITY');
+  const clnyRemap = remaps.get('CLNY');
+  if (tileSection && Array.isArray(tileSection.records) && (cityRemap || clnyRemap)) {
+    tileSection.records.forEach((rec) => {
+      if (cityRemap) setTileRecordFieldValue(rec, 'city', remapDeletedSectionIndex(rec.city, cityRemap, -1));
+      if (clnyRemap) setTileRecordFieldValue(rec, 'colony', remapDeletedSectionIndex(rec.colony, clnyRemap, -1));
+    });
+    markModified(tileSection);
+  }
+
   const leadSection = getSectionByCode(parsed, 'LEAD');
   if (leadSection && Array.isArray(leadSection.records)) {
     leadSection.records.forEach((rec) => {
@@ -3697,6 +3723,41 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   }
 
   return { ok: true };
+}
+
+function collectMapReferenceIntegrityIssues(parsed) {
+  const issues = [];
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return issues;
+  const citySection = getSectionByCode(parsed, 'CITY');
+  const clnySection = getSectionByCode(parsed, 'CLNY');
+  const cityCount = citySection && Array.isArray(citySection.records) ? citySection.records.length : 0;
+  const clnyCount = clnySection && Array.isArray(clnySection.records) ? clnySection.records.length : 0;
+  const normalizeRef = (value) => {
+    const parsedValue = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsedValue) ? parsedValue : -1;
+  };
+  tileSection.records.forEach((rec, tileIndex) => {
+    const cityRef = normalizeRef(rec && rec.city);
+    if (cityRef >= cityCount) {
+      issues.push({
+        kind: 'tile-city-ref',
+        tileIndex,
+        cityRef,
+        cityCount
+      });
+    }
+    const colonyRef = normalizeRef(rec && rec.colony);
+    if (colonyRef >= clnyCount) {
+      issues.push({
+        kind: 'tile-colony-ref',
+        tileIndex,
+        colonyRef,
+        colonyCount: clnyCount
+      });
+    }
+  });
+  return issues;
 }
 
 function buildMapSectionRecordFromUi(sectionCode, record, io, recordIndex) {
@@ -3895,10 +3956,10 @@ function applyEdits(buf, edits, options = {}) {
 
   const { io } = parsed;
   const originalRefsBySection = {};
-  ['RACE', 'TECH', 'GOOD', 'BLDG', 'GOVT', 'PRTO'].forEach((code) => {
+  ['RACE', 'TECH', 'GOOD', 'BLDG', 'GOVT', 'PRTO', 'CITY', 'CLNY'].forEach((code) => {
     const section = getSectionByCode(parsed, code);
     originalRefsBySection[code] = section && Array.isArray(section.records)
-      ? section.records.map((record) => getRecordCivilopediaRef(record))
+      ? section.records.map((record) => getRecordStructureRef(record))
       : [];
   });
   const originalRaceSection = getSectionByCode(parsed, 'RACE');
@@ -4069,6 +4130,15 @@ function applyEdits(buf, edits, options = {}) {
     log.error('BiqApplyEdits', `normalizeDeletedReferenceSections failed: ${normalizeDeleteResult.error || 'unknown'}`);
     return { ok: false, error: normalizeDeleteResult.error || 'Failed to normalize deleted BIQ references.' };
   }
+  const mapReferenceIssues = collectMapReferenceIntegrityIssues(parsed);
+  if (mapReferenceIssues.length > 0) {
+    const issue = mapReferenceIssues[0];
+    const detail = issue.kind === 'tile-city-ref'
+      ? `tile ${issue.tileIndex} references CITY ${issue.cityRef} but only ${issue.cityCount} city record(s) remain`
+      : `tile ${issue.tileIndex} references CLNY ${issue.colonyRef} but only ${issue.colonyCount} colony record(s) remain`;
+    log.error('BiqApplyEdits', `collectMapReferenceIntegrityIssues failed: ${detail}`);
+    return { ok: false, error: `Map reference integrity check failed after BIQ edits: ${detail}.` };
+  }
 
   const newBuf = buildBiqBuffer(parsed);
   log.debug('BiqApplyEdits', `buildBiqBuffer complete: output size ${newBuf ? newBuf.length : 0} — applied=${applied} skipped=${skipped}${warnings.length > 0 ? ' warnings=' + warnings.length : ''}`);
@@ -4121,4 +4191,5 @@ module.exports = {
   getTileRecordLength,
   normalizeRaceDependentSections,
   normalizeDeletedReferenceSections,
+  collectMapReferenceIntegrityIssues,
 };

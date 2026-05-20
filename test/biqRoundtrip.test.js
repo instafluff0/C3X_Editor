@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 const { loadBundle, saveBundle } = require('../src/configCore');
 const mapCore = require('../src/mapEditorCore');
-const { parseAllSections } = require('../src/biq/biqSections');
+const { parseAllSections, normalizeDeletedReferenceSections, collectMapReferenceIntegrityIssues } = require('../src/biq/biqSections');
 const { decompress } = require('../src/biq/decompress');
 
 function mkTmpDir() {
@@ -193,6 +193,15 @@ function getRecordInt(record, key, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function getRecordStoredInt(record, key, fallback) {
+  const field = getRecordField(record, key);
+  const preferred = field && field.mapEditorValueEdited
+    ? field.value
+    : (field && field.originalValue != null && String(field.originalValue).trim() !== '' ? field.originalValue : field && field.value);
+  const parsed = mapCore.parseIntLoose(preferred, fallback);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function buildTileLookup(tileSection) {
   const lookup = new Map();
   const records = (tileSection && Array.isArray(tileSection.records)) ? tileSection.records : [];
@@ -225,6 +234,24 @@ function getMapSectionsOrSkip(t, mapTab) {
     return null;
   }
   return { tileSection, citySection, unitSection };
+}
+
+function assertMapReferenceIntegrityFromMapTab(mapTab, message = '') {
+  const parsed = {
+    sections: Array.isArray(mapTab && mapTab.sections) ? mapTab.sections.map((section) => ({
+      code: section.code,
+      records: Array.isArray(section.records) ? section.records.map((record) => {
+        const out = { index: Number(record && record.index) };
+        if (String(section && section.code || '').toUpperCase() === 'TILE') {
+          out.city = getRecordStoredInt(record, 'city', -1);
+          out.colony = getRecordStoredInt(record, 'colony', -1);
+        }
+        return out;
+      }) : []
+    })) : []
+  };
+  const issues = collectMapReferenceIntegrityIssues(parsed);
+  assert.deepEqual(issues, [], message || `expected valid map references, got ${JSON.stringify(issues)}`);
 }
 
 function getScenarioSettingsField(bundle, key) {
@@ -2460,6 +2487,122 @@ test('scenario save writes and reloads scenario.districts.txt entries and named 
   assert.equal(Array.isArray(scenarioDistricts.namedTiles), true);
   assert.ok(scenarioDistricts.entries.some((entry) => Number(entry && entry.x) === 126 && Number(entry && entry.y) === 2 && String(entry && entry.district || '') === 'Neighborhood'));
   assert.ok(scenarioDistricts.namedTiles.some((entry) => Number(entry && entry.x) === 126 && Number(entry && entry.y) === 2 && String(entry && entry.name || '') === 'Test Named Tile'));
+});
+
+test('normalizeDeletedReferenceSections remaps TILE city and colony references after map deletes', () => {
+  const parsed = {
+    sections: [
+      { code: 'CITY', records: [{ index: 0 }, { index: 1 }] },
+      { code: 'CLNY', records: [{ index: 0 }, { index: 1 }] },
+      {
+        code: 'TILE',
+        records: [
+          { index: 0, city: 0, colony: 0 },
+          { index: 1, city: 1, colony: 1 },
+          { index: 2, city: -1, colony: -1 }
+        ]
+      }
+    ]
+  };
+  const result = normalizeDeletedReferenceSections(parsed, [
+    { op: 'delete', sectionCode: 'CITY', recordRef: '@INDEX:0' },
+    { op: 'delete', sectionCode: 'CLNY', recordRef: '@INDEX:0' }
+  ], {
+    CITY: ['@INDEX:0', '@INDEX:1'],
+    CLNY: ['@INDEX:0', '@INDEX:1']
+  });
+  assert.equal(result.ok, true, String(result.error || 'normalize failed'));
+  const tileRecords = parsed.sections.find((section) => section.code === 'TILE').records;
+  assert.equal(tileRecords[0].city, -1, 'expected deleted city tile ref to clear');
+  assert.equal(tileRecords[1].city, 0, 'expected later city tile ref to shift down');
+  assert.equal(tileRecords[0].colony, -1, 'expected deleted colony tile ref to clear');
+  assert.equal(tileRecords[1].colony, 0, 'expected later colony tile ref to shift down');
+  assert.deepEqual(collectMapReferenceIntegrityIssues(parsed), [], 'expected no invalid tile references after remap');
+});
+
+test('BIQ map round-trip keeps surviving city tile references stable after deleting an earlier city', (t) => {
+  const civ3Root = path.resolve(__dirname, '..', '..');
+  const sampleBiq = [
+    path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific TEST.biq'),
+    path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific.biq'),
+    findSampleMapBiqPath()
+  ].find((candidate) => candidate && fs.existsSync(candidate));
+  if (!sampleBiq) t.skip('No suitable map-enabled BIQ available for city delete regression.');
+
+  const resolvedCiv3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: resolvedCiv3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  if (!mapTab) {
+    t.skip('Map tab unavailable in sample BIQ.');
+    return;
+  }
+  const sections = getMapSectionsOrSkip(t, mapTab);
+  if (!sections) return;
+  const { tileSection, citySection } = sections;
+
+  const cityRecords = Array.isArray(citySection.records) ? citySection.records : [];
+  const tileRecords = Array.isArray(tileSection.records) ? tileSection.records : [];
+  const tileByCityIndex = new Map();
+  tileRecords.forEach((tile) => {
+    const cityRef = getRecordInt(tile, 'city', -1);
+    if (cityRef >= 0 && !tileByCityIndex.has(cityRef)) tileByCityIndex.set(cityRef, tile);
+  });
+  const survivor = cityRecords.find((record) => Number(record && record.index) > 0 && tileByCityIndex.has(Number(record && record.index)));
+  if (!survivor) {
+    t.skip('Sample BIQ lacks a survivor city with a linked tile reference.');
+    return;
+  }
+  const deleted = cityRecords.find((record) => Number(record && record.index) < Number(survivor.index) && tileByCityIndex.has(Number(record && record.index)));
+  if (!deleted) {
+    t.skip('Sample BIQ lacks an earlier city delete candidate.');
+    return;
+  }
+
+  const survivorName = String(getRecordField(survivor, 'name') && getRecordField(survivor, 'name').value || '');
+  const survivorX = getRecordInt(survivor, 'x', -1);
+  const survivorY = getRecordInt(survivor, 'y', -1);
+  const survivorTileBefore = tileByCityIndex.get(Number(survivor.index));
+  const survivorTileBeforeX = getRecordInt(survivorTileBefore, 'xpos', -1);
+  const survivorTileBeforeY = getRecordInt(survivorTileBefore, 'ypos', -1);
+
+  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
+  mapTab.recordOps.push({ op: 'delete', sectionCode: 'CITY', recordRef: `@INDEX:${Number(deleted.index)}` });
+  citySection.records = cityRecords.filter((record) => record !== deleted);
+  tileRecords.forEach((tile) => {
+    if (getRecordInt(tile, 'city', -1) !== Number(deleted.index)) return;
+    const cityField = getRecordField(tile, 'city');
+    if (cityField) cityField.value = '-1';
+    tile.city = -1;
+  });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: resolvedCiv3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: resolvedCiv3Root, scenarioPath: scenarioBiq });
+  const reMap = reloaded.tabs.map;
+  const reCitySection = getSection(reMap, 'CITY');
+  const reTileSection = getSection(reMap, 'TILE');
+  const reSurvivor = (reCitySection.records || []).find((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === survivorName);
+  assert.ok(reSurvivor, `expected survivor city ${survivorName} after delete/save`);
+  assert.equal(getRecordInt(reSurvivor, 'x', -1), survivorX, 'expected survivor city X to remain stable');
+  assert.equal(getRecordInt(reSurvivor, 'y', -1), survivorY, 'expected survivor city Y to remain stable');
+  const reSurvivorTile = (reTileSection.records || []).find((tile) => getRecordInt(tile, 'xpos', -1) === survivorTileBeforeX && getRecordInt(tile, 'ypos', -1) === survivorTileBeforeY);
+  assert.ok(reSurvivorTile, 'expected survivor tile after reload');
+  assert.match(String(getRecordField(reSurvivorTile, 'city') && getRecordField(reSurvivorTile, 'city').value || ''), new RegExp(`\\(${Number(reSurvivor.index)}\\)$`), 'expected survivor tile to reference the survivor city after reindex');
+  assertMapReferenceIntegrityFromMapTab(reMap, 'expected all tile city/colony references to stay valid after city delete round-trip');
 });
 
 test('mixed BIQ + text save failure rolls back all committed changes', (t) => {

@@ -281,8 +281,18 @@ test('map overlay rendering offsets colony-like overlays, draws barricades, and 
 
   assert.match(
     rendererText,
+    /function getColonyTypeForTile\(tile\) \{[\s\S]*?const overlays = parseIntLoose\(getMapFieldStoredValue\(tile, 'c3coverlays', '0'\), 0\) >>> 0;[\s\S]*?if \(overlays & 0x20000000\) return 1;[\s\S]*?if \(overlays & 0x40000000\) return 2;[\s\S]*?if \(overlays & 0x80000000\) return 3;[\s\S]*?const colonyRecord = getTileColonyRecord\(tile\);/,
+    'colony-like rendering should prefer tile overlay mask bits for airfield, radar tower, and outpost type detection before falling back to CLNY improvement type'
+  );
+  assert.match(
+    rendererText,
     /const drawColonyOverlay = \(record, sx, sy\) => \{[\s\S]*?const midY = sy \+ Math\.floor\(tileH \/ 2\);[\s\S]*?drawSheetSprite\(sheet, cols, rows, \(4 \* Math\.max\(0, Math\.min\(3, colonyAge\)\)\) \+ 1, sx, midY\);[\s\S]*?ctx\.drawImage\(airfieldsSheet, airfieldVariant \* 128, 0, 128, 64, sx, midY, tileW, tileH\);[\s\S]*?ctx\.drawImage\(airfieldsSheet, 0, 192, 128, 128, sx, sy - Math\.floor\(tileH \/ 2\), tileW, tileH \* 2\);[\s\S]*?ctx\.drawImage\(airfieldsSheet, outpostVariant \* 128, 64, 128, 128, sx, sy - Math\.floor\(tileH \/ 2\), tileW, tileH \* 2\);/,
     'colony, airfield, radar tower, and outpost overlays should all render half a tile lower on the map'
+  );
+  assert.match(
+    rendererText,
+    /const syncTileColonyOverlayBits = \(tile, colonyType = -1\) => \{[\s\S]*?let next = current & \(~0xE0000000\);[\s\S]*?if \(Number\(colonyType\) === 1\) next \|= 0x20000000;[\s\S]*?else if \(Number\(colonyType\) === 2\) next \|= 0x40000000;[\s\S]*?else if \(Number\(colonyType\) === 3\) next \|= 0x80000000;/,
+    'colony-like edits should keep TILE C3C overlay bits synchronized with the selected airfield, radar tower, or outpost type'
   );
   assert.match(
     rendererText,
