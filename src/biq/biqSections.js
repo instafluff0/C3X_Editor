@@ -4321,6 +4321,11 @@ function removeMapSectionsFromParsed(parsed) {
   parsed.sections = parsed.sections.filter((section) => !['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].includes(String(section && section.code || '').toUpperCase()));
 }
 
+function removeCustomRulesSectionsFromParsed(parsed) {
+  const codes = new Set(['BLDG', 'CTZN', 'CULT', 'DIFF', 'ERAS', 'ESPN', 'EXPR', 'FLAV', 'GOOD', 'GOVT', 'PRTO', 'RACE', 'RULE', 'TECH', 'TERR', 'TFRM', 'WSIZ']);
+  parsed.sections = parsed.sections.filter((section) => !codes.has(String(section && section.code || '').toUpperCase()));
+}
+
 function setMapSectionsOnParsed(parsed, uiSections) {
   removeMapSectionsFromParsed(parsed);
   const mapSections = Array.isArray(uiSections) ? uiSections : [];
@@ -4333,6 +4338,23 @@ function setMapSectionsOnParsed(parsed, uiSections) {
   const insertAt = parsed.sections.findIndex((section) => {
     const code = String(section && section.code || '').toUpperCase();
     return code === 'GAME' || code === 'LEAD';
+  });
+  if (insertAt >= 0) parsed.sections.splice(insertAt, 0, ...builtSections);
+  else parsed.sections.push(...builtSections);
+}
+
+function setCustomRulesSectionsOnParsed(parsed, uiSections) {
+  removeCustomRulesSectionsFromParsed(parsed);
+  const ruleSectionCodes = new Set(['BLDG', 'CTZN', 'CULT', 'DIFF', 'ERAS', 'ESPN', 'EXPR', 'FLAV', 'GOOD', 'GOVT', 'PRTO', 'RACE', 'RULE', 'TECH', 'TERR', 'TFRM', 'WSIZ']);
+  const builtSections = [];
+  (Array.isArray(uiSections) ? uiSections : []).forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!ruleSectionCodes.has(code)) return;
+    builtSections.push(JSON.parse(JSON.stringify(section)));
+  });
+  const insertAt = parsed.sections.findIndex((section) => {
+    const code = String(section && section.code || '').toUpperCase();
+    return code === 'WCHR' || code === 'WMAP' || code === 'GAME' || code === 'LEAD';
   });
   if (insertAt >= 0) parsed.sections.splice(insertAt, 0, ...builtSections);
   else parsed.sections.push(...builtSections);
@@ -4390,6 +4412,21 @@ function applyEdits(buf, edits, options = {}) {
       const mapSecCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
       log.debug('BiqApplyEdits', `op=setmap: replacing map sections [${mapSecCodes}]`);
       setMapSectionsOnParsed(parsed, edit.sections);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'removecustomrules') {
+      log.debug('BiqApplyEdits', 'op=removecustomrules: removing custom-rules sections');
+      removeCustomRulesSectionsFromParsed(parsed);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'setcustomrules') {
+      const sectionCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
+      log.debug('BiqApplyEdits', `op=setcustomrules: replacing custom-rules sections [${sectionCodes}]`);
+      setCustomRulesSectionsOnParsed(parsed, edit.sections);
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
       continue;

@@ -225,23 +225,26 @@ function buildTileLookup(tileSection) {
   return lookup;
 }
 
-function getMapSectionsOrSkip(t, mapTab) {
+function getMapSectionsOrSkip(t, mapTab, options = {}) {
   const tileSection = getSection(mapTab, 'TILE');
   const citySection = getSection(mapTab, 'CITY');
   const unitSection = getSection(mapTab, 'UNIT');
+  const minTileRecords = Number.isFinite(options.minTileRecords) ? Number(options.minTileRecords) : 2;
+  const minCityRecords = Number.isFinite(options.minCityRecords) ? Number(options.minCityRecords) : 1;
+  const minUnitRecords = Number.isFinite(options.minUnitRecords) ? Number(options.minUnitRecords) : 1;
   if (!(tileSection && citySection && unitSection)) {
     t.skip('Sample BIQ map tab is missing TILE/CITY/UNIT sections.');
     return null;
   }
-  if (!Array.isArray(tileSection.records) || tileSection.records.length < 2) {
+  if (!Array.isArray(tileSection.records) || tileSection.records.length < minTileRecords) {
     t.skip('Sample BIQ has insufficient TILE records.');
     return null;
   }
-  if (!Array.isArray(citySection.records) || citySection.records.length < 1) {
+  if (!Array.isArray(citySection.records) || citySection.records.length < minCityRecords) {
     t.skip('Sample BIQ has insufficient CITY records.');
     return null;
   }
-  if (!Array.isArray(unitSection.records) || unitSection.records.length < 1) {
+  if (!Array.isArray(unitSection.records) || unitSection.records.length < minUnitRecords) {
     t.skip('Sample BIQ has insufficient UNIT records.');
     return null;
   }
@@ -398,6 +401,8 @@ function computeGenericRoundtripMutation(field, occurrence = 0) {
 function mutateEditableFieldsForRoundtrip(holder, { exclude } = {}) {
   const expectations = [];
   const occurrenceByBaseKey = new Map();
+  const holderCode = String(holder && holder.code || holder && holder.sectionCode || '').trim().toUpperCase();
+  const forceMapEditedFlag = ['WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].includes(holderCode);
 
   getFieldCollection(holder).forEach((field) => {
     if (!field || !field.editable) return;
@@ -408,6 +413,7 @@ function mutateEditableFieldsForRoundtrip(holder, { exclude } = {}) {
     occurrenceByBaseKey.set(baseKey, occurrence + 1);
     const mutation = computeGenericRoundtripMutation(field, occurrence);
     field.value = mutation.assigned;
+    if (forceMapEditedFlag) field.mapEditorValueEdited = true;
     expectations.push({
       baseKey,
       occurrence,
@@ -1365,6 +1371,7 @@ test('BIQ round-trip persists editable remaining structured BIQ section fields f
     const section = getSection(bundle);
     assert.ok(section && Array.isArray(section.records) && section.records.length > 0, `expected ${label} fixture section`);
     section.records.forEach((record, index) => {
+      record.sectionCode = label;
       const expectations = mutateEditableFieldsForRoundtrip(record);
       assert.ok(expectations.length > 0, `expected editable ${label} record ${index} fields to mutate`);
       expectedByLabel.set(`${label}:${index}`, { expectations, getSection, index });
@@ -2392,7 +2399,7 @@ test('BIQ map round-trip supports map painting + adding city/unit records', (t) 
     t.skip('Sample BIQ has no map tab.');
     return;
   }
-  const sections = getMapSectionsOrSkip(t, mapTab);
+  const sections = getMapSectionsOrSkip(t, mapTab, { minCityRecords: 0, minUnitRecords: 0 });
   if (!sections) return;
   const { tileSection, citySection, unitSection } = sections;
 
@@ -2518,7 +2525,7 @@ test('unchanged map save preserves raw BIQ map sections byte-for-byte', () => {
   assertRawSectionsEqual(reparsedOriginal, reparsedSaved, DEFAULT_MAP_SECTION_CODES, 'expected unchanged save to preserve raw');
 });
 
-test('BIQ map round-trip persists added city/unit records at 126,2 from stable fixture', (t) => {
+test('BIQ map round-trip persists added city/unit records at a deterministic stable fixture tile', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -2533,18 +2540,23 @@ test('BIQ map round-trip persists added city/unit records at 126,2 from stable f
 
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   const mapTab = bundle && bundle.tabs && bundle.tabs.map;
-  const sections = getMapSectionsOrSkip(t, mapTab);
+  const sections = getMapSectionsOrSkip(t, mapTab, { minCityRecords: 0, minUnitRecords: 0 });
   if (!sections) return;
   const { tileSection, citySection, unitSection } = sections;
 
-  const tile = (tileSection.records || []).find((record) => getRecordInt(record, 'xpos', -1) === 126 && getRecordInt(record, 'ypos', -1) === 2);
-  assert.ok(tile, 'expected stable fixture tile at 126,2');
+  const tile = (tileSection.records || []).find((record) => {
+    return getRecordInt(record, 'city', -1) < 0 && getRecordInt(record, 'colony', -1) < 0;
+  });
+  assert.ok(tile, 'expected stable fixture tile available for add-city/add-unit roundtrip');
+  const tileX = getRecordInt(tile, 'xpos', -1);
+  const tileY = getRecordInt(tile, 'ypos', -1);
+  assert.ok(tileX >= 0 && tileY >= 0, 'expected selected stable fixture tile to expose valid coordinates');
 
   if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
-  const cityRef = makeShortBiqTestRef('CITY', '1262');
-  const unitRef = makeShortBiqTestRef('UNIT', '1262');
-  mapCore.addCity(citySection, tile, 126, 2, 1, 2, 'Stable Fixture City', cityRef);
-  mapCore.addUnit(unitSection, tile, 126, 2, 1, 2, 0, unitRef);
+  const cityRef = makeShortBiqTestRef('CITY', `${tileX}${tileY}`);
+  const unitRef = makeShortBiqTestRef('UNIT', `${tileX}${tileY}`);
+  mapCore.addCity(citySection, tile, tileX, tileY, 1, 2, 'Stable Fixture City', cityRef);
+  mapCore.addUnit(unitSection, tile, tileX, tileY, 1, 2, 0, unitRef);
   mapTab.recordOps.push({ op: 'add', sectionCode: 'CITY', newRecordRef: cityRef });
   mapTab.recordOps.push({ op: 'add', sectionCode: 'UNIT', newRecordRef: unitRef });
 
@@ -2563,18 +2575,18 @@ test('BIQ map round-trip persists added city/unit records at 126,2 from stable f
   const reUnitSection = getSection(reMap, 'UNIT');
   const savedCity = (reCitySection && Array.isArray(reCitySection.records) ? reCitySection.records : []).find((record) => {
     return String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Stable Fixture City'
-      && getRecordInt(record, 'x', -1) === 126
-      && getRecordInt(record, 'y', -1) === 2;
+      && getRecordInt(record, 'x', -1) === tileX
+      && getRecordInt(record, 'y', -1) === tileY;
   });
-  assert.ok(savedCity, 'expected added city at 126,2 to persist');
+  assert.ok(savedCity, `expected added city at ${tileX},${tileY} to persist`);
   const savedUnit = (reUnitSection && Array.isArray(reUnitSection.records) ? reUnitSection.records : []).find((record) => {
-    return getRecordInt(record, 'x', -1) === 126
-      && getRecordInt(record, 'y', -1) === 2
+    return getRecordInt(record, 'x', -1) === tileX
+      && getRecordInt(record, 'y', -1) === tileY
       && getRecordInt(record, 'owner', -1) === 1
       && getRecordInt(record, 'ownertype', -1) === 2
       && getRecordInt(record, 'prtonumber', -1) === 0;
   });
-  assert.ok(savedUnit, 'expected added unit at 126,2 to persist');
+  assert.ok(savedUnit, `expected added unit at ${tileX},${tileY} to persist`);
 });
 
 test('scenario save writes and reloads scenario.districts.txt entries and named tiles', () => {

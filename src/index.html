@@ -31,7 +31,13 @@
     <section class="paths card">
       <div class="actions">
         <button id="paths-toggle" class="ghost" type="button">Hide File Paths</button>
-        <span id="paths-summary" class="paths-summary"></span>
+        <div class="paths-summary-stack">
+          <span id="paths-summary" class="paths-summary"></span>
+          <div id="scenario-option-chips" class="scenario-option-chips hidden" aria-label="Scenario options">
+            <button id="custom-rules-chip" class="scenario-option-chip" type="button"></button>
+            <button id="custom-player-data-chip" class="scenario-option-chip" type="button"></button>
+          </div>
+        </div>
         <button id="global-search-btn" class="ghost" type="button" title="Jump Search (Ctrl/Cmd+K)"><span class="btn-icon">🔎</span>Search</button>
         <button id="back-btn" class="ghost nav-btn" type="button" aria-label="Back" title="Back">←</button>
         <button id="forward-btn" class="ghost nav-btn" type="button" aria-label="Forward" title="Forward">→</button>
@@ -307,11 +313,6 @@
           </li>
           <li>
             <strong><a href="https://forums.civfanatics.com/members/haluu.195079/" target="_blank" rel="noopener noreferrer">@Haluu</a></strong> for extensive help, testing, feedback, kindness, as well as the remarkable <a href="https://forums.civfanatics.com/resources/tides-of-crimson-v2-0-full.28857/" target="_blank" rel="noopener noreferrer">Tides of Crimson mod</a>, which served as a crucial test case and source of sample data for development, debugging, and source of inspiration.
-          </li>
-          <li>
-            <strong><a href="https://forums.civfanatics.com/members/quintillus.112675/" target="_blank" rel="noopener noreferrer">@Quintillus</a></strong> for the remarkable
-            <a href="https://forums.civfanatics.com/threads/quintillus-cross-platform-civ3-editor.377358/" target="_blank" rel="noopener noreferrer">Civ 3 Cross Platform Editor</a>,
-            without which this app would not be possible. The Editor served as a consistent Rosetta Stone for making sense of the BIQ file and how to organize this information for users.
           </li>
           <li>
             <strong><a href="https://forums.civfanatics.com/members/puppeteer.36357/" target="_blank" rel="noopener noreferrer">@Puppeteer</a></strong>, whose Go-language BIQ decompressor

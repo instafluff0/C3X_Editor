@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { buildReferenceTabs } = require('../src/configCore');
+const { buildReferenceTabs, buildEffectiveReferenceTabs } = require('../src/configCore');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-layers-'));
@@ -48,6 +48,10 @@ function makeField(baseKey, value, editable = true) {
     originalValue: String(value),
     editable
   };
+}
+
+function getField(fields, key) {
+  return (Array.isArray(fields) ? fields : []).find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === String(key || '').toLowerCase()) || null;
 }
 
 test('global mode uses Conquests override precedence over PTW/Vanilla', () => {
@@ -315,4 +319,115 @@ test('BIQ-backed units only fold Quint strategy-map duplicates, not same-civilop
   assert.deepEqual(entries.map((entry) => entry.name), ['Shared Unit A', 'Shared Unit B']);
   assert.deepEqual(entries.map((entry) => entry.biqIndex), [0, 2]);
   assert.deepEqual(entries.map((entry) => entry.civilopediaKey), ['PRTO_SHARED', 'PRTO_SHARED']);
+});
+
+test('scenario BIQ with Enabled Custom Rules off falls back to global rule tabs and disables them', () => {
+  const root = mkTmpDir();
+  const scenarioDir = path.join(root, 'Conquests', 'Scenarios', 'NoCustomRulesScenario');
+  fs.mkdirSync(scenarioDir, { recursive: true });
+
+  writeTextLayer(root, 'Conquests', 'Civilopedia.txt', '');
+  writeTextLayer(root, 'Conquests', 'PediaIcons.txt', '');
+  writeTextLayer(root, 'Conquests', 'diplomacy.txt', makeDiplomacy('Conquests hello', 'Conquests deal'));
+
+  const scenarioBiqTab = {
+    sourcePath: path.join(scenarioDir, 'NoCustomRulesScenario.biq'),
+    sections: [
+      {
+        code: 'GAME',
+        records: [
+          {
+            index: 0,
+            fields: [makeField('useDefaultRules', 'true', false)]
+          }
+        ]
+      },
+      {
+        code: 'WCHR',
+        records: [{ index: 0, fields: [] }]
+      },
+      {
+        code: 'WMAP',
+        records: [{ index: 0, fields: [] }]
+      }
+    ]
+  };
+  const defaultRulesBiqTab = {
+    sourcePath: path.join(root, 'Conquests', 'conquests.biq'),
+    sections: [
+      {
+        code: 'GOOD',
+        records: [
+          {
+            index: 0,
+            fields: [
+              makeField('civilopediaentry', 'GOOD_HORSES', false),
+              makeField('name', 'Horses'),
+              makeField('icon', '7'),
+              makeField('type', '1')
+            ]
+          },
+          {
+            index: 1,
+            fields: [
+              makeField('civilopediaentry', 'GOOD_IRON', false),
+              makeField('name', 'Iron'),
+              makeField('icon', '12'),
+              makeField('type', '1')
+            ]
+          }
+        ]
+      },
+      {
+        code: 'TECH',
+        records: [
+          {
+            index: 0,
+            fields: [
+              makeField('civilopediaentry', 'TECH_ALPHABET', false),
+              makeField('name', 'Alphabet')
+            ]
+          },
+          {
+            index: 1,
+            fields: [
+              makeField('civilopediaentry', 'TECH_BRONZE_WORKING', false),
+              makeField('name', 'Bronze Working')
+            ]
+          }
+        ]
+      }
+    ]
+  };
+
+  const tabs = buildEffectiveReferenceTabs(root, {
+    mode: 'scenario',
+    scenarioPath: scenarioDir,
+    scenarioPaths: [scenarioDir],
+    biqTab: scenarioBiqTab,
+    defaultRulesBiqTab,
+    textFileEncoding: 'windows-1252'
+  });
+
+  assert.equal(tabs.resources.disabled, true);
+  assert.equal(tabs.technologies.disabled, true);
+  assert.match(String(tabs.resources.fallbackNotice || ''), /Enabled Custom Rules is off/i);
+  assert.match(String(tabs.resources.disabledReason || ''), /Enabled Custom Rules is off/i);
+
+  const resourceSummary = tabs.resources.entries.slice(0, 2).map((entry) => ({
+    name: entry.name,
+    biqIndex: entry.biqIndex,
+    icon: getField(entry.biqFields, 'icon') && getField(entry.biqFields, 'icon').value
+  }));
+  assert.deepEqual(resourceSummary, [
+    { name: 'Horses', biqIndex: 0, icon: '7' },
+    { name: 'Iron', biqIndex: 1, icon: '12' }
+  ]);
+  assert.deepEqual(
+    tabs.technologies.entries.slice(0, 2).map((entry) => ({ name: entry.name, biqIndex: entry.biqIndex })),
+    [
+      { name: 'Alphabet', biqIndex: 0 },
+      { name: 'Bronze Working', biqIndex: 1 }
+    ]
+  );
 });

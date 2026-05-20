@@ -3867,6 +3867,138 @@ function collectStandardReferenceKeySets(biqTab) {
   };
 }
 
+const CUSTOM_RULES_SECTION_CODES = [
+  'BLDG', 'CTZN', 'CULT', 'DIFF', 'ERAS', 'ESPN', 'EXPR', 'FLAV',
+  'GOOD', 'GOVT', 'PRTO', 'RACE', 'RULE', 'TECH', 'TERR', 'TFRM', 'WSIZ'
+];
+const DEFAULT_RULES_REFERENCE_TAB_KEYS = ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
+const DEFAULT_RULES_STRUCTURE_TAB_KEYS = ['terrain', 'world', 'rules'];
+const CUSTOM_RULES_FALLBACK_NOTICE = 'Showing standard-game rules because Enabled Custom Rules is off for this scenario BIQ.';
+const CUSTOM_RULES_DISABLED_REASON = 'Enabled Custom Rules is off for this scenario BIQ. Showing standard-game rules instead of scenario-local rule tabs.';
+const CUSTOM_PLAYER_DATA_DISABLED_REASON = 'Enabled Custom Player Data is off for this scenario BIQ. The Players tab is unavailable until custom player data is enabled.';
+
+function parseBooleanishFieldValue(value) {
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  return text === '1' || text === 'true' || text === 'yes' || text === 'on';
+}
+
+function findGameFieldValue(biqTab, baseKey) {
+  if (!biqTab || !Array.isArray(biqTab.sections)) return '';
+  const gameSection = biqTab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'GAME');
+  const record = gameSection && Array.isArray(gameSection.records) ? gameSection.records[0] : null;
+  if (!record || !Array.isArray(record.fields)) return '';
+  const target = canonicalFieldKey(baseKey);
+  const field = record.fields.find((entry) => canonicalFieldKey(entry && (entry.baseKey || entry.key)) === target);
+  return field ? String(field.value == null ? '' : field.value) : '';
+}
+
+function biqUsesDefaultRules(biqTab) {
+  return parseBooleanishFieldValue(findGameFieldValue(biqTab, 'useDefaultRules'));
+}
+
+function hasBiqCustomRulesSections(biqTab) {
+  if (!biqTab || !Array.isArray(biqTab.sections)) return false;
+  return biqTab.sections.some((section) => {
+    const code = String(section && section.code || '').toUpperCase();
+    if (!CUSTOM_RULES_SECTION_CODES.includes(code)) return false;
+    const count = Number(section && section.count);
+    const records = Array.isArray(section && section.records) ? section.records.length : 0;
+    const fullRecords = Array.isArray(section && section.fullRecords) ? section.fullRecords.length : 0;
+    return count > 0 || records > 0 || fullRecords > 0;
+  });
+}
+
+function shouldUseScenarioDefaultRulesFallback(mode, biqTab) {
+  if (mode !== 'scenario') return false;
+  return !hasBiqCustomRulesSections(biqTab);
+}
+
+function applyScenarioDefaultRulesFallbackToReferenceTabs(referenceTabs, fallbackTabs) {
+  const out = { ...(referenceTabs || {}) };
+  DEFAULT_RULES_REFERENCE_TAB_KEYS.forEach((key) => {
+    const fallbackTab = fallbackTabs && fallbackTabs[key];
+    if (!fallbackTab) return;
+    out[key] = {
+      ...fallbackTab,
+      readOnly: true,
+      disabled: true,
+      fallbackSourcePath: fallbackTab.sourcePath || '',
+      fallbackNotice: CUSTOM_RULES_FALLBACK_NOTICE,
+      disabledReason: CUSTOM_RULES_DISABLED_REASON
+    };
+  });
+  return out;
+}
+
+function applyScenarioDefaultRulesFallbackToStructureTabs(structureTabs, fallbackTabs) {
+  const out = { ...(structureTabs || {}) };
+  DEFAULT_RULES_STRUCTURE_TAB_KEYS.forEach((key) => {
+    const fallbackTab = fallbackTabs && fallbackTabs[key];
+    if (!fallbackTab) return;
+    out[key] = {
+      ...fallbackTab,
+      readOnly: true,
+      disabled: true,
+      fallbackSourcePath: fallbackTab.sourcePath || '',
+      fallbackNotice: CUSTOM_RULES_FALLBACK_NOTICE,
+      disabledReason: CUSTOM_RULES_DISABLED_REASON
+    };
+  });
+  return out;
+}
+
+function applyCustomPlayerDataDisabledState(structureTabs, mode) {
+  if (mode !== 'scenario') return structureTabs;
+  const out = { ...(structureTabs || {}) };
+  const playersTab = out.players;
+  const hasLeadRecords = !!(playersTab
+    && Array.isArray(playersTab.sections)
+    && playersTab.sections.some((section) => String(section && section.code || '').toUpperCase() === 'LEAD'
+      && Array.isArray(section.records)
+      && section.records.length > 0));
+  if (!playersTab || hasLeadRecords) return out;
+  out.players = {
+    ...playersTab,
+    readOnly: true,
+    disabled: true,
+    fallbackNotice: 'Custom player data is currently off for this scenario BIQ.',
+    disabledReason: CUSTOM_PLAYER_DATA_DISABLED_REASON
+  };
+  return out;
+}
+
+function buildEffectiveReferenceTabs(civ3Path, options = {}) {
+  const mode = options.mode === 'scenario' ? 'scenario' : 'global';
+  const referenceTabs = buildReferenceTabs(civ3Path, options);
+  if (!shouldUseScenarioDefaultRulesFallback(mode, options.biqTab)) return referenceTabs;
+  const fallbackBiqTab = options.defaultRulesBiqTab || null;
+  const fallbackTabs = buildReferenceTabs(civ3Path, {
+    mode: 'global',
+    scenarioPath: '',
+    scenarioPaths: [],
+    biqTab: fallbackBiqTab,
+    textFileEncoding: options.textFileEncoding
+  });
+  return applyScenarioDefaultRulesFallbackToReferenceTabs(referenceTabs, fallbackTabs);
+}
+
+function collectBiqCustomRulesMutationOps({ tabs, civ3Path, textEncoding = DEFAULT_TEXT_FILE_ENCODING } = {}) {
+  const scenarioTab = tabs && tabs.scenarioSettings;
+  const mutation = String(scenarioTab && scenarioTab.customRulesMutation || '').trim().toLowerCase();
+  if (!mutation) return [];
+  if (mutation === 'disable') {
+    return [{ op: 'removecustomrules' }];
+  }
+  if (mutation !== 'enable') return [];
+  const globalBiqTab = loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding });
+  if (!globalBiqTab || !Array.isArray(globalBiqTab.sections)) return [];
+  const sections = globalBiqTab.sections
+    .filter((section) => CUSTOM_RULES_SECTION_CODES.includes(String(section && section.code || '').trim().toUpperCase()))
+    .map((section) => JSON.parse(JSON.stringify(section)));
+  if (sections.length === 0) return [];
+  return [{ op: 'setcustomrules', sections }];
+}
+
 function getSectionCodeForReferencePrefix(prefix) {
   const p = String(prefix || '').toUpperCase().replace(/_+$/, '');
   if (!p) return '';
@@ -5672,11 +5804,18 @@ function loadBundle(payload) {
       readPaths.add(path.resolve(String(biqTab.sourcePath)));
     }
 
-    let referenceTabs = buildReferenceTabs(civ3Path, {
+    let globalBiqTab = null;
+    const needsDefaultRulesFallback = shouldUseScenarioDefaultRulesFallback(mode, biqTab);
+    if (needsDefaultRulesFallback) {
+      globalBiqTab = loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding: String(biqTab && biqTab.textEncoding || textFileEncoding || 'windows-1252') });
+    }
+
+    let referenceTabs = buildEffectiveReferenceTabs(civ3Path, {
       mode,
       scenarioPath: mode === 'scenario' ? (scenarioContext.contentWriteRoot || scenarioDir) : scenarioDir,
       scenarioPaths: scenarioSearchPaths,
       biqTab,
+      defaultRulesBiqTab: globalBiqTab,
       textFileEncoding
     });
     const resolvedBiqTextEncoding = inferBiqTextEncodingFromReferenceTabs(referenceTabs, textFileEncoding);
@@ -5684,11 +5823,18 @@ function loadBundle(payload) {
       biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, textEncoding: resolvedBiqTextEncoding });
       bundle.biq = biqTab;
       bundle.biqTextEncoding = String(biqTab && biqTab.textEncoding || resolvedBiqTextEncoding);
-      referenceTabs = buildReferenceTabs(civ3Path, {
+      const reloadedNeedsDefaultRulesFallback = shouldUseScenarioDefaultRulesFallback(mode, biqTab);
+      if (reloadedNeedsDefaultRulesFallback) {
+        globalBiqTab = loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding: resolvedBiqTextEncoding });
+      } else {
+        globalBiqTab = null;
+      }
+      referenceTabs = buildEffectiveReferenceTabs(civ3Path, {
         mode,
         scenarioPath: mode === 'scenario' ? (scenarioContext.contentWriteRoot || scenarioDir) : scenarioDir,
         scenarioPaths: scenarioSearchPaths,
         biqTab,
+        defaultRulesBiqTab: globalBiqTab,
         textFileEncoding
       });
     }
@@ -5707,21 +5853,16 @@ function loadBundle(payload) {
       })
       : null;
     bundle.tabs.map = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts: scenarioDistrictsMetadata });
-    const biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
+    let biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
+    if (shouldUseScenarioDefaultRulesFallback(mode, biqTab)) {
+      globalBiqTab = globalBiqTab || loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding: bundle.biqTextEncoding || textFileEncoding });
+      const globalStructureTabs = buildBiqStructureTabs(globalBiqTab, 'global');
+      biqStructureTabs = applyScenarioDefaultRulesFallbackToStructureTabs(biqStructureTabs, globalStructureTabs);
+    }
+    biqStructureTabs = applyCustomPlayerDataDisabledState(biqStructureTabs, mode);
     Object.keys(biqStructureTabs).forEach((key) => {
       bundle.tabs[key] = biqStructureTabs[key];
     });
-    if (mode === 'scenario' && bundle.tabs.terrain && Array.isArray(bundle.tabs.terrain.sections) && bundle.tabs.terrain.sections.length === 0) {
-      const globalBiqTab = loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '' });
-      const globalStructureTabs = buildBiqStructureTabs(globalBiqTab, 'global');
-      if (globalStructureTabs.terrain && Array.isArray(globalStructureTabs.terrain.sections) && globalStructureTabs.terrain.sections.length > 0) {
-        bundle.tabs.terrain.sections = globalStructureTabs.terrain.sections;
-        bundle.tabs.terrain.readOnly = true;
-        bundle.tabs.terrain.sourcePath = globalStructureTabs.terrain.sourcePath || bundle.tabs.terrain.sourcePath;
-        bundle.tabs.terrain.fallbackSourcePath = globalStructureTabs.terrain.sourcePath || '';
-        bundle.tabs.terrain.fallbackNotice = 'Showing standard-game terrain rules because this scenario BIQ does not include TERR/TFRM sections.';
-      }
-    }
     if (bundle.tabs.terrain) {
       bundle.tabs.terrain.civilopedia = {
         terrain: referenceTabs.terrainPedia || null,
@@ -6661,6 +6802,11 @@ function buildSavePlan(payload) {
       tabs: payload.tabs || {}
     });
 
+    const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
+      tabs: payload.tabs || {},
+      civ3Path,
+      textEncoding: inferredBiqTextEncoding
+    });
     const biqRecordOps = resolveExternalImportedPrtoRecordOps(
       collectBiqReferenceRecordOps(payload.tabs || {}),
       civ3Path
@@ -6685,7 +6831,8 @@ function buildSavePlan(payload) {
         value: scenarioContext.autoCreatedSearchValue
       }]
       : [];
-    const allBiqEdits = biqRecordOps
+    const allBiqEdits = biqCustomRulesOps
+      .concat(biqRecordOps)
       .concat(biqStructureRecordOps)
       .concat(biqMapStructureOps)
       .concat(biqMapRecordOps)
@@ -6694,6 +6841,7 @@ function buildSavePlan(payload) {
       .concat(mapEdits)
       .concat(autoSearchEdits);
     log.info('BiqSave', `buildSavePlan: BIQ edit summary for ${log.rel(scenarioPath)}`
+      + ` — customRulesOps=${biqCustomRulesOps.length}`
       + ` — referenceRecordOps=${biqRecordOps.length}`
       + ` structureRecordOps=${biqStructureRecordOps.length}`
       + ` mapStructureOps=${biqMapStructureOps.length}`
@@ -9276,6 +9424,7 @@ module.exports = {
   serializeDiplomacyDocumentWithOrder,
   parseDiplomacySlotOptions,
   buildReferenceTabs,
+  buildEffectiveReferenceTabs,
   resolveScenarioDir,
   resolveBiqPath,
   createScenario,

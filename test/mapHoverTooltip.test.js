@@ -303,7 +303,7 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
   );
   assert.match(
     rendererText,
-    /const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.innerHTML = '<span class="btn-icon">⇪<\/span>Import Map';[\s\S]*?const result = await promptImportMapAction\(\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.importedSections, 'set', 'imported'\);/,
+    /const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?importBtn\.textContent = '⇪ Import Map';[\s\S]*?const result = await promptImportMapAction\(\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.importedSections, 'set', 'imported'\);/,
     'the map tab should expose an Import Map button that routes accepted imports into the explicit whole-map replacement path'
   );
   assert.match(
@@ -328,12 +328,12 @@ test('map tab exposes Quint-style Add Custom Map creation with even-size and til
   );
   assert.match(
     rendererText,
-    /async function promptAddCustomMapAction\(tab\) \{[\s\S]*?el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Create New Map';[\s\S]*?Create a new custom map\.[\s\S]*?65,536 tiles[\s\S]*?Custom maps require even dimensions[\s\S]*?Odd dimensions will be rounded up to the next even size/,
+    /async function promptAddCustomMapAction\(tab\) \{[\s\S]*?el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Create New Map';[\s\S]*?Create a new custom map\.[\s\S]*?65,536 tiles[\s\S]*?Custom maps require even dimensions[\s\S]*?Polar Ice Caps[\s\S]*?Allow X-wrapping[\s\S]*?Allow Y-wrapping[\s\S]*?Odd dimensions will be rounded up to the next even size/,
     'Add Custom Map should use the shared modal shell and explain Quint-style size validation clearly'
   );
   assert.match(
     rendererText,
-    /async function buildBlankCustomMapSections\(tab, options = \{\}\) \{[\s\S]*?const resourceCount = resourceDefs\.length;[\s\S]*?baseKey: 'numresources', value: resourceCount[\s\S]*?baseKey: 'flags', value: QUINT_CUSTOM_MAP_FLAGS[\s\S]*?baseKey: 'continentclass', value: 1[\s\S]*?createGeneratedMapSection\('SLOC', \[\]\),[\s\S]*?createGeneratedMapSection\('CITY', \[\]\),[\s\S]*?createGeneratedMapSection\('UNIT', \[\]\),[\s\S]*?createGeneratedMapSection\('CLNY', \[\]\)/,
+    /async function buildBlankCustomMapSections\(tab, options = \{\}\) \{[\s\S]*?const xWrapping = options\.xWrapping == null[\s\S]*?const yWrapping = options\.yWrapping == null[\s\S]*?const polarIceCaps = options\.polarIceCaps == null[\s\S]*?const mapFlags = \(xWrapping \? 1 : 0\) \| \(yWrapping \? 2 : 0\) \| \(polarIceCaps \? 4 : 0\);[\s\S]*?const resourceCount = resourceDefs\.length;[\s\S]*?baseKey: 'numresources', value: resourceCount[\s\S]*?baseKey: 'flags', value: mapFlags[\s\S]*?baseKey: 'continentclass', value: 1[\s\S]*?createGeneratedMapSection\('SLOC', \[\]\),[\s\S]*?createGeneratedMapSection\('CITY', \[\]\),[\s\S]*?createGeneratedMapSection\('UNIT', \[\]\),[\s\S]*?createGeneratedMapSection\('CLNY', \[\]\)/,
     'custom map creation should seed Quint-style WCHR/WMAP/TILE/CONT sections while leaving map entities empty'
   );
   assert.match(
@@ -343,8 +343,8 @@ test('map tab exposes Quint-style Add Custom Map creation with even-size and til
   );
   assert.match(
     rendererText,
-    /if \(isScenarioMode\(\) && !hasMapData\(tab\)\) \{[\s\S]*?addCustomBtn\.innerHTML = '<span class="btn-icon">＋<\/span>Create New Map';[\s\S]*?const result = await promptAddCustomMapAction\(tab\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.customSections, 'set', 'custom'\);/,
-    'the map tab should expose Add Custom Map only when no custom map exists and route it through the explicit whole-map custom-map path'
+    /if \(isScenarioMode\(\) && !hasMapData\(tab\)\) \{[\s\S]*?addCustomBtn\.className = 'ghost action-add';[\s\S]*?addCustomBtn\.textContent = '＋ Create New Map';[\s\S]*?const result = await promptAddCustomMapAction\(tab\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.customSections, 'set', 'custom'\);[\s\S]*?openMapModal\(\{ tab, tileSection: tileSectionAfterCreate, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);/,
+    'the map tab should expose Add Custom Map only when no custom map exists, route it through the explicit whole-map custom-map path, and open the new map immediately'
   );
 });
 
@@ -365,6 +365,21 @@ test('map art loads repaint an open map modal in place instead of rebuilding the
     rendererText,
     /if \(floatingUi\) \{[\s\S]*?mapModal\.refreshVisuals = \(meta = null\) => \{[\s\S]*?minimapBaseDirty = true;[\s\S]*?redrawMapCanvasInPlace\(\);[\s\S]*?if \(typeof renderMiniMap === 'function'\) renderMiniMap\(\);[\s\S]*?return true;[\s\S]*?\};[\s\S]*?\}/,
     'an open map modal should register a reusable visual refresh callback that repaints the canvas and minimap when art assets finish loading'
+  );
+});
+
+test('modal map zoom previews on the existing canvas stack and defers the expensive rerender until input settles', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const clearDeferredZoomCommit = \(\) => \{[\s\S]*?state\.biqMapZoomCommitTimer[\s\S]*?\};[\s\S]*?const applyTransientZoomPreview = \(fromZoom, toZoom, paneX, paneY, source\) => \{[\s\S]*?mapCanvasStack\.style\.transformOrigin = `\$\{originX\}px \$\{originY\}px`[\s\S]*?mapCanvasStack\.style\.transform = `scale\(\$\{factor\}\)`[\s\S]*?\};[\s\S]*?const scheduleDeferredZoomCommit = \(source\) => \{[\s\S]*?state\.biqMapZoomCommitTimer = window\.setTimeout\(\(\) => \{[\s\S]*?clearTransientZoomPreview\(\);[\s\S]*?rerenderMapView\(\);[\s\S]*?\}, 120\);[\s\S]*?\};/,
+    'modal zoom should preview by scaling the existing canvas stack immediately, then pay for a single rerender once input settles'
+  );
+  assert.match(
+    rendererText,
+    /const setMapZoom = \(nextZoom, source, paneX, paneY, anchorContent\) => \{[\s\S]*?const renderedZoom = \(floatingUi && state\.biqMapZoomAnim && Number\.isFinite\(state\.biqMapZoomAnim\.renderedZoom\)\)[\s\S]*?state\.biqMapZoomAnchor = \{ fromZoom: renderedZoom, paneX: safePaneX, paneY: safePaneY, contentX, contentY \};[\s\S]*?if \(floatingUi\) \{[\s\S]*?applyTransientZoomPreview\(renderedZoom, clamped, safePaneX, safePaneY, source\);[\s\S]*?scheduleDeferredZoomCommit\(source\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?rerenderMapView\(\);[\s\S]*?const anchorContent = hovered[\s\S]*?\? \{ x: hovered\.centerX, y: hovered\.centerY \}[\s\S]*?: \{[\s\S]*?x: mapPane\.scrollLeft \+ paneX,[\s\S]*?y: mapPane\.scrollTop \+ paneY[\s\S]*?\};/,
+    'modal zoom should keep anchor math based on the currently rendered zoom and prefer hovered tile centers over raw pane coordinates when choosing the committed zoom target'
   );
 });
 
@@ -398,7 +413,7 @@ test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered c
   );
   assert.match(
     rendererText,
-    /refreshMapViewForToolChange = \(options = \{\}\) => \{[\s\S]*?if \(shouldRedrawCanvas\) redrawMapCanvasInPlace\(\);[\s\S]*?\};[\s\S]*?redrawMapCanvasInPlace\(\);[\s\S]*?window\.requestAnimationFrame\(\(\) => \{[\s\S]*?redrawMapCanvasInPlace\(\);/,
+    /refreshMapViewForToolChange = \(options = \{\}\) => \{[\s\S]*?if \(shouldRedrawCanvas\) redrawMapCanvasInPlace\(\);[\s\S]*?\};[\s\S]*?const applySavedMapPaneView = \(allowInitialCenter = false\) => \{[\s\S]*?if \(zoomAnchor && Number\.isFinite\(zoomAnchor\.fromZoom\)\) \{[\s\S]*?setMapPaneScroll\(targetLeft, targetTop, \{ reason: 'zoom-anchor', logWhenNoHorizontal: true \}\);[\s\S]*?return 'zoom-anchor';[\s\S]*?\}[\s\S]*?if \(Number\.isFinite\(state\.biqMapScrollLeft\) && Number\.isFinite\(state\.biqMapScrollTop\)\) \{[\s\S]*?setMapPaneScroll\(state\.biqMapScrollLeft, state\.biqMapScrollTop, \{ reason: 'restore-scroll' \}\);[\s\S]*?return 'restore-scroll';[\s\S]*?\}[\s\S]*?applySavedMapPaneView\(false\);[\s\S]*?window\.requestAnimationFrame\(\(\) => \{[\s\S]*?applySavedMapPaneView\(true\);[\s\S]*?redrawMapCanvasInPlace\(\);/,
     'initial map open and tool-driven refreshes should use a synchronous whole-canvas redraw instead of the viewport scheduler'
   );
   assert.doesNotMatch(rendererText, /const scheduleViewportRedraw = \(/, 'the reverted smooth-pan renderer should not include the viewport redraw scheduler');
