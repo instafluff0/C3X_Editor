@@ -2795,10 +2795,13 @@ function findRecordByRef(records, recordRef) {
     if (Number.isFinite(idx) && idx >= 0 && idx < records.length) return records[idx];
     return null;
   }
-  // Search by civilopediaEntry
+  // Search by civilopediaEntry for normal BIQ sections, and by transient
+  // newRecordRef for newly added map/structure records before serialization.
   return records.find((r) => {
     const ce = String(r.civilopediaEntry || '').trim().toUpperCase();
-    return ce === upper;
+    if (ce === upper) return true;
+    const newRef = String(r && r.newRecordRef || '').trim().toUpperCase();
+    return newRef === upper;
   }) || null;
 }
 
@@ -3197,12 +3200,18 @@ function createDefaultRecord(code, civKey, io) {
       return prtoRec;
     }
     case 'CITY': return {
-      hasWalls: 0, hasPalace: 0, name: '', ownerType: 1, numBuildings: 0, buildings: [],
-      culture: 0, owner: 0, size: 1, x: 0, y: 0, cityLevel: 0, borderLevel: 0, useAutoName: 0
+      hasWalls: 0, hasPalace: 0, name: '', ownerType: 2, numBuildings: 0, buildings: [],
+      culture: 0, owner: 1, size: 1, x: 0, y: 0, cityLevel: 0, borderLevel: 1, useAutoName: 0
     };
     case 'UNIT': return {
       name: '', ownerType: 1, experienceLevel: 0, owner: 0, pRTONumber: 0,
       AIStrategy: 0, x: 0, y: 0, customName: '', useCivilizationKing: 0
+    };
+    case 'SLOC': return {
+      ownerType: 2, owner: 1, x: 0, y: 0
+    };
+    case 'CLNY': return {
+      ownerType: 2, owner: 1, x: 0, y: 0, improvementType: 0
     };
     default: return { _rawData: Buffer.alloc(0) };
   }
@@ -3976,6 +3985,7 @@ function applyEdits(buf, edits, options = {}) {
         log.debug('BiqApplyEdits', `op=add ${code}: creating new record ${newRef}`);
         newRec = createDefaultRecord(code, newRef, io);
       }
+      newRec.newRecordRef = newRef;
       newRec.index = section.records.length;
       section.records.push(newRec);
       section._modified = true;
@@ -3987,13 +3997,14 @@ function applyEdits(buf, edits, options = {}) {
       const ref = String(edit.recordRef || '').trim().toUpperCase();
       if (!section) { skipped++; continue; }
       const idx = section.records.findIndex((r) => {
-        const ce = String(r.civilopediaEntry || '').trim().toUpperCase();
-        if (ce === ref) return true;
         if (ref.startsWith('@INDEX:')) {
           const n = Number.parseInt(ref.slice(7), 10);
           return Number.isFinite(n) && r.index === n;
         }
-        return false;
+        const ce = String(r && r.civilopediaEntry || '').trim().toUpperCase();
+        if (ce === ref) return true;
+        const newRef = String(r && r.newRecordRef || '').trim().toUpperCase();
+        return newRef === ref;
       });
       if (idx < 0) {
         skipped++;

@@ -1,4 +1,6 @@
 * RELEASE 27.11
+- Fixed BIQ map tabs to retain raw BIQ ownership/reference values from the underlying section data and serialize those raw values instead of enriched UI labels, eliminating no-op map rewrites, correcting player-owned city/unit reload behavior, and making painted scenario districts persist to `scenario.districts.txt` instead of staying as map-only visuals.
+- Fixed scenario saves omitting the BIQ `map` tab from the save payload, so Map editor BIQ changes and `scenario.districts.txt` writes now persist.
 - Changed BIQ map unit overlays to choose the visible unit by tile context and defense strength: strongest land defender on land, strongest sea defender on water, then air or next strongest fallback, with Tile Info unit add/remove redraw checks using the same chooser.
 - Added a default-on `File -> Settings -> Map -> Auto-Dock Tile Info Left Near Right Edge` toggle so Tile Info only flips to the left near the extreme-right map edge when that behavior is enabled.
 - Unified BIQ map district building-influence rendering and city-triggered district refreshes onto the same dynamic `city_work_radius` footprint used by wonder-district nearby-city assignment.

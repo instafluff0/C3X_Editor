@@ -32942,6 +32942,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const type = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtType, 0);
       const enabled = type >= 0 && !(state.mapEditorTool && state.mapEditorTool.remove);
       const dState = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtState, 1);
+      const districtEntry = districtEntries[type] || null;
+      const districtName = String(districtEntry && districtEntry.name || '').trim();
       if (!enabled) {
         const changedIndexes = [];
         indices.forEach((idx) => {
@@ -32957,19 +32959,28 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         });
         return changedIndexes;
       }
-      if (mapCore && typeof mapCore.applyDistrict === 'function') {
-        const changedIndexes = [];
-        indices.forEach((idx) => {
-          const tile = tiles[idx];
-          if (!tile) return;
-          const nextValue = enabled ? `${type},${dState}` : '';
-          if (String(getMapFieldValue(tile, 'district', '')) === nextValue) return;
-          changedIndexes.push(idx);
-        });
-        if (changedIndexes.length > 0) mapCore.applyDistrict(tiles, changedIndexes, type, dState, enabled);
-        return changedIndexes;
-      }
-      return [];
+      if (!districtName || !scenarioDistrictsMeta) return [];
+      const changedIndexes = [];
+      indices.forEach((idx) => {
+        const tile = tiles[idx];
+        const g = tileGeom[idx];
+        if (!tile || !g) return;
+        const beforeDistrict = String(getMapFieldValue(tile, 'district', '')).trim();
+        const beforeName = String(getMapFieldValue(tile, 'districtname', '')).trim();
+        const beforePlaced = findScenarioDistrictEntryAtCoords(g.xPos, g.yPos);
+        if (!upsertScenarioDistrictEntry(g.xPos, g.yPos, {
+          district: districtName,
+          wonderName: '',
+          wonderCity: '',
+          districtState: dState
+        })) return;
+        const afterDistrict = String(getMapFieldValue(tile, 'district', '')).trim();
+        const afterName = String(getMapFieldValue(tile, 'districtname', '')).trim();
+        const afterPlaced = findScenarioDistrictEntryAtCoords(g.xPos, g.yPos);
+        const placedChanged = JSON.stringify(beforePlaced || null) !== JSON.stringify(afterPlaced || null);
+        if (beforeDistrict !== afterDistrict || beforeName !== afterName || placedChanged) changedIndexes.push(idx);
+      });
+      return changedIndexes;
     }
     if (mode === 'naturalWonder') {
       const remove = !!(state.mapEditorTool && state.mapEditorTool.remove);
@@ -42130,7 +42141,7 @@ async function loadBundleAndRender(options = {}) {
 
 function getTabsForSavePayload() {
   const tabsToSave = {};
-  ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules'].forEach((key) => {
+  ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'map'].forEach((key) => {
     if (state.bundle && state.bundle.tabs && state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
   });
   return tabsToSave;

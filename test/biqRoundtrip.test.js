@@ -2310,6 +2310,156 @@ test('BIQ map round-trip supports map painting + adding city/unit records', (t) 
   assert.ok(districtField, 'expected district/c3coverlays data on tile after save');
   assert.ok((reCitySection && reCitySection.records && reCitySection.records.length) >= citySection.records.length);
   assert.ok((reUnitSection && reUnitSection.records && reUnitSection.records.length) >= unitSection.records.length);
+  const savedCity = (reCitySection && Array.isArray(reCitySection.records) ? reCitySection.records : []).find((record) => {
+    return String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'C3X Test City'
+      && getRecordInt(record, 'x', -1) === x
+      && getRecordInt(record, 'y', -1) === y;
+  });
+  assert.ok(savedCity, 'expected newly added city to persist at the edited tile');
+  const savedUnit = (reUnitSection && Array.isArray(reUnitSection.records) ? reUnitSection.records : []).find((record) => {
+    return getRecordInt(record, 'x', -1) === x
+      && getRecordInt(record, 'y', -1) === y
+      && getRecordInt(record, 'prtonumber', -1) === 0;
+  });
+  assert.ok(savedUnit, 'expected newly added unit to persist at the edited tile');
+});
+
+test('BIQ map save is a no-op when a loaded map bundle is unchanged', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  const biqReport = (Array.isArray(saveResult.saveReport) ? saveResult.saveReport : []).find((entry) => String(entry && entry.kind || '') === 'biq');
+  assert.ok(biqReport, 'expected BIQ save report entry');
+  assert.ok(Number(biqReport.applied) <= 2, `expected unchanged map save to avoid bulk map edits, got ${Number(biqReport.applied)}`);
+});
+
+test('BIQ map round-trip persists added city/unit records at 126,2 from stable fixture', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  const sections = getMapSectionsOrSkip({ skip: () => {} }, mapTab);
+  assert.ok(sections, 'expected stable fixture map sections');
+  const { tileSection, citySection, unitSection } = sections;
+
+  const tile = (tileSection.records || []).find((record) => getRecordInt(record, 'xpos', -1) === 126 && getRecordInt(record, 'ypos', -1) === 2);
+  assert.ok(tile, 'expected stable fixture tile at 126,2');
+
+  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
+  const cityRef = makeShortBiqTestRef('CITY', '1262');
+  const unitRef = makeShortBiqTestRef('UNIT', '1262');
+  mapCore.addCity(citySection, tile, 126, 2, 1, 2, 'Stable Fixture City', cityRef);
+  mapCore.addUnit(unitSection, tile, 126, 2, 1, 2, 0, unitRef);
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'CITY', newRecordRef: cityRef });
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'UNIT', newRecordRef: unitRef });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = reloaded.tabs.map;
+  const reCitySection = getSection(reMap, 'CITY');
+  const reUnitSection = getSection(reMap, 'UNIT');
+  const savedCity = (reCitySection && Array.isArray(reCitySection.records) ? reCitySection.records : []).find((record) => {
+    return String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Stable Fixture City'
+      && getRecordInt(record, 'x', -1) === 126
+      && getRecordInt(record, 'y', -1) === 2;
+  });
+  assert.ok(savedCity, 'expected added city at 126,2 to persist');
+  const savedUnit = (reUnitSection && Array.isArray(reUnitSection.records) ? reUnitSection.records : []).find((record) => {
+    return getRecordInt(record, 'x', -1) === 126
+      && getRecordInt(record, 'y', -1) === 2
+      && getRecordInt(record, 'owner', -1) === 1
+      && getRecordInt(record, 'ownertype', -1) === 2
+      && getRecordInt(record, 'prtonumber', -1) === 0;
+  });
+  assert.ok(savedUnit, 'expected added unit at 126,2 to persist');
+});
+
+test('scenario save writes and reloads scenario.districts.txt entries and named tiles', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  assert.ok(mapTab && mapTab.scenarioDistricts, 'expected scenario map metadata');
+
+  mapTab.scenarioDistricts.entries = [
+    { x: 126, y: 2, district: 'Neighborhood', wonderName: '', wonderCity: '' },
+    { x: 128, y: 4, district: 'Aerodrome', wonderName: '', wonderCity: '' }
+  ];
+  mapTab.scenarioDistricts.namedTiles = [
+    { x: 126, y: 2, name: 'Test Named Tile' }
+  ];
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const sidecarPath = path.join(scenarioDir, 'scenario.districts.txt');
+  assert.equal(fs.existsSync(sidecarPath), true, 'expected scenario.districts.txt to be created');
+  const sidecarText = fs.readFileSync(sidecarPath, 'utf8');
+  assert.match(sidecarText, /#District/);
+  assert.match(sidecarText, /coordinates\s*=\s*126,2/);
+  assert.match(sidecarText, /district\s*=\s*Neighborhood/);
+  assert.match(sidecarText, /#NamedTile/);
+  assert.match(sidecarText, /name\s*=\s*Test Named Tile/);
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const scenarioDistricts = reloaded && reloaded.tabs && reloaded.tabs.map && reloaded.tabs.map.scenarioDistricts;
+  assert.ok(scenarioDistricts, 'expected scenario districts metadata after reload');
+  assert.equal(Array.isArray(scenarioDistricts.entries), true);
+  assert.equal(Array.isArray(scenarioDistricts.namedTiles), true);
+  assert.ok(scenarioDistricts.entries.some((entry) => Number(entry && entry.x) === 126 && Number(entry && entry.y) === 2 && String(entry && entry.district || '') === 'Neighborhood'));
+  assert.ok(scenarioDistricts.namedTiles.some((entry) => Number(entry && entry.x) === 126 && Number(entry && entry.y) === 2 && String(entry && entry.name || '') === 'Test Named Tile'));
 });
 
 test('mixed BIQ + text save failure rolls back all committed changes', (t) => {

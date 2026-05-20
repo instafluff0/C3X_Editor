@@ -46,6 +46,16 @@
     var field = ensureField(record, key, label || key, value);
     if (!field) return;
     field.value = String(value == null ? '' : value);
+    field.mapEditorValueEdited = true;
+    if (record && typeof record === 'object') {
+      var target = canonicalKey(key);
+      var keys = Object.keys(record);
+      for (var i = 0; i < keys.length; i += 1) {
+        if (canonicalKey(keys[i]) !== target) continue;
+        record[keys[i]] = String(value == null ? '' : value);
+        break;
+      }
+    }
   }
 
   function tileCoordsByIndex(width, index) {

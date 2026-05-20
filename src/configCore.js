@@ -4848,7 +4848,49 @@ function buildReferenceTabs(civ3Path, options = {}) {
 }
 
 function buildMapTabFromBiq(biqTab, mode, options = {}) {
-  const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections : [];
+  const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections.map((section) => ({
+    ...section,
+    records: Array.isArray(section && section.records)
+      ? section.records.map((record, index) => {
+        const rawRecord = Array.isArray(section && section.fullRecords) ? section.fullRecords[index] : null;
+        const recordClone = { ...(rawRecord || {}), ...record };
+        const rawFields = Array.isArray(rawRecord && rawRecord.fields)
+          ? rawRecord.fields
+          : parseEnglishFields(String(section && section.code || ''), String(rawRecord && rawRecord.english || ''));
+        rawFields.forEach((field) => {
+          const baseKey = String(field && (field.baseKey || field.key) || '').trim();
+          if (!baseKey) return;
+          const canonical = String(baseKey).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          const alreadyPresent = Object.keys(recordClone).some((key) => String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') === canonical);
+          if (alreadyPresent) return;
+          recordClone[baseKey] = cleanDisplayText(field && field.value);
+        });
+        recordClone.fields = Array.isArray(record && record.fields)
+          ? record.fields.map((field) => {
+            const baseKey = field && (field.baseKey || field.key);
+            const canonical = String(baseKey || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+            let rawValue = field && field.value;
+            if (canonical) {
+              const keys = Object.keys(recordClone);
+              for (let i = 0; i < keys.length; i += 1) {
+                const key = keys[i];
+                const keyCanonical = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (keyCanonical !== canonical) continue;
+                rawValue = recordClone[key];
+                break;
+              }
+            }
+            return {
+              ...field,
+              baseKey: field.baseKey || String(field.key || '').replace(/_\d+$/, ''),
+              originalValue: cleanDisplayText(rawValue)
+            };
+          })
+          : [];
+        return recordClone;
+      })
+      : []
+  })) : [];
   const hasMapData = sections.some((s) => s.code === 'TILE') && sections.some((s) => s.code === 'WMAP');
   return {
     title: 'Map',
@@ -7923,6 +7965,23 @@ function collectBiqMapEdits(tabs) {
   if (mutation === 'set' || mutation === 'remove') return edits;
   if (!tab || !Array.isArray(tab.sections)) return edits;
   const editableMapSections = new Set(['WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+  const canonicalFieldKey = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const getDirectRecordValue = (record, key) => {
+    if (!record || typeof record !== 'object') return undefined;
+    const target = canonicalFieldKey(key);
+    const keys = Object.keys(record);
+    for (let i = 0; i < keys.length; i += 1) {
+      const candidate = keys[i];
+      if (canonicalFieldKey(candidate) === target) return record[candidate];
+    }
+    return undefined;
+  };
+  const getRawMapFieldValue = (record, field) => {
+    if (!field) return '';
+    const direct = getDirectRecordValue(record, field.baseKey || field.key);
+    if (direct != null) return cleanDisplayText(direct);
+    return cleanDisplayText(field.value);
+  };
   tab.sections.forEach((section) => {
     const sectionCode = String((section && section.code) || '').trim().toUpperCase();
     if (!editableMapSections.has(sectionCode)) return;
@@ -7939,7 +7998,7 @@ function collectBiqMapEdits(tabs) {
         const keyLower = key.toLowerCase();
         if (sectionCode === 'TILE' && ['district', 'districtname', 'wondername', 'wondercity', 'naturalwonder', 'namedtile'].includes(keyLower)) return;
         if (keyLower === 'civilopediaentry' || keyLower === 'note') return;
-        const value = cleanDisplayText(field.value);
+        const value = getRawMapFieldValue(record, field);
         const originalValue = cleanDisplayText(field.originalValue);
         if (value === originalValue) return;
         edits.push({
