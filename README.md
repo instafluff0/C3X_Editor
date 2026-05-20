@@ -1,4 +1,4 @@
-# Civ 3 | C3X Modern Configuration Manager
+# Civ 3 | C3X Modern Editor
 
 Electron app for managing C3X configuration files with two modes:
 

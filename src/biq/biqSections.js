@@ -1379,17 +1379,18 @@ function setTileRecordFieldValue(rec, fieldName, value) {
   if (!rec) return false;
   const fd = TILE_FIELD_MAP.get(String(fieldName || '').trim().toLowerCase());
   if (!fd) return false;
-  const raw = rec._rawRecord;
-  if (!raw) return false;
   const n = Number.parseInt(String(value), 10);
   if (!Number.isFinite(n)) return false;
-  const bodyOff = 4 + fd.off;
-  switch (fd.type) {
-    case 'uint8': raw[bodyOff] = n & 0xff; break;
-    case 'int16': raw.writeInt16LE(n, bodyOff); break;
-    case 'uint16': raw.writeUInt16LE(n & 0xffff, bodyOff); break;
-    case 'int32': raw.writeInt32LE(n | 0, bodyOff); break;
-    default: raw[bodyOff] = n & 0xff;
+  const raw = rec._rawRecord;
+  if (raw) {
+    const bodyOff = 4 + fd.off;
+    switch (fd.type) {
+      case 'uint8': raw[bodyOff] = n & 0xff; break;
+      case 'int16': raw.writeInt16LE(n, bodyOff); break;
+      case 'uint16': raw.writeUInt16LE(n & 0xffff, bodyOff); break;
+      case 'int32': raw.writeInt32LE(n | 0, bodyOff); break;
+      default: raw[bodyOff] = n & 0xff;
+    }
   }
   rec[fd.name] = n;
   return true;
@@ -3400,6 +3401,24 @@ function buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices = []) 
   };
 }
 
+function composeDeletedSectionRemaps(firstRemap, secondRemap) {
+  if (!firstRemap) return secondRemap || null;
+  if (!secondRemap) return firstRemap || null;
+  const oldToNew = new Map();
+  for (let oldIndex = 0; oldIndex < firstRemap.oldCount; oldIndex += 1) {
+    const midIndex = remapDeletedSectionIndex(oldIndex, firstRemap, null);
+    if (!Number.isFinite(midIndex) || midIndex < 0) continue;
+    const finalIndex = remapDeletedSectionIndex(midIndex, secondRemap, null);
+    if (!Number.isFinite(finalIndex) || finalIndex < 0) continue;
+    oldToNew.set(oldIndex, finalIndex);
+  }
+  return {
+    oldCount: firstRemap.oldCount,
+    finalCount: secondRemap.finalCount,
+    oldToNew
+  };
+}
+
 function remapDeletedSectionIndex(value, remap, deletedFallback = -1) {
   const parsedValue = Number.parseInt(String(value), 10);
   if (!Number.isFinite(parsedValue) || parsedValue < 0) return parsedValue;
@@ -3494,15 +3513,67 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const bldgRemap = remaps.get('BLDG');
   const govtRemap = remaps.get('GOVT');
   const prtoRemap = remaps.get('PRTO');
-  const raceRemap = remaps.get('RACE');
+  let raceRemap = remaps.get('RACE');
   const raceDependentSectionsAlreadyNormalized = parsed && parsed._raceDependentSectionsNormalized === true;
   const erasRemap = remaps.get('ERAS');
   const diffRemap = remaps.get('DIFF');
   const espnRemap = remaps.get('ESPN');
   const tfrmRemap = remaps.get('TFRM');
   const terrRemap = remaps.get('TERR');
+  const leadRemap = remaps.get('LEAD');
   const markModified = (section) => {
     if (section) section._modified = true;
+  };
+  const normalizeMapOwnerSection = (sectionCode, ownerTypeToMatch, remap, options = {}) => {
+    if (!remap) return { ok: true, remap: null };
+    const section = getSectionByCode(parsed, sectionCode);
+    if (!section || !Array.isArray(section.records)) return { ok: true, remap: null };
+    const originalRefs = section.records.map((record) => getRecordStructureRef(record));
+    const nextRecords = [];
+    const deletedOriginalIndices = [];
+    let changed = false;
+    for (let originalIndex = 0; originalIndex < section.records.length; originalIndex += 1) {
+      const record = section.records[originalIndex];
+      const ownerType = Number.parseInt(String(record && record.ownerType), 10);
+      if (ownerType !== ownerTypeToMatch) {
+        nextRecords.push(record);
+        continue;
+      }
+      const nextOwner = remapDeletedSectionIndex(record && record.owner, remap, null);
+      if (!Number.isFinite(nextOwner) || nextOwner < 0) {
+        if (options.failOnDeletedOwner) {
+          return {
+            ok: false,
+            error: `Deleting civilization(s) still referenced by ${sectionCode} map ownership is not supported safely; ${sectionCode} record ${originalIndex} still points at deleted civilization ${record && record.owner}.`
+          };
+        }
+        if (options.deleteOnDeletedOwner) {
+          deletedOriginalIndices.push(originalIndex);
+          changed = true;
+          continue;
+        }
+        nextRecords.push(record);
+        continue;
+      }
+      if (Number(record.owner) !== nextOwner) {
+        record.owner = nextOwner;
+        changed = true;
+      }
+      nextRecords.push(record);
+    }
+    nextRecords.forEach((record, index) => {
+      if (Object.prototype.hasOwnProperty.call(record || {}, 'index')) record.index = index;
+    });
+    if (changed || deletedOriginalIndices.length > 0 || nextRecords.length !== section.records.length) {
+      section.records = nextRecords;
+      markModified(section);
+    }
+    return {
+      ok: true,
+      remap: deletedOriginalIndices.length > 0
+        ? buildDeletedSectionRemap(originalRefs, nextRecords.map((record) => getRecordStructureRef(record)), deletedOriginalIndices)
+        : null
+    };
   };
 
   const raceSection = getSectionByCode(parsed, 'RACE');
@@ -3672,6 +3743,24 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     if (techRemap || goodRemap) markModified(tfrmSection);
   }
 
+  const slocPlayerCascade = normalizeMapOwnerSection('SLOC', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!slocPlayerCascade.ok) return slocPlayerCascade;
+  const cityPlayerCascade = normalizeMapOwnerSection('CITY', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!cityPlayerCascade.ok) return cityPlayerCascade;
+  const unitPlayerCascade = normalizeMapOwnerSection('UNIT', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!unitPlayerCascade.ok) return unitPlayerCascade;
+  const clnyPlayerCascade = normalizeMapOwnerSection('CLNY', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!clnyPlayerCascade.ok) return clnyPlayerCascade;
+
+  const slocCivCascade = normalizeMapOwnerSection('SLOC', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!slocCivCascade.ok) return slocCivCascade;
+  const cityCivCascade = normalizeMapOwnerSection('CITY', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!cityCivCascade.ok) return cityCivCascade;
+  const unitCivCascade = normalizeMapOwnerSection('UNIT', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!unitCivCascade.ok) return unitCivCascade;
+  const clnyCivCascade = normalizeMapOwnerSection('CLNY', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!clnyCivCascade.ok) return clnyCivCascade;
+
   const citySection = getSectionByCode(parsed, 'CITY');
   if (citySection && Array.isArray(citySection.records) && bldgRemap) {
     citySection.records.forEach((rec) => {
@@ -3690,8 +3779,10 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   }
 
   const tileSection = getSectionByCode(parsed, 'TILE');
-  const cityRemap = remaps.get('CITY');
-  const clnyRemap = remaps.get('CLNY');
+  let cityRemap = remaps.get('CITY');
+  let clnyRemap = remaps.get('CLNY');
+  cityRemap = composeDeletedSectionRemaps(cityRemap, cityPlayerCascade.remap);
+  clnyRemap = composeDeletedSectionRemaps(clnyRemap, clnyPlayerCascade.remap);
   if (tileSection && Array.isArray(tileSection.records) && (cityRemap || clnyRemap)) {
     tileSection.records.forEach((rec) => {
       if (cityRemap) setTileRecordFieldValue(rec, 'city', remapDeletedSectionIndex(rec.city, cityRemap, -1));
@@ -3729,15 +3820,88 @@ function collectMapReferenceIntegrityIssues(parsed) {
   const issues = [];
   const tileSection = getSectionByCode(parsed, 'TILE');
   if (!tileSection || !Array.isArray(tileSection.records)) return issues;
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const slocSection = getSectionByCode(parsed, 'SLOC');
   const citySection = getSectionByCode(parsed, 'CITY');
+  const unitSection = getSectionByCode(parsed, 'UNIT');
   const clnySection = getSectionByCode(parsed, 'CLNY');
+  const mapWidth = Number(parsed && parsed.io && parsed.io.mapWidth)
+    || Number(wmapSection && Array.isArray(wmapSection.records) && wmapSection.records[0] && wmapSection.records[0].width)
+    || 0;
+  const mapHeight = Number(wmapSection && Array.isArray(wmapSection.records) && wmapSection.records[0] && wmapSection.records[0].height) || 0;
   const cityCount = citySection && Array.isArray(citySection.records) ? citySection.records.length : 0;
+  const unitCount = unitSection && Array.isArray(unitSection.records) ? unitSection.records.length : 0;
   const clnyCount = clnySection && Array.isArray(clnySection.records) ? clnySection.records.length : 0;
+  const raceCount = raceSection && Array.isArray(raceSection.records) ? raceSection.records.length : 0;
+  const playerCount = leadSection && Array.isArray(leadSection.records) ? leadSection.records.length : 0;
   const normalizeRef = (value) => {
     const parsedValue = Number.parseInt(String(value), 10);
     return Number.isFinite(parsedValue) ? parsedValue : -1;
   };
+  const tileByCoords = new Map();
+  const cityRefCounts = new Map();
+  const colonyRefCounts = new Map();
+  const getCoords = (record, xKey = 'x', yKey = 'y') => ({
+    x: normalizeRef(record && record[xKey]),
+    y: normalizeRef(record && record[yKey])
+  });
+  const getTileCoords = (record) => ({
+    x: normalizeRef(record && record.xpos),
+    y: normalizeRef(record && record.ypos)
+  });
+  const isInBounds = (coords) => (
+    Number.isFinite(coords.x)
+    && Number.isFinite(coords.y)
+    && coords.x >= 0
+    && coords.y >= 0
+    && (!mapWidth || coords.x < mapWidth)
+    && (!mapHeight || coords.y < mapHeight)
+  );
+  const validateOwnerRef = (sectionCode, recordIndex, record) => {
+    const ownerType = normalizeRef(record && record.ownerType);
+    const owner = normalizeRef(record && record.owner);
+    if (ownerType === 0 || ownerType === 1) return;
+    if (ownerType === 2) {
+      if (owner < 0 || owner >= raceCount) {
+        issues.push({
+          kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,
+          sectionCode,
+          recordRef: recordIndex,
+          ownerType,
+          owner,
+          raceCount,
+          playerCount
+        });
+      }
+      return;
+    }
+    if (ownerType === 3) {
+      if (owner < 0 || owner >= playerCount) {
+        issues.push({
+          kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,
+          sectionCode,
+          recordRef: recordIndex,
+          ownerType,
+          owner,
+          raceCount,
+          playerCount
+        });
+      }
+      return;
+    }
+    issues.push({
+      kind: `${String(sectionCode || '').toLowerCase()}-owner-type`,
+      sectionCode,
+      recordRef: recordIndex,
+      ownerType,
+      owner
+    });
+  };
   tileSection.records.forEach((rec, tileIndex) => {
+    const tileCoords = getTileCoords(rec);
+    if (isInBounds(tileCoords)) tileByCoords.set(`${tileCoords.x},${tileCoords.y}`, rec);
     const cityRef = normalizeRef(rec && rec.city);
     if (cityRef >= cityCount) {
       issues.push({
@@ -3746,6 +3910,21 @@ function collectMapReferenceIntegrityIssues(parsed) {
         cityRef,
         cityCount
       });
+    } else if (cityRef >= 0) {
+      cityRefCounts.set(cityRef, (cityRefCounts.get(cityRef) || 0) + 1);
+      const cityRecord = citySection && citySection.records ? citySection.records[cityRef] : null;
+      const cityCoords = getCoords(cityRecord);
+      if (cityCoords.x !== tileCoords.x || cityCoords.y !== tileCoords.y) {
+        issues.push({
+          kind: 'tile-city-coords',
+          tileIndex,
+          cityRef,
+          tileX: tileCoords.x,
+          tileY: tileCoords.y,
+          cityX: cityCoords.x,
+          cityY: cityCoords.y
+        });
+      }
     }
     const colonyRef = normalizeRef(rec && rec.colony);
     if (colonyRef >= clnyCount) {
@@ -3754,6 +3933,198 @@ function collectMapReferenceIntegrityIssues(parsed) {
         tileIndex,
         colonyRef,
         colonyCount: clnyCount
+      });
+    } else if (colonyRef >= 0) {
+      colonyRefCounts.set(colonyRef, (colonyRefCounts.get(colonyRef) || 0) + 1);
+      const colonyRecord = clnySection && clnySection.records ? clnySection.records[colonyRef] : null;
+      const colonyCoords = getCoords(colonyRecord);
+      if (colonyCoords.x !== tileCoords.x || colonyCoords.y !== tileCoords.y) {
+        issues.push({
+          kind: 'tile-colony-coords',
+          tileIndex,
+          colonyRef,
+          tileX: tileCoords.x,
+          tileY: tileCoords.y,
+          colonyX: colonyCoords.x,
+          colonyY: colonyCoords.y
+        });
+      }
+    }
+  });
+  if (citySection && Array.isArray(citySection.records)) {
+    citySection.records.forEach((rec, cityIndex) => {
+      validateOwnerRef('CITY', cityIndex, rec);
+      const coords = getCoords(rec);
+      const tile = tileByCoords.get(`${coords.x},${coords.y}`) || null;
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'city-out-of-bounds',
+          cityRef: cityIndex,
+          cityX: coords.x,
+          cityY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      if (!tile) {
+        issues.push({
+          kind: 'city-missing-tile',
+          cityRef: cityIndex,
+          cityX: coords.x,
+          cityY: coords.y
+        });
+        return;
+      }
+      if (normalizeRef(tile.city) !== cityIndex) {
+        issues.push({
+          kind: 'city-tile-backref',
+          cityRef: cityIndex,
+          cityX: coords.x,
+          cityY: coords.y,
+          tileCityRef: normalizeRef(tile.city)
+        });
+      }
+      if ((cityRefCounts.get(cityIndex) || 0) !== 1) {
+        issues.push({
+          kind: 'city-ref-count',
+          cityRef: cityIndex,
+          count: cityRefCounts.get(cityIndex) || 0
+        });
+      }
+    });
+  }
+  if (clnySection && Array.isArray(clnySection.records)) {
+    clnySection.records.forEach((rec, colonyIndex) => {
+      validateOwnerRef('CLNY', colonyIndex, rec);
+      const coords = getCoords(rec);
+      const tile = tileByCoords.get(`${coords.x},${coords.y}`) || null;
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'colony-out-of-bounds',
+          colonyRef: colonyIndex,
+          colonyX: coords.x,
+          colonyY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      if (!tile) {
+        issues.push({
+          kind: 'colony-missing-tile',
+          colonyRef: colonyIndex,
+          colonyX: coords.x,
+          colonyY: coords.y
+        });
+        return;
+      }
+      if (normalizeRef(tile.colony) !== colonyIndex) {
+        issues.push({
+          kind: 'colony-tile-backref',
+          colonyRef: colonyIndex,
+          colonyX: coords.x,
+          colonyY: coords.y,
+          tileColonyRef: normalizeRef(tile.colony)
+        });
+      }
+      if ((colonyRefCounts.get(colonyIndex) || 0) !== 1) {
+        issues.push({
+          kind: 'colony-ref-count',
+          colonyRef: colonyIndex,
+          count: colonyRefCounts.get(colonyIndex) || 0
+        });
+      }
+    });
+  }
+  if (slocSection && Array.isArray(slocSection.records)) {
+    slocSection.records.forEach((rec, slocIndex) => {
+      validateOwnerRef('SLOC', slocIndex, rec);
+      const coords = getCoords(rec);
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'sloc-out-of-bounds',
+          slocRef: slocIndex,
+          slocX: coords.x,
+          slocY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      const tile = tileByCoords.get(`${coords.x},${coords.y}`);
+      if (!tile) {
+        issues.push({
+          kind: 'sloc-missing-tile',
+          slocRef: slocIndex,
+          slocX: coords.x,
+          slocY: coords.y
+        });
+      }
+    });
+  }
+  if (unitSection && Array.isArray(unitSection.records)) {
+    unitSection.records.forEach((rec, unitIndex) => {
+      validateOwnerRef('UNIT', unitIndex, rec);
+      const coords = getCoords(rec);
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'unit-out-of-bounds',
+          unitRef: unitIndex,
+          unitX: coords.x,
+          unitY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      if (!tileByCoords.has(`${coords.x},${coords.y}`)) {
+        issues.push({
+          kind: 'unit-missing-tile',
+          unitRef: unitIndex,
+          unitX: coords.x,
+          unitY: coords.y,
+          tileCount: tileSection.records.length,
+          unitCount
+        });
+      }
+    });
+  }
+  return issues;
+}
+
+function collectColonyOverlayCoherenceIssues(parsed) {
+  const issues = [];
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  const clnySection = getSectionByCode(parsed, 'CLNY');
+  if (!tileSection || !Array.isArray(tileSection.records) || !clnySection || !Array.isArray(clnySection.records)) {
+    return issues;
+  }
+  const normalizeRef = (value) => {
+    const parsedValue = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsedValue) ? parsedValue : -1;
+  };
+  const getOverlayType = (tile) => {
+    const overlays = Number(tile && tile.c3cOverlays) >>> 0;
+    if ((overlays & 0x20000000) === 0x20000000) return 1;
+    if ((overlays & 0x40000000) === 0x40000000) return 2;
+    if ((overlays & 0x80000000) === 0x80000000) return 3;
+    return 0;
+  };
+  tileSection.records.forEach((tile, tileIndex) => {
+    const colonyRef = normalizeRef(tile && tile.colony);
+    if (colonyRef < 0) return;
+    const colony = clnySection.records[colonyRef];
+    if (!colony) return;
+    const overlayType = getOverlayType(tile);
+    const improvementType = normalizeRef(colony && colony.improvementType);
+    if (overlayType !== improvementType) {
+      issues.push({
+        kind: 'colony-overlay-type-mismatch',
+        tileIndex,
+        colonyRef,
+        overlayType,
+        improvementType
       });
     }
   });
@@ -3982,6 +4353,10 @@ function applyEdits(buf, edits, options = {}) {
       continue;
     }
     if (op === 'setmap') {
+      if (!options.allowSetmapGeneration || !edit.allowSetmapGeneration) {
+        log.error('BiqApplyEdits', 'op=setmap rejected: whole-map replacement is only allowed for explicit map generation or map import saves');
+        return { ok: false, error: 'Whole-map BIQ replacement is blocked for normal saves. Only explicit map generation or map import writes may replace all map sections.' };
+      }
       const mapSecCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
       log.debug('BiqApplyEdits', `op=setmap: replacing map sections [${mapSecCodes}]`);
       setMapSectionsOnParsed(parsed, edit.sections);
@@ -4133,11 +4508,64 @@ function applyEdits(buf, edits, options = {}) {
   const mapReferenceIssues = collectMapReferenceIntegrityIssues(parsed);
   if (mapReferenceIssues.length > 0) {
     const issue = mapReferenceIssues[0];
-    const detail = issue.kind === 'tile-city-ref'
-      ? `tile ${issue.tileIndex} references CITY ${issue.cityRef} but only ${issue.cityCount} city record(s) remain`
-      : `tile ${issue.tileIndex} references CLNY ${issue.colonyRef} but only ${issue.colonyCount} colony record(s) remain`;
+    let detail = `map integrity issue ${issue.kind}`;
+    if (issue.kind === 'tile-city-ref') {
+      detail = `tile ${issue.tileIndex} references CITY ${issue.cityRef} but only ${issue.cityCount} city record(s) remain`;
+    } else if (issue.kind === 'tile-colony-ref') {
+      detail = `tile ${issue.tileIndex} references CLNY ${issue.colonyRef} but only ${issue.colonyCount} colony record(s) remain`;
+    } else if (issue.kind === 'tile-city-coords') {
+      detail = `tile ${issue.tileIndex} points at CITY ${issue.cityRef}, but tile ${issue.tileX},${issue.tileY} does not match city ${issue.cityX},${issue.cityY}`;
+    } else if (issue.kind === 'tile-colony-coords') {
+      detail = `tile ${issue.tileIndex} points at CLNY ${issue.colonyRef}, but tile ${issue.tileX},${issue.tileY} does not match colony ${issue.colonyX},${issue.colonyY}`;
+    } else if (issue.kind === 'city-tile-backref') {
+      detail = `CITY ${issue.cityRef} at ${issue.cityX},${issue.cityY} is not linked back from its tile (tile has CITY ${issue.tileCityRef})`;
+    } else if (issue.kind === 'colony-tile-backref') {
+      detail = `CLNY ${issue.colonyRef} at ${issue.colonyX},${issue.colonyY} is not linked back from its tile (tile has CLNY ${issue.tileColonyRef})`;
+    } else if (issue.kind === 'city-ref-count') {
+      detail = `CITY ${issue.cityRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
+    } else if (issue.kind === 'colony-ref-count') {
+      detail = `CLNY ${issue.colonyRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
+    } else if (issue.kind === 'city-out-of-bounds') {
+      detail = `CITY ${issue.cityRef} is out of bounds at ${issue.cityX},${issue.cityY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'colony-out-of-bounds') {
+      detail = `CLNY ${issue.colonyRef} is out of bounds at ${issue.colonyX},${issue.colonyY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'unit-out-of-bounds') {
+      detail = `UNIT ${issue.unitRef} is out of bounds at ${issue.unitX},${issue.unitY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'city-missing-tile') {
+      detail = `CITY ${issue.cityRef} points to missing tile ${issue.cityX},${issue.cityY}`;
+    } else if (issue.kind === 'colony-missing-tile') {
+      detail = `CLNY ${issue.colonyRef} points to missing tile ${issue.colonyX},${issue.colonyY}`;
+    } else if (issue.kind === 'unit-missing-tile') {
+      detail = `UNIT ${issue.unitRef} points to missing tile ${issue.unitX},${issue.unitY}`;
+    } else if (/^(city|unit|clny|sloc)-owner-ref$/.test(issue.kind)) {
+      detail = `${issue.sectionCode} ${issue.recordRef} has invalid owner ${issue.owner} for ownerType ${issue.ownerType} (races=${issue.raceCount}, players=${issue.playerCount})`;
+    } else if (/^(city|unit|clny|sloc)-owner-type$/.test(issue.kind)) {
+      detail = `${issue.sectionCode} ${issue.recordRef} has unsupported ownerType ${issue.ownerType}`;
+    } else if (issue.kind === 'sloc-out-of-bounds') {
+      detail = `SLOC ${issue.slocRef} is out of bounds at ${issue.slocX},${issue.slocY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'sloc-missing-tile') {
+      detail = `SLOC ${issue.slocRef} points to missing tile ${issue.slocX},${issue.slocY}`;
+    }
     log.error('BiqApplyEdits', `collectMapReferenceIntegrityIssues failed: ${detail}`);
     return { ok: false, error: `Map reference integrity check failed after BIQ edits: ${detail}.` };
+  }
+  const touchedColonyLikeState = edits.some((edit) => {
+    const op = String(edit && edit.op || 'set').toLowerCase();
+    const sectionCode = String(edit && edit.sectionCode || '').toUpperCase();
+    const fieldKey = canonicalKey(edit && edit.fieldKey);
+    if (op === 'setmap') return true;
+    if (sectionCode === 'CLNY') return true;
+    if (sectionCode === 'TILE' && (fieldKey === 'colony' || fieldKey === 'c3coverlays')) return true;
+    return false;
+  });
+  if (touchedColonyLikeState) {
+    const colonyOverlayIssues = collectColonyOverlayCoherenceIssues(parsed);
+    if (colonyOverlayIssues.length > 0) {
+      const issue = colonyOverlayIssues[0];
+      const detail = `tile ${issue.tileIndex} links CLNY ${issue.colonyRef} with improvementType ${issue.improvementType}, but tile overlay state resolves to ${issue.overlayType}`;
+      log.error('BiqApplyEdits', `collectColonyOverlayCoherenceIssues failed: ${detail}`);
+      return { ok: false, error: `Colony overlay coherence check failed after BIQ edits: ${detail}.` };
+    }
   }
 
   const newBuf = buildBiqBuffer(parsed);
@@ -4192,4 +4620,5 @@ module.exports = {
   normalizeRaceDependentSections,
   normalizeDeletedReferenceSections,
   collectMapReferenceIntegrityIssues,
+  collectColonyOverlayCoherenceIssues,
 };

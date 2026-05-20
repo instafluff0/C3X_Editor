@@ -1,7 +1,7 @@
 # agents.md
 
 ## Purpose
-This repository is an Electron app (`Civ 3 | C3X Modern Configuration Manager`) for editing C3X/Civ3 configuration and scenario files safely.
+This repository is an Electron app (`Civ 3 | C3X Modern Editor`) for editing C3X/Civ3 configuration and scenario files safely.
 
 This document is the agent contract: keep it short, durable, and implementation-focused.
 Assume all users are on Windows.

@@ -20,6 +20,7 @@ This file is a read-only layout reference only. It is not used at runtime and th
 The app uses a pure-JS pipeline with no external dependencies.
 
 See `docs/biq/JSBridge.md` for the full architecture and per-section notes.
+See `docs/biq/MapPipelineParity.md` for the Quint-to-C3X map pipeline mapping and current save-path boundaries.
 
 ### Inflate path (`src/configCore.js → inflateBiqIfNeeded`)
 1. Read raw file bytes.

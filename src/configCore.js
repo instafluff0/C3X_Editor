@@ -4901,6 +4901,7 @@ function buildMapTabFromBiq(biqTab, mode, options = {}) {
     hasMapData,
     originalHasMap: hasMapData,
     mapMutation: null,
+    mapMutationSource: null,
     recordOps: [],
     scenarioDistricts: options.scenarioDistricts || null,
     sections
@@ -5484,7 +5485,7 @@ function serializeSectionedConfig(model, marker, options = null) {
   const managedMode = options && options.mode ? String(options.mode) : '';
 
   if (includeManagedHeader) {
-    lines.push('; Managed by Civ 3 | C3X Modern Configuration Manager');
+    lines.push('; Managed by Civ 3 | C3X Modern Editor');
     if (managedMode) lines.push(`; Mode: ${managedMode}`);
     lines.push('');
   }
@@ -5523,7 +5524,7 @@ function serializeSectionedConfig(model, marker, options = null) {
 
 function serializeBaseConfig(baseRows, defaultMap, mode, commentsByKey = {}) {
   const lines = [];
-  lines.push('; Managed by Civ 3 | C3X Modern Configuration Manager');
+  lines.push('; Managed by Civ 3 | C3X Modern Editor');
   lines.push(`; Mode: ${mode}`);
   lines.push('');
 
@@ -7276,6 +7277,13 @@ function getFieldNumericValue(field, fallback = NaN) {
   return parseIntLoose(cleanDisplayText(field && field.value), fallback);
 }
 
+function getRecordFieldNumericValue(fields, canonicalKey, fallback = NaN) {
+  const target = canonicalFieldKey(canonicalKey);
+  if (!target || !Array.isArray(fields)) return fallback;
+  const match = fields.find((field) => getFieldCanonicalKey(field) === target);
+  return getFieldNumericValue(match, fallback);
+}
+
 function getFieldValuesAsInts(field) {
   const raw = cleanDisplayText(field && field.value);
   if (!raw || raw.toLowerCase() === '(none)') return [];
@@ -7363,21 +7371,11 @@ function getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef) {
   };
 }
 
-function hasScenarioMapData(tabs) {
-  const mapTab = tabs && tabs.map;
-  const sections = Array.isArray(mapTab && mapTab.sections) ? mapTab.sections : [];
-  return sections.some((section) => {
-    const code = String(section && section.code || '').trim().toUpperCase();
-    if (!['TILE', 'CITY', 'UNIT'].includes(code)) return false;
-    return Array.isArray(section.records) && section.records.length > 0;
-  });
-}
-
-function matchesDeletedReference(field, targetIndex, matcher) {
+function matchesDeletedReference(field, targetIndex, matcher, context = null) {
   if (!field || !Number.isFinite(targetIndex) || typeof matcher !== 'function') return false;
   const canon = getFieldCanonicalKey(field);
   if (!canon) return false;
-  return !!matcher({ canon, field, targetIndex });
+  return !!matcher({ canon, field, targetIndex, context });
 }
 
 function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
@@ -7400,8 +7398,64 @@ function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
     RACE: []
   };
 
+  dependencyRules.PRTO.push(
+    {
+      sourceSection: 'UNIT',
+      sourceLabel: 'Map Units',
+      matcher: ({ canon, field, targetIndex }) => canon === 'prtonumber' && getFieldNumericValue(field) === targetIndex
+    },
+    {
+      sourceSection: 'LEAD',
+      sourceLabel: 'Players',
+      matcher: ({ canon, field, targetIndex }) => /^startingunitsoftype\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex
+    }
+  );
+
+  dependencyRules.RACE.push(
+    {
+      sourceSection: 'LEAD',
+      sourceLabel: 'Players',
+      matcher: ({ canon, field, targetIndex }) => canon === 'civ' && getFieldNumericValue(field) === targetIndex
+    },
+    {
+      sourceSection: 'SLOC',
+      sourceLabel: 'Starting Locations',
+      matcher: ({ canon, field, targetIndex, context }) => (
+        canon === 'owner'
+        && getFieldNumericValue(field) === targetIndex
+        && getRecordFieldNumericValue(context && context.record && context.record.fields, 'ownertype', NaN) === 2
+      )
+    },
+    {
+      sourceSection: 'CITY',
+      sourceLabel: 'Cities',
+      matcher: ({ canon, field, targetIndex, context }) => (
+        canon === 'owner'
+        && getFieldNumericValue(field) === targetIndex
+        && getRecordFieldNumericValue(context && context.record && context.record.fields, 'ownertype', NaN) === 2
+      )
+    },
+    {
+      sourceSection: 'UNIT',
+      sourceLabel: 'Map Units',
+      matcher: ({ canon, field, targetIndex, context }) => (
+        canon === 'owner'
+        && getFieldNumericValue(field) === targetIndex
+        && getRecordFieldNumericValue(context && context.record && context.record.fields, 'ownertype', NaN) === 2
+      )
+    },
+    {
+      sourceSection: 'CLNY',
+      sourceLabel: 'Colonies',
+      matcher: ({ canon, field, targetIndex, context }) => (
+        canon === 'owner'
+        && getFieldNumericValue(field) === targetIndex
+        && getRecordFieldNumericValue(context && context.record && context.record.fields, 'ownertype', NaN) === 2
+      )
+    }
+  );
+
   const issues = [];
-  const mapDataExists = hasScenarioMapData(tabs);
 
   const recordsBySection = new Map();
   const pushRecord = (sectionCode, sourceLabel, recordName, fields) => {
@@ -7453,19 +7507,6 @@ function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
     const ruleSet = dependencyRules[sectionCode];
     if (!sectionCode || !recordRef || !Array.isArray(ruleSet)) return;
 
-    if ((sectionCode === 'PRTO' || sectionCode === 'RACE') && mapDataExists) {
-      const original = getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef)
-        || getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef);
-      const fallbackName = cleanDisplayText(recordRef) || `Deleted ${getBiqSectionTitle(sectionCode).replace(/s$/, '')}`;
-      issues.push({
-        title: `${(original && original.name) || fallbackName} (${getBiqSectionTitle(sectionCode).replace(/s$/, '')})`,
-        reason: sectionCode === 'PRTO'
-          ? 'This scenario has map data, so deleting a unit could break placed units or other map links.'
-          : 'This scenario has map data, so deleting a civilization could break ownership, players, or other map links.'
-      });
-      return;
-    }
-
     const original = getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef)
       || getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef);
     if (!original || !Number.isFinite(original.index) || original.index < 0) return;
@@ -7476,7 +7517,11 @@ function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
       const sourceRecords = recordsBySection.get(String(rule.sourceSection || '').trim().toUpperCase()) || [];
       sourceRecords.forEach((record) => {
         if (!Array.isArray(record.fields)) return;
-        if (!record.fields.some((field) => matchesDeletedReference(field, original.index, rule.matcher))) return;
+        const context = {
+          sectionCode: String(rule.sourceSection || '').trim().toUpperCase(),
+          record
+        };
+        if (!record.fields.some((field) => matchesDeletedReference(field, original.index, rule.matcher, context))) return;
         matches.push(`${record.sourceLabel}: ${record.recordName}`);
       });
     });
@@ -7955,7 +8000,11 @@ function collectBiqMapStructureOps(tabs) {
     .filter((section) => mapSectionCodes.has(String(section && section.code || '').trim().toUpperCase()))
     .map((section) => JSON.parse(JSON.stringify(section)));
   if (sections.length === 0) return [];
-  return [{ op: 'setmap', sections }];
+  return [{
+    op: 'setmap',
+    sections,
+    allowSetmapGeneration: ['generated', 'imported'].includes(String(tab && tab.mapMutationSource || '').trim().toLowerCase())
+  }];
 }
 
 function collectBiqMapEdits(tabs) {
@@ -9161,8 +9210,14 @@ function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath, textEnco
   log.debug('BiqSave', `  inflated BIQ: ${inflated.buffer ? inflated.buffer.length : 0} bytes`);
 
   const finalOutputPath = String(outputPath || biqPath).trim() || biqPath;
+  const allowSetmapGeneration = edits.some((edit) => String(edit && edit.op || '').toLowerCase() === 'setmap' && !!(edit && edit.allowSetmapGeneration));
   try {
-    const jsResult = jsApplyBiqEdits({ buffer: inflated.buffer, edits, textEncoding: resolveAutoTextEncoding(textEncoding) });
+    const jsResult = jsApplyBiqEdits({
+      buffer: inflated.buffer,
+      edits,
+      textEncoding: resolveAutoTextEncoding(textEncoding),
+      allowSetmapGeneration
+    });
     if (!jsResult.ok) {
       log.error('BiqSave', `applyBiqReferenceEdits: jsApplyBiqEdits failed — ${jsResult.error || 'unknown'}`);
       return { ok: false, error: jsResult.error || 'BIQ edit failed' };

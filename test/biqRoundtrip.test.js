@@ -7,7 +7,14 @@ const crypto = require('node:crypto');
 
 const { loadBundle, saveBundle } = require('../src/configCore');
 const mapCore = require('../src/mapEditorCore');
-const { parseAllSections, normalizeDeletedReferenceSections, collectMapReferenceIntegrityIssues } = require('../src/biq/biqSections');
+const {
+  applyEdits,
+  parseAllSections,
+  serializeSection,
+  normalizeDeletedReferenceSections,
+  collectMapReferenceIntegrityIssues,
+  collectColonyOverlayCoherenceIssues
+} = require('../src/biq/biqSections');
 const { decompress } = require('../src/biq/decompress');
 
 function mkTmpDir() {
@@ -236,15 +243,60 @@ function getMapSectionsOrSkip(t, mapTab) {
   return { tileSection, citySection, unitSection };
 }
 
+function getMapSectionsForSeedOrSkip(t, mapTab) {
+  const tileSection = getSection(mapTab, 'TILE');
+  const citySection = getSection(mapTab, 'CITY');
+  const unitSection = getSection(mapTab, 'UNIT');
+  if (!(tileSection && citySection && unitSection)) {
+    t.skip('Sample BIQ map tab is missing TILE/CITY/UNIT sections.');
+    return null;
+  }
+  if (!Array.isArray(tileSection.records) || tileSection.records.length < 3) {
+    t.skip('Sample BIQ has insufficient TILE records to seed delete regression.');
+    return null;
+  }
+  if (!Array.isArray(citySection.records)) {
+    t.skip('Sample BIQ CITY section is unavailable.');
+    return null;
+  }
+  if (!Array.isArray(unitSection.records)) {
+    t.skip('Sample BIQ UNIT section is unavailable.');
+    return null;
+  }
+  return { tileSection, citySection, unitSection };
+}
+
 function assertMapReferenceIntegrityFromMapTab(mapTab, message = '') {
+  const parsedWmap = getSection(mapTab, 'WMAP');
   const parsed = {
+    io: {
+      mapWidth: parsedWmap && Array.isArray(parsedWmap.records) && parsedWmap.records[0]
+        ? getRecordStoredInt(parsedWmap.records[0], 'width', 0)
+        : 0
+    },
     sections: Array.isArray(mapTab && mapTab.sections) ? mapTab.sections.map((section) => ({
       code: section.code,
       records: Array.isArray(section.records) ? section.records.map((record) => {
         const out = { index: Number(record && record.index) };
-        if (String(section && section.code || '').toUpperCase() === 'TILE') {
+        const sectionCode = String(section && section.code || '').toUpperCase();
+        if (sectionCode === 'WMAP') {
+          out.width = getRecordStoredInt(record, 'width', 0);
+          out.height = getRecordStoredInt(record, 'height', 0);
+        } else if (sectionCode === 'TILE') {
+          out.xpos = getRecordStoredInt(record, 'xpos', -1);
+          out.ypos = getRecordStoredInt(record, 'ypos', -1);
           out.city = getRecordStoredInt(record, 'city', -1);
           out.colony = getRecordStoredInt(record, 'colony', -1);
+        } else if (sectionCode === 'SLOC') {
+          out.ownerType = getRecordStoredInt(record, 'ownertype', -1);
+          out.owner = getRecordStoredInt(record, 'owner', -1);
+          out.x = getRecordStoredInt(record, 'x', -1);
+          out.y = getRecordStoredInt(record, 'y', -1);
+        } else if (sectionCode === 'CITY' || sectionCode === 'CLNY' || sectionCode === 'UNIT') {
+          out.ownerType = getRecordStoredInt(record, 'ownertype', -1);
+          out.owner = getRecordStoredInt(record, 'owner', -1);
+          out.x = getRecordStoredInt(record, 'x', -1);
+          out.y = getRecordStoredInt(record, 'y', -1);
         }
         return out;
       }) : []
@@ -252,6 +304,35 @@ function assertMapReferenceIntegrityFromMapTab(mapTab, message = '') {
   };
   const issues = collectMapReferenceIntegrityIssues(parsed);
   assert.deepEqual(issues, [], message || `expected valid map references, got ${JSON.stringify(issues)}`);
+}
+
+function seedFixtureCitiesForDeleteRegression(t, mapTab) {
+  const sections = getMapSectionsForSeedOrSkip(t, mapTab);
+  if (!sections) return null;
+  const { tileSection, citySection } = sections;
+  const openTiles = (tileSection.records || []).filter((tile) => getRecordInt(tile, 'city', -1) < 0).slice(0, 3);
+  if (openTiles.length < 3) {
+    t.skip('Stable fixture lacks enough empty tiles to seed city-delete regression.');
+    return null;
+  }
+  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
+  const seed = (tile, name, suffix) => {
+    const ref = makeShortBiqTestRef('CITY', suffix);
+    const x = getRecordInt(tile, 'xpos', -1);
+    const y = getRecordInt(tile, 'ypos', -1);
+    mapCore.addCity(citySection, tile, x, y, 0, 2, name, ref);
+    mapTab.recordOps.push({ op: 'add', sectionCode: 'CITY', newRecordRef: ref });
+    return { ref, x, y, name };
+  };
+  return {
+    seeded: [
+      seed(openTiles[0], 'Seed Delete City A', 'SDA'),
+      seed(openTiles[1], 'Seed Delete City B', 'SDB'),
+      seed(openTiles[2], 'Seed Delete City C', 'SDC')
+    ],
+    tileSection,
+    citySection
+  };
 }
 
 function getScenarioSettingsField(bundle, key) {
@@ -2221,7 +2302,7 @@ test('BIQ round-trip reindexes unit Available To after deleting a newly added ci
   );
 });
 
-test('BIQ save blocks deleting a unit when the scenario already has map data', (t) => {
+test('BIQ save blocks deleting a unit when concrete map-unit references still exist', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   if (!fs.existsSync(sampleBiq)) t.skip('Stable map-unit fixture BIQ is missing.');
 
@@ -2262,7 +2343,7 @@ test('BIQ save blocks deleting a unit when the scenario already has map data', (
 
   assert.equal(saveResult.ok, false);
   assert.match(String(saveResult.error || ''), /Cannot save yet because deleted items are still in use\./);
-  assert.match(String(saveResult.error || ''), /This scenario has map data, so deleting a unit could break placed units or other map links\./);
+  assert.match(String(saveResult.error || ''), /still used by .*Map Units:/);
 });
 
 test('BIQ map round-trip supports map painting + adding city/unit records', (t) => {
@@ -2378,7 +2459,47 @@ test('BIQ map save is a no-op when a loaded map bundle is unchanged', () => {
   assert.ok(Number(biqReport.applied) <= 2, `expected unchanged map save to avoid bulk map edits, got ${Number(biqReport.applied)}`);
 });
 
-test('BIQ map round-trip persists added city/unit records at 126,2 from stable fixture', () => {
+test('unchanged map save preserves raw BIQ map sections byte-for-byte', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reparsedOriginal = parseBiqFileForRawSections(sampleBiq);
+  const reparsedSaved = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(reparsedOriginal.ok, true, 'expected original BIQ parse to succeed');
+  assert.equal(reparsedSaved.ok, true, 'expected saved BIQ parse to succeed');
+
+  ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].forEach((code) => {
+    const before = (reparsedOriginal.sections || []).find((section) => section.code === code);
+    const after = (reparsedSaved.sections || []).find((section) => section.code === code);
+    assert.ok(before, `expected original ${code} section`);
+    assert.ok(after, `expected saved ${code} section`);
+    assert.deepEqual(
+      serializeSection(before, reparsedOriginal.io),
+      serializeSection(after, reparsedSaved.io),
+      `expected unchanged save to preserve raw ${code} section bytes`
+    );
+  });
+});
+
+test('BIQ map round-trip persists added city/unit records at 126,2 from stable fixture', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -2393,8 +2514,8 @@ test('BIQ map round-trip persists added city/unit records at 126,2 from stable f
 
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   const mapTab = bundle && bundle.tabs && bundle.tabs.map;
-  const sections = getMapSectionsOrSkip({ skip: () => {} }, mapTab);
-  assert.ok(sections, 'expected stable fixture map sections');
+  const sections = getMapSectionsOrSkip(t, mapTab);
+  if (!sections) return;
   const { tileSection, citySection, unitSection } = sections;
 
   const tile = (tileSection.records || []).find((record) => getRecordInt(record, 'xpos', -1) === 126 && getRecordInt(record, 'ypos', -1) === 2);
@@ -2520,16 +2641,201 @@ test('normalizeDeletedReferenceSections remaps TILE city and colony references a
   assert.deepEqual(collectMapReferenceIntegrityIssues(parsed), [], 'expected no invalid tile references after remap');
 });
 
-test('BIQ map round-trip keeps surviving city tile references stable after deleting an earlier city', (t) => {
-  const civ3Root = path.resolve(__dirname, '..', '..');
-  const sampleBiq = [
-    path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific TEST.biq'),
-    path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific.biq'),
-    findSampleMapBiqPath()
-  ].find((candidate) => candidate && fs.existsSync(candidate));
-  if (!sampleBiq) t.skip('No suitable map-enabled BIQ available for city delete regression.');
+test('collectMapReferenceIntegrityIssues rejects wrong-but-in-range city and colony links', () => {
+  const parsed = {
+    io: { mapWidth: 4 },
+    sections: [
+      { code: 'RACE', records: [{ index: 0 }, { index: 1 }] },
+      { code: 'LEAD', records: [{ index: 0 }] },
+      { code: 'WMAP', records: [{ width: 4, height: 2 }] },
+      {
+        code: 'TILE',
+        records: [
+          { index: 0, xpos: 0, ypos: 0, city: 1, colony: -1 },
+          { index: 1, xpos: 2, ypos: 0, city: -1, colony: 1 },
+          { index: 2, xpos: 1, ypos: 1, city: -1, colony: -1 },
+          { index: 3, xpos: 3, ypos: 1, city: -1, colony: -1 }
+        ]
+      },
+      {
+        code: 'CITY',
+        records: [
+          { index: 0, x: 0, y: 0, ownerType: 2, owner: 0 },
+          { index: 1, x: 2, y: 0, ownerType: 2, owner: 1 }
+        ]
+      },
+      {
+        code: 'CLNY',
+        records: [
+          { index: 0, x: 1, y: 1, improvementType: 0, ownerType: 2, owner: 0 },
+          { index: 1, x: 3, y: 1, improvementType: 2, ownerType: 2, owner: 1 }
+        ]
+      },
+      {
+        code: 'UNIT',
+        records: [
+          { index: 0, x: 0, y: 0, ownerType: 3, owner: 0 },
+          { index: 1, x: 9, y: 9, ownerType: 3, owner: 0 }
+        ]
+      }
+    ]
+  };
+  const issues = collectMapReferenceIntegrityIssues(parsed);
+  assert.ok(issues.some((issue) => issue.kind === 'tile-city-coords' && issue.cityRef === 1), `expected tile-city coordinate mismatch, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'tile-colony-coords' && issue.colonyRef === 1), `expected tile-colony coordinate mismatch, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'city-tile-backref' && issue.cityRef === 0), `expected city backref mismatch, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'colony-tile-backref' && issue.colonyRef === 0), `expected colony backref mismatch, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'city-ref-count' && issue.cityRef === 0 && issue.count === 0), `expected city ref-count issue, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'colony-ref-count' && issue.colonyRef === 0 && issue.count === 0), `expected colony ref-count issue, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'unit-out-of-bounds' && issue.unitRef === 1), `expected unit out-of-bounds issue, got ${JSON.stringify(issues)}`);
+});
 
-  const resolvedCiv3Root = resolveCiv3RootFromBiq(sampleBiq);
+test('collectMapReferenceIntegrityIssues rejects invalid city/unit/colony owner references', () => {
+  const parsed = {
+    io: { mapWidth: 4 },
+    sections: [
+      { code: 'RACE', records: [{ index: 0 }, { index: 1 }] },
+      { code: 'LEAD', records: [{ index: 0 }] },
+      { code: 'WMAP', records: [{ width: 4, height: 2 }] },
+      {
+        code: 'TILE',
+        records: [
+          { index: 0, xpos: 0, ypos: 0, city: 0, colony: 0 },
+          { index: 1, xpos: 2, ypos: 0, city: -1, colony: -1 }
+        ]
+      },
+      {
+        code: 'CITY',
+        records: [
+          { index: 0, x: 0, y: 0, ownerType: 2, owner: 9 }
+        ]
+      },
+      {
+        code: 'CLNY',
+        records: [
+          { index: 0, x: 0, y: 0, ownerType: 3, owner: 4, improvementType: 0 }
+        ]
+      },
+      {
+        code: 'UNIT',
+        records: [
+          { index: 0, x: 2, y: 0, ownerType: 7, owner: 0 }
+        ]
+      }
+    ]
+  };
+  const issues = collectMapReferenceIntegrityIssues(parsed);
+  assert.ok(issues.some((issue) => issue.kind === 'city-owner-ref' && issue.recordRef === 0), `expected invalid city owner ref, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'clny-owner-ref' && issue.recordRef === 0), `expected invalid colony owner ref, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'unit-owner-type' && issue.recordRef === 0), `expected invalid unit owner type, got ${JSON.stringify(issues)}`);
+});
+
+test('collectMapReferenceIntegrityIssues allows opaque barbarian owner payloads', () => {
+  const parsed = {
+    io: { mapWidth: 4 },
+    sections: [
+      { code: 'RACE', records: [{ index: 0 }, { index: 1 }] },
+      { code: 'LEAD', records: [{ index: 0 }] },
+      { code: 'WMAP', records: [{ width: 4, height: 2 }] },
+      {
+        code: 'TILE',
+        records: [
+          { index: 0, xpos: 0, ypos: 0, city: 0, colony: 0 },
+          { index: 1, xpos: 2, ypos: 0, city: -1, colony: -1 }
+        ]
+      },
+      {
+        code: 'CITY',
+        records: [
+          { index: 0, x: 0, y: 0, ownerType: 1, owner: 99 }
+        ]
+      },
+      {
+        code: 'CLNY',
+        records: [
+          { index: 0, x: 0, y: 0, ownerType: 1, owner: 75, improvementType: 0 }
+        ]
+      },
+      {
+        code: 'UNIT',
+        records: [
+          { index: 0, x: 2, y: 0, ownerType: 1, owner: 75 }
+        ]
+      }
+    ]
+  };
+  const issues = collectMapReferenceIntegrityIssues(parsed);
+  assert.equal(issues.length, 0, `expected no issues for opaque barbarian owner payloads, got ${JSON.stringify(issues)}`);
+});
+
+test('collectMapReferenceIntegrityIssues rejects invalid starting location owner references and coords', () => {
+  const parsed = {
+    io: { mapWidth: 4 },
+    sections: [
+      { code: 'RACE', records: [{ index: 0 }, { index: 1 }] },
+      { code: 'LEAD', records: [{ index: 0 }] },
+      { code: 'WMAP', records: [{ width: 4, height: 2 }] },
+      {
+        code: 'TILE',
+        records: [
+          { index: 0, xpos: 0, ypos: 0, city: -1, colony: -1 },
+          { index: 1, xpos: 2, ypos: 0, city: -1, colony: -1 }
+        ]
+      },
+      {
+        code: 'SLOC',
+        records: [
+          { ownerType: 3, owner: 9, x: 0, y: 0 },
+          { ownerType: 2, owner: 1, x: 7, y: 7 }
+        ]
+      }
+    ]
+  };
+  const issues = collectMapReferenceIntegrityIssues(parsed);
+  assert.ok(issues.some((issue) => issue.kind === 'sloc-owner-ref' && issue.recordRef === 0), `expected invalid SLOC owner ref, got ${JSON.stringify(issues)}`);
+  assert.ok(issues.some((issue) => issue.kind === 'sloc-out-of-bounds' && issue.slocRef === 1), `expected out-of-bounds SLOC, got ${JSON.stringify(issues)}`);
+});
+
+test('collectColonyOverlayCoherenceIssues rejects mismatched colony overlay types', () => {
+  const parsed = {
+    sections: [
+      {
+        code: 'TILE',
+        records: [
+          { index: 0, colony: 0, c3cOverlays: 0x40000000 }
+        ]
+      },
+      {
+        code: 'CLNY',
+        records: [
+          { index: 0, x: 0, y: 0, improvementType: 0 }
+        ]
+      }
+    ]
+  };
+  const issues = collectColonyOverlayCoherenceIssues(parsed);
+  assert.ok(issues.some((issue) => issue.kind === 'colony-overlay-type-mismatch' && issue.colonyRef === 0 && issue.overlayType === 2 && issue.improvementType === 0), `expected colony overlay mismatch, got ${JSON.stringify(issues)}`);
+});
+
+test('applyEdits rejects whole-map replacement outside explicit generated-map saves', () => {
+  const parsed = parseBiqFileForRawSections(getStableMapUnitsFixturePath());
+  assert.equal(parsed.ok, true, 'expected stable fixture BIQ parse');
+  const tileSection = (parsed.sections || []).find((section) => section.code === 'TILE');
+  assert.ok(tileSection, 'expected TILE section in stable fixture');
+  const result = applyEdits(Buffer.concat([
+    parsed._headerBuf,
+    ...parsed.sections.map((section) => serializeSection(section, parsed.io))
+  ]), [{
+    op: 'setmap',
+    sections: [tileSection]
+  }], {});
+  assert.equal(result.ok, false, 'expected setmap to be rejected without explicit generated-map allowance');
+  assert.match(String(result.error || ''), /Whole-map BIQ replacement is blocked/i);
+});
+
+test('BIQ map round-trip keeps surviving city tile references stable after deleting an earlier city', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const resolvedCiv3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   fs.mkdirSync(c3x, { recursive: true });
@@ -2540,43 +2846,48 @@ test('BIQ map round-trip keeps surviving city tile references stable after delet
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: resolvedCiv3Root, scenarioPath: scenarioBiq });
   const mapTab = bundle && bundle.tabs && bundle.tabs.map;
   if (!mapTab) {
-    t.skip('Map tab unavailable in sample BIQ.');
+    t.skip('Map tab unavailable in stable fixture BIQ.');
     return;
   }
-  const sections = getMapSectionsOrSkip(t, mapTab);
+  const seededState = seedFixtureCitiesForDeleteRegression(t, mapTab);
+  if (!seededState) return;
+  const seedSaveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: resolvedCiv3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed delete-regression cities'));
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: resolvedCiv3Root, scenarioPath: scenarioBiq });
+  const reloadedMapForDelete = seededReload.tabs.map;
+  const sections = getMapSectionsOrSkip(t, reloadedMapForDelete);
   if (!sections) return;
   const { tileSection, citySection } = sections;
-
   const cityRecords = Array.isArray(citySection.records) ? citySection.records : [];
   const tileRecords = Array.isArray(tileSection.records) ? tileSection.records : [];
-  const tileByCityIndex = new Map();
-  tileRecords.forEach((tile) => {
-    const cityRef = getRecordInt(tile, 'city', -1);
-    if (cityRef >= 0 && !tileByCityIndex.has(cityRef)) tileByCityIndex.set(cityRef, tile);
-  });
-  const survivor = cityRecords.find((record) => Number(record && record.index) > 0 && tileByCityIndex.has(Number(record && record.index)));
-  if (!survivor) {
-    t.skip('Sample BIQ lacks a survivor city with a linked tile reference.');
-    return;
-  }
-  const deleted = cityRecords.find((record) => Number(record && record.index) < Number(survivor.index) && tileByCityIndex.has(Number(record && record.index)));
-  if (!deleted) {
-    t.skip('Sample BIQ lacks an earlier city delete candidate.');
-    return;
-  }
+  const deletedIndex = cityRecords.findIndex((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Seed Delete City A');
+  const survivorIndex = cityRecords.findIndex((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Seed Delete City C');
+  const deleted = deletedIndex >= 0 ? cityRecords[deletedIndex] : null;
+  const survivor = survivorIndex >= 0 ? cityRecords[survivorIndex] : null;
+  assert.ok(deleted, 'expected seeded city delete candidate after seed save');
+  assert.ok(survivor, 'expected seeded survivor city after seed save');
 
-  const survivorName = String(getRecordField(survivor, 'name') && getRecordField(survivor, 'name').value || '');
+  const survivorName = 'Seed Delete City C';
   const survivorX = getRecordInt(survivor, 'x', -1);
   const survivorY = getRecordInt(survivor, 'y', -1);
-  const survivorTileBefore = tileByCityIndex.get(Number(survivor.index));
+  const survivorTileBefore = tileRecords.find((tile) => getRecordInt(tile, 'city', -1) === survivorIndex);
+  assert.ok(survivorTileBefore, 'expected survivor tile before delete');
   const survivorTileBeforeX = getRecordInt(survivorTileBefore, 'xpos', -1);
   const survivorTileBeforeY = getRecordInt(survivorTileBefore, 'ypos', -1);
 
-  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
-  mapTab.recordOps.push({ op: 'delete', sectionCode: 'CITY', recordRef: `@INDEX:${Number(deleted.index)}` });
+  const mapTabAfterSeed = reloadedMapForDelete;
+  if (!Array.isArray(mapTabAfterSeed.recordOps)) mapTabAfterSeed.recordOps = [];
+  mapTabAfterSeed.recordOps.push({ op: 'delete', sectionCode: 'CITY', recordRef: `@INDEX:${deletedIndex}` });
   citySection.records = cityRecords.filter((record) => record !== deleted);
   tileRecords.forEach((tile) => {
-    if (getRecordInt(tile, 'city', -1) !== Number(deleted.index)) return;
+    if (getRecordInt(tile, 'city', -1) !== deletedIndex) return;
     const cityField = getRecordField(tile, 'city');
     if (cityField) cityField.value = '-1';
     tile.city = -1;
@@ -2587,7 +2898,7 @@ test('BIQ map round-trip keeps surviving city tile references stable after delet
     c3xPath: c3x,
     civ3Path: resolvedCiv3Root,
     scenarioPath: scenarioBiq,
-    tabs: bundle.tabs
+    tabs: seededReload.tabs
   });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
 
@@ -2601,7 +2912,9 @@ test('BIQ map round-trip keeps surviving city tile references stable after delet
   assert.equal(getRecordInt(reSurvivor, 'y', -1), survivorY, 'expected survivor city Y to remain stable');
   const reSurvivorTile = (reTileSection.records || []).find((tile) => getRecordInt(tile, 'xpos', -1) === survivorTileBeforeX && getRecordInt(tile, 'ypos', -1) === survivorTileBeforeY);
   assert.ok(reSurvivorTile, 'expected survivor tile after reload');
-  assert.match(String(getRecordField(reSurvivorTile, 'city') && getRecordField(reSurvivorTile, 'city').value || ''), new RegExp(`\\(${Number(reSurvivor.index)}\\)$`), 'expected survivor tile to reference the survivor city after reindex');
+  const reSurvivorIndex = (reCitySection.records || []).findIndex((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === survivorName);
+  assert.ok(reSurvivorIndex >= 0, 'expected survivor city index after reload');
+  assert.equal(getRecordInt(reSurvivorTile, 'city', -1), reSurvivorIndex, 'expected survivor tile to reference the survivor city after reindex');
   assertMapReferenceIntegrityFromMapTab(reMap, 'expected all tile city/colony references to stay valid after city delete round-trip');
 });
 

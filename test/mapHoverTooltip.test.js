@@ -276,6 +276,48 @@ test('barbarian unit overlays use barbarian owner color mapping on the map', () 
   );
 });
 
+test('barbarian cities contribute territory borders through city influence ownership metadata', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const cityMetaList = \(citySection\?\.records \|\| \[\]\)\.map\(\(cityRecord, cityPos\) => \{[\s\S]*?let ownerId = -1;[\s\S]*?if \(ownerType === 1\) ownerId = 0;[\s\S]*?const civId = parseIntLoose\(resolveCivIdFromOwnership\(ownerTypeRaw, ownerRaw\), -1\);[\s\S]*?let borderColorId = NaN;[\s\S]*?if \(ownerType === 1 && civId >= 0\) \{[\s\S]*?borderColorId = parseIntLoose\(raceDefaultColorById\[civId\], NaN\);[\s\S]*?\}[\s\S]*?if \(!cityMeta \|\| cityMeta\.ownerId < 0\) \{/,
+    'barbarian-owned cities should carry valid owner and border-color metadata into the city-influence territory pass so their borders render on the map'
+  );
+});
+
+test('map tab exposes terrain-overlay import and routes it through explicit whole-map import replacement', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const configCoreText = fs.readFileSync(path.join(__dirname, '..', 'src', 'configCore.js'), 'utf8');
+  const biqSectionsText = fs.readFileSync(path.join(__dirname, '..', 'src', 'biq', 'biqSections.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /async function promptImportMapAction\(\) \{[\s\S]*?el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Import Map';[\s\S]*?replace the current map and clear existing cities, units, colonies, resources, and starting locations[\s\S]*?Terrain, rivers, landmark\/bonus terrain flags, and tile overlays only\./,
+    'map import should use the shared entity modal shell and clearly warn that importing replaces the current map while limiting scope to terrain and overlays'
+  );
+  assert.match(
+    rendererText,
+    /function buildImportedTerrainOverlayMapSections\(sourceMapTab\) \{[\s\S]*?setRecordFieldValue\(next, 'resource', '-1'\);[\s\S]*?setRecordFieldValue\(next, 'city', '-1'\);[\s\S]*?setRecordFieldValue\(next, 'colony', '-1'\);[\s\S]*?emptySection\('SLOC'\),[\s\S]*?emptySection\('CITY'\),[\s\S]*?emptySection\('UNIT'\),[\s\S]*?emptySection\('CLNY'\)/,
+    'terrain-overlay map import should strip resources and map entities while replacing the structural map sections'
+  );
+  assert.match(
+    rendererText,
+    /const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.innerHTML = '<span class="btn-icon">⇪<\/span>Import Map';[\s\S]*?const result = await promptImportMapAction\(\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.importedSections, 'set', 'imported'\);/,
+    'the map tab should expose an Import Map button that routes accepted imports into the explicit whole-map replacement path'
+  );
+  assert.match(
+    configCoreText,
+    /allowSetmapGeneration: \['generated', 'imported'\]\.includes\(String\(tab && tab\.mapMutationSource \|\| ''\)\.trim\(\)\.toLowerCase\(\)\)/,
+    'config save planning should allow explicit imported map replacements to emit setmap operations'
+  );
+  assert.match(
+    biqSectionsText,
+    /Whole-map BIQ replacement is blocked for normal saves\. Only explicit map generation or map import writes may replace all map sections\./,
+    'BIQ apply should still block arbitrary whole-map replacement while allowing the explicit import path'
+  );
+});
+
 test('map overlay rendering offsets colony-like overlays, draws barricades, and shifts ruins right/down', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 

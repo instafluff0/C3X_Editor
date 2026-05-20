@@ -3475,11 +3475,6 @@ button.danger:hover {
   background: linear-gradient(135deg, #d98228, #f0b04d);
 }
 
-.biq-map-control-move-hint .tab-hint {
-  color: #7b4a16;
-  transition: color 120ms ease, text-shadow 120ms ease;
-}
-
 .biq-map-control-move-hint.active {
   border-color: rgba(34, 169, 158, 0.56);
   background: rgba(23, 72, 69, 0.86);

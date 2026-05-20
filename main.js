@@ -7,7 +7,7 @@ const { getPreview } = require('./src/artPreview');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
-const APP_NAME = 'Civ 3 C3X Modern Configuration Manager';
+const APP_NAME = 'Civ 3 C3X Modern Editor';
 const DEV_APP_ICON_PATH = path.join(__dirname, 'build', 'icon.png');
 app.setName(APP_NAME);
 app.name = APP_NAME;
@@ -357,7 +357,7 @@ function createWindow() {
     height: 960,
     minWidth: 1180,
     minHeight: 760,
-    title: 'Civ 3 | C3X Modern Configuration Manager',
+    title: 'Civ 3 | C3X Modern Editor',
     icon: windowIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

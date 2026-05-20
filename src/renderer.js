@@ -20950,6 +20950,148 @@ function confirmRemoveMap(tab) {
   });
 }
 
+async function promptImportMapAction() {
+  if (!el.entityModalOverlay || !el.entityModalContent) return null;
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Import Map';
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = 'Import terrain and overlays from another scenario map. Doing this will replace the current map and clear existing cities, units, colonies, resources, and starting locations from this BIQ.';
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Import Map';
+    el.entityModalConfirm.disabled = true;
+  }
+  el.entityModalContent.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.className = 'entity-modal-content';
+  const warning = document.createElement('p');
+  warning.className = 'entity-modal-copy-warning';
+  warning.textContent = 'This replaces the current scenario map. Only terrain and tile overlays are imported; map entities and resources are intentionally discarded.';
+  form.appendChild(warning);
+  const grid = document.createElement('div');
+  grid.className = 'entity-form-grid';
+  form.appendChild(grid);
+
+  const sourceField = document.createElement('div');
+  sourceField.className = 'entity-field';
+  const sourceLabel = document.createElement('label');
+  sourceLabel.textContent = 'Source Scenario';
+  const sourceSelect = document.createElement('select');
+  sourceSelect.className = 'entity-import-scenario-pill';
+  buildScenarioSourceSelect(sourceSelect);
+  sourceField.appendChild(sourceLabel);
+  sourceField.appendChild(sourceSelect);
+  grid.appendChild(sourceField);
+
+  const infoField = document.createElement('div');
+  infoField.className = 'entity-field';
+  const infoLabel = document.createElement('label');
+  infoLabel.textContent = 'Imported Scope';
+  const infoValue = document.createElement('div');
+  infoValue.className = 'hint';
+  infoValue.textContent = 'Terrain, rivers, landmark/bonus terrain flags, and tile overlays only.';
+  infoField.appendChild(infoLabel);
+  infoField.appendChild(infoValue);
+  grid.appendChild(infoField);
+
+  const summary = document.createElement('p');
+  summary.className = 'hint';
+  summary.textContent = 'Select a source scenario to load its map summary.';
+  form.appendChild(summary);
+  el.entityModalContent.appendChild(form);
+
+  let selectedSourcePath = '';
+  let importedSections = null;
+  const updateConfirmState = () => {
+    if (el.entityModalConfirm) el.entityModalConfirm.disabled = !(selectedSourcePath && importedSections);
+  };
+  const loadSource = async (filePath) => {
+    if (!filePath) return;
+    selectedSourcePath = '';
+    importedSections = null;
+    updateConfirmState();
+    summary.textContent = 'Loading map...';
+    sourceSelect.disabled = true;
+    try {
+      const sourceMapTab = await loadImportMapTab(filePath);
+      importedSections = buildImportedTerrainOverlayMapSections(sourceMapTab);
+      selectedSourcePath = filePath;
+      const importedWmap = importedSections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP');
+      const importedTile = importedSections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE');
+      const wmapRecord = importedWmap && Array.isArray(importedWmap.records) ? importedWmap.records[0] : null;
+      const width = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+      const height = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+      const tileCount = importedTile && Array.isArray(importedTile.records) ? importedTile.records.length : 0;
+      const sizeLabel = width > 0 && height > 0 ? `${width}x${height}` : 'unknown size';
+      summary.textContent = `Ready to import ${sizeLabel} terrain/overlay data from ${getPathTail(filePath)} (${tileCount} tile records).`;
+    } catch (err) {
+      importedSections = null;
+      selectedSourcePath = '';
+      summary.textContent = err && err.message ? err.message : 'Could not load import source scenario.';
+      setStatus(summary.textContent, true);
+    } finally {
+      sourceSelect.disabled = false;
+      updateConfirmState();
+    }
+  };
+
+  sourceSelect.addEventListener('change', async () => {
+    const value = String(sourceSelect.value || '').trim();
+    if (!value) {
+      selectedSourcePath = '';
+      importedSections = null;
+      summary.textContent = 'Select a source scenario to load its map summary.';
+      updateConfirmState();
+      return;
+    }
+    if (value === '__manual__') {
+      const filePath = await window.c3xManager.pickFile({
+        filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+      });
+      if (!filePath) {
+        sourceSelect.value = selectedSourcePath || '';
+        return;
+      }
+      const existingOpt = Array.from(sourceSelect.options).find((opt) => String(opt.value || '') === filePath);
+      if (existingOpt) {
+        sourceSelect.value = filePath;
+      } else {
+        const manualOpt = document.createElement('option');
+        manualOpt.value = filePath;
+        manualOpt.textContent = getPathTail(filePath);
+        manualOpt.title = filePath;
+        sourceSelect.insertBefore(manualOpt, sourceSelect.querySelector('option[value="__manual__"]'));
+        sourceSelect.value = filePath;
+      }
+      await loadSource(filePath);
+      return;
+    }
+    await loadSource(value);
+  });
+
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => sourceSelect.focus({ preventScroll: true }), 0);
+
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const onConfirm = () => {
+      if (!selectedSourcePath || !importedSections) {
+        setStatus('Select a source scenario with a map first.', true);
+        return;
+      }
+      resolveEntityModal({
+        sourceScenarioPath: selectedSourcePath,
+        importedSections
+      });
+    };
+    const onCancel = () => resolveEntityModal(null);
+    if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
+    if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
+  });
+}
+
 function openGenerateMapModal(tab) {
   if (!tab) return;
   const overlay = ensureGenerateMapModalNode();
@@ -24239,6 +24381,21 @@ function resolveEntityModal(payload) {
   if (typeof resolver === 'function') resolver(payload || null);
 }
 
+async function loadImportMapTab(filePath) {
+  const loaded = await window.c3xManager.loadBundle(buildLoadBundlePayload({
+    mode: 'scenario',
+    scenarioPath: filePath
+  }));
+  if (!loaded || !loaded.tabs || !loaded.tabs.map) {
+    throw new Error('Could not load import source scenario.');
+  }
+  const sourceMapTab = loaded.tabs.map;
+  if (!hasMapData(sourceMapTab)) {
+    throw new Error('Selected scenario does not contain a map.');
+  }
+  return sourceMapTab;
+}
+
 async function loadImportEntriesForTab(tabKey, filePath) {
   const loaded = await window.c3xManager.loadBundle(buildLoadBundlePayload({
     mode: 'scenario',
@@ -24289,6 +24446,50 @@ function getImportReferenceIndexMap(sourceMaps, tabKey) {
   const maps = sourceMaps && typeof sourceMaps === 'object' ? sourceMaps : {};
   const items = maps[tabKey];
   return Array.isArray(items) ? items : [];
+}
+
+function buildImportedTerrainOverlayMapSections(sourceMapTab) {
+  const sourceSections = Array.isArray(sourceMapTab && sourceMapTab.sections) ? sourceMapTab.sections : [];
+  const findSection = (code) => sourceSections.find((section) => String(section && section.code || '').trim().toUpperCase() === code) || null;
+  const cloneSection = (section) => (section ? JSON.parse(JSON.stringify(section)) : null);
+  const sanitizeTileRecord = (record) => {
+    const next = JSON.parse(JSON.stringify(record || {}));
+    setRecordFieldValue(next, 'border', '0');
+    setRecordFieldValue(next, 'resource', '-1');
+    setRecordFieldValue(next, 'barbariantribe', '-1');
+    setRecordFieldValue(next, 'city', '-1');
+    setRecordFieldValue(next, 'colony', '-1');
+    return next;
+  };
+  const wchr = cloneSection(findSection('WCHR'));
+  const wmap = cloneSection(findSection('WMAP'));
+  const sourceTile = cloneSection(findSection('TILE'));
+  const cont = cloneSection(findSection('CONT'));
+  if (!wmap || !sourceTile) {
+    throw new Error('Selected scenario is missing required WMAP/TILE map sections.');
+  }
+  if (Array.isArray(wmap.records) && wmap.records[0]) {
+    setRecordFieldValue(wmap.records[0], 'numresources', '0');
+  }
+  const tile = {
+    ...(sourceTile || {}),
+    records: Array.isArray(sourceTile && sourceTile.records) ? sourceTile.records.map(sanitizeTileRecord) : []
+  };
+  const emptySection = (code) => ({
+    code,
+    title: BIQ_SECTION_FRIENDLY_NAMES[code] || code,
+    records: []
+  });
+  return [
+    ...(wchr ? [wchr] : []),
+    wmap,
+    tile,
+    ...(cont ? [cont] : []),
+    emptySection('SLOC'),
+    emptySection('CITY'),
+    emptySection('UNIT'),
+    emptySection('CLNY')
+  ];
 }
 
 function getTargetReferenceEntries(tabKey) {
@@ -28596,6 +28797,38 @@ function renderMapTab(tab) {
     });
     actions.appendChild(openBtn);
   }
+  if (isScenarioMode()) {
+    const importBtn = document.createElement('button');
+    importBtn.type = 'button';
+    importBtn.className = 'secondary';
+    importBtn.innerHTML = '<span class="btn-icon">⇪</span>Import Map';
+    importBtn.addEventListener('click', async () => {
+      const result = await promptImportMapAction();
+      if (!result || !Array.isArray(result.importedSections)) return;
+      const mapOverlay = ensureMapModalNode();
+      const reopenMapEditor = mapModal.tab === tab && !mapOverlay.classList.contains('hidden');
+      rememberMapUndoSnapshot();
+      applyWholeMapSectionsToTab(tab, result.importedSections, 'set', 'imported');
+      setDirty(true);
+      if (reopenMapEditor) closeMapModal();
+      renderTabs();
+      renderActiveTab({ preserveTabScroll: true });
+      if (reopenMapEditor) {
+        reopenMapModalForTab(tab);
+      } else {
+        refreshOpenMapModalForTab(tab);
+      }
+      const importedWmap = Array.isArray(tab.sections)
+        ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP')
+        : null;
+      const importedWmapRecord = importedWmap && Array.isArray(importedWmap.records) ? importedWmap.records[0] : null;
+      const importedWidth = parseIntLoose(getFieldByBaseKey(importedWmapRecord, 'width')?.value, 0);
+      const importedHeight = parseIntLoose(getFieldByBaseKey(importedWmapRecord, 'height')?.value, 0);
+      const sizeLabel = importedWidth > 0 && importedHeight > 0 ? ` (${importedWidth}x${importedHeight})` : '';
+      setStatus(`Imported terrain and overlays from ${getPathTail(result.sourceScenarioPath || '')}${sizeLabel}.`);
+    });
+    actions.appendChild(importBtn);
+  }
   if (isScenarioMode() && hasMapData(tab)) {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
@@ -29037,7 +29270,7 @@ async function buildGeneratedMapSections(tab, generation = {}) {
   ];
 }
 
-function applyGeneratedMapSectionsToTab(tab, generatedSections, mutation = 'set') {
+function applyWholeMapSectionsToTab(tab, mapSectionsInput, mutation = 'set', mutationSource = 'generated') {
   if (!tab) return false;
   const existingSections = Array.isArray(tab.sections) ? tab.sections.filter((section) => !isMapSectionCode(section && section.code)) : [];
   const nextSections = existingSections.slice();
@@ -29045,15 +29278,20 @@ function applyGeneratedMapSectionsToTab(tab, generatedSections, mutation = 'set'
     const code = String(section && section.code || '').toUpperCase();
     return code === 'GAME' || code === 'LEAD';
   });
-  const mapSections = Array.isArray(generatedSections) ? generatedSections : [];
+  const mapSections = Array.isArray(mapSectionsInput) ? mapSectionsInput : [];
   if (insertAt >= 0) nextSections.splice(insertAt, 0, ...mapSections);
   else nextSections.push(...mapSections);
   tab.sections = nextSections;
   tab.hasMapData = hasMapData(tab);
   tab.mapMutation = mutation;
+  tab.mapMutationSource = mutation === 'set' ? String(mutationSource || 'generated') : null;
   tab.recordOps = [];
   state.biqMapSelectedTile = tab.hasMapData ? 0 : -1;
   return true;
+}
+
+function applyGeneratedMapSectionsToTab(tab, generatedSections, mutation = 'set') {
+  return applyWholeMapSectionsToTab(tab, generatedSections, mutation, 'generated');
 }
 
 function refreshOpenMapModalForTab(tab) {
@@ -29091,6 +29329,7 @@ function removeMapFromTab(tab) {
   tab.sections = Array.isArray(tab.sections) ? tab.sections.filter((section) => !isMapSectionCode(section && section.code)) : [];
   tab.hasMapData = false;
   tab.mapMutation = tab.originalHasMap ? 'remove' : null;
+  tab.mapMutationSource = null;
   tab.recordOps = [];
   state.biqMapSelectedTile = -1;
   return true;
@@ -31477,11 +31716,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
     const ownerType = parseOwnerType(ownerTypeRaw);
     let ownerId = -1;
-    if (ownerType === 2) ownerId = parseIntLoose(resolveCivIdFromRaw(ownerRaw), -1);
+    if (ownerType === 1) ownerId = 0;
+    else if (ownerType === 2) ownerId = parseIntLoose(resolveCivIdFromRaw(ownerRaw), -1);
     else if (ownerType === 3) ownerId = parseIntLoose(resolvePlayerIdFromOwnerRaw(ownerRaw), -1);
     const civId = parseIntLoose(resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw), -1);
     let borderColorId = NaN;
-    if (ownerType === 2 && ownerId >= 0) {
+    if (ownerType === 1 && civId >= 0) {
+      borderColorId = parseIntLoose(raceDefaultColorById[civId], NaN);
+    } else if (ownerType === 2 && ownerId >= 0) {
       if (hasCustomPlayerData) {
         for (let p = 0; p < (leadSection?.records || []).length; p += 1) {
           if (parseIntLoose(playerCivById[p], -1) !== ownerId) continue;
@@ -38227,9 +38469,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         });
       }
     });
-    addRow.appendChild(addBtn);
-    addPanel.appendChild(addRow);
-
     const unitPicker = createReferencePicker({
       options: addUnitOptions,
       targetTabKey: 'units',
@@ -38246,6 +38485,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
     unitPicker.classList.add('map-unit-add-picker');
     addPanel.appendChild(unitPicker);
+    addRow.appendChild(addBtn);
+    addPanel.appendChild(addRow);
     card.appendChild(addPanel);
     syncTileInfoUnitTint();
     syncAddButton();

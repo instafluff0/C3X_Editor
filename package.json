@@ -1,6 +1,6 @@
 {
   "name": "civ3-c3x-modern-config-manager",
-  "productName": "Civ 3 C3X Modern Configuration Manager",
+  "productName": "Civ 3 C3X Modern Editor",
   "version": "27.11.0",
   "description": "Modern config manager for C3X",
   "main": "main.js",
@@ -32,7 +32,7 @@
     "nsis": {
       "artifactName": "${productName} Setup ${version}.${ext}",
       "createStartMenuShortcut": true,
-      "shortcutName": "Civ 3 C3X Modern Configuration Manager"
+      "shortcutName": "Civ 3 C3X Modern Editor"
     },
     "mac": {
       "target": "dmg",

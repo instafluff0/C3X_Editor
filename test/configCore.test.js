@@ -262,7 +262,7 @@ test('saving new sectioned override file does not copy default docs/comments', (
 
   const userDistrictsPath = path.join(root, 'user.districts_config.txt');
   const saved = fs.readFileSync(userDistrictsPath, 'utf8');
-  assert.match(saved, /Managed by Civ 3 \| C3X Modern Configuration Manager/);
+  assert.match(saved, /Managed by Civ 3 \| C3X Modern Editor/);
   assert.match(saved, /Mode: global/);
   assert.doesNotMatch(saved, /\[======================================================================= NOTE/);
   assert.doesNotMatch(saved, /default comment that should not be copied/);
