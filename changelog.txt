@@ -1,4 +1,5 @@
 * RELEASE 27.11
+- Fixed the Map modal `Save` button state so it follows the main app rules and stays disabled unless there are unsaved changes and save is currently valid.
 - Fixed BIQ auto-encoding detection to read BIQ/map strings from the BIQ itself instead of inferring from Civilopedia/PediaIcons text layers, which corrects mixed-language cases such as accented city names rendering as the wrong characters on the Map tab.
 - Deferred full Map-tab BIQ projection until the Map tab is actually opened, improving app load time and scenario switching for large BIQs while preserving on-demand map editing and import behavior.
 - Enabled the new Map tab with in-app scenario map importing, resizing, removal, and editing.

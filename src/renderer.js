@@ -21986,7 +21986,7 @@ function ensureMapModalNode() {
   if (closeBtn) closeBtn.addEventListener('click', () => closeMapModal());
   if (mapModal.saveBtn) {
     mapModal.saveBtn.addEventListener('click', async () => {
-      if (state.isSaving || state.isLoading || !state.bundle) return;
+      if (!state.isDirty || state.isSaving || state.isLoading || !state.bundle || !!state.sectionValidationError) return;
       await saveCurrentBundle();
     });
   }
@@ -22010,7 +22010,8 @@ function ensureMapModalNode() {
 
 function refreshMapModalUndoButtons() {
   if (mapModal.saveBtn) {
-    mapModal.saveBtn.disabled = state.isSaving || state.isLoading || !state.bundle;
+    mapModal.saveBtn.disabled = !state.isDirty || state.isSaving || state.isLoading || !state.bundle || !!state.sectionValidationError;
+    mapModal.saveBtn.title = state.sectionValidationError || '';
   }
   if (mapModal.undoBtn) {
     mapModal.undoBtn.disabled = !isScenarioMode() || !getLatestScopedUndoSnapshot('map') || state.isLoading;

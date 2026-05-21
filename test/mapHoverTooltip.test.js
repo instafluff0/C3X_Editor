@@ -433,7 +433,7 @@ test('map art loads repaint an open map modal in place instead of rebuilding the
 
   assert.match(
     rendererText,
-    /function ensureMapModalNode\(\) \{[\s\S]*?<button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?<button type="button" class="ghost map-editor-modal-undo-btn" data-act="undo">[\s\S]*?mapModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?await saveCurrentBundle\(\);[\s\S]*?\}[\s\S]*?if \(mapModal\.undoBtn\) \{[\s\S]*?function refreshMapModalUndoButtons\(\) \{[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?mapModal\.saveBtn\.disabled = state\.isSaving \|\| state\.isLoading \|\| !state\.bundle;[\s\S]*?\}/,
+    /function ensureMapModalNode\(\) \{[\s\S]*?<button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?mapModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?if \(!state\.isDirty \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError\) return;[\s\S]*?await saveCurrentBundle\(\);[\s\S]*?\}[\s\S]*?function refreshMapModalUndoButtons\(\) \{[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?mapModal\.saveBtn\.disabled = !state\.isDirty \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError;[\s\S]*?mapModal\.saveBtn\.title = state\.sectionValidationError \|\| '';[\s\S]*?\}/,
     'the map modal header should expose a Save button beside Undo and route it through the shared saveCurrentBundle flow with matching disabled-state rules'
   );
   assert.match(
