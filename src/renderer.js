@@ -302,6 +302,11 @@ const unitAvailabilityModal = {
   body: null,
   title: null
 };
+const unitTableModal = {
+  node: null,
+  body: null,
+  title: null
+};
 const civilizationAnimationPreviewQueue = {
   active: 0,
   limit: 2,
@@ -9054,6 +9059,9 @@ function paintReferenceListThumbnailPreview(holder, preview) {
   drawPreviewFrameToCanvas(preview, canvas);
   holder.innerHTML = '';
   holder.appendChild(canvas);
+  holder.classList.remove('art-pending');
+  const outerThumb = holder.closest('.map-option-thumb');
+  if (outerThumb) outerThumb.classList.remove('art-pending');
 }
 
 function loadReferenceListThumbnail(tabKey, entry, holder) {
@@ -12778,6 +12786,27 @@ const UNIT_RULE_FRIENDLY_LABELS = Object.freeze({
   transportsonlytacticalmissiles: 'Transports Only Tactical Missiles',
   wheeled: 'Wheeled'
 });
+
+const UNIT_TABLE_COLUMNS = Object.freeze([
+  { key: 'name', label: 'Unit Name', type: 'text', width: 220 },
+  { key: 'unitclass', label: 'Unit Class', type: 'enum', width: 132 },
+  { key: 'requiredtech', label: 'Required Tech', type: 'reference', width: 190 },
+  { key: 'upgradeto', label: 'Upgrade To', type: 'reference', width: 190 },
+  { key: 'attack', label: 'Attack', type: 'number', width: 82, min: 0 },
+  { key: 'defence', label: 'Defence', type: 'number', width: 82, min: 0 },
+  { key: 'movement', label: 'Movement', type: 'number', width: 92, min: 0 },
+  { key: 'bombardstrength', label: 'Bombard', type: 'number', width: 92, min: 0 },
+  { key: 'bombardrange', label: 'Range', type: 'number', width: 82, min: 0 },
+  { key: 'rateoffire', label: 'ROF', type: 'number', width: 74, min: 0 },
+  { key: 'airdefence', label: 'Air Def', type: 'number', width: 88, min: 0 },
+  { key: 'hitpointbonus', label: 'HP Bonus', type: 'number', width: 92, min: 0 },
+  { key: 'operationalrange', label: 'Op Range', type: 'number', width: 92, min: 0 },
+  { key: 'capacity', label: 'Capacity', type: 'number', width: 92, min: 0 },
+  { key: 'shieldcost', label: 'Shield Cost', type: 'number', width: 96, min: 0 },
+  { key: 'populationcost', label: 'Pop Cost', type: 'number', width: 88, min: 0 },
+  { key: 'zoneofcontrol', label: 'ZoC', type: 'bool', width: 64 },
+  { key: 'requiressupport', label: 'Support', type: 'bool', width: 82 }
+]);
 
 function isReadonlyRuleField(tabKey, field) {
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
@@ -21081,6 +21110,614 @@ function openUnitAvailabilityModal({ tab, referenceEditable, initialCivValue = '
   overlay.setAttribute('aria-hidden', 'false');
 }
 
+function ensureUnitTableModalNode() {
+  if (unitTableModal.node && unitTableModal.node.isConnected) return unitTableModal.node;
+  const overlay = document.createElement('div');
+  overlay.className = 'unit-table-modal-overlay hidden';
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.innerHTML = `
+    <div class="unit-table-modal-panel" role="dialog" aria-modal="true" aria-label="Unit Table">
+      <div class="unit-table-modal-header">
+        <div class="unit-table-modal-head">
+          <strong id="unit-table-modal-title">Unit Table</strong>
+          <span class="unit-table-modal-note">Existing units only. Add/copy/delete still happens in the main Units view.</span>
+        </div>
+        <button type="button" class="ghost" data-act="close">Close</button>
+      </div>
+      <div id="unit-table-modal-body" class="unit-table-modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  unitTableModal.node = overlay;
+  unitTableModal.body = overlay.querySelector('#unit-table-modal-body');
+  unitTableModal.title = overlay.querySelector('#unit-table-modal-title');
+  const closeBtn = overlay.querySelector('[data-act="close"]');
+  if (closeBtn) closeBtn.addEventListener('click', () => closeUnitTableModal());
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closeUnitTableModal();
+  });
+  return overlay;
+}
+
+function closeUnitTableModal() {
+  const overlay = ensureUnitTableModalNode();
+  overlay.classList.add('hidden');
+  overlay.setAttribute('aria-hidden', 'true');
+  if (unitTableModal.body) unitTableModal.body.innerHTML = '';
+}
+
+function getUnitTableColumnDisplayLabel(column) {
+  return column && column.label ? String(column.label) : getRuleFieldDisplayLabel('units', {
+    baseKey: column && column.key ? String(column.key) : '',
+    key: column && column.key ? String(column.key) : ''
+  }, null);
+}
+
+function getUnitTableFieldStub(column) {
+  return {
+    baseKey: String(column && column.key || ''),
+    key: String(column && column.key || ''),
+    label: getUnitTableColumnDisplayLabel(column),
+    value: ''
+  };
+}
+
+function normalizeUnitTableSelectValue(rawValue) {
+  const parsed = parseIntFromDisplayValue(rawValue);
+  if (parsed != null) return String(parsed);
+  const text = String(rawValue == null ? '' : rawValue).trim();
+  return text || '-1';
+}
+
+function normalizeUnitTableCellValue(rawValue, column) {
+  const type = String(column && column.type || '');
+  if (type === 'bool') {
+    return String(rawValue || '').trim().toLowerCase() === 'true' ? 'true' : 'false';
+  }
+  if (type === 'reference' || type === 'enum') {
+    return normalizeUnitTableSelectValue(rawValue);
+  }
+  if (type === 'number') {
+    return String(rawValue == null ? '' : rawValue).trim();
+  }
+  return String(rawValue == null ? '' : rawValue);
+}
+
+function getUnitTableCellValue(entry, column) {
+  if (!entry || !column) return '';
+  if (String(column.key || '') === 'name') {
+    const nameField = getBiqFieldByBaseKey(entry, getReferenceTopNameBiqFieldKey('units'));
+    return normalizeUnitTableCellValue(entry.name || (nameField && nameField.value) || '', column);
+  }
+  const field = getBiqFieldByBaseKey(entry, column.key);
+  return normalizeUnitTableCellValue(field && field.value, column);
+}
+
+function getUnitTableClassValue(row) {
+  return normalizeUnitClassValue(row && row.values ? row.values.unitclass : '');
+}
+
+function getUnitTableRows(tab) {
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  return entries.map((entry, fallbackIndex) => {
+    const values = {};
+    UNIT_TABLE_COLUMNS.forEach((column) => {
+      values[column.key] = getUnitTableCellValue(entry, column);
+    });
+    const originalValues = JSON.parse(JSON.stringify(values));
+    return {
+      entry,
+      fallbackIndex,
+      identity: getReferenceEntryIdentity('units', entry, fallbackIndex) || `idx:${fallbackIndex}`,
+      key: String(entry && entry.civilopediaKey || ''),
+      eraIndex: getReferenceEntryEraIndex('units', entry),
+      originalValues,
+      values
+    };
+  });
+}
+
+function createUnitTableReferencePicker(column, currentValue, onSelect) {
+  const field = getUnitTableFieldStub(column);
+  const options = column.type === 'enum'
+    ? getEnumOptionsForField('units', field)
+    : getReferenceOptionsForField('units', field);
+  return createReferencePicker({
+    options,
+    targetTabKey: column.type === 'reference'
+      ? ((BIQ_FIELD_REFS.units || {})[normalizeRuleLookupKey(column.key)] || '')
+      : '',
+    currentValue: normalizeUnitTableCellValue(currentValue, column),
+    searchPlaceholder: `Search ${getUnitTableColumnDisplayLabel(column)}...`,
+    noneLabel: '(none)',
+    showOptionThumbs: false,
+    onSelect
+  });
+}
+
+function sortUnitTableRows(rows, sortMode) {
+  const items = Array.isArray(rows) ? rows.slice() : [];
+  const mode = String(sortMode || 'ingame');
+  if (mode === 'az') {
+    items.sort((a, b) => String(a && a.values && a.values.name || '').localeCompare(String(b && b.values && b.values.name || '')));
+    return items;
+  }
+  if (mode === 'za') {
+    items.sort((a, b) => String(b && b.values && b.values.name || '').localeCompare(String(a && a.values && a.values.name || '')));
+    return items;
+  }
+  items.sort((a, b) => {
+    const ai = a && a.entry && a.entry.biqIndex != null ? a.entry.biqIndex : Infinity;
+    const bi = b && b.entry && b.entry.biqIndex != null ? b.entry.biqIndex : Infinity;
+    return ai - bi;
+  });
+  return items;
+}
+
+function createUnitTablePanel({ tab, referenceEditable }) {
+  const rows = getUnitTableRows(tab);
+  const sortOptions = [
+    { value: 'ingame', label: 'In-game order' },
+    { value: 'az', label: 'A → Z' },
+    { value: 'za', label: 'Z → A' }
+  ];
+  const filters = {
+    query: '',
+    era: String(state.referenceEraFilter.units || 'all'),
+    unitClass: 'all',
+    sort: String(state.referenceUnitSort.units || 'ingame')
+  };
+
+  let history = [JSON.stringify(rows.map((row) => ({ identity: row.identity, values: row.values })))];
+  let historyIndex = 0;
+  let visibleRows = [];
+  let lastFocusedCellId = '';
+
+  const panel = document.createElement('div');
+  panel.className = 'unit-table-panel';
+  const toolbar = document.createElement('div');
+  toolbar.className = 'unit-table-toolbar';
+  const filterRow = document.createElement('div');
+  filterRow.className = 'unit-table-filter-row';
+  const actionRow = document.createElement('div');
+  actionRow.className = 'unit-table-action-row';
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'unit-table-grid-wrap';
+  const table = document.createElement('table');
+  table.className = 'unit-table-grid';
+  const thead = document.createElement('thead');
+  const tbody = document.createElement('tbody');
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  panel.appendChild(toolbar);
+  panel.appendChild(tableWrap);
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.className = 'app-search-input';
+  searchInput.placeholder = 'Search units...';
+  filterRow.appendChild(searchInput);
+
+  const eraSelect = document.createElement('select');
+  eraSelect.className = 'unit-table-era-select';
+  getReferenceEraFilterOptions().forEach((opt) => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    eraSelect.appendChild(option);
+  });
+  eraSelect.value = filters.era;
+  filterRow.appendChild(eraSelect);
+
+  const classSelect = document.createElement('select');
+  classSelect.className = 'unit-table-class-select';
+  [
+    { value: 'all', label: 'All Classes' },
+    { value: 'land', label: 'Land' },
+    { value: 'sea', label: 'Sea' },
+    { value: 'air', label: 'Air' }
+  ].forEach((opt) => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    classSelect.appendChild(option);
+  });
+  filterRow.appendChild(classSelect);
+
+  const sortSelect = document.createElement('select');
+  sortSelect.className = 'unit-table-sort-select';
+  sortOptions.forEach((opt) => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    sortSelect.appendChild(option);
+  });
+  sortSelect.value = filters.sort;
+  filterRow.appendChild(sortSelect);
+
+  const summary = document.createElement('div');
+  summary.className = 'unit-table-summary';
+  actionRow.appendChild(summary);
+
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'ghost unit-table-undo-btn';
+  undoBtn.innerHTML = '<span class="btn-icon">↶</span>Undo';
+  actionRow.appendChild(undoBtn);
+
+  const undoAllBtn = document.createElement('button');
+  undoAllBtn.type = 'button';
+  undoAllBtn.className = 'ghost unit-table-undo-all-btn';
+  undoAllBtn.innerHTML = '<span class="btn-icon">↺</span>Undo All';
+  actionRow.appendChild(undoAllBtn);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'ghost unit-table-cancel-btn';
+  cancelBtn.textContent = 'Cancel';
+  actionRow.appendChild(cancelBtn);
+
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'button';
+  applyBtn.className = 'secondary unit-table-apply-btn';
+  applyBtn.innerHTML = '<span class="btn-icon">✓</span>Apply';
+  actionRow.appendChild(applyBtn);
+
+  toolbar.appendChild(filterRow);
+  toolbar.appendChild(actionRow);
+
+  const snapshotNow = () => JSON.stringify(rows.map((row) => ({
+    identity: row.identity,
+    values: row.values
+  })));
+
+  const restoreSnapshot = (snapshotText) => {
+    const parsed = JSON.parse(String(snapshotText || '[]'));
+    const byIdentity = new Map(parsed.map((row) => [String(row && row.identity || ''), row && row.values ? row.values : {}]));
+    rows.forEach((row) => {
+      const nextValues = byIdentity.get(row.identity) || {};
+      UNIT_TABLE_COLUMNS.forEach((column) => {
+        row.values[column.key] = normalizeUnitTableCellValue(nextValues[column.key], column);
+      });
+    });
+  };
+
+  const pushCurrentSnapshot = (priorSnapshot) => {
+    const current = snapshotNow();
+    if (String(priorSnapshot || '') === current) return;
+    if (historyIndex < history.length - 1) history = history.slice(0, historyIndex + 1);
+    history.push(current);
+    historyIndex = history.length - 1;
+  };
+
+  const getChangedCellCount = () => rows.reduce((count, row) => (
+    count + UNIT_TABLE_COLUMNS.reduce((inner, column) => (
+      inner + (normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column) ? 1 : 0)
+    ), 0)
+  ), 0);
+
+  const getChangedRowCount = () => rows.filter((row) => UNIT_TABLE_COLUMNS.some((column) => (
+    normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column)
+  ))).length;
+
+  const getVisibleRows = () => {
+    const needle = String(filters.query || '').trim().toLowerCase();
+    return sortUnitTableRows(rows, filters.sort).filter((row) => {
+      const hay = `${String(row && row.values && row.values.name || '')} ${String(row && row.key || '')}`.toLowerCase();
+      if (needle && !hay.includes(needle)) return false;
+      if (filters.era !== 'all' && String(row.eraIndex) !== String(filters.era)) return false;
+      if (filters.unitClass !== 'all' && getUnitTableClassValue(row) !== filters.unitClass) return false;
+      return true;
+    });
+  };
+
+  const updateToolbar = () => {
+    const changedRows = getChangedRowCount();
+    const changedCells = getChangedCellCount();
+    summary.textContent = `${visibleRows.length} shown · ${rows.length} total · ${changedRows} rows changed · ${changedCells} cells changed`;
+    undoBtn.disabled = historyIndex <= 0;
+    undoAllBtn.disabled = historyIndex <= 0;
+    applyBtn.disabled = !referenceEditable || changedCells === 0;
+  };
+
+  const moveCellFocus = (rowOffset, colOffset, fromElement) => {
+    const rowId = String(fromElement && fromElement.dataset.unitTableRow || '');
+    const colKey = String(fromElement && fromElement.dataset.unitTableCol || '');
+    if (!rowId || !colKey || visibleRows.length === 0) return;
+    const rowIndex = visibleRows.findIndex((row) => row.identity === rowId);
+    const colIndex = UNIT_TABLE_COLUMNS.findIndex((column) => column.key === colKey);
+    if (rowIndex < 0 || colIndex < 0) return;
+    const nextRowIndex = Math.max(0, Math.min(visibleRows.length - 1, rowIndex + rowOffset));
+    const nextColIndex = Math.max(0, Math.min(UNIT_TABLE_COLUMNS.length - 1, colIndex + colOffset));
+    const target = panel.querySelector(`[data-unit-table-row="${CSS.escape(visibleRows[nextRowIndex].identity)}"][data-unit-table-col="${CSS.escape(UNIT_TABLE_COLUMNS[nextColIndex].key)}"]`);
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    if (typeof target.select === 'function' && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+      target.select();
+    }
+  };
+
+  const shouldHandleHorizontalNav = (target, key) => {
+    if (!(target instanceof HTMLInputElement)) return true;
+    if (target.type === 'checkbox') return true;
+    const textLike = target.type === 'text' || target.type === 'search' || target.type === 'number' || target.type === '';
+    if (!textLike) return true;
+    const start = Number(target.selectionStart);
+    const end = Number(target.selectionEnd);
+    const valueLength = String(target.value || '').length;
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return true;
+    if (key === 'ArrowLeft') return start === 0 && end === 0;
+    if (key === 'ArrowRight') return start === valueLength && end === valueLength;
+    return true;
+  };
+
+  const attachGridNav = (control, row, column) => {
+    if (!control) return;
+    control.dataset.unitTableRow = row.identity;
+    control.dataset.unitTableCol = column.key;
+    control.addEventListener('focus', () => {
+      lastFocusedCellId = `${row.identity}::${column.key}`;
+      control.__unitTableSnapshotBefore = snapshotNow();
+    });
+    control.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowLeft' && shouldHandleHorizontalNav(control, ev.key)) {
+        ev.preventDefault();
+        moveCellFocus(0, -1, control);
+        return;
+      }
+      if (ev.key === 'ArrowRight' && shouldHandleHorizontalNav(control, ev.key)) {
+        ev.preventDefault();
+        moveCellFocus(0, 1, control);
+        return;
+      }
+      if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        moveCellFocus(-1, 0, control);
+        return;
+      }
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        moveCellFocus(1, 0, control);
+      }
+    });
+  };
+
+  const commitControlSnapshot = (control) => {
+    const before = control && Object.prototype.hasOwnProperty.call(control, '__unitTableSnapshotBefore')
+      ? control.__unitTableSnapshotBefore
+      : null;
+    if (control && Object.prototype.hasOwnProperty.call(control, '__unitTableSnapshotBefore')) {
+      delete control.__unitTableSnapshotBefore;
+    }
+    pushCurrentSnapshot(before);
+    updateToolbar();
+  };
+
+  const validateRows = () => {
+    const issues = [];
+    rows.forEach((row) => {
+      UNIT_TABLE_COLUMNS.forEach((column) => {
+        const rawValue = normalizeUnitTableCellValue(row.values[column.key], column);
+        if (column.type === 'text' && column.key === 'name' && !String(rawValue || '').trim()) {
+          issues.push(`${row.key || row.identity}: Unit Name cannot be empty.`);
+          return;
+        }
+        if (column.type === 'number' && rawValue && !/^-?\d+$/.test(rawValue)) {
+          issues.push(`${row.values.name || row.key || row.identity}: ${column.label} must be a whole number.`);
+          return;
+        }
+        if (column.type === 'number' && rawValue && Number.isFinite(column.min) && Number(rawValue) < Number(column.min)) {
+          issues.push(`${row.values.name || row.key || row.identity}: ${column.label} cannot be below ${column.min}.`);
+        }
+      });
+    });
+    return issues;
+  };
+
+  const render = () => {
+    visibleRows = getVisibleRows();
+    const headRow = document.createElement('tr');
+    const thumbHead = document.createElement('th');
+    thumbHead.className = 'unit-table-col-thumb';
+    thumbHead.textContent = '';
+    headRow.appendChild(thumbHead);
+    UNIT_TABLE_COLUMNS.forEach((column) => {
+      const th = document.createElement('th');
+      th.textContent = getUnitTableColumnDisplayLabel(column);
+      if (column.key === 'name') th.classList.add('unit-table-col-name');
+      if (column.type === 'bool') th.classList.add('unit-table-col-bool');
+      if (Number.isFinite(column.width)) th.style.width = `${column.width}px`;
+      headRow.appendChild(th);
+    });
+    thead.innerHTML = '';
+    thead.appendChild(headRow);
+
+    tbody.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    visibleRows.forEach((row) => {
+      const tr = document.createElement('tr');
+      if (UNIT_TABLE_COLUMNS.some((column) => normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column))) {
+        tr.classList.add('is-dirty');
+      }
+
+      const thumbCell = document.createElement('td');
+      thumbCell.className = 'unit-table-thumb-cell';
+      const thumb = document.createElement('span');
+      thumb.className = 'entry-thumb unit-table-thumb';
+      thumbCell.appendChild(thumb);
+      loadReferenceListThumbnail('units', row.entry, thumb);
+      tr.appendChild(thumbCell);
+
+      UNIT_TABLE_COLUMNS.forEach((column) => {
+        const td = document.createElement('td');
+        if (column.key === 'name') td.classList.add('unit-table-name-cell');
+        if (column.type === 'bool') td.classList.add('unit-table-bool-cell');
+        if (normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column)) {
+          td.classList.add('is-dirty');
+        }
+
+        if (column.type === 'text') {
+          const wrap = document.createElement('div');
+          wrap.className = 'unit-table-name-wrap';
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.value = String(row.values[column.key] || '');
+          input.disabled = !referenceEditable;
+          input.className = 'unit-table-text-input';
+          input.addEventListener('input', () => {
+            row.values[column.key] = String(input.value || '');
+            updateToolbar();
+          });
+          input.addEventListener('change', () => commitControlSnapshot(input));
+          wrap.appendChild(input);
+          const meta = document.createElement('div');
+          meta.className = 'unit-table-name-meta';
+          meta.textContent = row.key || '(no key)';
+          wrap.appendChild(meta);
+          td.appendChild(wrap);
+          attachGridNav(input, row, column);
+        } else if (column.type === 'number') {
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.inputMode = 'numeric';
+          input.value = String(row.values[column.key] || '');
+          input.disabled = !referenceEditable;
+          input.className = 'unit-table-number-input';
+          input.addEventListener('input', () => {
+            row.values[column.key] = String(input.value || '').trim();
+            updateToolbar();
+          });
+          input.addEventListener('change', () => commitControlSnapshot(input));
+          td.appendChild(input);
+          attachGridNav(input, row, column);
+        } else if (column.type === 'bool') {
+          const check = document.createElement('input');
+          check.type = 'checkbox';
+          check.checked = row.values[column.key] === 'true';
+          check.disabled = !referenceEditable;
+          check.className = 'unit-table-bool-input';
+          check.addEventListener('change', () => {
+            row.values[column.key] = check.checked ? 'true' : 'false';
+            commitControlSnapshot(check);
+            render();
+          });
+          td.appendChild(check);
+          attachGridNav(check, row, column);
+        } else {
+          const picker = createUnitTableReferencePicker(column, row.values[column.key], (value) => {
+            row.values[column.key] = normalizeUnitTableCellValue(value, column);
+            commitControlSnapshot(pickerButton);
+            render();
+          });
+          picker.classList.add('unit-table-picker');
+          const pickerButton = picker.querySelector('.tech-picker-btn');
+          td.appendChild(picker);
+          if (pickerButton) attachGridNav(pickerButton, row, column);
+        }
+
+        tr.appendChild(td);
+      });
+      fragment.appendChild(tr);
+    });
+    tbody.appendChild(fragment);
+    updateToolbar();
+
+    if (lastFocusedCellId) {
+      const [rowId, colKey] = lastFocusedCellId.split('::');
+      const target = rowId && colKey
+        ? panel.querySelector(`[data-unit-table-row="${CSS.escape(rowId)}"][data-unit-table-col="${CSS.escape(colKey)}"]`)
+        : null;
+      if (target) {
+        window.requestAnimationFrame(() => target.focus({ preventScroll: true }));
+      }
+    }
+  };
+
+  searchInput.addEventListener('input', () => {
+    filters.query = searchInput.value;
+    render();
+  });
+  eraSelect.addEventListener('change', () => {
+    filters.era = eraSelect.value || 'all';
+    render();
+  });
+  classSelect.addEventListener('change', () => {
+    filters.unitClass = classSelect.value || 'all';
+    render();
+  });
+  sortSelect.addEventListener('change', () => {
+    filters.sort = sortSelect.value || 'ingame';
+    render();
+  });
+  undoBtn.addEventListener('click', () => {
+    if (historyIndex <= 0) return;
+    historyIndex -= 1;
+    restoreSnapshot(history[historyIndex]);
+    render();
+  });
+  undoAllBtn.addEventListener('click', () => {
+    if (historyIndex <= 0) return;
+    historyIndex = 0;
+    restoreSnapshot(history[historyIndex]);
+    render();
+  });
+  cancelBtn.addEventListener('click', () => {
+    closeUnitTableModal();
+  });
+  applyBtn.addEventListener('click', () => {
+    if (!referenceEditable) return;
+    const issues = validateRows();
+    if (issues.length > 0) {
+      setStatus(issues[0], true);
+      return;
+    }
+    const changedRows = rows.filter((row) => UNIT_TABLE_COLUMNS.some((column) => (
+      normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column)
+    )));
+    if (changedRows.length === 0) {
+      setStatus('No unit table changes to apply.');
+      return;
+    }
+    rememberUndoSnapshot();
+    changedRows.forEach((row) => {
+      UNIT_TABLE_COLUMNS.forEach((column) => {
+        const nextValue = normalizeUnitTableCellValue(row.values[column.key], column);
+        const originalValue = normalizeUnitTableCellValue(row.originalValues[column.key], column);
+        if (nextValue === originalValue) return;
+        if (column.key === 'name') {
+          row.entry.name = nextValue;
+          const nameField = ensureBiqFieldByBaseKey(row.entry, getReferenceTopNameBiqFieldKey('units'), 'Name', nextValue);
+          if (nameField) nameField.value = nextValue;
+        } else {
+          const field = ensureBiqFieldByBaseKey(row.entry, column.key, getUnitTableColumnDisplayLabel(column), nextValue);
+          if (field) field.value = nextValue;
+        }
+        row.originalValues[column.key] = nextValue;
+      });
+    });
+    state.referenceUnitSort.units = filters.sort;
+    setDirty(true);
+    renderActiveTab({ preserveTabScroll: true });
+    closeUnitTableModal();
+    setStatus(`Applied table edits to ${changedRows.length} unit${changedRows.length === 1 ? '' : 's'}.`);
+  });
+
+  render();
+  return panel;
+}
+
+function openUnitTableModal({ tab, referenceEditable }) {
+  const overlay = ensureUnitTableModalNode();
+  if (unitTableModal.title) unitTableModal.title.textContent = 'Unit Table';
+  if (unitTableModal.body) {
+    unitTableModal.body.innerHTML = '';
+    unitTableModal.body.appendChild(createUnitTablePanel({ tab, referenceEditable }));
+  }
+  overlay.classList.remove('hidden');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
 function ensureMapModalNode() {
   if (mapModal.node && mapModal.node.isConnected) return mapModal.node;
   const overlay = document.createElement('div');
@@ -26284,6 +26921,7 @@ function renderReferenceTab(tab, tabKey) {
   }
   let unitSortSelect = null;
   let unitAvailabilityBtn = null;
+  let unitTableBtn = null;
   if (tabKey === 'units') {
     unitSortSelect = document.createElement('select');
     const unitSortOptions = [
@@ -26314,6 +26952,21 @@ function renderReferenceTab(tab, tabKey) {
       ? 'Edit unit availability by civilization'
       : 'View unit availability by civilization';
     controlsRight.appendChild(unitAvailabilityBtn);
+
+    unitTableBtn = document.createElement('button');
+    unitTableBtn.type = 'button';
+    unitTableBtn.className = 'ghost unit-table-action-btn';
+    const unitTableIcon = document.createElement('span');
+    unitTableIcon.className = 'btn-icon unit-table-action-icon';
+    unitTableIcon.textContent = '▦';
+    const unitTableLabel = document.createElement('span');
+    unitTableLabel.textContent = 'Unit Table';
+    unitTableBtn.appendChild(unitTableIcon);
+    unitTableBtn.appendChild(unitTableLabel);
+    unitTableBtn.title = referenceEditable
+      ? 'Batch edit existing units in a table'
+      : 'View existing units in a table';
+    controlsRight.appendChild(unitTableBtn);
   }
   if (tabKey === 'technologies') {
     techTreeBtn = document.createElement('button');
@@ -27773,6 +28426,14 @@ function renderReferenceTab(tab, tabKey) {
         tab,
         referenceEditable,
         initialCivValue: getDefaultUnitAvailabilityCivValue()
+      });
+    });
+  }
+  if (unitTableBtn) {
+    unitTableBtn.addEventListener('click', () => {
+      openUnitTableModal({
+        tab,
+        referenceEditable
       });
     });
   }
@@ -41127,6 +41788,7 @@ function loadDistrictRepresentativePreview(section, holder, canvasSize = 28, onL
     .then((preview) => {
       if (!preview || !holder.isConnected) return;
       drawPreviewFrameToCanvas(preview, canvas);
+      holder.classList.remove('art-pending');
       if (typeof onLoaded === 'function') onLoaded(preview);
     })
     .catch(() => {});
@@ -41448,6 +42110,13 @@ function makeTerrainOptionPreviewIcon(optionName) {
   return holder;
 }
 
+function markMapThumbPending(holder) {
+  if (!holder) return holder;
+  holder.innerHTML = '';
+  holder.classList.add('art-pending');
+  return holder;
+}
+
 function findDistrictSectionByName(name) {
   const target = normalizeConfigToken(name).toLowerCase();
   if (!target) return null;
@@ -41571,8 +42240,7 @@ function makeMapCroppedAssetThumb(assetKey, sx, sy, sw, sh, fallbackGlyph = '?')
   holder.className = 'map-option-thumb';
   const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
   if (!atlas || !atlas.width || !atlas.height || (sx + sw) > atlas.width || (sy + sh) > atlas.height) {
-    holder.textContent = fallbackGlyph;
-    return holder;
+    return markMapThumbPending(holder);
   }
   const canvasNode = document.createElement('canvas');
   canvasNode.width = 42;
@@ -41588,6 +42256,7 @@ function makeMapCroppedAssetThumb(assetKey, sx, sy, sw, sh, fallbackGlyph = '?')
     const dy = Math.floor((canvasNode.height - drawH) / 2);
     thumbCtx.drawImage(atlas, sx, sy, sw, sh, dx, dy, drawW, drawH);
   }
+  holder.classList.remove('art-pending');
   holder.appendChild(canvasNode);
   return holder;
 }
@@ -41597,8 +42266,7 @@ function makeMapLargeAtlasThumb(assetKey, spriteW, spriteH, spriteIndex, fallbac
   holder.className = 'map-option-thumb';
   const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
   if (!atlas || !Number.isFinite(spriteIndex) || spriteIndex < 0) {
-    holder.textContent = fallbackGlyph;
-    return holder;
+    return markMapThumbPending(holder);
   }
   const cols = Math.max(1, Math.floor(atlas.width / spriteW));
   const row = Math.floor(spriteIndex / cols);
@@ -41606,8 +42274,7 @@ function makeMapLargeAtlasThumb(assetKey, spriteW, spriteH, spriteIndex, fallbac
   const sx = col * spriteW;
   const sy = row * spriteH;
   if (sx + spriteW > atlas.width || sy + spriteH > atlas.height) {
-    holder.textContent = fallbackGlyph;
-    return holder;
+    return markMapThumbPending(holder);
   }
   const canvasNode = document.createElement('canvas');
   canvasNode.width = 42;
@@ -41623,6 +42290,7 @@ function makeMapLargeAtlasThumb(assetKey, spriteW, spriteH, spriteIndex, fallbac
     const dy = Math.floor((canvasNode.height - drawH) / 2);
     thumbCtx.drawImage(atlas, sx, sy, spriteW, spriteH, dx, dy, drawW, drawH);
   }
+  holder.classList.remove('art-pending');
   holder.appendChild(canvasNode);
   return holder;
 }
@@ -41658,16 +42326,18 @@ function paintMapOverlayButtonThumb(holder, spec, extraClassName = '') {
   if (extraClassName) holder.classList.add(...String(extraClassName).split(/\s+/).filter(Boolean));
   const artThumb = makeMapOverlayArtThumb(spec);
   if (artThumb) {
+    holder.classList.remove('art-pending');
     while (artThumb.firstChild) holder.appendChild(artThumb.firstChild);
     return true;
   }
   const found = findTerrainPreviewEntry(String(spec && (spec.artName || spec.label) || ''));
   if (!found) {
-    holder.textContent = spec && spec.icon ? spec.icon : '•';
+    markMapThumbPending(holder);
     return true;
   }
   const icon = document.createElement('span');
   icon.className = 'terrain-option-chip-thumb';
+  holder.classList.add('art-pending');
   loadReferenceListThumbnail(found.tabKey, found.entry, icon);
   holder.appendChild(icon);
   return true;
@@ -41684,11 +42354,11 @@ function paintMapDistrictButtonThumb(holder, entry, canvasSize = 30, extraClassN
   holder.className = 'map-option-thumb district';
   if (extraClassName) holder.classList.add(...String(extraClassName).split(/\s+/).filter(Boolean));
   if (entry && entry.section) {
+    holder.classList.add('art-pending');
     loadDistrictRepresentativePreview(entry.section, holder, canvasSize);
     return true;
   }
-  holder.innerHTML = '';
-  holder.textContent = '◆';
+  markMapThumbPending(holder);
   return true;
 }
 
@@ -43577,6 +44247,9 @@ function renderActiveTab(options = {}) {
   }
   if (state.activeTab !== 'units' && unitAvailabilityModal.node && !unitAvailabilityModal.node.classList.contains('hidden')) {
     closeUnitAvailabilityModal();
+  }
+  if (state.activeTab !== 'units' && unitTableModal.node && !unitTableModal.node.classList.contains('hidden')) {
+    closeUnitTableModal();
   }
 
   if (tab.type === 'reference') {
@@ -45972,6 +46645,12 @@ async function init() {
     }
     if (ev.key === 'Escape' && unitAvailabilityModal.node && !unitAvailabilityModal.node.classList.contains('hidden')) {
       closeUnitAvailabilityModal();
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (ev.key === 'Escape' && unitTableModal.node && !unitTableModal.node.classList.contains('hidden')) {
+      closeUnitTableModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;

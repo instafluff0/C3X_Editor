@@ -1,4 +1,6 @@
 * RELEASE 27.11
+- Added a new Units `Unit Table` modal for batch editing existing scenario units in-app, with thumbnails, sticky name columns, local modal Undo/Undo All, Apply-once save behavior, and arrow-key spreadsheet-style navigation across core unit stats and prerequisite fields.
+- Removed the BIQ Map modal's large terrain and overlay fallback glyph flashes, so those thumbs now stay neutral until their real art resolves instead of briefly showing misleading placeholder art.
 - Added a subtle active-state treatment to the BIQ Map modal `Stats` button so the open flyout reads as engaged without adding noisy UI chrome.
 - Moved scenario `Custom Rules` and `Custom Player Data` toggles from the header into the OS `File` menu, aligned custom-player-data enablement with Quint's default eight-player LEAD setup, and changed post-load quality checks to audit the live in-memory BIQ preview so toggle-driven fallback/disable states stop producing stale warnings.
 - Fixed BIQ Map modal zoom rerenders resetting the viewport toward the upper-left by deferring saved zoom-anchor and scroll restoration until the rebuilt modal pane reports real layout dimensions.

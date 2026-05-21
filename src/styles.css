@@ -2470,6 +2470,11 @@ button.danger:hover {
   border-radius: inherit;
 }
 
+.biq-map-toolbar .map-toolbar-picker-thumb.art-pending {
+  background: linear-gradient(135deg, rgba(244, 242, 236, 0.98), rgba(232, 229, 221, 0.98));
+  color: transparent;
+}
+
 .biq-map-toolbar .map-toolbar-picker-glyph {
   display: inline-flex;
   align-items: center;
@@ -2790,6 +2795,11 @@ button.danger:hover {
 
 .map-option-thumb.none {
   color: #737a93;
+}
+
+.map-option-thumb.art-pending {
+  background: linear-gradient(135deg, rgba(244, 242, 236, 0.98), rgba(232, 229, 221, 0.98));
+  color: transparent;
 }
 
 .map-option-text {
@@ -7329,6 +7339,285 @@ details > summary:focus-visible {
   color: var(--muted);
   font-weight: 700;
   padding: 14px;
+}
+
+.unit-table-action-icon {
+  color: #0d7f8f;
+}
+
+.unit-table-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  background: rgba(10, 16, 30, 0.56);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+
+.unit-table-modal-overlay.hidden {
+  display: none;
+}
+
+.unit-table-modal-panel {
+  width: min(1480px, calc(100vw - 28px));
+  height: min(940px, calc(100vh - 28px));
+  border-radius: 15px;
+  border: 1px solid rgba(82, 97, 136, 0.34);
+  background: rgba(255, 255, 255, 0.985);
+  box-shadow: 0 18px 36px rgba(11, 18, 32, 0.34);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.unit-table-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(72, 84, 121, 0.18);
+  background: linear-gradient(145deg, rgba(250, 252, 255, 0.97), rgba(240, 246, 255, 0.97));
+}
+
+.unit-table-modal-head {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.unit-table-modal-note {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.unit-table-modal-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.unit-table-panel {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 12px;
+}
+
+.unit-table-toolbar {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid rgba(72, 84, 121, 0.12);
+  padding-bottom: 10px;
+}
+
+.unit-table-filter-row,
+.unit-table-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.unit-table-filter-row {
+  flex-wrap: nowrap;
+}
+
+.unit-table-filter-row > .app-search-input {
+  flex: 1 1 340px;
+  min-width: 260px;
+}
+
+.unit-table-era-select,
+.unit-table-class-select,
+.unit-table-sort-select {
+  flex: 0 0 auto;
+  min-width: 140px;
+}
+
+.unit-table-toolbar input,
+.unit-table-toolbar select,
+.unit-table-toolbar button {
+  min-height: 38px;
+}
+
+.unit-table-summary {
+  margin-right: auto;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.unit-table-grid-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid rgba(72, 84, 121, 0.14);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(250, 253, 255, 0.92), rgba(244, 248, 254, 0.96));
+}
+
+.unit-table-grid {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.unit-table-grid th,
+.unit-table-grid td {
+  border-right: 1px solid rgba(72, 84, 121, 0.12);
+  border-bottom: 1px solid rgba(72, 84, 121, 0.1);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.unit-table-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 9px 10px;
+  text-align: left;
+  color: #25324f;
+  font-size: 0.73rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, rgba(245, 249, 255, 0.99), rgba(236, 244, 255, 0.99));
+}
+
+.unit-table-grid tbody tr.is-dirty td {
+  background: rgba(255, 252, 241, 0.95);
+}
+
+.unit-table-grid td {
+  padding: 6px 8px;
+  vertical-align: middle;
+}
+
+.unit-table-grid td.is-dirty {
+  box-shadow: inset 0 0 0 1px rgba(222, 156, 28, 0.28);
+  background: rgba(255, 247, 218, 0.98);
+}
+
+.unit-table-col-thumb,
+.unit-table-thumb-cell {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  padding: 0 6px;
+  text-align: center;
+}
+
+.unit-table-col-thumb {
+  z-index: 6;
+}
+
+.unit-table-col-name,
+.unit-table-name-cell {
+  position: sticky;
+  left: 44px;
+  z-index: 2;
+}
+
+.unit-table-col-name {
+  z-index: 5;
+}
+
+.unit-table-thumb-cell,
+.unit-table-name-cell {
+  background: rgba(251, 252, 255, 0.99);
+}
+
+.unit-table-thumb {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+}
+
+.unit-table-name-wrap {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.unit-table-name-meta {
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unit-table-text-input,
+.unit-table-number-input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(72, 84, 121, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  color: var(--ink);
+  padding: 7px 9px;
+  font: inherit;
+}
+
+.unit-table-number-input {
+  text-align: right;
+}
+
+.unit-table-text-input:focus,
+.unit-table-number-input:focus,
+.unit-table-bool-input:focus,
+.unit-table-picker .tech-picker-btn:focus {
+  outline: none;
+  border-color: rgba(46, 135, 225, 0.54);
+  box-shadow: 0 0 0 3px rgba(70, 150, 233, 0.16);
+}
+
+.unit-table-picker {
+  min-width: 0;
+}
+
+.unit-table-picker .tech-picker-btn {
+  min-height: 34px;
+}
+
+.unit-table-picker .entry-thumb {
+  display: none;
+}
+
+.unit-table-grid .tech-picker {
+  width: 100%;
+}
+
+.unit-table-grid .tech-picker-head,
+.unit-table-grid .tech-picker-btn {
+  width: 100%;
+}
+
+.unit-table-grid .tech-picker-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unit-table-bool-cell {
+  text-align: center;
+}
+
+.unit-table-bool-input {
+  width: 16px;
+  height: 16px;
+  accent-color: #17897f;
 }
 
 .map-editor-modal-overlay {
