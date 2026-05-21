@@ -560,6 +560,117 @@ test('critical BIQ map: resizing recomputes stored terrain sprite fields for shi
   assert.equal(Number(newEastEdgeTile.image), 40, 'expected wrapped east-edge grassland tile to use recomputed wrapped-neighbor sprite image');
 });
 
+test('critical BIQ map: width-only resize keeps terrain lookups on valid staggered-grid coordinates', () => {
+  const raw = fs.readFileSync(getStableMapUnitsFixturePath());
+  const parsedBefore = parseAllSections(raw);
+  assert.equal(parsedBefore.ok, true, 'expected source BIQ to parse');
+  const wmapBefore = getSection({ sections: parsedBefore.sections }, 'WMAP');
+  const tileBefore = getSection({ sections: parsedBefore.sections }, 'TILE');
+  assert.ok(wmapBefore && tileBefore, 'expected source BIQ map sections');
+  const sourceWidth = Number(wmapBefore.records[0].width);
+  const sourceHeight = Number(wmapBefore.records[0].height);
+
+  const resizeResult = applyEdits(raw, [{
+    op: 'resizemap',
+    width: sourceWidth + 10,
+    height: sourceHeight
+  }]);
+  assert.equal(resizeResult.ok, true, String(resizeResult.error || 'width-only resize save failed'));
+
+  const parsedAfter = parseAllSections(resizeResult.buffer);
+  assert.equal(parsedAfter.ok, true, 'expected width-only resized BIQ to parse');
+  const resizedWmap = getSection({ sections: parsedAfter.sections }, 'WMAP');
+  const resizedTileSection = getSection({ sections: parsedAfter.sections }, 'TILE');
+  assert.equal(Number(resizedWmap.records[0].width), sourceWidth + 10);
+  assert.equal(Number(resizedWmap.records[0].height), sourceHeight);
+
+  const seaCode = 12;
+  const nonSeaTiles = (resizedTileSection.records || []).filter((record) => (
+    (getRecordInt(record, 'c3cbaserealterrain', getRecordInt(record, 'baserealterrain', -1)) & 0x0f) !== seaCode
+  ));
+  assert.ok(nonSeaTiles.length > 0, 'expected width-only resize to preserve some non-sea terrain instead of degenerating to an all-sea map');
+});
+
+test('critical BIQ map: resize fill terrain propagates into new edge tiles', () => {
+  const raw = fs.readFileSync(getStableLeadNoMapFixturePath());
+  const blankSections = buildGeneratedBlankMapSections(16, 16);
+  const setMapResult = applyEdits(raw, [{
+    op: 'setmap',
+    sections: blankSections,
+    allowSetmapGeneration: true
+  }], {
+    allowSetmapGeneration: true
+  });
+  assert.equal(setMapResult.ok, true, String(setMapResult.error || 'failed to seed blank map'));
+
+  const resizeResult = applyEdits(setMapResult.buffer, [{
+    op: 'resizemap',
+    width: 18,
+    height: 16,
+    fillTerrain: 1
+  }]);
+  assert.equal(resizeResult.ok, true, String(resizeResult.error || 'resize save failed'));
+
+  const resizedParsed = parseAllSections(resizeResult.buffer);
+  assert.equal(resizedParsed.ok, true, 'expected resized blank map to parse');
+  const resizedTileSection = getSection({ sections: resizedParsed.sections }, 'TILE');
+  const newEdgeTile = getParsedTileAtCoords(resizedTileSection, 17, 3);
+  assert.ok(newEdgeTile, 'expected new edge tile after resize');
+  assert.equal(Number(newEdgeTile.c3cBaseRealTerrain) & 0x0f, 1, 'expected new resize space to honor the chosen fill terrain');
+});
+
+test('critical BIQ map: resizing desert terrain does not remap stored sprites to tundra', () => {
+  const raw = fs.readFileSync(getStableLeadNoMapFixturePath());
+  const blankSections = buildGeneratedBlankMapSections(16, 16);
+  const tileSection = blankSections.find((section) => section && section.code === 'TILE');
+  assert.ok(tileSection && Array.isArray(tileSection.records), 'expected generated TILE section');
+  tileSection.records.forEach((record) => {
+    const baseField = getRecordField(record, 'baserealterrain');
+    const c3cBaseField = getRecordField(record, 'c3cbaserealterrain');
+    const fileField = getRecordField(record, 'file');
+    const imageField = getRecordField(record, 'image');
+    assert.ok(baseField && c3cBaseField && fileField && imageField, 'expected generated desert test tile fields');
+    baseField.value = '0';
+    c3cBaseField.value = '0';
+    fileField.value = '4';
+    imageField.value = '0';
+  });
+
+  const setMapResult = applyEdits(raw, [{
+    op: 'setmap',
+    sections: blankSections,
+    allowSetmapGeneration: true
+  }], {
+    allowSetmapGeneration: true
+  });
+  assert.equal(setMapResult.ok, true, String(setMapResult.error || 'failed to seed desert map'));
+
+  const resizeResult = applyEdits(setMapResult.buffer, [{
+    op: 'resizemap',
+    width: 18,
+    height: 16,
+    fillTerrain: 0
+  }]);
+  assert.equal(resizeResult.ok, true, String(resizeResult.error || 'desert resize save failed'));
+
+  const resizedParsed = parseAllSections(resizeResult.buffer);
+  assert.equal(resizedParsed.ok, true, 'expected resized desert BIQ to parse');
+  const resizedTileSection = getSection({ sections: resizedParsed.sections }, 'TILE');
+  const interiorDesertTile = getParsedTileAtCoords(resizedTileSection, 5, 3);
+  const newEdgeDesertTile = getParsedTileAtCoords(resizedTileSection, 16, 2);
+  assert.ok(interiorDesertTile, 'expected preserved interior desert tile after resize');
+  assert.ok(newEdgeDesertTile, 'expected new desert edge tile after resize');
+
+  [interiorDesertTile, newEdgeDesertTile].forEach((tile, index) => {
+    assert.equal(
+      Number(tile.c3cbaserealterrain) & 0x0f,
+      0,
+      `expected desert tile ${index} to keep desert terrain id 0 instead of tundra 3`
+    );
+    assert.notEqual(Number(tile.file), 0, `expected desert tile ${index} to avoid tundra terrain atlas file 0`);
+  });
+});
+
 test('critical BIQ map: shrinking dimensions removes out-of-bounds entities and still saves a valid BIQ', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();

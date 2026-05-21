@@ -61,6 +61,26 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const getMapSupportSection = \(sectionCode\) => \{[\s\S]*?if \(code === 'TERR' \|\| code === 'TFRM'\) return getBiqSectionFromTab\(terrainSupportTab, code\);[\s\S]*?if \(code === 'ERAS'\) return getBiqSectionFromTab\(worldSupportTab, code\);[\s\S]*?if \(code === 'RULE'\) return getBiqSectionFromTab\(rulesSupportTab, code\);[\s\S]*?if \(code === 'LEAD'\) return getBiqSectionFromTab\(playersSupportTab, code\);[\s\S]*?return null;[\s\S]*?\};[\s\S]*?const terrainSectionForPicker = getMapSupportSection\('TERR'\);/,
+    'map toolbar pickers should fall back to the loaded Terrain/World/Rules/Players BIQ tabs when the scenario map tab lacks those sections'
+  );
+  assert.match(
+    rendererText,
+    /const resourceWrap = createMapToolbarStructuredPicker\({[\s\S]*?renderOptionThumb: \(\{ holder, option, value \}\) => \{[\s\S]*?prepareMapToolbarPickerThumb\(holder, 'resource'\);[\s\S]*?if \(option && option\.entry\) \{[\s\S]*?loadReferenceListThumbnail\('resources', option\.entry, holder\);[\s\S]*?return true;[\s\S]*?\}/,
+    'paint-mode resource picker thumbnails should use the shared resource thumbnail loader so async art loads repaint the dropdown reliably'
+  );
+  assert.match(
+    rendererText,
+    /const makeResourceButtonThumb = \(entry, resourceId = -1\) => \{[\s\S]*?if \(entry\) \{[\s\S]*?thumb\.className = 'map-option-thumb resource';[\s\S]*?loadReferenceListThumbnail\('resources', entry, thumb\);[\s\S]*?return thumb;[\s\S]*?\}[\s\S]*?return makeEmptyButtonThumb\(\);[\s\S]*?\};[\s\S]*?const renderResourceOptions = \(host, tile\) => \{[\s\S]*?thumb: makeResourceButtonThumb\(entry, resourceId\),/,
+    'tile-info resource buttons should use the same shared resource thumbnail loader as the paint toolbar for consistent async thumbnail rendering'
+  );
+  assert.match(
+    rendererText,
+    /const mapOwnerPickerValueForPlayer = \(playerId\) => `player:\$\{playerId\}`;[\s\S]*?const mapOwnerPickerValueForCivilization = \(civId\) => `civ:\$\{civId\}`;[\s\S]*?const getMapOwnerPickerOptions = \(\) => \{[\s\S]*?leadRecordsForOwner\.length > 0[\s\S]*?: civilizationEntriesForOwner[\s\S]*?ownerType:\s*2,[\s\S]*?const resolveMapOwnerSelection = \(value\) => \{[\s\S]*?const playerMatch = text\.match\(\/\^player:\(\\d\+\)\$\/\);[\s\S]*?const civMatch = text\.match\(\/\^civ:\(\\d\+\)\$\/\);[\s\S]*?return leadRecordsForOwner\.length > 0 \? \{ ownerType: 3, owner \} : \{ ownerType: 2, owner \};/,
+    'city and unit owner pickers should fall back to civilization-owned options when no LEAD player records are available'
+  );
+  assert.match(
+    rendererText,
     /const unitPicker = createReferencePicker\({[\s\S]*?searchPlaceholder: 'Search unit\.\.\.',[\s\S]*?noneLabel: 'Choose unit\.\.\.',[\s\S]*?getOptionMetaText: \(opt\) => Number\.isFinite\(opt && opt\.mapFrequency\) \? `\(\$\{opt\.mapFrequency\} total\)` : '',/,
     'Tile Info unit-add picker should show each unit type count for the selected owner in the dropdown list'
   );
@@ -333,23 +353,33 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /miniPreviewLabel\.textContent = 'Resize Preview';[\s\S]*?miniPreviewHint\.textContent = 'Terrain-only minimap preview\. Existing terrain stays centered; new space fills with sea\.';/,
-    'Resize Map should keep the terrain-only preview copy'
+    /miniPreviewLabel\.textContent = 'Resize Preview';[\s\S]*?miniPreviewHint\.textContent = 'Terrain-only minimap preview\. Existing terrain stays centered; new space fills with the selected terrain\.';/,
+    'Resize Map should explain that the preview and resize fill use the selected terrain'
   );
   assert.match(
     rendererText,
-    /const statusLine = document\.createElement\('div'\);[\s\S]*?statusLine\.className = 'hint map-resize-status';[\s\S]*?statusLine\.textContent = '\\u00A0';[\s\S]*?statusLine\.className = 'warning map-resize-status';[\s\S]*?Shrinking to \$\{validation\.width\}x\$\{validation\.height\} will remove[\s\S]*?statusLine\.textContent = 'Expansion keeps the existing map centered by adding tiles evenly around it\.';/,
+    /const statusLine = document\.createElement\('div'\);[\s\S]*?statusLine\.className = 'hint map-resize-status';[\s\S]*?statusLine\.textContent = '\\u00A0';[\s\S]*?statusLine\.className = 'warning map-resize-status';[\s\S]*?Shrinking to \$\{validation\.width\}x\$\{validation\.height\} will remove[\s\S]*?statusLine\.textContent = `Expansion keeps the existing map centered by adding \$\{fillTerrainLabel\.toLowerCase\(\)\} tiles evenly around it\.`;/,
     'Resize Map should use one reserved status row for shrink warnings and expansion guidance instead of separate stacked text blocks'
   );
   assert.match(
     rendererText,
-    /function computeMapResizePreviewOffsets\(sourceWidth, sourceHeight, targetWidth, targetHeight\) \{[\s\S]*?const candidates = \[0, 1\]\.map\(\(parity\) => \(\{[\s\S]*?x: pickOffset\(widthDiff, parity\),[\s\S]*?y: pickOffset\(heightDiff, parity\)[\s\S]*?\}\)\);[\s\S]*?candidates\.sort\(\(a, b\) => \{[\s\S]*?return a\.parity - b\.parity;[\s\S]*?\}\);[\s\S]*?return \{ x: candidates\[0\]\.x, y: candidates\[0\]\.y \};[\s\S]*?\}/,
+    /let validation = getQuintCustomMapValidation\(widthInput\.value, heightInput\.value\);[\s\S]*?totalValue\.textContent = `\$\{validation\.tileCount\.toLocaleString\(\)\} \(\$\{validation\.width\}x\$\{validation\.height\}\)`;[\s\S]*?if \(validation\.width === currentWidth && validation\.height === currentHeight\) \{[\s\S]*?No size change yet\.[\s\S]*?else if \(validation\.width >= currentWidth && validation\.height >= currentHeight\) \{[\s\S]*?Expansion keeps the existing map centered by adding \$\{fillTerrainLabel\.toLowerCase\(\)\} tiles evenly around it\.[\s\S]*?widthInput\.addEventListener\('input', refreshValidation\);[\s\S]*?heightInput\.addEventListener\('input', refreshValidation\);[\s\S]*?const onConfirm = \(\) => \{[\s\S]*?refreshValidation\(\);/,
+    'Resize Map should keep odd dimensions in the inputs while using the normalized even result without flashing a separate odd-dimension status message'
+  );
+  assert.match(
+    rendererText,
+    /function computeMapResizePreviewOffsets\(sourceWidth, sourceHeight, targetWidth, targetHeight\) \{[\s\S]*?if \(filtered\.length <= 0\) return null;[\s\S]*?const candidates = \[0, 1\]\.map\(\(parity\) => \{[\s\S]*?const x = pickOffset\(widthDiff, parity\);[\s\S]*?const y = pickOffset\(heightDiff, parity\);[\s\S]*?if \(!Number\.isFinite\(x\) \|\| !Number\.isFinite\(y\)\) return null;[\s\S]*?return \{ parity, x, y \};[\s\S]*?\}\)\.filter\(Boolean\);[\s\S]*?candidates\.sort\(\(a, b\) => \{[\s\S]*?return a\.parity - b\.parity;[\s\S]*?\}\);[\s\S]*?return \{ x: candidates\[0\]\.x, y: candidates\[0\]\.y \};[\s\S]*?\}/,
     'Resize Map should choose resize offsets as parity-matched x/y pairs so preview/source tile lookups stay on valid Civ3 coordinates'
   );
   assert.match(
     rendererText,
-    /const MAP_RESIZE_MINI_PREVIEW_MAX_TILES = 50000;[\s\S]*?function buildMapResizeTerrainPreview\(tab, targetWidth, targetHeight\) \{[\s\S]*?getPackedResizePreviewTerrainValue\(BIQ_TERRAIN\.SEA\)[\s\S]*?\}[\s\S]*?function drawMapResizeMiniPreview\(canvas, preview\) \{[\s\S]*?const scale = Math\.min\(stageWidth \/ Math\.max\(1, width\), stageHeight \/ Math\.max\(1, height\)\);[\s\S]*?const originX = Math\.floor\(\(stageWidth - previewWidth\) \/ 2\);[\s\S]*?const getTerrainCodeAt = \(x, y\) => \{[\s\S]*?return BIQ_TERRAIN\.SEA;[\s\S]*?\};[\s\S]*?for \(let y = 0; y < height; y \+= 1\) \{[\s\S]*?for \(let x = 0; x < width; x \+= 1\) \{[\s\S]*?getMapResizeMiniPreviewFillStyle\(getTerrainCodeAt\(x, y\)\)[\s\S]*?\}[\s\S]*?\}[\s\S]*?function drawMapResizeMiniPreviewPlaceholder\(canvas, message\) \{/,
-    'Edit Map should build a terrain-only resize minimap preview, fill new resize space with sea, paint parity gaps from nearby terrain to avoid plaid artifacts, and provide a cheap placeholder path for oversized previews'
+    /const MAP_RESIZE_MINI_PREVIEW_MAX_TILES = 50000;[\s\S]*?function buildMapResizeTerrainPreview\(tab, targetWidth, targetHeight, fillTerrain = BIQ_TERRAIN\.SEA\) \{[\s\S]*?const fillCode = normalizeResizeFillTerrain\(fillTerrain, BIQ_TERRAIN\.SEA\);[\s\S]*?const packedFillTerrain = getPackedResizePreviewTerrainValue\(fillCode\);[\s\S]*?function drawMapResizeMiniPreview\(canvas, preview\) \{[\s\S]*?const scale = Math\.min\(stageWidth \/ Math\.max\(1, width\), stageHeight \/ Math\.max\(1, height\)\);[\s\S]*?const originX = Math\.floor\(\(stageWidth - previewWidth\) \/ 2\);[\s\S]*?const getTerrainCodeAt = \(x, y\) => \{[\s\S]*?return BIQ_TERRAIN\.SEA;[\s\S]*?\};[\s\S]*?for \(let y = 0; y < height; y \+= 1\) \{[\s\S]*?for \(let x = 0; x < width; x \+= 1\) \{[\s\S]*?getMapResizeMiniPreviewFillStyle\(getTerrainCodeAt\(x, y\)\)[\s\S]*?\}[\s\S]*?\}[\s\S]*?function drawMapResizeMiniPreviewPlaceholder\(canvas, message\) \{/,
+    'Edit Map should build a terrain-only resize minimap preview, fill new resize space from the selected terrain, paint parity gaps from nearby terrain, and provide a cheap placeholder path for oversized previews'
+  );
+  assert.match(
+    rendererText,
+    /const terrainField = document\.createElement\('div'\);[\s\S]*?terrainLabel\.textContent = 'Add New Terrain as Type';[\s\S]*?const terrainSelect = document\.createElement\('select'\);[\s\S]*?QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS\.forEach\(\(option\) => \{[\s\S]*?terrainSelect\.value = String\(BIQ_TERRAIN\.SEA\);[\s\S]*?terrainSelect\.addEventListener\('change', refreshValidation\);/,
+    'Resize Map should expose an Add New Terrain as Type dropdown driven by the shared terrain options and refresh the preview when it changes'
   );
   assert.match(
     rendererText,
@@ -363,7 +393,7 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{ fillTerrain: result\.fillTerrain \}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
     'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
   );
 });
@@ -401,6 +431,11 @@ test('map tab exposes Quint-style Add Custom Map creation with even-size and til
 test('map art loads repaint an open map modal in place instead of rebuilding the whole modal body', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
+  assert.match(
+    rendererText,
+    /function ensureMapModalNode\(\) \{[\s\S]*?<button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?<button type="button" class="ghost map-editor-modal-undo-btn" data-act="undo">[\s\S]*?mapModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?await saveCurrentBundle\(\);[\s\S]*?\}[\s\S]*?if \(mapModal\.undoBtn\) \{[\s\S]*?function refreshMapModalUndoButtons\(\) \{[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?mapModal\.saveBtn\.disabled = state\.isSaving \|\| state\.isLoading \|\| !state\.bundle;[\s\S]*?\}/,
+    'the map modal header should expose a Save button beside Undo and route it through the shared saveCurrentBundle flow with matching disabled-state rules'
+  );
   assert.match(
     rendererText,
     /function biqMapArtRerender\(meta = null\) \{[\s\S]*?if \(mapModal\.tab && mapModal\.tileSection && !mapOverlay\.classList\.contains\('hidden'\)\) \{[\s\S]*?if \(typeof mapModal\.refreshVisuals === 'function'\) \{[\s\S]*?const loadingCount = Object\.keys\(state\.biqMapArtLoading \|\| \{\}\)\.length;[\s\S]*?const reason = String\(meta && meta\.reason \|\| 'asset-load'\);[\s\S]*?if \(assetDrivenRefresh && loadingCount > 0\) \{[\s\S]*?mode: 'deferred-until-idle'[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'light-refresh'[\s\S]*?mapModal\.refreshVisuals\(\{[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'full-modal-rerender'[\s\S]*?renderMapModalBody\(\);/,

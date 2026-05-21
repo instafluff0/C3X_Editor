@@ -8200,10 +8200,19 @@ function getBiqMapResizeOp(tab) {
     return null;
   }
   if (nextWidth === originalWidth && nextHeight === originalHeight) return null;
+  const pendingResize = tab && tab.pendingMapResize && typeof tab.pendingMapResize === 'object'
+    ? tab.pendingMapResize
+    : null;
+  const pendingFillTerrain = pendingResize
+    && Number(pendingResize.width) === nextWidth
+    && Number(pendingResize.height) === nextHeight
+    ? pendingResize.fillTerrain
+    : null;
   return {
     op: 'resizemap',
     width: nextWidth,
-    height: nextHeight
+    height: nextHeight,
+    fillTerrain: pendingFillTerrain
   };
 }
 

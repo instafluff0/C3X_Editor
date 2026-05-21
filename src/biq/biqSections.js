@@ -4,6 +4,7 @@
 // Supports Conquests (BICX, majorVersion=12) as primary target.
 
 const { BiqReader, BiqWriter } = require('./biqBuffer');
+const { decompress } = require('./decompress');
 const log = require('../log');
 const iconv = require('iconv-lite');
 
@@ -2509,6 +2510,17 @@ function parseAllSections(buf, options = {}) {
   if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf);
   setCurrentBiqTextEncoding(options && options.textEncoding);
 
+  if (buf.length >= 8) {
+    const initialVersionTag = buf.subarray(0, 4).toString('latin1');
+    const initialVerHeaderTag = buf.subarray(4, 8).toString('latin1');
+    if (!initialVersionTag.startsWith('BIC') || initialVerHeaderTag !== 'VER#') {
+      const inflated = decompress(buf);
+      if (inflated && inflated.ok && Buffer.isBuffer(inflated.data)) {
+        buf = inflated.data;
+      }
+    }
+  }
+
   // Parse header
   if (buf.length < 736) return { ok: false, error: 'Buffer too small for BIQ header' };
   const versionTag = buf.subarray(0, 4).toString('latin1');
@@ -4419,21 +4431,36 @@ function normalizeResizeMapDimension(value, label) {
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`Map ${label} must be a positive integer.`);
   }
-  if ((parsed % 2) !== 0) {
-    throw new Error(`Map ${label} must be even for Civ 3 BIQ map storage.`);
+  if (String(label || '').trim().toLowerCase() === 'width' && (parsed % 2) !== 0) {
+    return parsed + 1;
   }
   return parsed;
 }
 
 const BIQ_TERRAIN = {
-  TUNDRA: 0,
+  DESERT: 0,
   PLAINS: 1,
   GRASSLAND: 2,
-  DESERT: 3,
+  TUNDRA: 3,
   COAST: 11,
   SEA: 12,
   OCEAN: 13
 };
+const RESIZE_FILL_TERRAIN_VALUES = new Set([
+  BIQ_TERRAIN.DESERT,
+  BIQ_TERRAIN.PLAINS,
+  BIQ_TERRAIN.GRASSLAND,
+  BIQ_TERRAIN.TUNDRA,
+  BIQ_TERRAIN.COAST,
+  BIQ_TERRAIN.SEA,
+  BIQ_TERRAIN.OCEAN
+]);
+
+function normalizeResizeFillTerrain(value, fallback = BIQ_TERRAIN.SEA) {
+  const parsed = Number.parseInt(String(value == null ? '' : value), 10);
+  if (RESIZE_FILL_TERRAIN_VALUES.has(parsed)) return parsed;
+  return fallback;
+}
 
 function buildResizedTileTemplateCoord(xPos, yPos, width, height) {
   const maxX = Math.max(0, Number(width) - 1);
@@ -4462,7 +4489,7 @@ function computeCenteredResizeOffsets(sourceWidth, sourceHeight, targetWidth, ta
       .filter((value, index, arr) => Number.isFinite(value) && arr.indexOf(value) === index)
       .filter((value) => value >= min && value <= max)
       .filter((value) => (Math.abs(value) % 2) === parity);
-    if (filtered.length <= 0) return Math.max(min, Math.min(max, Math.round(ideal)));
+    if (filtered.length <= 0) return null;
     filtered.sort((a, b) => {
       const distance = Math.abs(a - ideal) - Math.abs(b - ideal);
       if (distance !== 0) return distance;
@@ -4472,17 +4499,25 @@ function computeCenteredResizeOffsets(sourceWidth, sourceHeight, targetWidth, ta
   };
   const widthDiff = Number(targetWidth) - Number(sourceWidth);
   const heightDiff = Number(targetHeight) - Number(sourceHeight);
-  const evenOffsets = {
-    x: pickOffset(widthDiff, 0),
-    y: pickOffset(heightDiff, 0)
-  };
-  const oddOffsets = {
-    x: pickOffset(widthDiff, 1),
-    y: pickOffset(heightDiff, 1)
-  };
-  const evenCost = Math.abs(evenOffsets.x - (widthDiff / 2)) + Math.abs(evenOffsets.y - (heightDiff / 2));
-  const oddCost = Math.abs(oddOffsets.x - (widthDiff / 2)) + Math.abs(oddOffsets.y - (heightDiff / 2));
-  return oddCost < evenCost ? oddOffsets : evenOffsets;
+  const candidates = [0, 1].map((parity) => {
+    const x = pickOffset(widthDiff, parity);
+    const y = pickOffset(heightDiff, parity);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { parity, x, y };
+  }).filter(Boolean);
+  if (candidates.length <= 0) {
+    return {
+      x: Math.round(widthDiff / 2),
+      y: Math.round(heightDiff / 2)
+    };
+  }
+  candidates.sort((a, b) => {
+    const aCost = Math.abs(a.x - (widthDiff / 2)) + Math.abs(a.y - (heightDiff / 2));
+    const bCost = Math.abs(b.x - (widthDiff / 2)) + Math.abs(b.y - (heightDiff / 2));
+    if (aCost !== bCost) return aCost - bCost;
+    return a.parity - b.parity;
+  });
+  return { x: candidates[0].x, y: candidates[0].y };
 }
 
 function clearResizedTileBackrefs(tile) {
@@ -4490,16 +4525,32 @@ function clearResizedTileBackrefs(tile) {
   setTileRecordFieldValue(tile, 'colony', -1);
 }
 
-function resetNewResizedTileToSea(tile) {
+function getResizedTileFillTerrainCode(sourceX, sourceY, sourceWidth, sourceHeight, template, fallbackTerrain, allowTemplateTerrain = false) {
+  const yInBounds = Number.isFinite(sourceY) && sourceY >= 0 && sourceY < sourceHeight;
+  const xInBounds = Number.isFinite(sourceX) && sourceX >= 0 && sourceX < sourceWidth;
+  if (allowTemplateTerrain && !xInBounds && yInBounds && template) {
+    return getTileBaseTerrain(template);
+  }
+  return fallbackTerrain;
+}
+
+function resetNewResizedTileToTerrain(tile, terrainId = BIQ_TERRAIN.SEA) {
   if (!tile) return;
-  const seaPackedTerrain = ((BIQ_TERRAIN.SEA & 0x0f) << 4) | (BIQ_TERRAIN.SEA & 0x0f);
+  const terrainCode = normalizeResizeFillTerrain(terrainId, BIQ_TERRAIN.SEA);
+  const packedTerrain = ((terrainCode & 0x0f) << 4) | (terrainCode & 0x0f);
   setTileRecordFieldValue(tile, 'riverConnectionInfo', 0);
   setTileRecordFieldValue(tile, 'border', 0);
   setTileRecordFieldValue(tile, 'resource', -1);
   setTileRecordFieldValue(tile, 'image', 0);
-  setTileRecordFieldValue(tile, 'file', 7);
+  setTileRecordFieldValue(tile, 'file', terrainCode === BIQ_TERRAIN.PLAINS ? 1
+    : terrainCode === BIQ_TERRAIN.DESERT ? 2
+      : terrainCode === BIQ_TERRAIN.GRASSLAND ? 5
+        : terrainCode === BIQ_TERRAIN.COAST ? 6
+          : terrainCode === BIQ_TERRAIN.SEA ? 7
+            : terrainCode === BIQ_TERRAIN.OCEAN ? 8
+              : 0);
   setTileRecordFieldValue(tile, 'overlays', 0);
-  setTileRecordFieldValue(tile, 'baseRealTerrain', seaPackedTerrain);
+  setTileRecordFieldValue(tile, 'baseRealTerrain', packedTerrain);
   setTileRecordFieldValue(tile, 'bonuses', 0);
   setTileRecordFieldValue(tile, 'riverCrossingData', 0);
   setTileRecordFieldValue(tile, 'barbarianTribe', -1);
@@ -4509,7 +4560,7 @@ function resetNewResizedTileToSea(tile) {
   setTileRecordFieldValue(tile, 'victoryPointLocation', -1);
   setTileRecordFieldValue(tile, 'ruin', 0);
   setTileRecordFieldValue(tile, 'c3cOverlays', 0);
-  setTileRecordFieldValue(tile, 'c3cBaseRealTerrain', seaPackedTerrain);
+  setTileRecordFieldValue(tile, 'c3cBaseRealTerrain', packedTerrain);
   setTileRecordFieldValue(tile, 'fogOfWar', 0);
   setTileRecordFieldValue(tile, 'c3cBonuses', 0);
 }
@@ -4717,9 +4768,11 @@ function sanitizeResizedMapEntitySections(parsed, width, height, offsets = {}) {
   tileSection._modified = true;
 }
 
-function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight) {
+function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight, fillTerrain = BIQ_TERRAIN.SEA) {
   const width = normalizeResizeMapDimension(targetWidth, 'width');
   const height = normalizeResizeMapDimension(targetHeight, 'height');
+  const fillTerrainCode = normalizeResizeFillTerrain(fillTerrain, BIQ_TERRAIN.SEA);
+  const allowImplicitEdgeTerrain = fillTerrain == null || String(fillTerrain).trim() === '';
   const tileCount = Math.floor((width * height) / 2);
   if (tileCount > 65536) {
     throw new Error(`Map dimensions ${width}x${height} exceed the Civ 3 custom-map limit of 65,536 tiles.`);
@@ -4769,7 +4822,16 @@ function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight) {
       nextRecord.xpos = x;
       nextRecord.ypos = y;
       if (!existing) {
-        resetNewResizedTileToSea(nextRecord);
+        const terrainCode = getResizedTileFillTerrainCode(
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          template,
+          fillTerrainCode,
+          allowImplicitEdgeTerrain
+        );
+        resetNewResizedTileToTerrain(nextRecord, terrainCode);
         clearResizedTileBackrefs(nextRecord);
       }
       nextTileRecords.push(nextRecord);
@@ -4868,7 +4930,7 @@ function applyEdits(buf, edits, options = {}) {
     }
     if (op === 'resizemap') {
       try {
-        resizeMapSectionsOnParsed(parsed, edit.width, edit.height);
+        resizeMapSectionsOnParsed(parsed, edit.width, edit.height, edit.fillTerrain);
       } catch (err) {
         const errorText = err && err.message ? err.message : 'Failed to resize BIQ map.';
         log.error('BiqApplyEdits', `op=resizemap rejected: ${errorText}`);
