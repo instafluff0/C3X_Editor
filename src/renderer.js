@@ -164,6 +164,7 @@ const state = {
   dirtyTabCounts: {},
   dirtyReferenceKeysByTab: {},
   dirtySectionIndexesByTab: {},
+  dirtyUiRefreshRaf: 0,
   unsavedModal: {
     open: false,
     resolve: null
@@ -2182,7 +2183,7 @@ function refreshDirtyUi() {
   }
   if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
   if (el.filesReadToggle) el.filesReadToggle.classList.toggle('dirty', state.isDirty);
-  const hasUndoHistory = Array.isArray(state.undoHistory) && state.undoHistory.length > 0;
+  const hasUndoHistory = (Array.isArray(state.undoHistory) && state.undoHistory.length > 0) || hasPendingTrackedEditSessions();
   if (el.undoBtn) el.undoBtn.disabled = !hasUndoHistory || state.isLoading;
   if (el.undoAllBtn) el.undoAllBtn.disabled = !state.isDirty || state.isLoading;
   refreshMapModalUndoButtons();
@@ -2268,6 +2269,23 @@ function getUndoSnapshotForKey(key = '') {
   const normalizedKey = String(key || '').trim().toUpperCase();
   if (normalizedKey.startsWith('BASE:')) {
     return snapshotSelectedEditableTabs(['base']);
+  }
+  if (normalizedKey.startsWith('RULE_FIELD:')) {
+    const parts = normalizedKey.split(':');
+    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
+      return snapshotSelectedEditableTabs([tabKey]);
+    }
+  }
+  if (normalizedKey.startsWith('TECH_TOP:')) {
+    return snapshotSelectedEditableTabs(['technologies']);
+  }
+  if (normalizedKey.startsWith('REFERENCE_TAB:')) {
+    const parts = normalizedKey.split(':');
+    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
+      return snapshotSelectedEditableTabs([tabKey]);
+    }
   }
   if (normalizedKey === 'MAP' || normalizedKey.startsWith('MAP:')) {
     if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs.map) return 'null';
@@ -2368,21 +2386,26 @@ function normalizeEditSessionValue(value) {
   return String(value == null ? '' : value);
 }
 
-function beginTrackedEditSession(key, initialValue) {
+function beginTrackedEditSession(key, initialValue, getValue = null) {
   const sessionKey = String(key || '');
   if (!sessionKey) return;
   if (state.editSessionByKey[sessionKey]) return;
   state.editSessionByKey[sessionKey] = {
     snapshot: getUndoSnapshotForKey(sessionKey),
-    initialValue: normalizeEditSessionValue(initialValue)
+    initialValue: normalizeEditSessionValue(initialValue),
+    getValue: typeof getValue === 'function' ? getValue : null
   };
 }
 
-function ensureTrackedEditSession(key, initialValue) {
+function ensureTrackedEditSession(key, initialValue, getValue = null) {
   const sessionKey = String(key || '');
   if (!sessionKey) return;
   if (!state.editSessionByKey[sessionKey]) {
-    beginTrackedEditSession(sessionKey, initialValue);
+    beginTrackedEditSession(sessionKey, initialValue, getValue);
+    return;
+  }
+  if (typeof getValue === 'function' && !state.editSessionByKey[sessionKey].getValue) {
+    state.editSessionByKey[sessionKey].getValue = getValue;
   }
 }
 
@@ -2401,6 +2424,27 @@ function clearTrackedEditSession(key) {
   const sessionKey = String(key || '');
   if (!sessionKey) return;
   delete state.editSessionByKey[sessionKey];
+}
+
+function hasPendingTrackedEditSessions() {
+  const sessions = state.editSessionByKey && typeof state.editSessionByKey === 'object'
+    ? Object.values(state.editSessionByKey)
+    : [];
+  return sessions.some((session) => session
+    && typeof session.getValue === 'function'
+    && normalizeEditSessionValue(session.getValue()) !== normalizeEditSessionValue(session.initialValue));
+}
+
+function commitAllTrackedEditSessions() {
+  const items = Object.entries(state.editSessionByKey || {});
+  items.forEach(([key, session]) => {
+    if (!session) return;
+    if (typeof session.getValue === 'function') {
+      commitTrackedEditSession(key, session.getValue());
+    } else {
+      clearTrackedEditSession(key);
+    }
+  });
 }
 
 function getMapCityEditSessionKey(cityRef) {
@@ -2493,7 +2537,7 @@ function syncActiveMapUnitEditSession(nextKey, getValue) {
 
 function wireGroupedUndoSession(input, { key, getValue, commitOnChange = false } = {}) {
   if (!input || !key || typeof getValue !== 'function') return;
-  const start = () => ensureTrackedEditSession(key, getValue());
+  const start = () => ensureTrackedEditSession(key, getValue(), getValue);
   const commit = () => commitTrackedEditSession(key, getValue());
   input.addEventListener('focus', start);
   input.addEventListener('blur', commit);
@@ -2502,6 +2546,10 @@ function wireGroupedUndoSession(input, { key, getValue, commitOnChange = false }
 }
 
 function captureCleanSnapshot() {
+  if (state.dirtyUiRefreshRaf) {
+    window.cancelAnimationFrame(state.dirtyUiRefreshRaf);
+    state.dirtyUiRefreshRaf = 0;
+  }
   if (state.activeMapCityEditSessionPrimeTimer) {
     window.clearTimeout(state.activeMapCityEditSessionPrimeTimer);
     state.activeMapCityEditSessionPrimeTimer = 0;
@@ -2525,10 +2573,44 @@ function captureCleanSnapshot() {
   refreshActiveBiqRecordListDirtyBadges();
 }
 
+function flushDirtyUiRefresh() {
+  if (state.dirtyUiRefreshRaf) {
+    window.cancelAnimationFrame(state.dirtyUiRefreshRaf);
+    state.dirtyUiRefreshRaf = 0;
+  }
+  if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
+  if (state.isDirty) {
+    updateActiveDirtyCaches();
+    if (Object.keys(state.dirtyTabCounts || {}).length === 0) {
+      state.isDirty = snapshotTabs() !== state.cleanSnapshot;
+    }
+    if (!state.isDirty) {
+      state.undoHistory = [];
+      clearDirtyTabCounts();
+    }
+  }
+  refreshDirtyUi();
+  refreshTabDirtyBadges();
+  refreshActiveReferenceListDirtyBadges();
+  refreshActiveBiqRecordListDirtyBadges();
+}
+
+function scheduleDirtyUiRefresh() {
+  if (state.dirtyUiRefreshRaf) return;
+  state.dirtyUiRefreshRaf = window.requestAnimationFrame(() => {
+    state.dirtyUiRefreshRaf = 0;
+    flushDirtyUiRefresh();
+  });
+}
+
 function setDirty(next) {
   markFilesReadEntriesDirty();
   if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
   if (!next) {
+    if (state.dirtyUiRefreshRaf) {
+      window.cancelAnimationFrame(state.dirtyUiRefreshRaf);
+      state.dirtyUiRefreshRaf = 0;
+    }
     state.isDirty = false;
     clearDirtyTabCounts();
     refreshDirtyUi();
@@ -2542,26 +2624,14 @@ function setDirty(next) {
     state.isDirty = currentSnapshot !== state.cleanSnapshot;
     if (!state.isDirty) {
       clearDirtyTabCounts();
-    } else {
-      updateActiveDirtyCaches();
-    }
-  } else {
-    updateActiveDirtyCaches();
-    // updateActiveDirtyCaches only covers the active tab. If that tab has no dirty
-    // count (e.g. modifying a biqStructure tab that isn't the active tab, like
-    // editing LEAD records while state.activeTab === 'scenario'), fall back to a
-    // full snapshot comparison so isDirty is never cleared incorrectly.
-    if (Object.keys(state.dirtyTabCounts || {}).length === 0) {
-      state.isDirty = snapshotTabs() !== state.cleanSnapshot;
-    }
-    if (!state.isDirty) {
-      state.undoHistory = [];
+      refreshDirtyUi();
+      refreshTabDirtyBadges();
+      refreshActiveReferenceListDirtyBadges();
+      refreshActiveBiqRecordListDirtyBadges();
+      return;
     }
   }
-  refreshDirtyUi();
-  refreshTabDirtyBadges();
-  refreshActiveReferenceListDirtyBadges();
-  refreshActiveBiqRecordListDirtyBadges();
+  scheduleDirtyUiRefresh();
 }
 
 function parseSnapshotTabs(snapshotText) {
@@ -2877,6 +2947,21 @@ function updateActiveDirtyCaches() {
   if (!tab) return;
 
   if (tab.type === 'reference' && Array.isArray(tab.entries)) {
+    if (tabKey === 'units' && unitTableModal.node && unitTableModal.node.isConnected && !unitTableModal.node.classList.contains('hidden')) {
+      const set = ensureReferenceDirtySet(tabKey);
+      set.clear();
+      tab.entries.forEach((entry, idx) => {
+        const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+        if (!identity) return;
+        const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
+        if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(identity);
+      });
+      const cleanTabs = getCleanTabsObject();
+      const cleanTab = cleanTabs[tabKey];
+      const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
+      setTabDirtyCount(tabKey, set.size + extra);
+      return;
+    }
     const selectedIndex = Number(state.referenceSelection[tabKey] || 0);
     const entry = tab.entries[selectedIndex];
     if (!entry) return;
@@ -21479,7 +21564,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   const rememberCellEdit = (control) => {
     if (!referenceEditable || !control) return;
     if (control.__unitTableUndoRemembered) return;
-    rememberUndoSnapshot();
+    rememberUndoSnapshotForKey('REFERENCE_TAB:units');
     control.__unitTableUndoRemembered = true;
   };
 
@@ -45357,6 +45442,7 @@ function closeSaveProgressModal() {
 }
 
 async function saveCurrentBundle() {
+  flushDirtyUiRefresh();
   if (state.isSaving) {
     _dbgWarn('saveBundle', 'Save already in progress — skipped');
     return false;
@@ -45500,6 +45586,7 @@ async function saveCurrentBundle() {
 }
 
 async function performSeedScenarioTab(tabKey) {
+  flushDirtyUiRefresh();
   if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[tabKey]) return;
   const tabsToSave = { [tabKey]: state.bundle.tabs[tabKey] };
   const payload = buildSavePayload({ tabsToSave, dirtyTabs: [tabKey] });
@@ -45945,6 +46032,8 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
 }
 
 async function undoOneStep() {
+  flushDirtyUiRefresh();
+  commitAllTrackedEditSessions();
   const undoSnapshot = getLatestUndoSnapshot();
   if (!state.bundle || !undoSnapshot) {
     setStatus('No unsaved changes to undo.');
@@ -45982,6 +46071,8 @@ async function undoMapOneStep() {
 }
 
 async function undoAllChanges() {
+  flushDirtyUiRefresh();
+  commitAllTrackedEditSessions();
   if (!state.bundle || !state.isDirty) {
     setStatus('No unsaved changes to undo.');
     return;
