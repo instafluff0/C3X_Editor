@@ -191,6 +191,41 @@ test('collectPediaIconsReferenceEdits writes tech large-first model to small and
   ]);
 });
 
+test('collectPediaIconsReferenceEdits writes unit icon and animation blocks from explicit PRTO fields', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    units: {
+      entries: [{
+        civilopediaKey: 'PRTO_Slinger',
+        iconPaths: [
+          'Art/Civilopedia/Icons/Units/Slinger-large.pcx',
+          'Art/Civilopedia/Icons/Units/Slinger-small.pcx'
+        ],
+        originalIconPaths: [
+          'Art/Civilopedia/Icons/Units/OldSlinger-large.pcx',
+          'Art/Civilopedia/Icons/Units/OldSlinger-small.pcx'
+        ],
+        animationName: 'Slinger',
+        originalAnimationName: 'OldSlinger'
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, [
+    {
+      blockKey: 'ICON_PRTO_Slinger',
+      lines: [
+        'Art/Civilopedia/Icons/Units/Slinger-large.pcx',
+        'Art/Civilopedia/Icons/Units/Slinger-small.pcx'
+      ]
+    },
+    {
+      blockKey: 'ANIMNAME_PRTO_Slinger',
+      lines: ['Slinger']
+    }
+  ]);
+});
+
 test('buildScenarioPediaIconsEditResult deletes blocks instead of leaving empty headers', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-pediaicons-'));
   const targetPath = path.join(dir, 'PediaIcons.txt');

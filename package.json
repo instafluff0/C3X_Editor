@@ -1,12 +1,16 @@
 {
   "name": "civ3-c3x-modern-config-manager",
-  "productName": "Civ 3 C3X Modern Configuration Manager",
-  "version": "27.10.0",
+  "productName": "Civ 3 C3X Modern Editor",
+  "version": "27.11.0",
   "description": "Modern config manager for C3X",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test",
+    "test": "node scripts/run-tests.js fast",
+    "test:fast": "node scripts/run-tests.js fast",
+    "test:map-critical": "node scripts/run-tests.js map-critical",
+    "test:biq": "node scripts/run-tests.js biq",
+    "test:full": "node scripts/run-tests.js full",
     "dist": "electron-builder"
   },
   "devDependencies": {
@@ -29,7 +33,7 @@
     "nsis": {
       "artifactName": "${productName} Setup ${version}.${ext}",
       "createStartMenuShortcut": true,
-      "shortcutName": "Civ 3 C3X Modern Configuration Manager"
+      "shortcutName": "Civ 3 C3X Modern Editor"
     },
     "mac": {
       "target": "dmg",

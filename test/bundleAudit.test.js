@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { auditLoadedBundle } = require('../src/bundleAudit');
+const { auditBundle, auditLoadedBundle } = require('../src/bundleAudit');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-bundle-audit-'));
@@ -207,6 +207,39 @@ test('auditLoadedBundle skips day-night checks when cycle mode is off', () => {
   const result = auditLoadedBundle(bundle);
   assert.equal(result.totalWarnings, 0);
   assert.equal(result.tabs.base, undefined);
+});
+
+test('auditBundle uses the provided bundle snapshot for live scenario-option previews', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeBundle(c3xRoot, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'true' }
+        ]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({ name: 'Market', img_paths: 'Market.pcx' })
+          ]
+        }
+      }
+    }
+  });
+
+  const result = auditBundle({
+    mode: 'scenario',
+    c3xPath: path.join(c3xRoot, 'does-not-matter'),
+    civ3Path: path.join(c3xRoot, 'does-not-matter'),
+    scenarioPath: path.join(c3xRoot, 'preview.biq'),
+    bundleSnapshot: bundle
+  });
+
+  assert.equal(result.totalWarnings, 2);
+  assert.match(result.tabs.districts.sections['0'][0].message, /Missing district art "Market\.pcx"/);
+  assert.match(result.tabs.districts.general[0].message, /Missing district art "Abandoned\.pcx"/);
 });
 
 test('auditLoadedBundle reports missing day-night terrain and district hour art', () => {

@@ -107,7 +107,19 @@ const IMPORT_REFERENCE_INVENTORY = [
   { id: 'import-prto-enslaveresultsin', tabKey: 'units', field: 'enslaveresultsin', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
   { id: 'import-prto-stealthtarget', tabKey: 'units', field: 'stealth_target', kind: 'list', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
   { id: 'import-prto-legalunittelepad', tabKey: 'units', field: 'legal_unit_telepad', kind: 'list', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
-  { id: 'import-prto-legalbuildingtelepad', tabKey: 'units', field: 'legal_building_telepad', kind: 'list', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' }
+  { id: 'import-prto-legalbuildingtelepad', tabKey: 'units', field: 'legal_building_telepad', kind: 'list', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' },
+
+  { id: 'import-rule-slave', tabKey: 'rules', field: 'slave', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-startunit1', tabKey: 'rules', field: 'startunit1', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-startunit2', tabKey: 'rules', field: 'startunit2', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-scout', tabKey: 'rules', field: 'scout', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-battlecreatedunit', tabKey: 'rules', field: 'battlecreatedunit', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-buildarmyunit', tabKey: 'rules', field: 'buildarmyunit', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-basicbarbarian', tabKey: 'rules', field: 'basicbarbarian', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-advancedbarbarian', tabKey: 'rules', field: 'advancedbarbarian', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-barbarianseaunit', tabKey: 'rules', field: 'barbarianseaunit', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-flagunit', tabKey: 'rules', field: 'flagunit', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-rule-defaultmoneyresource', tabKey: 'rules', field: 'defaultmoneyresource', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' }
 ];
 
 module.exports = {

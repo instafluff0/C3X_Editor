@@ -11,6 +11,7 @@ const { BiqWriter } = require('../src/biq/biqBuffer');
 const {
   BiqIO,
   SECTION_REGISTRY,
+  serializeSection,
   sectionToEnglish,
   sectionRecordName,
   sectionWritableKeys,
@@ -1435,6 +1436,28 @@ test('CLNY parser produces human-readable fields', () => {
   assertNoGenericFields(english, 'CLNY');
   const map = parseEnglish(english);
   assert.equal(map.get('improvementType'), '2');
+});
+
+test('CLNY fixed-size serialization preserves improvementType in Conquests record layout', () => {
+  const io = makeIo();
+  const section = {
+    code: 'CLNY',
+    records: [
+      {
+        index: 0,
+        ownerType: 1,
+        owner: 3,
+        x: 4,
+        y: 8,
+        improvementType: 2
+      }
+    ]
+  };
+  const buf = serializeSection(section, io);
+  assert.equal(buf.readUInt32LE(4), 1, 'expected one CLNY record');
+  assert.equal(buf.length, 8 + 24, 'expected Conquests CLNY record to include 4-byte length prefix plus 20-byte body');
+  assert.equal(buf.readUInt32LE(8), 20, 'expected CLNY dataLength to remain 20 in Conquests layout');
+  assert.equal(buf.readInt32LE(28), 2, 'expected improvementType to remain present at the end of the CLNY body');
 });
 
 // ---------------------------------------------------------------------------

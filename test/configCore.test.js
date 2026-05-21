@@ -10,15 +10,29 @@ const {
   serializeCivilopediaDocumentWithOrder,
   parseSectionedConfig,
   serializeSectionedConfig,
+  parseScenarioDistrictsText,
+  serializeScenarioDistrictsText,
   parseBiqSectionsFromBuffer,
   resolveScenarioDir,
   resolvePaths,
+  collectBiqMapEdits,
+  collectBiqMapStructureOps,
   loadBundle,
   saveBundle
 } = require('../src/configCore');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-config-manager-'));
+}
+
+function makeMapField(baseKey, value, originalValue) {
+  return {
+    key: baseKey,
+    baseKey,
+    label: baseKey,
+    value: String(value),
+    originalValue: String(originalValue == null ? value : originalValue)
+  };
 }
 
 test('base config precedence is default -> scenario -> custom', () => {
@@ -112,6 +126,41 @@ test('resolveScenarioDir supports scenarioPath as .biq file', () => {
   assert.equal(resolveScenarioDir('/tmp/scenarios'), '/tmp/scenarios');
 });
 
+test('scenario districts codec preserves wonder completion fields and named tiles', () => {
+  const text = [
+    'DISTRICTS',
+    '',
+    '#District',
+    'coordinates  = 14,9',
+    'district     = "The Great Wall"',
+    'wonder_city  = Rome',
+    'wonder_name  = "The Great Wall"',
+    '',
+    '#NamedTile',
+    'coordinates  = 15,9',
+    'name         = Tiber River',
+    ''
+  ].join('\n');
+
+  const parsed = parseScenarioDistrictsText(text);
+  assert.equal(parsed.entries.length, 1);
+  assert.deepEqual(parsed.entries[0], {
+    x: 14,
+    y: 9,
+    district: 'The Great Wall',
+    wonderName: 'The Great Wall',
+    wonderCity: 'Rome'
+  });
+  assert.deepEqual(parsed.namedTiles, [{ x: 15, y: 9, name: 'Tiber River' }]);
+
+  const serialized = serializeScenarioDistrictsText(parsed);
+  assert.match(serialized, /#District/);
+  assert.match(serialized, /wonder_city\s+= Rome/);
+  assert.match(serialized, /wonder_name\s+= The Great Wall/);
+  assert.match(serialized, /#NamedTile/);
+  assert.ok(serialized.endsWith('\n'));
+});
+
 test('parseBiqSectionsFromBuffer reads basic BIQ section metadata', () => {
   const header = Buffer.alloc(736, 0);
   header.write('BICX', 0, 'latin1');
@@ -171,6 +220,40 @@ test('loadBundle + saveBundle writes to scope targets', () => {
   assert.match(savedText, /flag = false/);
 });
 
+test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips WMAP dimensions', () => {
+  const tabs = {
+    map: {
+      hasMapData: true,
+      originalHasMap: true,
+      mapMutation: null,
+      pendingMapResize: { width: 140, height: 120, fillTerrain: 1 },
+      sections: [
+        {
+          code: 'WMAP',
+          records: [{
+            index: 0,
+            fields: [
+              makeMapField('width', 140, 130),
+              makeMapField('height', 120, 110),
+              makeMapField('flags', 3, 1)
+            ]
+          }]
+        }
+      ]
+    }
+  };
+
+  assert.deepEqual(collectBiqMapStructureOps(tabs), [{ op: 'resizemap', width: 140, height: 120, fillTerrain: 1 }]);
+  assert.deepEqual(collectBiqMapEdits(tabs), [
+    {
+      sectionCode: 'WMAP',
+      recordRef: '@INDEX:0',
+      fieldKey: 'flags',
+      value: '3'
+    }
+  ]);
+});
+
 test('loadBundle does not write target files before save', () => {
   const root = mkTmpDir();
   const scenario = mkTmpDir();
@@ -225,7 +308,7 @@ test('saving new sectioned override file does not copy default docs/comments', (
 
   const userDistrictsPath = path.join(root, 'user.districts_config.txt');
   const saved = fs.readFileSync(userDistrictsPath, 'utf8');
-  assert.match(saved, /Managed by Civ 3 \| C3X Modern Configuration Manager/);
+  assert.match(saved, /Managed by Civ 3 \| C3X Modern Editor/);
   assert.match(saved, /Mode: global/);
   assert.doesNotMatch(saved, /\[======================================================================= NOTE/);
   assert.doesNotMatch(saved, /default comment that should not be copied/);

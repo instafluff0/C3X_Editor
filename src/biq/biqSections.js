@@ -4,6 +4,7 @@
 // Supports Conquests (BICX, majorVersion=12) as primary target.
 
 const { BiqReader, BiqWriter } = require('./biqBuffer');
+const { decompress } = require('./decompress');
 const log = require('../log');
 const iconv = require('iconv-lite');
 
@@ -1375,6 +1376,27 @@ function serializeTILE(rec) {
   return Buffer.from(rec._rawRecord);
 }
 
+function setTileRecordFieldValue(rec, fieldName, value) {
+  if (!rec) return false;
+  const fd = TILE_FIELD_MAP.get(String(fieldName || '').trim().toLowerCase());
+  if (!fd) return false;
+  const n = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(n)) return false;
+  const raw = rec._rawRecord;
+  if (raw) {
+    const bodyOff = 4 + fd.off;
+    switch (fd.type) {
+      case 'uint8': raw[bodyOff] = n & 0xff; break;
+      case 'int16': raw.writeInt16LE(n, bodyOff); break;
+      case 'uint16': raw.writeUInt16LE(n & 0xffff, bodyOff); break;
+      case 'int32': raw.writeInt32LE(n | 0, bodyOff); break;
+      default: raw[bodyOff] = n & 0xff;
+    }
+  }
+  rec[fd.name] = n;
+  return true;
+}
+
 function toEnglishTILE(rec, io) {
   const pairs = [
     ['xpos', String(rec.xpos | 0)],
@@ -2452,6 +2474,15 @@ const OPTIONAL_SECTIONS = new Set(['FLAV', 'WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC
 
 const FIXED_SECTION_SIZES = { CONT: 12, SLOC: 20, CLNY: 20 };
 
+function getFixedSectionSize(code, io) {
+  const upper = String(code || '').trim().toUpperCase();
+  if (upper === 'TILE') return getTileRecordLength(io && io.versionTag, io && io.majorVersion);
+  if (upper === 'CLNY') {
+    return io && io.isConquests ? 24 : 20;
+  }
+  return FIXED_SECTION_SIZES[upper] || 0;
+}
+
 function getTileRecordLength(versionTag, majorVersion) {
   if (versionTag === 'BICX' && majorVersion === 12) return 49; // 4+45
   if (versionTag === 'BICX') return 33;
@@ -2478,6 +2509,17 @@ function findSectionTag(buf, tag, fromOff) {
 function parseAllSections(buf, options = {}) {
   if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf);
   setCurrentBiqTextEncoding(options && options.textEncoding);
+
+  if (buf.length >= 8) {
+    const initialVersionTag = buf.subarray(0, 4).toString('latin1');
+    const initialVerHeaderTag = buf.subarray(4, 8).toString('latin1');
+    if (!initialVersionTag.startsWith('BIC') || initialVerHeaderTag !== 'VER#') {
+      const inflated = decompress(buf);
+      if (inflated && inflated.ok && Buffer.isBuffer(inflated.data)) {
+        buf = inflated.data;
+      }
+    }
+  }
 
   // Parse header
   if (buf.length < 736) return { ok: false, error: 'Buffer too small for BIQ header' };
@@ -2547,8 +2589,7 @@ function parseAllSections(buf, options = {}) {
     }
 
     const isFixed = reg ? (reg.mode === 'fixed') : (FIXED_SECTION_SIZES[code] != null);
-    const fixedSize = code === 'TILE' ? getTileRecordLength(versionTag, majorVersion)
-      : (FIXED_SECTION_SIZES[code] || 0);
+    const fixedSize = getFixedSectionSize(code, io);
 
     const records = [];
     let pos = dataStart;
@@ -2648,8 +2689,7 @@ function serializeSection(section, io) {
   const isFixed = reg ? (reg.mode === 'fixed') : (FIXED_SECTION_SIZES[code] != null);
 
   if (isFixed) {
-    const fixedSize = code === 'TILE' ? getTileRecordLength(io.versionTag, io.majorVersion)
-      : (FIXED_SECTION_SIZES[code] || 0);
+    const fixedSize = getFixedSectionSize(code, io);
     for (const rec of records) {
       if (code === 'TILE') {
         // TILE always uses raw record (surgical edits done in-place)
@@ -2795,10 +2835,13 @@ function findRecordByRef(records, recordRef) {
     if (Number.isFinite(idx) && idx >= 0 && idx < records.length) return records[idx];
     return null;
   }
-  // Search by civilopediaEntry
+  // Search by civilopediaEntry for normal BIQ sections, and by transient
+  // newRecordRef for newly added map/structure records before serialization.
   return records.find((r) => {
     const ce = String(r.civilopediaEntry || '').trim().toUpperCase();
-    return ce === upper;
+    if (ce === upper) return true;
+    const newRef = String(r && r.newRecordRef || '').trim().toUpperCase();
+    return newRef === upper;
   }) || null;
 }
 
@@ -2935,23 +2978,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
 
   // TILE: surgical raw edit
   if (code === 'TILE') {
-    const fd = [...TILE_FIELDS].find((f) => canonicalKey(f.name) === ck);
-    if (!fd) return false;
-    const raw = rec._rawRecord;
-    if (!raw) return false;
-    const bodyOff = 4 + fd.off; // 4-byte dataLen prefix
-    const n = Number.parseInt(value, 10);
-    if (!Number.isFinite(n)) return false;
-    switch (fd.type) {
-      case 'uint8': raw[bodyOff] = n & 0xff; break;
-      case 'int16': raw.writeInt16LE(n, bodyOff); break;
-      case 'uint16': raw.writeUInt16LE(n & 0xffff, bodyOff); break;
-      case 'int32': raw.writeInt32LE(n | 0, bodyOff); break;
-      default: raw[bodyOff] = n & 0xff;
-    }
-    // Update parsed field too
-    rec[fd.name] = n;
-    return true;
+    return setTileRecordFieldValue(rec, ck, value);
   }
 
   // CITY buildings list
@@ -2964,6 +2991,39 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
 
   // LEAD: tech indices (dynamic list keyed by position)
   if (code === 'LEAD') {
+    if (ck === 'numberofdifferentstartunits') {
+      const n = Number.parseInt(value, 10);
+      if (Number.isFinite(n) && n >= 0) {
+        if (!Array.isArray(rec.startUnits)) rec.startUnits = [];
+        while (rec.startUnits.length < n) rec.startUnits.push({ startUnitCount: 0, startUnitIndex: rec.startUnits.length });
+        if (rec.startUnits.length > n) rec.startUnits.length = n;
+        rec.numStartUnits = rec.startUnits.length;
+      }
+      return true;
+    }
+    const startUnitMatch = ck.match(/^startingunitsoftype(.+)$/);
+    if (startUnitMatch) {
+      const rawTarget = String(startUnitMatch[1] || '').trim().toLowerCase();
+      let startUnitIndex = Number.parseInt(rawTarget, 10);
+      if (!Number.isFinite(startUnitIndex)) {
+        if (rawTarget === 'settler') startUnitIndex = 0;
+        else if (rawTarget === 'worker') startUnitIndex = 1;
+      }
+      if (!Number.isFinite(startUnitIndex) || startUnitIndex < 0) return true;
+      if (!Array.isArray(rec.startUnits)) rec.startUnits = [];
+      const startUnitCount = Number.parseInt(value, 10);
+      const existingIdx = rec.startUnits.findIndex((entry) => Number(entry && entry.startUnitIndex) === startUnitIndex);
+      if (!Number.isFinite(startUnitCount) || startUnitCount <= 0) {
+        if (existingIdx >= 0) rec.startUnits.splice(existingIdx, 1);
+      } else if (existingIdx >= 0) {
+        rec.startUnits[existingIdx].startUnitCount = startUnitCount;
+      } else {
+        rec.startUnits.push({ startUnitCount, startUnitIndex });
+      }
+      rec.startUnits.sort((a, b) => Number(a.startUnitIndex) - Number(b.startUnitIndex));
+      rec.numStartUnits = rec.startUnits.length;
+      return true;
+    }
     if (ck === 'numberofstartingtechnologies') {
       const n = Number.parseInt(value, 10);
       if (Number.isFinite(n) && n >= 0) {
@@ -3093,6 +3153,29 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     }
   }
 
+  if (code === 'CLNY') {
+    if (ck === 'ownertype') {
+      rec.ownerType = parseEditInt(value, 0);
+      return true;
+    }
+    if (ck === 'owner') {
+      rec.owner = parseEditInt(value, -1);
+      return true;
+    }
+    if (ck === 'x') {
+      rec.x = parseEditInt(value, 0);
+      return true;
+    }
+    if (ck === 'y') {
+      rec.y = parseEditInt(value, 0);
+      return true;
+    }
+    if (ck === 'improvementtype') {
+      rec.improvementType = parseEditInt(value, 0);
+      return true;
+    }
+  }
+
   // Generic: set field on rec object
   // Try exact camelCase match first
   for (const key of Object.keys(rec)) {
@@ -3196,13 +3279,40 @@ function createDefaultRecord(code, civKey, io) {
       prtoRec.PTWSpecialActions = 781;
       return prtoRec;
     }
+    case 'LEAD':
+      return {
+        humanPlayer: 0,
+        customCivData: 0,
+        leaderName: '',
+        questionMark1: 0,
+        questionMark2: 0,
+        numStartUnits: 0,
+        startUnits: [],
+        genderOfLeaderName: 0,
+        numStartTechs: 0,
+        techIndices: [],
+        difficulty: -1,
+        initialEra: 0,
+        startCash: 10,
+        government: 1,
+        civ: -3,
+        color: 0,
+        skipFirstTurn: 0,
+        startEmbassies: 0
+      };
     case 'CITY': return {
-      hasWalls: 0, hasPalace: 0, name: '', ownerType: 1, numBuildings: 0, buildings: [],
-      culture: 0, owner: 0, size: 1, x: 0, y: 0, cityLevel: 0, borderLevel: 0, useAutoName: 0
+      hasWalls: 0, hasPalace: 0, name: '', ownerType: 2, numBuildings: 0, buildings: [],
+      culture: 0, owner: 1, size: 1, x: 0, y: 0, cityLevel: 0, borderLevel: 1, useAutoName: 0
     };
     case 'UNIT': return {
       name: '', ownerType: 1, experienceLevel: 0, owner: 0, pRTONumber: 0,
       AIStrategy: 0, x: 0, y: 0, customName: '', useCivilizationKing: 0
+    };
+    case 'SLOC': return {
+      ownerType: 2, owner: 1, x: 0, y: 0
+    };
+    case 'CLNY': return {
+      ownerType: 2, owner: 1, x: 0, y: 0, improvementType: 0
     };
     default: return { _rawData: Buffer.alloc(0) };
   }
@@ -3229,6 +3339,17 @@ function getSectionByCode(parsed, sectionCode) {
 
 function getRecordCivilopediaRef(record) {
   return String(record && record.civilopediaEntry || '').trim().toUpperCase();
+}
+
+function getRecordStructureRef(record) {
+  if (!record) return '';
+  const newRef = String(record.newRecordRef || '').trim().toUpperCase();
+  if (newRef) return newRef;
+  const civRef = getRecordCivilopediaRef(record);
+  if (civRef) return civRef;
+  const idx = Number.parseInt(String(record.index), 10);
+  if (Number.isFinite(idx) && idx >= 0) return `@INDEX:${idx}`;
+  return '';
 }
 
 function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
@@ -3376,6 +3497,24 @@ function buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices = []) 
   };
 }
 
+function composeDeletedSectionRemaps(firstRemap, secondRemap) {
+  if (!firstRemap) return secondRemap || null;
+  if (!secondRemap) return firstRemap || null;
+  const oldToNew = new Map();
+  for (let oldIndex = 0; oldIndex < firstRemap.oldCount; oldIndex += 1) {
+    const midIndex = remapDeletedSectionIndex(oldIndex, firstRemap, null);
+    if (!Number.isFinite(midIndex) || midIndex < 0) continue;
+    const finalIndex = remapDeletedSectionIndex(midIndex, secondRemap, null);
+    if (!Number.isFinite(finalIndex) || finalIndex < 0) continue;
+    oldToNew.set(oldIndex, finalIndex);
+  }
+  return {
+    oldCount: firstRemap.oldCount,
+    finalCount: secondRemap.finalCount,
+    oldToNew
+  };
+}
+
 function remapDeletedSectionIndex(value, remap, deletedFallback = -1) {
   const parsedValue = Number.parseInt(String(value), 10);
   if (!Number.isFinite(parsedValue) || parsedValue < 0) return parsedValue;
@@ -3460,7 +3599,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       .map((edit) => originalRefs.indexOf(String(edit && edit.recordRef || '').trim().toUpperCase()))
       .filter((index) => index >= 0);
     const finalRefs = section && Array.isArray(section.records)
-      ? section.records.map((record) => getRecordCivilopediaRef(record))
+      ? section.records.map((record) => getRecordStructureRef(record))
       : [];
     remaps.set(code, buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices));
   });
@@ -3470,15 +3609,67 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const bldgRemap = remaps.get('BLDG');
   const govtRemap = remaps.get('GOVT');
   const prtoRemap = remaps.get('PRTO');
-  const raceRemap = remaps.get('RACE');
+  let raceRemap = remaps.get('RACE');
   const raceDependentSectionsAlreadyNormalized = parsed && parsed._raceDependentSectionsNormalized === true;
   const erasRemap = remaps.get('ERAS');
   const diffRemap = remaps.get('DIFF');
   const espnRemap = remaps.get('ESPN');
   const tfrmRemap = remaps.get('TFRM');
   const terrRemap = remaps.get('TERR');
+  const leadRemap = remaps.get('LEAD');
   const markModified = (section) => {
     if (section) section._modified = true;
+  };
+  const normalizeMapOwnerSection = (sectionCode, ownerTypeToMatch, remap, options = {}) => {
+    if (!remap) return { ok: true, remap: null };
+    const section = getSectionByCode(parsed, sectionCode);
+    if (!section || !Array.isArray(section.records)) return { ok: true, remap: null };
+    const originalRefs = section.records.map((record) => getRecordStructureRef(record));
+    const nextRecords = [];
+    const deletedOriginalIndices = [];
+    let changed = false;
+    for (let originalIndex = 0; originalIndex < section.records.length; originalIndex += 1) {
+      const record = section.records[originalIndex];
+      const ownerType = Number.parseInt(String(record && record.ownerType), 10);
+      if (ownerType !== ownerTypeToMatch) {
+        nextRecords.push(record);
+        continue;
+      }
+      const nextOwner = remapDeletedSectionIndex(record && record.owner, remap, null);
+      if (!Number.isFinite(nextOwner) || nextOwner < 0) {
+        if (options.failOnDeletedOwner) {
+          return {
+            ok: false,
+            error: `Deleting civilization(s) still referenced by ${sectionCode} map ownership is not supported safely; ${sectionCode} record ${originalIndex} still points at deleted civilization ${record && record.owner}.`
+          };
+        }
+        if (options.deleteOnDeletedOwner) {
+          deletedOriginalIndices.push(originalIndex);
+          changed = true;
+          continue;
+        }
+        nextRecords.push(record);
+        continue;
+      }
+      if (Number(record.owner) !== nextOwner) {
+        record.owner = nextOwner;
+        changed = true;
+      }
+      nextRecords.push(record);
+    }
+    nextRecords.forEach((record, index) => {
+      if (Object.prototype.hasOwnProperty.call(record || {}, 'index')) record.index = index;
+    });
+    if (changed || deletedOriginalIndices.length > 0 || nextRecords.length !== section.records.length) {
+      section.records = nextRecords;
+      markModified(section);
+    }
+    return {
+      ok: true,
+      remap: deletedOriginalIndices.length > 0
+        ? buildDeletedSectionRemap(originalRefs, nextRecords.map((record) => getRecordStructureRef(record)), deletedOriginalIndices)
+        : null
+    };
   };
 
   const raceSection = getSectionByCode(parsed, 'RACE');
@@ -3648,6 +3839,24 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     if (techRemap || goodRemap) markModified(tfrmSection);
   }
 
+  const slocPlayerCascade = normalizeMapOwnerSection('SLOC', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!slocPlayerCascade.ok) return slocPlayerCascade;
+  const cityPlayerCascade = normalizeMapOwnerSection('CITY', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!cityPlayerCascade.ok) return cityPlayerCascade;
+  const unitPlayerCascade = normalizeMapOwnerSection('UNIT', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!unitPlayerCascade.ok) return unitPlayerCascade;
+  const clnyPlayerCascade = normalizeMapOwnerSection('CLNY', 3, leadRemap, { deleteOnDeletedOwner: true });
+  if (!clnyPlayerCascade.ok) return clnyPlayerCascade;
+
+  const slocCivCascade = normalizeMapOwnerSection('SLOC', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!slocCivCascade.ok) return slocCivCascade;
+  const cityCivCascade = normalizeMapOwnerSection('CITY', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!cityCivCascade.ok) return cityCivCascade;
+  const unitCivCascade = normalizeMapOwnerSection('UNIT', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!unitCivCascade.ok) return unitCivCascade;
+  const clnyCivCascade = normalizeMapOwnerSection('CLNY', 2, raceRemap, { failOnDeletedOwner: true });
+  if (!clnyCivCascade.ok) return clnyCivCascade;
+
   const citySection = getSectionByCode(parsed, 'CITY');
   if (citySection && Array.isArray(citySection.records) && bldgRemap) {
     citySection.records.forEach((rec) => {
@@ -3663,6 +3872,19 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       rec.pRTONumber = remapDeletedSectionIndex(rec.pRTONumber, prtoRemap, -1);
     });
     markModified(unitSection);
+  }
+
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  let cityRemap = remaps.get('CITY');
+  let clnyRemap = remaps.get('CLNY');
+  cityRemap = composeDeletedSectionRemaps(cityRemap, cityPlayerCascade.remap);
+  clnyRemap = composeDeletedSectionRemaps(clnyRemap, clnyPlayerCascade.remap);
+  if (tileSection && Array.isArray(tileSection.records) && (cityRemap || clnyRemap)) {
+    tileSection.records.forEach((rec) => {
+      if (cityRemap) setTileRecordFieldValue(rec, 'city', remapDeletedSectionIndex(rec.city, cityRemap, -1));
+      if (clnyRemap) setTileRecordFieldValue(rec, 'colony', remapDeletedSectionIndex(rec.colony, clnyRemap, -1));
+    });
+    markModified(tileSection);
   }
 
   const leadSection = getSectionByCode(parsed, 'LEAD');
@@ -3688,6 +3910,321 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   }
 
   return { ok: true };
+}
+
+function collectMapReferenceIntegrityIssues(parsed) {
+  const issues = [];
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return issues;
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const slocSection = getSectionByCode(parsed, 'SLOC');
+  const citySection = getSectionByCode(parsed, 'CITY');
+  const unitSection = getSectionByCode(parsed, 'UNIT');
+  const clnySection = getSectionByCode(parsed, 'CLNY');
+  const mapWidth = Number(parsed && parsed.io && parsed.io.mapWidth)
+    || Number(wmapSection && Array.isArray(wmapSection.records) && wmapSection.records[0] && wmapSection.records[0].width)
+    || 0;
+  const mapHeight = Number(wmapSection && Array.isArray(wmapSection.records) && wmapSection.records[0] && wmapSection.records[0].height) || 0;
+  const cityCount = citySection && Array.isArray(citySection.records) ? citySection.records.length : 0;
+  const unitCount = unitSection && Array.isArray(unitSection.records) ? unitSection.records.length : 0;
+  const clnyCount = clnySection && Array.isArray(clnySection.records) ? clnySection.records.length : 0;
+  const raceCount = raceSection && Array.isArray(raceSection.records) ? raceSection.records.length : 0;
+  const playerCount = leadSection && Array.isArray(leadSection.records) ? leadSection.records.length : 0;
+  const normalizeRef = (value) => {
+    const parsedValue = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsedValue) ? parsedValue : -1;
+  };
+  const tileByCoords = new Map();
+  const cityRefCounts = new Map();
+  const colonyRefCounts = new Map();
+  const getCoords = (record, xKey = 'x', yKey = 'y') => ({
+    x: normalizeRef(record && record[xKey]),
+    y: normalizeRef(record && record[yKey])
+  });
+  const getTileCoords = (record) => ({
+    x: normalizeRef(record && record.xpos),
+    y: normalizeRef(record && record.ypos)
+  });
+  const isInBounds = (coords) => (
+    Number.isFinite(coords.x)
+    && Number.isFinite(coords.y)
+    && coords.x >= 0
+    && coords.y >= 0
+    && (!mapWidth || coords.x < mapWidth)
+    && (!mapHeight || coords.y < mapHeight)
+  );
+  const validateOwnerRef = (sectionCode, recordIndex, record) => {
+    const ownerType = normalizeRef(record && record.ownerType);
+    const owner = normalizeRef(record && record.owner);
+    if (ownerType === 0 || ownerType === 1) return;
+    if (ownerType === 2) {
+      if (owner < 0 || owner >= raceCount) {
+        issues.push({
+          kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,
+          sectionCode,
+          recordRef: recordIndex,
+          ownerType,
+          owner,
+          raceCount,
+          playerCount
+        });
+      }
+      return;
+    }
+    if (ownerType === 3) {
+      if (owner < 0 || owner >= playerCount) {
+        issues.push({
+          kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,
+          sectionCode,
+          recordRef: recordIndex,
+          ownerType,
+          owner,
+          raceCount,
+          playerCount
+        });
+      }
+      return;
+    }
+    issues.push({
+      kind: `${String(sectionCode || '').toLowerCase()}-owner-type`,
+      sectionCode,
+      recordRef: recordIndex,
+      ownerType,
+      owner
+    });
+  };
+  tileSection.records.forEach((rec, tileIndex) => {
+    const tileCoords = getTileCoords(rec);
+    if (isInBounds(tileCoords)) tileByCoords.set(`${tileCoords.x},${tileCoords.y}`, rec);
+    const cityRef = normalizeRef(rec && rec.city);
+    if (cityRef >= cityCount) {
+      issues.push({
+        kind: 'tile-city-ref',
+        tileIndex,
+        cityRef,
+        cityCount
+      });
+    } else if (cityRef >= 0) {
+      cityRefCounts.set(cityRef, (cityRefCounts.get(cityRef) || 0) + 1);
+      const cityRecord = citySection && citySection.records ? citySection.records[cityRef] : null;
+      const cityCoords = getCoords(cityRecord);
+      if (cityCoords.x !== tileCoords.x || cityCoords.y !== tileCoords.y) {
+        issues.push({
+          kind: 'tile-city-coords',
+          tileIndex,
+          cityRef,
+          tileX: tileCoords.x,
+          tileY: tileCoords.y,
+          cityX: cityCoords.x,
+          cityY: cityCoords.y
+        });
+      }
+    }
+    const colonyRef = normalizeRef(rec && rec.colony);
+    if (colonyRef >= clnyCount) {
+      issues.push({
+        kind: 'tile-colony-ref',
+        tileIndex,
+        colonyRef,
+        colonyCount: clnyCount
+      });
+    } else if (colonyRef >= 0) {
+      colonyRefCounts.set(colonyRef, (colonyRefCounts.get(colonyRef) || 0) + 1);
+      const colonyRecord = clnySection && clnySection.records ? clnySection.records[colonyRef] : null;
+      const colonyCoords = getCoords(colonyRecord);
+      if (colonyCoords.x !== tileCoords.x || colonyCoords.y !== tileCoords.y) {
+        issues.push({
+          kind: 'tile-colony-coords',
+          tileIndex,
+          colonyRef,
+          tileX: tileCoords.x,
+          tileY: tileCoords.y,
+          colonyX: colonyCoords.x,
+          colonyY: colonyCoords.y
+        });
+      }
+    }
+  });
+  if (citySection && Array.isArray(citySection.records)) {
+    citySection.records.forEach((rec, cityIndex) => {
+      validateOwnerRef('CITY', cityIndex, rec);
+      const coords = getCoords(rec);
+      const tile = tileByCoords.get(`${coords.x},${coords.y}`) || null;
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'city-out-of-bounds',
+          cityRef: cityIndex,
+          cityX: coords.x,
+          cityY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      if (!tile) {
+        issues.push({
+          kind: 'city-missing-tile',
+          cityRef: cityIndex,
+          cityX: coords.x,
+          cityY: coords.y
+        });
+        return;
+      }
+      if (normalizeRef(tile.city) !== cityIndex) {
+        issues.push({
+          kind: 'city-tile-backref',
+          cityRef: cityIndex,
+          cityX: coords.x,
+          cityY: coords.y,
+          tileCityRef: normalizeRef(tile.city)
+        });
+      }
+      if ((cityRefCounts.get(cityIndex) || 0) !== 1) {
+        issues.push({
+          kind: 'city-ref-count',
+          cityRef: cityIndex,
+          count: cityRefCounts.get(cityIndex) || 0
+        });
+      }
+    });
+  }
+  if (clnySection && Array.isArray(clnySection.records)) {
+    clnySection.records.forEach((rec, colonyIndex) => {
+      validateOwnerRef('CLNY', colonyIndex, rec);
+      const coords = getCoords(rec);
+      const tile = tileByCoords.get(`${coords.x},${coords.y}`) || null;
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'colony-out-of-bounds',
+          colonyRef: colonyIndex,
+          colonyX: coords.x,
+          colonyY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      if (!tile) {
+        issues.push({
+          kind: 'colony-missing-tile',
+          colonyRef: colonyIndex,
+          colonyX: coords.x,
+          colonyY: coords.y
+        });
+        return;
+      }
+      if (normalizeRef(tile.colony) !== colonyIndex) {
+        issues.push({
+          kind: 'colony-tile-backref',
+          colonyRef: colonyIndex,
+          colonyX: coords.x,
+          colonyY: coords.y,
+          tileColonyRef: normalizeRef(tile.colony)
+        });
+      }
+      if ((colonyRefCounts.get(colonyIndex) || 0) !== 1) {
+        issues.push({
+          kind: 'colony-ref-count',
+          colonyRef: colonyIndex,
+          count: colonyRefCounts.get(colonyIndex) || 0
+        });
+      }
+    });
+  }
+  if (slocSection && Array.isArray(slocSection.records)) {
+    slocSection.records.forEach((rec, slocIndex) => {
+      validateOwnerRef('SLOC', slocIndex, rec);
+      const coords = getCoords(rec);
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'sloc-out-of-bounds',
+          slocRef: slocIndex,
+          slocX: coords.x,
+          slocY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      const tile = tileByCoords.get(`${coords.x},${coords.y}`);
+      if (!tile) {
+        issues.push({
+          kind: 'sloc-missing-tile',
+          slocRef: slocIndex,
+          slocX: coords.x,
+          slocY: coords.y
+        });
+      }
+    });
+  }
+  if (unitSection && Array.isArray(unitSection.records)) {
+    unitSection.records.forEach((rec, unitIndex) => {
+      validateOwnerRef('UNIT', unitIndex, rec);
+      const coords = getCoords(rec);
+      if (!isInBounds(coords)) {
+        issues.push({
+          kind: 'unit-out-of-bounds',
+          unitRef: unitIndex,
+          unitX: coords.x,
+          unitY: coords.y,
+          mapWidth,
+          mapHeight
+        });
+        return;
+      }
+      if (!tileByCoords.has(`${coords.x},${coords.y}`)) {
+        issues.push({
+          kind: 'unit-missing-tile',
+          unitRef: unitIndex,
+          unitX: coords.x,
+          unitY: coords.y,
+          tileCount: tileSection.records.length,
+          unitCount
+        });
+      }
+    });
+  }
+  return issues;
+}
+
+function collectColonyOverlayCoherenceIssues(parsed) {
+  const issues = [];
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  const clnySection = getSectionByCode(parsed, 'CLNY');
+  if (!tileSection || !Array.isArray(tileSection.records) || !clnySection || !Array.isArray(clnySection.records)) {
+    return issues;
+  }
+  const normalizeRef = (value) => {
+    const parsedValue = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsedValue) ? parsedValue : -1;
+  };
+  const getOverlayType = (tile) => {
+    const overlays = Number(tile && tile.c3cOverlays) >>> 0;
+    if ((overlays & 0x20000000) === 0x20000000) return 1;
+    if ((overlays & 0x40000000) === 0x40000000) return 2;
+    if ((overlays & 0x80000000) === 0x80000000) return 3;
+    return 0;
+  };
+  tileSection.records.forEach((tile, tileIndex) => {
+    const colonyRef = normalizeRef(tile && tile.colony);
+    if (colonyRef < 0) return;
+    const colony = clnySection.records[colonyRef];
+    if (!colony) return;
+    const overlayType = getOverlayType(tile);
+    const improvementType = normalizeRef(colony && colony.improvementType);
+    if (overlayType !== improvementType) {
+      issues.push({
+        kind: 'colony-overlay-type-mismatch',
+        tileIndex,
+        colonyRef,
+        overlayType,
+        improvementType
+      });
+    }
+  });
+  return issues;
 }
 
 function buildMapSectionRecordFromUi(sectionCode, record, io, recordIndex) {
@@ -3850,6 +4387,28 @@ function removeMapSectionsFromParsed(parsed) {
   parsed.sections = parsed.sections.filter((section) => !['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].includes(String(section && section.code || '').toUpperCase()));
 }
 
+function removeCustomRulesSectionsFromParsed(parsed) {
+  const codes = new Set(['BLDG', 'CTZN', 'CULT', 'DIFF', 'ERAS', 'ESPN', 'EXPR', 'FLAV', 'GOOD', 'GOVT', 'PRTO', 'RACE', 'RULE', 'TECH', 'TERR', 'TFRM', 'WSIZ']);
+  parsed.sections = parsed.sections.filter((section) => !codes.has(String(section && section.code || '').toUpperCase()));
+}
+
+function removeCustomPlayerDataSectionsFromParsed(parsed) {
+  parsed.sections = parsed.sections.filter((section) => String(section && section.code || '').toUpperCase() !== 'LEAD');
+}
+
+function addCustomPlayerDataSectionToParsed(parsed) {
+  removeCustomPlayerDataSectionsFromParsed(parsed);
+  const leadSection = {
+    code: 'LEAD',
+    mode: 'len',
+    records: [],
+    _modified: true
+  };
+  const insertAt = parsed.sections.findIndex((section) => String(section && section.code || '').toUpperCase() === 'GAME');
+  if (insertAt >= 0) parsed.sections.splice(insertAt + 1, 0, leadSection);
+  else parsed.sections.push(leadSection);
+}
+
 function setMapSectionsOnParsed(parsed, uiSections) {
   removeMapSectionsFromParsed(parsed);
   const mapSections = Array.isArray(uiSections) ? uiSections : [];
@@ -3862,6 +4421,452 @@ function setMapSectionsOnParsed(parsed, uiSections) {
   const insertAt = parsed.sections.findIndex((section) => {
     const code = String(section && section.code || '').toUpperCase();
     return code === 'GAME' || code === 'LEAD';
+  });
+  if (insertAt >= 0) parsed.sections.splice(insertAt, 0, ...builtSections);
+  else parsed.sections.push(...builtSections);
+}
+
+function normalizeResizeMapDimension(value, label) {
+  const parsed = Number.parseInt(String(value == null ? '' : value).trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Map ${label} must be a positive integer.`);
+  }
+  if (String(label || '').trim().toLowerCase() === 'width' && (parsed % 2) !== 0) {
+    return parsed + 1;
+  }
+  return parsed;
+}
+
+const BIQ_TERRAIN = {
+  DESERT: 0,
+  PLAINS: 1,
+  GRASSLAND: 2,
+  TUNDRA: 3,
+  COAST: 11,
+  SEA: 12,
+  OCEAN: 13
+};
+const RESIZE_FILL_TERRAIN_VALUES = new Set([
+  BIQ_TERRAIN.DESERT,
+  BIQ_TERRAIN.PLAINS,
+  BIQ_TERRAIN.GRASSLAND,
+  BIQ_TERRAIN.TUNDRA,
+  BIQ_TERRAIN.COAST,
+  BIQ_TERRAIN.SEA,
+  BIQ_TERRAIN.OCEAN
+]);
+
+function normalizeResizeFillTerrain(value, fallback = BIQ_TERRAIN.SEA) {
+  const parsed = Number.parseInt(String(value == null ? '' : value), 10);
+  if (RESIZE_FILL_TERRAIN_VALUES.has(parsed)) return parsed;
+  return fallback;
+}
+
+function buildResizedTileTemplateCoord(xPos, yPos, width, height) {
+  const maxX = Math.max(0, Number(width) - 1);
+  const maxY = Math.max(0, Number(height) - 1);
+  let y = Math.max(0, Math.min(maxY, Number(yPos) || 0));
+  let x = Math.max(0, Math.min(maxX, Number(xPos) || 0));
+  const desiredParity = y & 1;
+  if ((x & 1) !== desiredParity) {
+    if ((x + 1) <= maxX) x += 1;
+    else if ((x - 1) >= 0) x -= 1;
+  }
+  return { x, y };
+}
+
+function computeCenteredResizeOffsets(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const pickOffset = (diff, parity) => {
+    const ideal = Number(diff) / 2;
+    const min = Math.min(0, Number(diff));
+    const max = Math.max(0, Number(diff));
+    const candidates = [];
+    for (let delta = 0; delta <= 4; delta += 1) {
+      candidates.push(Math.floor(ideal) - delta, Math.ceil(ideal) + delta);
+    }
+    candidates.push(min, max);
+    const filtered = candidates
+      .filter((value, index, arr) => Number.isFinite(value) && arr.indexOf(value) === index)
+      .filter((value) => value >= min && value <= max)
+      .filter((value) => (Math.abs(value) % 2) === parity);
+    if (filtered.length <= 0) return null;
+    filtered.sort((a, b) => {
+      const distance = Math.abs(a - ideal) - Math.abs(b - ideal);
+      if (distance !== 0) return distance;
+      return a - b;
+    });
+    return filtered[0];
+  };
+  const widthDiff = Number(targetWidth) - Number(sourceWidth);
+  const heightDiff = Number(targetHeight) - Number(sourceHeight);
+  const candidates = [0, 1].map((parity) => {
+    const x = pickOffset(widthDiff, parity);
+    const y = pickOffset(heightDiff, parity);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { parity, x, y };
+  }).filter(Boolean);
+  if (candidates.length <= 0) {
+    return {
+      x: Math.round(widthDiff / 2),
+      y: Math.round(heightDiff / 2)
+    };
+  }
+  candidates.sort((a, b) => {
+    const aCost = Math.abs(a.x - (widthDiff / 2)) + Math.abs(a.y - (heightDiff / 2));
+    const bCost = Math.abs(b.x - (widthDiff / 2)) + Math.abs(b.y - (heightDiff / 2));
+    if (aCost !== bCost) return aCost - bCost;
+    return a.parity - b.parity;
+  });
+  return { x: candidates[0].x, y: candidates[0].y };
+}
+
+function clearResizedTileBackrefs(tile) {
+  setTileRecordFieldValue(tile, 'city', -1);
+  setTileRecordFieldValue(tile, 'colony', -1);
+}
+
+function getResizedTileFillTerrainCode(sourceX, sourceY, sourceWidth, sourceHeight, template, fallbackTerrain, allowTemplateTerrain = false) {
+  const yInBounds = Number.isFinite(sourceY) && sourceY >= 0 && sourceY < sourceHeight;
+  const xInBounds = Number.isFinite(sourceX) && sourceX >= 0 && sourceX < sourceWidth;
+  if (allowTemplateTerrain && !xInBounds && yInBounds && template) {
+    return getTileBaseTerrain(template);
+  }
+  return fallbackTerrain;
+}
+
+function resetNewResizedTileToTerrain(tile, terrainId = BIQ_TERRAIN.SEA) {
+  if (!tile) return;
+  const terrainCode = normalizeResizeFillTerrain(terrainId, BIQ_TERRAIN.SEA);
+  const packedTerrain = ((terrainCode & 0x0f) << 4) | (terrainCode & 0x0f);
+  setTileRecordFieldValue(tile, 'riverConnectionInfo', 0);
+  setTileRecordFieldValue(tile, 'border', 0);
+  setTileRecordFieldValue(tile, 'resource', -1);
+  setTileRecordFieldValue(tile, 'image', 0);
+  setTileRecordFieldValue(tile, 'file', terrainCode === BIQ_TERRAIN.PLAINS ? 1
+    : terrainCode === BIQ_TERRAIN.DESERT ? 2
+      : terrainCode === BIQ_TERRAIN.GRASSLAND ? 5
+        : terrainCode === BIQ_TERRAIN.COAST ? 6
+          : terrainCode === BIQ_TERRAIN.SEA ? 7
+            : terrainCode === BIQ_TERRAIN.OCEAN ? 8
+              : 0);
+  setTileRecordFieldValue(tile, 'overlays', 0);
+  setTileRecordFieldValue(tile, 'baseRealTerrain', packedTerrain);
+  setTileRecordFieldValue(tile, 'bonuses', 0);
+  setTileRecordFieldValue(tile, 'riverCrossingData', 0);
+  setTileRecordFieldValue(tile, 'barbarianTribe', -1);
+  setTileRecordFieldValue(tile, 'city', -1);
+  setTileRecordFieldValue(tile, 'colony', -1);
+  setTileRecordFieldValue(tile, 'continent', 0);
+  setTileRecordFieldValue(tile, 'victoryPointLocation', -1);
+  setTileRecordFieldValue(tile, 'ruin', 0);
+  setTileRecordFieldValue(tile, 'c3cOverlays', 0);
+  setTileRecordFieldValue(tile, 'c3cBaseRealTerrain', packedTerrain);
+  setTileRecordFieldValue(tile, 'fogOfWar', 0);
+  setTileRecordFieldValue(tile, 'c3cBonuses', 0);
+}
+
+function getTileBaseTerrain(tile) {
+  if (!tile) return BIQ_TERRAIN.COAST;
+  const packed = Number.parseInt(String(
+    tile.c3cBaseRealTerrain != null ? tile.c3cBaseRealTerrain : tile.baseRealTerrain
+  ), 10);
+  if (!Number.isFinite(packed)) return BIQ_TERRAIN.COAST;
+  return packed & 0x0f;
+}
+
+function computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec) {
+  if (!spec) return -1;
+  if (!spec.needImage) return spec.image;
+  let sum = 0;
+  if (northBase === spec.terr2) sum += 1;
+  if (northBase === spec.terr3) sum += 2;
+  if (westBase === spec.terr2) sum += 3;
+  if (westBase === spec.terr3) sum += 6;
+  if (eastBase === spec.terr2) sum += 9;
+  if (eastBase === spec.terr3) sum += 18;
+  if (southBase === spec.terr2) sum += 27;
+  if (southBase === spec.terr3) sum += 54;
+  return sum;
+}
+
+function computeBiqStoredTerrainSpriteSpec(southBase, westBase, northBase, eastBase) {
+  const s = Number(southBase);
+  const w = Number(westBase);
+  const n = Number(northBase);
+  const e = Number(eastBase);
+  if (s === BIQ_TERRAIN.OCEAN && w === BIQ_TERRAIN.OCEAN && n === BIQ_TERRAIN.OCEAN && e === BIQ_TERRAIN.OCEAN) {
+    return { file: 8, image: 0, needImage: false, terr2: 0, terr3: 0 };
+  }
+  if (s === BIQ_TERRAIN.SEA && w === BIQ_TERRAIN.SEA && n === BIQ_TERRAIN.SEA && e === BIQ_TERRAIN.SEA) {
+    return { file: 7, image: 0, needImage: false, terr2: 0, terr3: 0 };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.TUNDRA)) {
+    return { file: 0, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.SEA)) {
+    return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+  }
+  if ([s, w, n, e].every((t) => t !== BIQ_TERRAIN.COAST)) {
+    return { file: 4, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.PLAINS };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.DESERT)) {
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+      return { file: 3, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+      return { file: 2, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+      return { file: 2, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+    }
+    return null;
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+    return { file: 1, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+    return { file: 5, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+    return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+  }
+  return null;
+}
+
+function recomputeResizedTileTerrainFileImage(tileRecords, width, height) {
+  if (!Array.isArray(tileRecords) || !tileRecords.length) return;
+  const tileByCoord = new Map();
+  tileRecords.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!isMapResizeCoordInBounds(x, y, width, height)) return;
+    tileByCoord.set(`${x},${y}`, record);
+  });
+  const getTerrainBaseForCoord = (xPos, yPos) => {
+    let x = Number(xPos);
+    const y = Number(yPos);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return BIQ_TERRAIN.COAST;
+    if (y < 0 || y >= height) return BIQ_TERRAIN.COAST;
+    x = ((x % width) + width) % width;
+    return getTileBaseTerrain(tileByCoord.get(`${x},${y}`) || null);
+  };
+  tileRecords.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!isMapResizeCoordInBounds(x, y, width, height)) return;
+    const southBase = getTerrainBaseForCoord(x, y);
+    const westBase = getTerrainBaseForCoord(x - 1, y - 1);
+    const northBase = getTerrainBaseForCoord(x, y - 2);
+    const eastBase = getTerrainBaseForCoord(x + 1, y - 1);
+    const spec = computeBiqStoredTerrainSpriteSpec(southBase, westBase, northBase, eastBase);
+    if (!spec) return;
+    setTileRecordFieldValue(record, 'file', spec.file);
+    setTileRecordFieldValue(record, 'image', computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec));
+  });
+}
+
+function recalculateContinentTileCounts(tileSection, contSection) {
+  if (!tileSection || !Array.isArray(tileSection.records) || !contSection || !Array.isArray(contSection.records)) return;
+  const counts = new Array(contSection.records.length).fill(0);
+  tileSection.records.forEach((tile) => {
+    const idx = Number.parseInt(String(tile && tile.continent), 10);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= counts.length) return;
+    counts[idx] += 1;
+  });
+  let changed = false;
+  contSection.records.forEach((record, index) => {
+    const next = counts[index] || 0;
+    if (Number(record && record.numTiles) === next) return;
+    if (record && typeof record === 'object') record.numTiles = next;
+    changed = true;
+  });
+  if (changed) contSection._modified = true;
+}
+
+function isMapResizeCoordInBounds(x, y, width, height) {
+  return Number.isFinite(x)
+    && Number.isFinite(y)
+    && x >= 0
+    && y >= 0
+    && x < width
+    && y < height;
+}
+
+function sanitizeResizedMapEntitySections(parsed, width, height, offsets = {}) {
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return;
+  const offsetX = Number.isFinite(offsets.x) ? Number(offsets.x) : 0;
+  const offsetY = Number.isFinite(offsets.y) ? Number(offsets.y) : 0;
+  const sectionSpecs = [
+    { code: 'CITY', xKey: 'x', yKey: 'y' },
+    { code: 'UNIT', xKey: 'x', yKey: 'y' },
+    { code: 'SLOC', xKey: 'x', yKey: 'y' },
+    { code: 'CLNY', xKey: 'x', yKey: 'y' }
+  ];
+  sectionSpecs.forEach((spec) => {
+    const section = getSectionByCode(parsed, spec.code);
+    if (!section || !Array.isArray(section.records)) return;
+    let changed = false;
+    const nextRecords = section.records.filter((record) => {
+      const x = Number.parseInt(String(record && record[spec.xKey]), 10);
+      const y = Number.parseInt(String(record && record[spec.yKey]), 10);
+      const shiftedX = x + offsetX;
+      const shiftedY = y + offsetY;
+      if (!Number.isFinite(shiftedX) || !Number.isFinite(shiftedY)) {
+        changed = true;
+        return false;
+      }
+      if (record && typeof record === 'object') {
+        if (record[spec.xKey] !== shiftedX) changed = true;
+        if (record[spec.yKey] !== shiftedY) changed = true;
+        record[spec.xKey] = shiftedX;
+        record[spec.yKey] = shiftedY;
+      }
+      if (!isMapResizeCoordInBounds(shiftedX, shiftedY, width, height)) {
+        changed = true;
+        return false;
+      }
+      return true;
+    });
+    if (!changed && nextRecords.length === section.records.length) return;
+    section.records = nextRecords;
+    section.records.forEach((record, index) => {
+      if (record && typeof record === 'object') record.index = index;
+    });
+    section.count = section.records.length;
+    section._modified = true;
+  });
+
+  const tileByCoord = new Map();
+  tileSection.records.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!isMapResizeCoordInBounds(x, y, width, height)) return;
+    tileByCoord.set(`${x},${y}`, record);
+    setTileRecordFieldValue(record, 'city', -1);
+    setTileRecordFieldValue(record, 'colony', -1);
+  });
+
+  const citySection = getSectionByCode(parsed, 'CITY');
+  if (citySection && Array.isArray(citySection.records)) {
+    citySection.records.forEach((record, index) => {
+      const tile = tileByCoord.get(`${record.x},${record.y}`) || null;
+      if (!tile) return;
+      setTileRecordFieldValue(tile, 'city', index);
+    });
+  }
+
+  const clnySection = getSectionByCode(parsed, 'CLNY');
+  if (clnySection && Array.isArray(clnySection.records)) {
+    clnySection.records.forEach((record, index) => {
+      const tile = tileByCoord.get(`${record.x},${record.y}`) || null;
+      if (!tile) return;
+      setTileRecordFieldValue(tile, 'colony', index);
+    });
+  }
+
+  tileSection._modified = true;
+}
+
+function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight, fillTerrain) {
+  const width = normalizeResizeMapDimension(targetWidth, 'width');
+  const height = normalizeResizeMapDimension(targetHeight, 'height');
+  const fillTerrainCode = normalizeResizeFillTerrain(fillTerrain, BIQ_TERRAIN.SEA);
+  const allowImplicitEdgeTerrain = fillTerrain == null || String(fillTerrain).trim() === '';
+  const tileCount = Math.floor((width * height) / 2);
+  if (tileCount > 65536) {
+    throw new Error(`Map dimensions ${width}x${height} exceed the Civ 3 custom-map limit of 65,536 tiles.`);
+  }
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!wmapSection || !Array.isArray(wmapSection.records) || !wmapSection.records[0] || !tileSection || !Array.isArray(tileSection.records)) {
+    throw new Error('Cannot resize a BIQ map that is missing WMAP or TILE data.');
+  }
+  const sourceWidth = Number(parsed && parsed.io && parsed.io.mapWidth)
+    || Number(wmapSection.records[0] && wmapSection.records[0].width)
+    || 0;
+  const sourceHeight = Number(wmapSection.records[0] && wmapSection.records[0].height) || 0;
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    throw new Error('Cannot resize a BIQ map with invalid source dimensions.');
+  }
+  if (sourceWidth === width && sourceHeight === height) return;
+  const resizeOffsets = computeCenteredResizeOffsets(sourceWidth, sourceHeight, width, height);
+
+  const sourceTileByCoord = new Map();
+  const firstTile = tileSection.records[0] || null;
+  tileSection.records.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    sourceTileByCoord.set(`${x},${y}`, record);
+  });
+
+  const nextTileRecords = [];
+  let nextIndex = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = (y & 1); x < width; x += 2) {
+      const sourceX = x - resizeOffsets.x;
+      const sourceY = y - resizeOffsets.y;
+      const existing = sourceTileByCoord.get(`${sourceX},${sourceY}`) || null;
+      const templateCoord = existing
+        ? null
+        : buildResizedTileTemplateCoord(sourceX, sourceY, sourceWidth, sourceHeight);
+      const template = existing
+        || sourceTileByCoord.get(`${templateCoord.x},${templateCoord.y}`)
+        || firstTile;
+      if (!template) {
+        throw new Error('Cannot resize a BIQ map without any source TILE records.');
+      }
+      const nextRecord = copyRecord(template);
+      nextRecord.index = nextIndex;
+      nextRecord.xpos = x;
+      nextRecord.ypos = y;
+      if (!existing) {
+        const terrainCode = getResizedTileFillTerrainCode(
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          template,
+          fillTerrainCode,
+          allowImplicitEdgeTerrain
+        );
+        resetNewResizedTileToTerrain(nextRecord, terrainCode);
+        clearResizedTileBackrefs(nextRecord);
+      }
+      nextTileRecords.push(nextRecord);
+      nextIndex += 1;
+    }
+  }
+
+  tileSection.records = nextTileRecords;
+  tileSection.count = nextTileRecords.length;
+  tileSection._modified = true;
+
+  wmapSection.records[0].width = width;
+  wmapSection.records[0].height = height;
+  wmapSection._modified = true;
+  parsed.io.mapWidth = width;
+
+  recomputeResizedTileTerrainFileImage(nextTileRecords, width, height);
+  sanitizeResizedMapEntitySections(parsed, width, height, resizeOffsets);
+
+  const contSection = getSectionByCode(parsed, 'CONT');
+  recalculateContinentTileCounts(tileSection, contSection);
+}
+
+function setCustomRulesSectionsOnParsed(parsed, uiSections) {
+  removeCustomRulesSectionsFromParsed(parsed);
+  const ruleSectionCodes = new Set(['BLDG', 'CTZN', 'CULT', 'DIFF', 'ERAS', 'ESPN', 'EXPR', 'FLAV', 'GOOD', 'GOVT', 'PRTO', 'RACE', 'RULE', 'TECH', 'TERR', 'TFRM', 'WSIZ']);
+  const builtSections = [];
+  (Array.isArray(uiSections) ? uiSections : []).forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!ruleSectionCodes.has(code)) return;
+    builtSections.push(JSON.parse(JSON.stringify(section)));
+  });
+  const insertAt = parsed.sections.findIndex((section) => {
+    const code = String(section && section.code || '').toUpperCase();
+    return code === 'WCHR' || code === 'WMAP' || code === 'GAME' || code === 'LEAD';
   });
   if (insertAt >= 0) parsed.sections.splice(insertAt, 0, ...builtSections);
   else parsed.sections.push(...builtSections);
@@ -3886,10 +4891,10 @@ function applyEdits(buf, edits, options = {}) {
 
   const { io } = parsed;
   const originalRefsBySection = {};
-  ['RACE', 'TECH', 'GOOD', 'BLDG', 'GOVT', 'PRTO'].forEach((code) => {
+  ['RACE', 'TECH', 'GOOD', 'BLDG', 'GOVT', 'PRTO', 'CITY', 'CLNY'].forEach((code) => {
     const section = getSectionByCode(parsed, code);
     originalRefsBySection[code] = section && Array.isArray(section.records)
-      ? section.records.map((record) => getRecordCivilopediaRef(record))
+      ? section.records.map((record) => getRecordStructureRef(record))
       : [];
   });
   const originalRaceSection = getSectionByCode(parsed, 'RACE');
@@ -3912,9 +4917,54 @@ function applyEdits(buf, edits, options = {}) {
       continue;
     }
     if (op === 'setmap') {
+      if (!options.allowSetmapGeneration || !edit.allowSetmapGeneration) {
+        log.error('BiqApplyEdits', 'op=setmap rejected: whole-map replacement is only allowed for explicit map generation, custom-map creation, or map import saves');
+        return { ok: false, error: 'Whole-map BIQ replacement is blocked for normal saves. Only explicit map generation, custom-map creation, or map import writes may replace all map sections.' };
+      }
       const mapSecCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
       log.debug('BiqApplyEdits', `op=setmap: replacing map sections [${mapSecCodes}]`);
       setMapSectionsOnParsed(parsed, edit.sections);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'resizemap') {
+      try {
+        resizeMapSectionsOnParsed(parsed, edit.width, edit.height, edit.fillTerrain);
+      } catch (err) {
+        const errorText = err && err.message ? err.message : 'Failed to resize BIQ map.';
+        log.error('BiqApplyEdits', `op=resizemap rejected: ${errorText}`);
+        return { ok: false, error: errorText };
+      }
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'removecustomrules') {
+      log.debug('BiqApplyEdits', 'op=removecustomrules: removing custom-rules sections');
+      removeCustomRulesSectionsFromParsed(parsed);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'removecustomplayerdata') {
+      log.debug('BiqApplyEdits', 'op=removecustomplayerdata: removing LEAD section');
+      removeCustomPlayerDataSectionsFromParsed(parsed);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'setcustomrules') {
+      const sectionCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
+      log.debug('BiqApplyEdits', `op=setcustomrules: replacing custom-rules sections [${sectionCodes}]`);
+      setCustomRulesSectionsOnParsed(parsed, edit.sections);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'addcustomplayerdata') {
+      log.debug('BiqApplyEdits', 'op=addcustomplayerdata: inserting empty LEAD section');
+      addCustomPlayerDataSectionToParsed(parsed);
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
       continue;
@@ -3976,6 +5026,7 @@ function applyEdits(buf, edits, options = {}) {
         log.debug('BiqApplyEdits', `op=add ${code}: creating new record ${newRef}`);
         newRec = createDefaultRecord(code, newRef, io);
       }
+      newRec.newRecordRef = newRef;
       newRec.index = section.records.length;
       section.records.push(newRec);
       section._modified = true;
@@ -3987,13 +5038,14 @@ function applyEdits(buf, edits, options = {}) {
       const ref = String(edit.recordRef || '').trim().toUpperCase();
       if (!section) { skipped++; continue; }
       const idx = section.records.findIndex((r) => {
-        const ce = String(r.civilopediaEntry || '').trim().toUpperCase();
-        if (ce === ref) return true;
         if (ref.startsWith('@INDEX:')) {
           const n = Number.parseInt(ref.slice(7), 10);
           return Number.isFinite(n) && r.index === n;
         }
-        return false;
+        const ce = String(r && r.civilopediaEntry || '').trim().toUpperCase();
+        if (ce === ref) return true;
+        const newRef = String(r && r.newRecordRef || '').trim().toUpperCase();
+        return newRef === ref;
       });
       if (idx < 0) {
         skipped++;
@@ -4058,6 +5110,68 @@ function applyEdits(buf, edits, options = {}) {
     log.error('BiqApplyEdits', `normalizeDeletedReferenceSections failed: ${normalizeDeleteResult.error || 'unknown'}`);
     return { ok: false, error: normalizeDeleteResult.error || 'Failed to normalize deleted BIQ references.' };
   }
+  const mapReferenceIssues = collectMapReferenceIntegrityIssues(parsed);
+  if (mapReferenceIssues.length > 0) {
+    const issue = mapReferenceIssues[0];
+    let detail = `map integrity issue ${issue.kind}`;
+    if (issue.kind === 'tile-city-ref') {
+      detail = `tile ${issue.tileIndex} references CITY ${issue.cityRef} but only ${issue.cityCount} city record(s) remain`;
+    } else if (issue.kind === 'tile-colony-ref') {
+      detail = `tile ${issue.tileIndex} references CLNY ${issue.colonyRef} but only ${issue.colonyCount} colony record(s) remain`;
+    } else if (issue.kind === 'tile-city-coords') {
+      detail = `tile ${issue.tileIndex} points at CITY ${issue.cityRef}, but tile ${issue.tileX},${issue.tileY} does not match city ${issue.cityX},${issue.cityY}`;
+    } else if (issue.kind === 'tile-colony-coords') {
+      detail = `tile ${issue.tileIndex} points at CLNY ${issue.colonyRef}, but tile ${issue.tileX},${issue.tileY} does not match colony ${issue.colonyX},${issue.colonyY}`;
+    } else if (issue.kind === 'city-tile-backref') {
+      detail = `CITY ${issue.cityRef} at ${issue.cityX},${issue.cityY} is not linked back from its tile (tile has CITY ${issue.tileCityRef})`;
+    } else if (issue.kind === 'colony-tile-backref') {
+      detail = `CLNY ${issue.colonyRef} at ${issue.colonyX},${issue.colonyY} is not linked back from its tile (tile has CLNY ${issue.tileColonyRef})`;
+    } else if (issue.kind === 'city-ref-count') {
+      detail = `CITY ${issue.cityRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
+    } else if (issue.kind === 'colony-ref-count') {
+      detail = `CLNY ${issue.colonyRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
+    } else if (issue.kind === 'city-out-of-bounds') {
+      detail = `CITY ${issue.cityRef} is out of bounds at ${issue.cityX},${issue.cityY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'colony-out-of-bounds') {
+      detail = `CLNY ${issue.colonyRef} is out of bounds at ${issue.colonyX},${issue.colonyY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'unit-out-of-bounds') {
+      detail = `UNIT ${issue.unitRef} is out of bounds at ${issue.unitX},${issue.unitY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'city-missing-tile') {
+      detail = `CITY ${issue.cityRef} points to missing tile ${issue.cityX},${issue.cityY}`;
+    } else if (issue.kind === 'colony-missing-tile') {
+      detail = `CLNY ${issue.colonyRef} points to missing tile ${issue.colonyX},${issue.colonyY}`;
+    } else if (issue.kind === 'unit-missing-tile') {
+      detail = `UNIT ${issue.unitRef} points to missing tile ${issue.unitX},${issue.unitY}`;
+    } else if (/^(city|unit|clny|sloc)-owner-ref$/.test(issue.kind)) {
+      detail = `${issue.sectionCode} ${issue.recordRef} has invalid owner ${issue.owner} for ownerType ${issue.ownerType} (races=${issue.raceCount}, players=${issue.playerCount})`;
+    } else if (/^(city|unit|clny|sloc)-owner-type$/.test(issue.kind)) {
+      detail = `${issue.sectionCode} ${issue.recordRef} has unsupported ownerType ${issue.ownerType}`;
+    } else if (issue.kind === 'sloc-out-of-bounds') {
+      detail = `SLOC ${issue.slocRef} is out of bounds at ${issue.slocX},${issue.slocY} for map ${issue.mapWidth}x${issue.mapHeight}`;
+    } else if (issue.kind === 'sloc-missing-tile') {
+      detail = `SLOC ${issue.slocRef} points to missing tile ${issue.slocX},${issue.slocY}`;
+    }
+    log.error('BiqApplyEdits', `collectMapReferenceIntegrityIssues failed: ${detail}`);
+    return { ok: false, error: `Map reference integrity check failed after BIQ edits: ${detail}.` };
+  }
+  const touchedColonyLikeState = edits.some((edit) => {
+    const op = String(edit && edit.op || 'set').toLowerCase();
+    const sectionCode = String(edit && edit.sectionCode || '').toUpperCase();
+    const fieldKey = canonicalKey(edit && edit.fieldKey);
+    if (op === 'setmap' || op === 'resizemap') return true;
+    if (sectionCode === 'CLNY') return true;
+    if (sectionCode === 'TILE' && (fieldKey === 'colony' || fieldKey === 'c3coverlays')) return true;
+    return false;
+  });
+  if (touchedColonyLikeState) {
+    const colonyOverlayIssues = collectColonyOverlayCoherenceIssues(parsed);
+    if (colonyOverlayIssues.length > 0) {
+      const issue = colonyOverlayIssues[0];
+      const detail = `tile ${issue.tileIndex} links CLNY ${issue.colonyRef} with improvementType ${issue.improvementType}, but tile overlay state resolves to ${issue.overlayType}`;
+      log.error('BiqApplyEdits', `collectColonyOverlayCoherenceIssues failed: ${detail}`);
+      return { ok: false, error: `Colony overlay coherence check failed after BIQ edits: ${detail}.` };
+    }
+  }
 
   const newBuf = buildBiqBuffer(parsed);
   log.debug('BiqApplyEdits', `buildBiqBuffer complete: output size ${newBuf ? newBuf.length : 0} — applied=${applied} skipped=${skipped}${warnings.length > 0 ? ' warnings=' + warnings.length : ''}`);
@@ -4110,4 +5224,6 @@ module.exports = {
   getTileRecordLength,
   normalizeRaceDependentSections,
   normalizeDeletedReferenceSections,
+  collectMapReferenceIntegrityIssues,
+  collectColonyOverlayCoherenceIssues,
 };

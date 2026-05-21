@@ -58,6 +58,11 @@ Current tab files:
 - `docs/biq/catalog/fields.json`: initial field catalog for high-impact BIQ fields and links.
 - `docs/biq/graph.md`: section dependency graph and optional-block gates.
 - `docs/biq/invariants.md`: mutation safety rules and invariant checklist.
+- `docs/biq/MapPipelineParity.md`: Quint-to-C3X map read/write pipeline mapping and current parity boundaries.
+- `docs/biq/MapSectionMutationMatrix.md`: per-section mutation/ref-cascade matrix for `TILE`, `SLOC`, `CITY`, `UNIT`, and `CLNY`.
+- `docs/biq/MapFieldProjectionMatrix.md`: raw-vs-display-vs-save source-of-truth matrix for high-risk BIQ map fields.
+- `docs/biq/MapEditedSaveParityMatrix.md`: per-operation map save parity matrix listing which BIQ sections may change and which should remain byte-stable.
+- `docs/biq/MapUnsupportedAndQuarantined.md`: explicit register of blocked, unsupported-safe, and quarantined BIQ map mutation classes.
 
 ## District Companion Files
 Quint Editor district tile placement is persisted via sidecar text (not BIQ bytes):

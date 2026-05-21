@@ -9,8 +9,20 @@ function section(code, records) {
   return { code, records };
 }
 
+function cloneSections(sections) {
+  return (sections || []).map((entry) => ({ ...entry, records: (entry.records || []).map((record) => ({ ...record })) }));
+}
+
+function getChangedSectionCodes(beforeSections, afterSections) {
+  const beforeByCode = new Map((beforeSections || []).map((section) => [section.code, section.records || []]));
+  const afterByCode = new Map((afterSections || []).map((section) => [section.code, section.records || []]));
+  return Array.from(new Set([...beforeByCode.keys(), ...afterByCode.keys()])).filter((code) => {
+    return JSON.stringify(beforeByCode.get(code) || []) !== JSON.stringify(afterByCode.get(code) || []);
+  });
+}
+
 function runCascade({ sections, edits, originalRefsBySection }) {
-  const parsed = { sections: sections.map((entry) => ({ ...entry, records: (entry.records || []).map((record) => ({ ...record })) })) };
+  const parsed = { sections: cloneSections(sections) };
   const raceResult = normalizeRaceDependentSections(parsed, edits, (originalRefsBySection && originalRefsBySection.RACE) || []);
   assert.equal(raceResult.ok, true, String(raceResult.error || 'race cascade failed'));
   const result = normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection);
@@ -297,4 +309,91 @@ test('delete cascade remaps GAME playable civs, LEAD civ, GOVT espionage immunit
   assert.equal(parsed.sections.find((s) => s.code === 'GOVT').records[0].immuneTo, 1);
   assert.equal(parsed.sections.find((s) => s.code === 'TERR').records[0].workerJob, 1);
   assert.equal(parsed.sections.find((s) => s.code === 'TERR').records[0].pollutionEffect, 1);
+});
+
+test('delete cascade removes player-owned map records and shifts surviving player owners like Quint', () => {
+  const originalSections = [
+    section('LEAD', [
+      { civ: 0 },
+      { civ: 2 }
+    ]),
+    section('TILE', [
+      { index: 0, xpos: 0, ypos: 0, city: 0, colony: 0 },
+      { index: 1, xpos: 2, ypos: 0, city: 1, colony: 1 },
+      { index: 2, xpos: 0, ypos: 1, city: 2, colony: 2 }
+    ]),
+    section('SLOC', [
+      { ownerType: 3, owner: 0, x: 0, y: 0 },
+      { ownerType: 3, owner: 1, x: 2, y: 0 },
+      { ownerType: 3, owner: 2, x: 0, y: 1 }
+    ]),
+    section('CITY', [
+      { index: 0, ownerType: 3, owner: 0, x: 0, y: 0 },
+      { index: 1, ownerType: 3, owner: 1, x: 2, y: 0 },
+      { index: 2, ownerType: 3, owner: 2, x: 0, y: 1 }
+    ]),
+    section('UNIT', [
+      { index: 0, ownerType: 3, owner: 0, x: 0, y: 0 },
+      { index: 1, ownerType: 3, owner: 1, x: 2, y: 0 },
+      { index: 2, ownerType: 3, owner: 2, x: 0, y: 1 }
+    ]),
+    section('CLNY', [
+      { index: 0, ownerType: 3, owner: 0, x: 0, y: 0, improvementType: 0 },
+      { index: 1, ownerType: 3, owner: 1, x: 2, y: 0, improvementType: 0 },
+      { index: 2, ownerType: 3, owner: 2, x: 0, y: 1, improvementType: 2 }
+    ])
+  ];
+  const parsed = runCascade({
+    sections: originalSections,
+    edits: [{ op: 'delete', sectionCode: 'LEAD', recordRef: 'LEAD_1' }],
+    originalRefsBySection: { LEAD: ['LEAD_0', 'LEAD_1', 'LEAD_2'] }
+  });
+
+  assert.deepEqual(parsed.sections.find((s) => s.code === 'SLOC').records, [
+    { ownerType: 3, owner: 0, x: 0, y: 0 },
+    { ownerType: 3, owner: 1, x: 0, y: 1 }
+  ]);
+  assert.deepEqual(parsed.sections.find((s) => s.code === 'CITY').records, [
+    { index: 0, ownerType: 3, owner: 0, x: 0, y: 0 },
+    { index: 1, ownerType: 3, owner: 1, x: 0, y: 1 }
+  ]);
+  assert.deepEqual(parsed.sections.find((s) => s.code === 'UNIT').records, [
+    { index: 0, ownerType: 3, owner: 0, x: 0, y: 0 },
+    { index: 1, ownerType: 3, owner: 1, x: 0, y: 1 }
+  ]);
+  assert.deepEqual(parsed.sections.find((s) => s.code === 'CLNY').records, [
+    { index: 0, ownerType: 3, owner: 0, x: 0, y: 0, improvementType: 0 },
+    { index: 1, ownerType: 3, owner: 1, x: 0, y: 1, improvementType: 2 }
+  ]);
+  assert.deepEqual(parsed.sections.find((s) => s.code === 'TILE').records.map((record) => ({ city: record.city, colony: record.colony })), [
+    { city: 0, colony: 0 },
+    { city: -1, colony: -1 },
+    { city: 1, colony: 1 }
+  ]);
+  assert.deepEqual(getChangedSectionCodes(originalSections, parsed.sections), ['TILE', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+});
+
+test('delete cascade remaps surviving civ-owned map owner references when a civilization is deleted', () => {
+  const originalSections = [
+    section('RACE', [
+      { civilopediaEntry: 'RACE_0' },
+      { civilopediaEntry: 'RACE_2' }
+    ]),
+    section('SLOC', [{ ownerType: 2, owner: 2, x: 0, y: 0 }]),
+    section('CITY', [{ index: 0, ownerType: 2, owner: 2, x: 0, y: 0 }]),
+    section('UNIT', [{ index: 0, ownerType: 2, owner: 2, x: 0, y: 0 }]),
+    section('CLNY', [{ index: 0, ownerType: 2, owner: 2, x: 0, y: 0, improvementType: 0 }]),
+    section('TILE', [{ index: 0, xpos: 0, ypos: 0, city: 0, colony: 0 }])
+  ];
+  const parsed = runCascade({
+    sections: originalSections,
+    edits: [{ op: 'delete', sectionCode: 'RACE', recordRef: 'RACE_1' }],
+    originalRefsBySection: { RACE: ['RACE_0', 'RACE_1', 'RACE_2'] }
+  });
+
+  assert.equal(parsed.sections.find((s) => s.code === 'SLOC').records[0].owner, 1);
+  assert.equal(parsed.sections.find((s) => s.code === 'CITY').records[0].owner, 1);
+  assert.equal(parsed.sections.find((s) => s.code === 'UNIT').records[0].owner, 1);
+  assert.equal(parsed.sections.find((s) => s.code === 'CLNY').records[0].owner, 1);
+  assert.deepEqual(getChangedSectionCodes(originalSections, parsed.sections), ['RACE', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
 });

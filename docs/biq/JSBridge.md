@@ -70,6 +70,7 @@ Records are located by civilopedia key or `@INDEX:N` ref.
 
 Maps section code → `{ parse, serialize, toEnglish, writableKeys, hasCivKey, mode }`.
 `mode: 'fixed'` sections (TILE, CONT, SLOC, CLNY) are read/written as raw fixed-size records.
+For Conquests, `CLNY` uses a 24-byte fixed record: 4-byte `dataLen` prefix plus a 20-byte body that includes `improvementType`.
 `mode: 'len'` sections prefix each record with a 4-byte `dataLen`.
 
 ## Per-section notes

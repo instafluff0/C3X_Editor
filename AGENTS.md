@@ -1,7 +1,7 @@
 # agents.md
 
 ## Purpose
-This repository is an Electron app (`Civ 3 | C3X Modern Configuration Manager`) for editing C3X/Civ3 configuration and scenario files safely.
+This repository is an Electron app (`Civ 3 | C3X Modern Editor`) for editing C3X/Civ3 configuration and scenario files safely.
 
 This document is the agent contract: keep it short, durable, and implementation-focused.
 Assume all users are on Windows.
@@ -123,7 +123,7 @@ Behavior follows C3X parsing semantics from `injected_code.c`.
 - Renderer playback keeps aspect ratio and honors frame timing controls.
 
 ## Verification Commands
-Run before finalizing significant changes:
+Run before finalizing normal feature changes:
 
 ```bash
 node --check main.js
@@ -132,7 +132,7 @@ node --check src/artPreview.js
 npm test
 ```
 
-Note that this repo has many tests, such that running all may take several minutes. Set a suitably high threshold (~10 minutes) and wait for them to complete.
+`npm test` runs the fast tier. For BIQ parser/save/reference changes, also run `npm run test:biq`. Before release/version prep, run `npm run test:full`; it includes every test and can take 10+ minutes.
 
 ## Deep-Dive References
 - `docs/DomainGroundTruth.md` for detailed precedence and file semantics.

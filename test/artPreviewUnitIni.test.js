@@ -4,7 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { getPreview, parseUnitAnimationIni, resolveUnitIniPath, encodePcx, encodeRgbaToPcx, decodePcx } = require('../src/artPreview');
+const {
+  getPreview,
+  parseUnitAnimationIni,
+  resolveUnitIniPath,
+  encodePcx,
+  encodeRgbaToPcx,
+  decodePcx,
+  encodeRgbaToLeaderFlc
+} = require('../src/artPreview');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-unit-anim-'));
@@ -237,6 +245,40 @@ test('unitAnimationManifest returns all parsed actions and source paths', () => 
   assert.equal(missing.exists, false);
   const def = res.actions.find((a) => a.key === 'DEFAULT');
   assert.equal(def.timingSeconds, 0.5);
+});
+
+test('unitFlcFirstFrame resolves ANIMNAME from civilopediaKey instead of display name', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const textDir = path.join(scenarioRoot, 'Text');
+  const unitDir = path.join(scenarioRoot, 'Art', 'Units', 'Heavy Cruiser');
+  fs.mkdirSync(textDir, { recursive: true });
+  fs.mkdirSync(unitDir, { recursive: true });
+  fs.writeFileSync(path.join(textDir, 'PediaIcons.txt'), [
+    '#ANIMNAME_PRTO_CRUISER',
+    'Heavy Cruiser'
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(path.join(unitDir, 'Heavy Cruiser.ini'), 'DEFAULT=HeavyCruiserDefault.flc\n', 'latin1');
+  const rgba = Buffer.alloc(200 * 240 * 4, 0);
+  for (let i = 0; i < rgba.length; i += 4) {
+    rgba[i] = 80;
+    rgba[i + 1] = 96;
+    rgba[i + 2] = 112;
+    rgba[i + 3] = 255;
+  }
+  fs.writeFileSync(path.join(unitDir, 'HeavyCruiserDefault.flc'), encodeRgbaToLeaderFlc(rgba, 200, 240));
+
+  const res = getPreview({
+    kind: 'unitFlcFirstFrame',
+    civ3Path: civ3Root,
+    scenarioPath: scenarioRoot,
+    prtoName: 'Heavy Cruiser',
+    civilopediaKey: 'PRTO_CRUISER'
+  });
+  assert.equal(res.ok, true);
+  assert.equal(Number.isFinite(res.width), true);
+  assert.equal(Number.isFinite(res.height), true);
+  assert.ok(Buffer.from(res.rgbaBase64, 'base64').length > 0);
 });
 
 test('civilopediaIcon preview does not treat palette slot 255 as transparent', () => {

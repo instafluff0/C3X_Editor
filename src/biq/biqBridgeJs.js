@@ -92,8 +92,8 @@ function parseBiqBuffer(buffer, options = {}) {
  * @param {{ buffer: Buffer, edits: Array }} opts
  * @returns {{ ok: true, buffer: Buffer, applied: number, skipped: number, warning: string } | { ok: false, error: string }}
  */
-function applyBiqEdits({ buffer, edits, textEncoding }) {
-  return applyEdits(buffer, edits, { textEncoding });
+function applyBiqEdits({ buffer, edits, textEncoding, allowSetmapGeneration = false }) {
+  return applyEdits(buffer, edits, { textEncoding, allowSetmapGeneration });
 }
 
 module.exports = { parseBiqBuffer, applyBiqEdits };

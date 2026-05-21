@@ -1,3 +1,16 @@
+* RELEASE 27.11
+- Enabled the new Map tab with in-app scenario map importing, resizing, removal, and editing.
+- Renamed the File menu toggles to `Enable Custom Rules` and `Enable Custom Player Data`, and kept them visible but disabled outside Scenario mode instead of hiding them entirely in Standard Game mode.
+- Unified `Scenario -> Players` custom-player-data field labeling so newly enabled previews and existing BIQs both use the same human-readable `LEAD` labels, and fixed numeric start-unit keys like `starting_units_of_type_0` to render as resolved unit names such as `Settler Units` instead of raw `0 Units`.
+- Fixed scenario custom-rules and custom-player-data previews to source civ/government/era and similar BIQ picker options from the live in-memory tab sections instead of the stale pre-toggle BIQ section list, restoring automatic default population for tabs like `Scenario -> Players` before save.
+- Fixed `Custom Rules` preview state so the cloned `Terrain`, `World`, and `Rules` BIQ tabs no longer show unsaved-change badges just from the toggle itself; they now stay clean until edited against the preview baseline.
+- Fixed `Rules -> General -> Default Units` and `Default Money Resource` BIQ fields to use the structured reference pickers in scenario custom-rules previews instead of falling back to plain raw-value controls.
+- Made unit `PediaIcons` mappings explicit in `Unit Art and Animations`, with direct editable fields for the `#ICON_PRTO_*` large/small Civilopedia paths and the `#ANIMNAME_PRTO_*` animation folder key.
+- Added a new Units `Unit Table` modal for batch editing existing scenario units in-app, with thumbnails, sticky name columns, local modal Undo/Undo All, Apply-once save behavior, and arrow-key spreadsheet-style navigation across core unit stats and prerequisite fields.
+- Moved scenario `Custom Rules` and `Custom Player Data` toggles from the header into the OS `File` menu, aligned custom-player-data enablement with default eight-player LEAD setup, and changed post-load quality checks to audit the live in-memory BIQ preview so toggle-driven fallback/disable states stop producing stale warnings.
+- Fixed scenario BIQ loads with `Enabled Custom Rules` off to fall back to standard-game rule/reference tabs instead of synthesizing broken scenario-local resources/civs/techs/units, which also restores correct map resource rendering and disables those tabs in the UI.
+- Split the test suite into fast, BIQ, and full npm tiers so day-to-day verification can avoid the longest BIQ round-trip and CRUD suites while keeping them available for release checks.
+
 * RELEASE 27.10
 - Added direction badges to Wonder District art previews when alternate-direction art is enabled, marking main art as right-facing and alt art as left-facing.
 - Fixed the Units tab responsive layout so the right sidebar no longer overlaps the dense rules content before the content grid collapses.
@@ -139,7 +152,7 @@
 - Changed the C3X base tab to construct offscreen row editors lazily as they approach the viewport, reducing initial tab-open cost on large scenario configs without changing validation, save, or undo state tracking.
 - Added an Era dropdown next to search in the Techs and Units tabs, populated from the loaded scenario/base-game ERAS data and off by default; Units filter by the era of their required tech.
 - Added localized encoding support for Civilopedia/PediaIcons/diplomacy text files and BIQ-backed names/labels, including auto-detection for common Civ3 code pages, same-encoding save preservation, and a global UI override when auto-detect is ambiguous.
-- Unit and improvement prerequisite resource dropdowns now include bonus resources, matching Quintillus Editor instead of restricting those BIQ pickers to luxury and strategic resources.
+- Unit and improvement prerequisite resource dropdowns now include bonus resources instead of restricting those BIQ pickers to luxury and strategic resources.
 - Reduced a renderer leak that could accumulate global click handlers while reopening Civilopedia editors and picker widgets, which could lead to random white-screen renderer failures during typing/clicking/dragging on Windows.
 - Added explicit renderer crash and hang logging plus a recovery message when the Electron content process dies, so white-screen failures are now easier to diagnose.
 - Changed Civilopedia editing so live preview stays on while typing, but undo now groups the entire edit session into a single change when you click `Done`, instead of capturing every keystroke as a separate undo step.

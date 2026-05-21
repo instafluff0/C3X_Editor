@@ -7,7 +7,7 @@ const { getPreview } = require('./src/artPreview');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
-const APP_NAME = 'Civ 3 C3X Modern Configuration Manager';
+const APP_NAME = 'Civ 3 C3X Modern Editor';
 const DEV_APP_ICON_PATH = path.join(__dirname, 'build', 'icon.png');
 app.setName(APP_NAME);
 app.name = APP_NAME;
@@ -61,6 +61,21 @@ function readStartupTextFileEncoding() {
     return normalizeTextFileEncoding(raw && raw.textFileEncoding);
   } catch (_err) {
     return 'auto';
+  }
+}
+
+function normalizeMapAutoDockTileInfoLeft(value) {
+  return value !== false;
+}
+
+function readStartupMapAutoDockTileInfoLeft() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeMapAutoDockTileInfoLeft(raw && raw.mapAutoDockTileInfoLeft);
+  } catch (_err) {
+    return true;
   }
 }
 
@@ -140,13 +155,21 @@ function normalizeTextFileEncoding(value) {
 const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
 const startupTextFileEncoding = readStartupTextFileEncoding();
+const startupMapAutoDockTileInfoLeft = readStartupMapAutoDockTileInfoLeft();
 const startupWriteLogFiles = readStartupWriteLogFiles();
 const startupLogFolder = readStartupLogFolder();
 let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentTextFileEncoding = startupTextFileEncoding;
+let currentMapAutoDockTileInfoLeft = startupMapAutoDockTileInfoLeft;
 let currentWriteLogFiles = startupWriteLogFiles;
 let currentLogFolder = startupLogFolder;
+let currentScenarioOptionMenuState = {
+  visible: false,
+  enabled: false,
+  customRulesEnabled: false,
+  customPlayerDataEnabled: false
+};
 log.configureFileLogging({ enabled: currentWriteLogFiles, folder: currentLogFolder });
 // Prevent frequent macOS IOSurface allocation crashes in canvas-heavy screens.
 if (process.platform === 'darwin' && startupPerformanceMode === 'safe' && process.env.C3X_MANAGER_FORCE_GPU !== '1') {
@@ -340,7 +363,7 @@ function createWindow() {
     height: 960,
     minWidth: 1180,
     minHeight: 760,
-    title: 'Civ 3 | C3X Modern Configuration Manager',
+    title: 'Civ 3 | C3X Modern Editor',
     icon: windowIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -592,10 +615,58 @@ function buildLogMenuItems() {
   ];
 }
 
+function sendMapAutoDockTileInfoLeftSelection(enabled) {
+  currentMapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(enabled);
+  try {
+    persistSettingsPatch({ mapAutoDockTileInfoLeft: currentMapAutoDockTileInfoLeft });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:map-settings-selected', {
+    mapAutoDockTileInfoLeft: currentMapAutoDockTileInfoLeft
+  });
+}
+
+function normalizeScenarioOptionMenuState(raw) {
+  const next = raw && typeof raw === 'object' ? raw : {};
+  return {
+    visible: !!next.visible,
+    enabled: !!next.enabled,
+    customRulesEnabled: !!next.customRulesEnabled,
+    customPlayerDataEnabled: !!next.customPlayerDataEnabled
+  };
+}
+
+function sendScenarioOptionToggle(channel) {
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send(channel);
+}
+
 function buildAppMenu() {
   const fileMenu = {
     label: 'File',
     submenu: [
+      {
+        label: 'Enable Custom Rules',
+        type: 'checkbox',
+        visible: currentScenarioOptionMenuState.visible,
+        enabled: currentScenarioOptionMenuState.enabled,
+        checked: currentScenarioOptionMenuState.customRulesEnabled,
+        click: () => sendScenarioOptionToggle('manager:toggle-custom-rules')
+      },
+      {
+        label: 'Enable Custom Player Data',
+        type: 'checkbox',
+        visible: currentScenarioOptionMenuState.visible,
+        enabled: currentScenarioOptionMenuState.enabled,
+        checked: currentScenarioOptionMenuState.customPlayerDataEnabled,
+        click: () => sendScenarioOptionToggle('manager:toggle-custom-player-data')
+      },
+      { type: 'separator', visible: currentScenarioOptionMenuState.visible },
       {
         label: 'Settings',
         submenu: [
@@ -608,6 +679,17 @@ function buildAppMenu() {
           {
             label: 'Logging',
             submenu: buildLogMenuItems()
+          },
+          {
+            label: 'Map',
+            submenu: [
+              {
+                label: 'Auto-Dock Tile Info Left Near Right Edge',
+                type: 'checkbox',
+                checked: currentMapAutoDockTileInfoLeft,
+                click: (item) => sendMapAutoDockTileInfoLeftSelection(item && item.checked)
+              }
+            ]
           },
           { type: 'separator' },
           {
@@ -702,6 +784,7 @@ ipcMain.handle('manager:get-settings', async () => {
     textFileEncoding: 'auto',
     performanceMode: 'high',
     runQualityChecks: true,
+    mapAutoDockTileInfoLeft: true,
     writeLogFiles: true,
     logFolder: getDefaultLogFolderUnsafe(),
     uiFontScale: 1,
@@ -713,6 +796,7 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
+  merged.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(merged.mapAutoDockTileInfoLeft);
   merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
   merged.logFolder = normalizeLogFolder(merged.logFolder);
   const parseReleaseNum = (v) => { const n = parseInt(String(v || '').replace(/^R/i, ''), 10); return isNaN(n) ? 0 : n; };
@@ -721,11 +805,13 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
+  inferred.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(inferred.mapAutoDockTileInfoLeft);
   inferred.writeLogFiles = normalizeWriteLogFiles(inferred.writeLogFiles);
   inferred.logFolder = normalizeLogFolder(inferred.logFolder);
   currentPerformanceMode = inferred.performanceMode;
   currentRunQualityChecks = inferred.runQualityChecks;
   currentTextFileEncoding = inferred.textFileEncoding;
+  currentMapAutoDockTileInfoLeft = inferred.mapAutoDockTileInfoLeft;
   currentWriteLogFiles = inferred.writeLogFiles;
   currentLogFolder = inferred.logFolder;
   log.configureFileLogging(getCurrentLogConfig());
@@ -755,6 +841,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode),
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
+    mapAutoDockTileInfoLeft: normalizeMapAutoDockTileInfoLeft(settings && settings.mapAutoDockTileInfoLeft),
     writeLogFiles: normalizeWriteLogFiles(settings && settings.writeLogFiles),
     logFolder: normalizeLogFolder(settings && settings.logFolder)
   };
@@ -778,6 +865,10 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentTextFileEncoding !== normalized.textFileEncoding) {
     currentTextFileEncoding = normalized.textFileEncoding;
+    buildAppMenu();
+  }
+  if (currentMapAutoDockTileInfoLeft !== normalized.mapAutoDockTileInfoLeft) {
+    currentMapAutoDockTileInfoLeft = normalized.mapAutoDockTileInfoLeft;
     buildAppMenu();
   }
   if (currentWriteLogFiles !== normalized.writeLogFiles || currentLogFolder !== normalized.logFolder) {
@@ -1014,6 +1105,12 @@ ipcMain.handle('manager:validate-bundle', async (_event, payload) => {
   return result;
 });
 
+ipcMain.handle('manager:update-scenario-option-menu-state', async (_event, payload) => {
+  currentScenarioOptionMenuState = normalizeScenarioOptionMenuState(payload);
+  buildAppMenu();
+  return { ok: true };
+});
+
 ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {
   applyLogContextFromPayload(payload || {});
   const result = previewSavePlan(payload || {});
@@ -1043,4 +1140,18 @@ ipcMain.handle('manager:get-preview', async (_event, payload) => {
     log.error('getPreview', `kind=${kind} threw: ${err.message}`);
     return { ok: false, error: err.message };
   }
+});
+
+ipcMain.on('manager:renderer-debug-log', (_event, entry) => {
+  try {
+    const payload = entry && typeof entry === 'object' ? entry : {};
+    const level = String(payload.level || 'debug').trim().toLowerCase();
+    const category = String(payload.category || 'renderer-debug').trim() || 'renderer-debug';
+    const msg = String(payload.msg || '').trim();
+    if (!msg) return;
+    if (level === 'error') log.error(category, msg);
+    else if (level === 'warn' || level === 'warning') log.warn(category, msg);
+    else if (level === 'info') log.info(category, msg);
+    else log.debug(category, msg);
+  } catch (_err) {}
 });
