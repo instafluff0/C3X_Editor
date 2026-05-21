@@ -4768,7 +4768,7 @@ function sanitizeResizedMapEntitySections(parsed, width, height, offsets = {}) {
   tileSection._modified = true;
 }
 
-function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight, fillTerrain = BIQ_TERRAIN.SEA) {
+function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight, fillTerrain) {
   const width = normalizeResizeMapDimension(targetWidth, 'width');
   const height = normalizeResizeMapDimension(targetHeight, 'height');
   const fillTerrainCode = normalizeResizeFillTerrain(fillTerrain, BIQ_TERRAIN.SEA);
