@@ -3999,6 +3999,17 @@ function collectBiqCustomRulesMutationOps({ tabs, civ3Path, textEncoding = DEFAU
   return [{ op: 'setcustomrules', sections }];
 }
 
+function collectBiqCustomPlayerDataMutationOps({ tabs } = {}) {
+  const playersTab = tabs && tabs.players;
+  const mutation = String(playersTab && playersTab.customPlayerDataMutation || '').trim().toLowerCase();
+  if (!mutation) return [];
+  if (mutation === 'disable') {
+    return [{ op: 'removecustomplayerdata' }];
+  }
+  if (mutation !== 'enable') return [];
+  return [{ op: 'addcustomplayerdata' }];
+}
+
 function getSectionCodeForReferencePrefix(prefix) {
   const p = String(prefix || '').toUpperCase().replace(/_+$/, '');
   if (!p) return '';
@@ -6807,6 +6818,9 @@ function buildSavePlan(payload) {
       civ3Path,
       textEncoding: inferredBiqTextEncoding
     });
+    const biqCustomPlayerDataOps = collectBiqCustomPlayerDataMutationOps({
+      tabs: payload.tabs || {}
+    });
     const biqRecordOps = resolveExternalImportedPrtoRecordOps(
       collectBiqReferenceRecordOps(payload.tabs || {}),
       civ3Path
@@ -6832,6 +6846,7 @@ function buildSavePlan(payload) {
       }]
       : [];
     const allBiqEdits = biqCustomRulesOps
+      .concat(biqCustomPlayerDataOps)
       .concat(biqRecordOps)
       .concat(biqStructureRecordOps)
       .concat(biqMapStructureOps)
@@ -6842,6 +6857,7 @@ function buildSavePlan(payload) {
       .concat(autoSearchEdits);
     log.info('BiqSave', `buildSavePlan: BIQ edit summary for ${log.rel(scenarioPath)}`
       + ` — customRulesOps=${biqCustomRulesOps.length}`
+      + ` — customPlayerDataOps=${biqCustomPlayerDataOps.length}`
       + ` — referenceRecordOps=${biqRecordOps.length}`
       + ` structureRecordOps=${biqStructureRecordOps.length}`
       + ` mapStructureOps=${biqMapStructureOps.length}`

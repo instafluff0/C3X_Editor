@@ -164,6 +164,12 @@ let currentTextFileEncoding = startupTextFileEncoding;
 let currentMapAutoDockTileInfoLeft = startupMapAutoDockTileInfoLeft;
 let currentWriteLogFiles = startupWriteLogFiles;
 let currentLogFolder = startupLogFolder;
+let currentScenarioOptionMenuState = {
+  visible: false,
+  enabled: false,
+  customRulesEnabled: false,
+  customPlayerDataEnabled: false
+};
 log.configureFileLogging({ enabled: currentWriteLogFiles, folder: currentLogFolder });
 // Prevent frequent macOS IOSurface allocation crashes in canvas-heavy screens.
 if (process.platform === 'darwin' && startupPerformanceMode === 'safe' && process.env.C3X_MANAGER_FORCE_GPU !== '1') {
@@ -624,10 +630,43 @@ function sendMapAutoDockTileInfoLeftSelection(enabled) {
   });
 }
 
+function normalizeScenarioOptionMenuState(raw) {
+  const next = raw && typeof raw === 'object' ? raw : {};
+  return {
+    visible: !!next.visible,
+    enabled: !!next.enabled,
+    customRulesEnabled: !!next.customRulesEnabled,
+    customPlayerDataEnabled: !!next.customPlayerDataEnabled
+  };
+}
+
+function sendScenarioOptionToggle(channel) {
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send(channel);
+}
+
 function buildAppMenu() {
   const fileMenu = {
     label: 'File',
     submenu: [
+      {
+        label: 'Custom Rules',
+        type: 'checkbox',
+        visible: currentScenarioOptionMenuState.visible,
+        enabled: currentScenarioOptionMenuState.enabled,
+        checked: currentScenarioOptionMenuState.customRulesEnabled,
+        click: () => sendScenarioOptionToggle('manager:toggle-custom-rules')
+      },
+      {
+        label: 'Custom Player Data',
+        type: 'checkbox',
+        visible: currentScenarioOptionMenuState.visible,
+        enabled: currentScenarioOptionMenuState.enabled,
+        checked: currentScenarioOptionMenuState.customPlayerDataEnabled,
+        click: () => sendScenarioOptionToggle('manager:toggle-custom-player-data')
+      },
+      { type: 'separator', visible: currentScenarioOptionMenuState.visible },
       {
         label: 'Settings',
         submenu: [
@@ -1064,6 +1103,12 @@ ipcMain.handle('manager:validate-bundle', async (_event, payload) => {
   const result = await runWorkerTask('validateBundle', payload || {});
   log.info('validateBundle', `OK — warnings=${Number(result && result.totalWarnings || 0)}`);
   return result;
+});
+
+ipcMain.handle('manager:update-scenario-option-menu-state', async (_event, payload) => {
+  currentScenarioOptionMenuState = normalizeScenarioOptionMenuState(payload);
+  buildAppMenu();
+  return { ok: true };
 });
 
 ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {

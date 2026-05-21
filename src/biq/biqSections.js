@@ -2979,6 +2979,39 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
 
   // LEAD: tech indices (dynamic list keyed by position)
   if (code === 'LEAD') {
+    if (ck === 'numberofdifferentstartunits') {
+      const n = Number.parseInt(value, 10);
+      if (Number.isFinite(n) && n >= 0) {
+        if (!Array.isArray(rec.startUnits)) rec.startUnits = [];
+        while (rec.startUnits.length < n) rec.startUnits.push({ startUnitCount: 0, startUnitIndex: rec.startUnits.length });
+        if (rec.startUnits.length > n) rec.startUnits.length = n;
+        rec.numStartUnits = rec.startUnits.length;
+      }
+      return true;
+    }
+    const startUnitMatch = ck.match(/^startingunitsoftype(.+)$/);
+    if (startUnitMatch) {
+      const rawTarget = String(startUnitMatch[1] || '').trim().toLowerCase();
+      let startUnitIndex = Number.parseInt(rawTarget, 10);
+      if (!Number.isFinite(startUnitIndex)) {
+        if (rawTarget === 'settler') startUnitIndex = 0;
+        else if (rawTarget === 'worker') startUnitIndex = 1;
+      }
+      if (!Number.isFinite(startUnitIndex) || startUnitIndex < 0) return true;
+      if (!Array.isArray(rec.startUnits)) rec.startUnits = [];
+      const startUnitCount = Number.parseInt(value, 10);
+      const existingIdx = rec.startUnits.findIndex((entry) => Number(entry && entry.startUnitIndex) === startUnitIndex);
+      if (!Number.isFinite(startUnitCount) || startUnitCount <= 0) {
+        if (existingIdx >= 0) rec.startUnits.splice(existingIdx, 1);
+      } else if (existingIdx >= 0) {
+        rec.startUnits[existingIdx].startUnitCount = startUnitCount;
+      } else {
+        rec.startUnits.push({ startUnitCount, startUnitIndex });
+      }
+      rec.startUnits.sort((a, b) => Number(a.startUnitIndex) - Number(b.startUnitIndex));
+      rec.numStartUnits = rec.startUnits.length;
+      return true;
+    }
     if (ck === 'numberofstartingtechnologies') {
       const n = Number.parseInt(value, 10);
       if (Number.isFinite(n) && n >= 0) {
@@ -3234,6 +3267,27 @@ function createDefaultRecord(code, civKey, io) {
       prtoRec.PTWSpecialActions = 781;
       return prtoRec;
     }
+    case 'LEAD':
+      return {
+        humanPlayer: 0,
+        customCivData: 0,
+        leaderName: '',
+        questionMark1: 0,
+        questionMark2: 0,
+        numStartUnits: 0,
+        startUnits: [],
+        genderOfLeaderName: 0,
+        numStartTechs: 0,
+        techIndices: [],
+        difficulty: -1,
+        initialEra: 0,
+        startCash: 10,
+        government: 1,
+        civ: -3,
+        color: 0,
+        skipFirstTurn: 0,
+        startEmbassies: 0
+      };
     case 'CITY': return {
       hasWalls: 0, hasPalace: 0, name: '', ownerType: 2, numBuildings: 0, buildings: [],
       culture: 0, owner: 1, size: 1, x: 0, y: 0, cityLevel: 0, borderLevel: 1, useAutoName: 0
@@ -4326,6 +4380,23 @@ function removeCustomRulesSectionsFromParsed(parsed) {
   parsed.sections = parsed.sections.filter((section) => !codes.has(String(section && section.code || '').toUpperCase()));
 }
 
+function removeCustomPlayerDataSectionsFromParsed(parsed) {
+  parsed.sections = parsed.sections.filter((section) => String(section && section.code || '').toUpperCase() !== 'LEAD');
+}
+
+function addCustomPlayerDataSectionToParsed(parsed) {
+  removeCustomPlayerDataSectionsFromParsed(parsed);
+  const leadSection = {
+    code: 'LEAD',
+    mode: 'len',
+    records: [],
+    _modified: true
+  };
+  const insertAt = parsed.sections.findIndex((section) => String(section && section.code || '').toUpperCase() === 'GAME');
+  if (insertAt >= 0) parsed.sections.splice(insertAt + 1, 0, leadSection);
+  else parsed.sections.push(leadSection);
+}
+
 function setMapSectionsOnParsed(parsed, uiSections) {
   removeMapSectionsFromParsed(parsed);
   const mapSections = Array.isArray(uiSections) ? uiSections : [];
@@ -4423,10 +4494,24 @@ function applyEdits(buf, edits, options = {}) {
       applied++;
       continue;
     }
+    if (op === 'removecustomplayerdata') {
+      log.debug('BiqApplyEdits', 'op=removecustomplayerdata: removing LEAD section');
+      removeCustomPlayerDataSectionsFromParsed(parsed);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
     if (op === 'setcustomrules') {
       const sectionCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
       log.debug('BiqApplyEdits', `op=setcustomrules: replacing custom-rules sections [${sectionCodes}]`);
       setCustomRulesSectionsOnParsed(parsed, edit.sections);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'addcustomplayerdata') {
+      log.debug('BiqApplyEdits', 'op=addcustomplayerdata: inserting empty LEAD section');
+      addCustomPlayerDataSectionToParsed(parsed);
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
       continue;

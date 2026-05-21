@@ -1089,7 +1089,9 @@ function auditLoadedBundle(bundle) {
 }
 
 function auditBundle(payload) {
-  const bundle = loadBundle(payload || {});
+  const bundle = payload && payload.bundleSnapshot && typeof payload.bundleSnapshot === 'object'
+    ? payload.bundleSnapshot
+    : loadBundle(payload || {});
   return auditLoadedBundle(bundle);
 }
 

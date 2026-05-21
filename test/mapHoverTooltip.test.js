@@ -383,6 +383,16 @@ test('modal map zoom previews on the existing canvas stack and defers the expens
   );
 });
 
+test('modal map zoom restore waits for non-zero pane metrics before consuming the saved anchor', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const hasUsablePaneMetrics = \(metrics\) => \{[\s\S]*?paneMetrics\.clientWidth > 0[\s\S]*?paneMetrics\.clientHeight > 0[\s\S]*?paneMetrics\.scrollWidth > 0[\s\S]*?paneMetrics\.scrollHeight > 0[\s\S]*?\};[\s\S]*?const applySavedMapPaneView = \(allowInitialCenter = false\) => \{[\s\S]*?const metrics = getPaneMetrics\(\);[\s\S]*?if \(!hasUsablePaneMetrics\(metrics\)\) return 'defer-layout';[\s\S]*?if \(zoomAnchor && Number\.isFinite\(zoomAnchor\.fromZoom\)\) \{[\s\S]*?const scheduleSavedMapPaneViewRestore = \(attempt = 0\) => \{[\s\S]*?const outcome = applySavedMapPaneView\(true\);[\s\S]*?if \(outcome === 'defer-layout' && attempt < 8\) \{[\s\S]*?scheduleSavedMapPaneViewRestore\(attempt \+ 1\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?\};[\s\S]*?scheduleSavedMapPaneViewRestore\(\);/,
+    'modal map zoom restore should defer until the rerendered pane has measurable layout and keep retrying for a few frames, so zoom anchors are not dropped when the first post-render frame still has no scroll range'
+  );
+});
+
 test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered canvas and limiting redraws to edits', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 

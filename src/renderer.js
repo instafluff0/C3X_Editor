@@ -460,9 +460,6 @@ const el = {
   paths: document.querySelector('.paths'),
   pathsToggle: document.getElementById('paths-toggle'),
   pathsSummary: document.getElementById('paths-summary'),
-  scenarioOptionChips: document.getElementById('scenario-option-chips'),
-  customRulesChip: document.getElementById('custom-rules-chip'),
-  customPlayerDataChip: document.getElementById('custom-player-data-chip'),
   globalSearchBtn: document.getElementById('global-search-btn'),
   loadingOverlay: document.getElementById('loading-overlay'),
   loadingText: document.getElementById('loading-text'),
@@ -3707,6 +3704,82 @@ function setScenarioGameBooleanField(baseKey, enabled) {
   return true;
 }
 
+function formatBiqReferenceValue(sectionCode, index) {
+  const parsed = Number.parseInt(String(index), 10);
+  if (!Number.isFinite(parsed)) return String(index || '');
+  if (parsed < 0) return String(parsed);
+  const options = makeBiqSectionIndexOptions(sectionCode, false);
+  const match = options.find((opt) => Number.parseInt(String(opt && opt.value || ''), 10) === parsed);
+  return match ? `${match.label} (${parsed})` : String(parsed);
+}
+
+function setLeadFieldValue(record, baseKey, value) {
+  const field = getFieldByBaseKey(record, baseKey);
+  if (!field) return false;
+  field.value = String(value);
+  return true;
+}
+
+function applyQuintLeadDefaults(record, playerIndex) {
+  if (!record) return;
+  setLeadFieldValue(record, 'name', '');
+  setLeadFieldValue(record, 'leadername', '');
+  setLeadFieldValue(record, 'humanplayer', playerIndex === 0 ? 'true' : 'false');
+  setLeadFieldValue(record, 'customcivdata', 'false');
+  setLeadFieldValue(record, 'civ', '-3');
+  setLeadFieldValue(record, 'government', formatBiqReferenceValue('GOVT', 1));
+  setLeadFieldValue(record, 'initialera', formatBiqReferenceValue('ERAS', 0));
+  setLeadFieldValue(record, 'difficulty', '-1');
+  setLeadFieldValue(record, 'startcash', '10');
+  setLeadFieldValue(record, 'color', '0');
+  setLeadFieldValue(record, 'genderofleadername', '0');
+  setLeadFieldValue(record, 'skipfirstturn', 'false');
+  setLeadFieldValue(record, 'startembassies', 'false');
+  setLeadFieldValue(record, 'numberofdifferentstartunits', '2');
+  setLeadFieldValue(record, 'starting_units_of_type_settler', '1');
+  setLeadFieldValue(record, 'starting_units_of_type_worker', '1');
+  setLeadFieldValue(record, 'numberofstartingtechnologies', '0');
+}
+
+function makeQuintLeadField(baseKey, value) {
+  return {
+    key: baseKey,
+    baseKey,
+    label: toFriendlyKey(baseKey),
+    value: String(value),
+    originalValue: ''
+  };
+}
+
+function buildQuintLeadRecord(newRecordRef, playerIndex) {
+  const record = {
+    index: playerIndex,
+    name: `Player ${playerIndex + 1}`,
+    newRecordRef: String(newRecordRef || '').trim().toUpperCase(),
+    fields: [
+      makeQuintLeadField('name', ''),
+      makeQuintLeadField('leadername', ''),
+      makeQuintLeadField('humanplayer', playerIndex === 0 ? 'true' : 'false'),
+      makeQuintLeadField('customcivdata', 'false'),
+      makeQuintLeadField('civ', '-3'),
+      makeQuintLeadField('government', formatBiqReferenceValue('GOVT', 1)),
+      makeQuintLeadField('initialera', formatBiqReferenceValue('ERAS', 0)),
+      makeQuintLeadField('difficulty', '-1'),
+      makeQuintLeadField('startcash', '10'),
+      makeQuintLeadField('color', '0'),
+      makeQuintLeadField('genderofleadername', '0'),
+      makeQuintLeadField('skipfirstturn', 'false'),
+      makeQuintLeadField('startembassies', 'false'),
+      makeQuintLeadField('numberofdifferentstartunits', '2'),
+      makeQuintLeadField('starting_units_of_type_settler', '1'),
+      makeQuintLeadField('starting_units_of_type_worker', '1'),
+      makeQuintLeadField('numberofstartingtechnologies', '0')
+    ]
+  };
+  applyQuintLeadDefaults(record, playerIndex);
+  return record;
+}
+
 function setPlayerTabDisabledState(enabled) {
   const playersTab = getBiqTabByKey('players');
   if (!playersTab) return;
@@ -3719,6 +3792,20 @@ function setPlayerTabDisabledState(enabled) {
     playersTab.fallbackNotice = 'Custom player data is currently off for this scenario BIQ.';
     playersTab.disabledReason = 'Enabled Custom Player Data is off for this scenario BIQ. The Players tab is unavailable until custom player data is enabled.';
   }
+}
+
+function ensureLeadSection(playersTab) {
+  if (!playersTab) return null;
+  if (!Array.isArray(playersTab.sections)) playersTab.sections = [];
+  let leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+  if (leadSection) return leadSection;
+  leadSection = {
+    code: 'LEAD',
+    title: 'Players',
+    records: []
+  };
+  playersTab.sections.push(leadSection);
+  return leadSection;
 }
 
 function removeAllLeadRecords() {
@@ -3755,6 +3842,11 @@ function updateScenarioUiAfterOptionChange(statusMessage) {
   renderScenarioOptionChips();
   renderTabs();
   renderActiveTab({ preserveTabScroll: true });
+  if (shouldRunQualityChecks()) {
+    void runBundleAudit(buildAuditPayloadFromState());
+  } else {
+    clearLoadAuditState({ rerender: true });
+  }
   if (statusMessage) setStatus(statusMessage);
 }
 
@@ -3841,10 +3933,10 @@ function toggleScenarioCustomPlayerData() {
     setStatus('Players tab is unavailable in this BIQ.', true);
     return;
   }
+  playersTab.customPlayerDataMutation = nextEnabled ? 'enable' : 'disable';
   let changed = false;
   if (nextEnabled) {
-    const preferredCount = getPlayableCivilizationIdSet().size || 1;
-    changed = ensureCustomPlayerDataEnabled({ preferredCount });
+    changed = ensureCustomPlayerDataEnabled();
   } else {
     changed = removeAllLeadRecords();
   }
@@ -3861,27 +3953,14 @@ function toggleScenarioCustomPlayerData() {
 }
 
 function renderScenarioOptionChips() {
-  if (!el.scenarioOptionChips || !el.customRulesChip || !el.customPlayerDataChip) return;
+  if (!window.c3xManager || typeof window.c3xManager.updateScenarioOptionMenuState !== 'function') return;
   const show = !!(state.settings && state.settings.mode === 'scenario' && state.bundle && state.bundle.tabs);
-  el.scenarioOptionChips.classList.toggle('hidden', !show);
-  if (!show) return;
-  const chipsDisabled = !!state.isLoading || !!state.isSaving;
-  const customRulesOn = getScenarioCustomRulesStatus();
-  const customPlayerDataOn = getScenarioCustomPlayerDataStatus();
-  el.customRulesChip.disabled = chipsDisabled;
-  el.customPlayerDataChip.disabled = chipsDisabled;
-  el.customRulesChip.classList.toggle('is-on', customRulesOn);
-  el.customRulesChip.classList.toggle('is-off', !customRulesOn);
-  el.customRulesChip.innerHTML = `<span class="chip-label">Custom Rules</span><span class="chip-state">${customRulesOn ? 'On' : 'Off'}</span>`;
-  el.customRulesChip.title = customRulesOn
-    ? 'Switch this scenario BIQ back to standard-game rules.'
-    : 'Copy standard-game rules into this scenario BIQ and enable scenario rule editing.';
-  el.customPlayerDataChip.classList.toggle('is-on', customPlayerDataOn);
-  el.customPlayerDataChip.classList.toggle('is-off', !customPlayerDataOn);
-  el.customPlayerDataChip.innerHTML = `<span class="chip-label">Custom Player Data</span><span class="chip-state">${customPlayerDataOn ? 'On' : 'Off'}</span>`;
-  el.customPlayerDataChip.title = customPlayerDataOn
-    ? 'Disable custom player data for this scenario BIQ.'
-    : 'Enable custom player data for this scenario BIQ.';
+  void window.c3xManager.updateScenarioOptionMenuState({
+    visible: show,
+    enabled: show && !state.isLoading && !state.isSaving,
+    customRulesEnabled: show && getScenarioCustomRulesStatus(),
+    customPlayerDataEnabled: show && getScenarioCustomPlayerDataStatus()
+  });
 }
 
 function updateScenarioSelectValue() {
@@ -4691,10 +4770,17 @@ function clearBundleView() {
   renderFilesReadModal();
   updateNavButtons();
   updateScrollTopFab();
+  renderScenarioOptionChips();
 }
 
 function cloneStateMap(mapLike) {
   return Object.assign({}, mapLike || {});
+}
+
+function sanitizePersistedMapEditorTool(tool) {
+  const next = Object.assign({}, tool || {});
+  delete next.tileInfoUnitQuantity;
+  return next;
 }
 
 function viewContextKey() {
@@ -4820,7 +4906,7 @@ function captureViewSnapshot() {
     biqMapShowOverlays: state.biqMapShowOverlays !== false,
     biqMapShowCityNames: state.biqMapShowCityNames !== false,
     mapModalOpen: isMapModalVisible,
-    mapEditorTool: Object.assign({}, state.mapEditorTool || {})
+    mapEditorTool: sanitizePersistedMapEditorTool(state.mapEditorTool)
   };
 }
 
@@ -5019,7 +5105,7 @@ function applyViewSnapshot(snapshot) {
   state.biqMapShowLandmarks = snapshot.biqMapShowLandmarks !== false;
   state.biqMapShowOverlays = snapshot.biqMapShowOverlays !== false;
   state.biqMapShowCityNames = snapshot.biqMapShowCityNames !== false;
-  state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, snapshot.mapEditorTool || {});
+  state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, sanitizePersistedMapEditorTool(snapshot.mapEditorTool));
   state.tabContentScrollTop = Number.isFinite(snapshot.tabContentScrollTop) ? snapshot.tabContentScrollTop : 0;
   if (!snapshot.mapModalOpen || state.activeTab !== 'map') {
     closeMapModal();
@@ -11095,7 +11181,7 @@ const BIQ_FIELD_ENUMS = {
   },
   players: {
     difficulty: [
-      { value: 'Any', label: 'Any' },
+      { value: '-1', label: 'Any' },
       { value: '0', label: 'Difficulty 1' },
       { value: '1', label: 'Difficulty 2' },
       { value: '2', label: 'Difficulty 3' },
@@ -24529,13 +24615,25 @@ function syncLeadRecordCountToTarget(targetCountRaw) {
 
 function ensureCustomPlayerDataEnabled({ preferredCount } = {}) {
   const playersTab = getBiqTabByKey('players');
-  const leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+  const leadSection = ensureLeadSection(playersTab);
   if (!playersTab || !leadSection || !Array.isArray(leadSection.records)) return false;
   const current = leadSection.records.length;
   if (current > 0) return false;
   const parsed = Number.parseInt(String(preferredCount || '').trim(), 10);
-  const target = Number.isFinite(parsed) ? Math.max(1, Math.min(32, parsed)) : 1;
-  return syncLeadRecordCountToTarget(target);
+  const target = Number.isFinite(parsed) ? Math.max(1, Math.min(32, parsed)) : 8;
+  if (leadSection.records.length === 0) {
+    const ops = ensureBiqStructureRecordOps(playersTab);
+    for (let i = 0; i < target; i += 1) {
+      const newRef = makeUniqueBiqStructureRecordRef(playersTab, 'LEAD');
+      leadSection.records.push(buildQuintLeadRecord(newRef, i));
+      ops.push({ op: 'add', sectionCode: 'LEAD', newRecordRef: newRef });
+    }
+    return true;
+  }
+  const changed = syncLeadRecordCountToTarget(target);
+  if (!changed) return false;
+  leadSection.records.forEach((record, idx) => applyQuintLeadDefaults(record, idx));
+  return true;
 }
 
 function getPlayableCivilizationIdSet() {
@@ -29162,11 +29260,16 @@ function renderBiqTab(tab) {
           const refSpec = getBiqStructureRefSpec(selected.code, baseKey);
           let refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
           if (selected.code === 'LEAD' && baseKey === 'civ') {
+            refOptions = [
+              { value: '-3', label: 'Any' },
+              { value: '-2', label: 'Random' },
+              ...refOptions
+            ];
             const playable = getPlayableCivilizationIdSet();
             if (playable.size > 0) {
               refOptions = refOptions.filter((opt) => {
                 const idx = Number.parseInt(String(opt && opt.value || ''), 10);
-                return Number.isFinite(idx) && playable.has(idx);
+                return idx < 0 || (Number.isFinite(idx) && playable.has(idx));
               });
             }
           }
@@ -31483,6 +31586,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       maxTop
     };
   };
+  const hasUsablePaneMetrics = (metrics) => {
+    const paneMetrics = metrics || getPaneMetrics();
+    return !!paneMetrics
+      && paneMetrics.clientWidth > 0
+      && paneMetrics.clientHeight > 0
+      && paneMetrics.scrollWidth > 0
+      && paneMetrics.scrollHeight > 0;
+  };
   const getCanonicalPaneBounds = (metrics) => {
     const paneMetrics = metrics || getPaneMetrics();
     const minLeft = Math.max(0, Math.min(paneMetrics.maxLeft, Math.round(canonicalWorldLeftPx || 0)));
@@ -33046,6 +33157,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (ref) pushStructureDeleteOp('UNIT', ref);
     const nextRecords = records.slice(0, targetPos).concat(records.slice(targetPos + 1));
     unitSection.records = nextRecords;
+    state.biqMapStatsDirty = true;
     if (Number.isFinite(tx) && Number.isFinite(ty)) {
       setUnitRecordsAtCoords(tx, ty, nextRecords.filter((record) => {
         const ux = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
@@ -33381,7 +33493,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ? getMapUnitOwnerPickerValue(visibleUnit)
       : String(ownerPickerOverride);
     const ownerColorSlot = getMapOwnerColorSlotForPickerValue(ownerValue);
-    return `${prtoNumber}|${ownerValue}|${ownerColorSlot}`;
+    return `${prtoNumber}|${ownerValue}|${ownerColorSlot}|${list.length}`;
   };
   const getUnitOverlaySignatureForCoords = (xPos, yPos, tileRecord = null) => {
     return getUnitOverlaySignatureForStack(listUnitsAtCoords(xPos, yPos), null, tileRecord);
@@ -33408,6 +33520,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       redrawMode: fullMapRerender ? 'full-map' : (shouldRedrawTile ? 'partial-tile' : 'tile-info-only'),
       ...(extra && typeof extra === 'object' ? extra : {})
     });
+    refreshMapStatsIfNeeded(false);
     if (fullMapRerender) {
       rerenderMapViewPreservingScroll();
     } else if (shouldRedrawTile) {
@@ -33481,6 +33594,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     setMapFieldValue(unit, 'experiencelevel', String(experienceLevel), 'Experience Level');
     appendUnitRecordAtCoords(unit, xPos, yPos);
     pushStructureAddOp('UNIT', ref);
+    state.biqMapStatsDirty = true;
     return true;
   };
   const syncTileColonyOverlayBits = (tile, colonyType = -1) => {
@@ -34683,6 +34797,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     };
   };
   refreshMapStatsIfNeeded = (force = false) => {
+    if (!state.biqMapStatsOpen) return false;
     if (!force && !state.biqMapStatsDirty) return false;
     const stats = collectMapStats();
     renderMapStatsSummary(stats);
@@ -37514,6 +37629,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   container.appendChild(mapFrame);
 
   const applySavedMapPaneView = (allowInitialCenter = false) => {
+    const metrics = getPaneMetrics();
+    if (!hasUsablePaneMetrics(metrics)) return 'defer-layout';
     const zoomAnchor = state.biqMapZoomAnchor;
     if (zoomAnchor && Number.isFinite(zoomAnchor.fromZoom)) {
       const factor = scaleForZoom(state.biqMapZoom) / scaleForZoom(zoomAnchor.fromZoom);
@@ -40007,11 +40124,33 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   }
   scheduleTileInfoDockSideUpdate();
 
-  window.requestAnimationFrame(() => {
-    applySavedMapPaneView(true);
-    redrawMapCanvasInPlace();
-    if (typeof renderMiniMap === 'function') renderMiniMap();
-  });
+  const scheduleSavedMapPaneViewRestore = (attempt = 0) => {
+    window.requestAnimationFrame(() => {
+      if (!container.isConnected) return;
+      const outcome = applySavedMapPaneView(true);
+      if (attempt === 0) {
+        redrawMapCanvasInPlace();
+      }
+      if (typeof renderMiniMap === 'function') renderMiniMap();
+      if (outcome === 'defer-layout' && attempt < 8) {
+        appendDebugLog('biq-map:view-restore-deferred', {
+          attempt: attempt + 1,
+          ...getPaneMetrics()
+        });
+        scheduleSavedMapPaneViewRestore(attempt + 1);
+        return;
+      }
+      appendDebugLog('biq-map:view-restore', {
+        outcome,
+        attempt: attempt + 1,
+        left: mapPane.scrollLeft,
+        top: mapPane.scrollTop,
+        ...getPaneMetrics()
+      });
+    });
+  };
+
+  scheduleSavedMapPaneViewRestore();
 
   if (floatingUi) {
     mapModal.refreshVisuals = (meta = null) => {
@@ -43588,7 +43727,7 @@ async function loadBundleAndRender(options = {}) {
       state.biqMapShowLandmarks = persistedView.biqMapShowLandmarks !== false;
       state.biqMapShowOverlays = persistedView.biqMapShowOverlays !== false;
       state.biqMapShowCityNames = persistedView.biqMapShowCityNames !== false;
-      state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, persistedView.mapEditorTool || {});
+      state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, sanitizePersistedMapEditorTool(persistedView.mapEditorTool));
       state.tabContentScrollTop = Number.isFinite(persistedView.tabContentScrollTop) ? persistedView.tabContentScrollTop : 0;
     } else {
       state.tabContentScrollTop = 0;
@@ -43663,7 +43802,7 @@ async function loadBundleAndRender(options = {}) {
     updateModeState(bundle);
     renderFilesReadModal();
     void refreshFilesReadAccess();
-    const auditPayload = buildLoadBundlePayload({
+    const auditPayload = buildAuditPayloadFromState({
       scenarioPath: state.settings.scenarioPath,
       scenarioSearchFolderOverride
     });
@@ -43918,6 +44057,13 @@ function buildLoadBundlePayload(overrides = {}) {
     scenarioPath: state.settings.scenarioPath,
     textFileEncoding: normalizeTextFileEncoding(state.settings.textFileEncoding),
     ...overrides
+  };
+}
+
+function buildAuditPayloadFromState(overrides = {}) {
+  return {
+    ...buildLoadBundlePayload(overrides),
+    bundleSnapshot: state.bundle ? deepCloneUiValue(state.bundle) : null
   };
 }
 
@@ -45403,7 +45549,7 @@ async function init() {
         return;
       }
       const scenarioSearchFolderOverride = normalizeScenarioSearchFolderFieldValue('');
-      const auditPayload = buildLoadBundlePayload({
+      const auditPayload = buildAuditPayloadFromState({
         scenarioPath: state.settings.scenarioPath,
         scenarioSearchFolderOverride
       });
@@ -45464,6 +45610,28 @@ async function init() {
       }
     }, { once: true });
   }
+  if (window.c3xManager && typeof window.c3xManager.onCustomRulesMenuSelect === 'function') {
+    state.customRulesMenuUnsubscribe = window.c3xManager.onCustomRulesMenuSelect(() => {
+      void toggleScenarioCustomRules();
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.customRulesMenuUnsubscribe) {
+        state.customRulesMenuUnsubscribe();
+        state.customRulesMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onCustomPlayerDataMenuSelect === 'function') {
+    state.customPlayerDataMenuUnsubscribe = window.c3xManager.onCustomPlayerDataMenuSelect(() => {
+      toggleScenarioCustomPlayerData();
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.customPlayerDataMenuUnsubscribe) {
+        state.customPlayerDataMenuUnsubscribe();
+        state.customPlayerDataMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
 
   if (window.c3xManager && typeof window.c3xManager.onLog === 'function') {
     window.c3xManager.onLog((entry) => {
@@ -45511,16 +45679,6 @@ async function init() {
   if (el.pathsToggle) {
     el.pathsToggle.addEventListener('click', () => {
       setPathsCollapsed(!state.pathsCollapsed);
-    });
-  }
-  if (el.customRulesChip) {
-    el.customRulesChip.addEventListener('click', () => {
-      void toggleScenarioCustomRules();
-    });
-  }
-  if (el.customPlayerDataChip) {
-    el.customPlayerDataChip.addEventListener('click', () => {
-      toggleScenarioCustomPlayerData();
     });
   }
 

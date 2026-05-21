@@ -71,6 +71,26 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:map-settings-selected', listener);
     };
   },
+  onCustomRulesMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = () => handler();
+    ipcRenderer.on('manager:toggle-custom-rules', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:toggle-custom-rules', listener);
+    };
+  },
+  onCustomPlayerDataMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = () => handler();
+    ipcRenderer.on('manager:toggle-custom-player-data', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:toggle-custom-player-data', listener);
+    };
+  },
   onLog: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};
@@ -95,6 +115,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   emitRendererDebugLog: (entry) => ipcRenderer.send('manager:renderer-debug-log', entry),
   loadBundle: (payload) => ipcRenderer.invoke('manager:load-bundle', payload),
   validateBundle: (payload) => ipcRenderer.invoke('manager:validate-bundle', payload),
+  updateScenarioOptionMenuState: (payload) => ipcRenderer.invoke('manager:update-scenario-option-menu-state', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload),
   previewSavePlan: (payload) => ipcRenderer.invoke('manager:preview-save-plan', payload),
   previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload)
