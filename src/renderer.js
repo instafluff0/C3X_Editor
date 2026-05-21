@@ -12788,24 +12788,24 @@ const UNIT_RULE_FRIENDLY_LABELS = Object.freeze({
 });
 
 const UNIT_TABLE_COLUMNS = Object.freeze([
-  { key: 'name', label: 'Unit Name', type: 'text', width: 220 },
-  { key: 'unitclass', label: 'Unit Class', type: 'enum', width: 132 },
-  { key: 'requiredtech', label: 'Required Tech', type: 'reference', width: 190 },
-  { key: 'upgradeto', label: 'Upgrade To', type: 'reference', width: 190 },
-  { key: 'attack', label: 'Attack', type: 'number', width: 82, min: 0 },
-  { key: 'defence', label: 'Defence', type: 'number', width: 82, min: 0 },
-  { key: 'movement', label: 'Movement', type: 'number', width: 92, min: 0 },
-  { key: 'bombardstrength', label: 'Bombard', type: 'number', width: 92, min: 0 },
-  { key: 'bombardrange', label: 'Range', type: 'number', width: 82, min: 0 },
-  { key: 'rateoffire', label: 'ROF', type: 'number', width: 74, min: 0 },
-  { key: 'airdefence', label: 'Air Def', type: 'number', width: 88, min: 0 },
-  { key: 'hitpointbonus', label: 'HP Bonus', type: 'number', width: 92, min: 0 },
-  { key: 'operationalrange', label: 'Op Range', type: 'number', width: 92, min: 0 },
-  { key: 'capacity', label: 'Capacity', type: 'number', width: 92, min: 0 },
-  { key: 'shieldcost', label: 'Shield Cost', type: 'number', width: 96, min: 0 },
-  { key: 'populationcost', label: 'Pop Cost', type: 'number', width: 88, min: 0 },
-  { key: 'zoneofcontrol', label: 'ZoC', type: 'bool', width: 64 },
-  { key: 'requiressupport', label: 'Support', type: 'bool', width: 82 }
+  { key: 'name', label: 'Name', type: 'text', width: 190 },
+  { key: 'unitclass', label: 'Unit Class', type: 'enum', width: 154 },
+  { key: 'requiredtech', label: 'Prerequisite', type: 'reference', width: 192 },
+  { key: 'upgradeto', label: 'Upgrade To', type: 'reference', width: 192 },
+  { key: 'attack', label: 'Attack', type: 'number', width: 84, min: 0 },
+  { key: 'defence', label: 'Defence', type: 'number', width: 92, min: 0 },
+  { key: 'movement', label: 'Movement', type: 'number', width: 96, min: 0 },
+  { key: 'bombardstrength', label: 'Bombard Strength', type: 'number', width: 106, min: 0 },
+  { key: 'bombardrange', label: 'Bombard Range', type: 'number', width: 96, min: 0 },
+  { key: 'rateoffire', label: 'Rate Of Fire', type: 'number', width: 88, min: 0 },
+  { key: 'airdefence', label: 'Air Defence', type: 'number', width: 92, min: 0 },
+  { key: 'hitpointbonus', label: 'Hit Point Bonus', type: 'number', width: 104, min: 0 },
+  { key: 'operationalrange', label: 'Operational Range', type: 'number', width: 110, min: 0 },
+  { key: 'capacity', label: 'Transport Capacity', type: 'number', width: 110, min: 0 },
+  { key: 'shieldcost', label: 'Shield Cost', type: 'number', width: 104, min: 0 },
+  { key: 'populationcost', label: 'Population Cost', type: 'number', width: 100, min: 0 },
+  { key: 'zoneofcontrol', label: 'Zone Of Control', type: 'bool', width: 98 },
+  { key: 'requiressupport', label: 'Requires Support', type: 'bool', width: 108 }
 ]);
 
 function isReadonlyRuleField(tabKey, field) {
@@ -18252,6 +18252,8 @@ function resolveReferenceEntryForPicker(targetTabKey, rawValue, options = []) {
   }) || null;
 }
 
+let activeReferencePickerCloser = null;
+
 function createReferencePicker(config) {
   const opts = config || {};
   const options = Array.isArray(opts.options) ? opts.options : [];
@@ -18260,6 +18262,7 @@ function createReferencePicker(config) {
   const resolveJumpTarget = typeof opts.resolveJumpTarget === 'function' ? opts.resolveJumpTarget : null;
   const getOptionMetaText = typeof opts.getOptionMetaText === 'function' ? opts.getOptionMetaText : null;
   const pickerClassName = String(opts.pickerClassName || '').trim();
+  const menuClassName = String(opts.menuClassName || '').trim();
   const thumbClassName = String(opts.thumbClassName || '').trim();
   const readOnly = !!opts.readOnly;
   const resetAfterSelect = !!opts.resetAfterSelect;
@@ -18457,9 +18460,15 @@ function createReferencePicker(config) {
 
   const menu = document.createElement('div');
   menu.className = 'tech-picker-menu hidden';
+  if (menuClassName) menu.classList.add(...menuClassName.split(/\s+/).filter(Boolean));
   const menuPortalRoot = menuPortalRootResolver() || null;
   const usePortaledMenu = !!menuPortalRoot;
+  const closeMenu = () => {
+    menu.classList.add('hidden');
+    if (activeReferencePickerCloser === closeMenu) activeReferencePickerCloser = null;
+  };
   const cleanupPortaledMenu = () => {
+    if (activeReferencePickerCloser === closeMenu) activeReferencePickerCloser = null;
     if (usePortaledMenu && menu.parentElement) {
       menu.parentElement.removeChild(menu);
     }
@@ -18553,7 +18562,7 @@ function createReferencePicker(config) {
       ev.preventDefault();
       ev.stopPropagation();
       renderButton(opt.value);
-      menu.classList.add('hidden');
+      closeMenu();
       if (onSelect) onSelect(opt.value);
       if (resetAfterSelect) renderButton(currentValue);
     });
@@ -18568,7 +18577,7 @@ function createReferencePicker(config) {
       jumpBtn.addEventListener('click', (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        menu.classList.add('hidden');
+        closeMenu();
         triggerJump(rowJumpTarget, opt);
       });
       row.appendChild(jumpBtn);
@@ -18605,7 +18614,16 @@ function createReferencePicker(config) {
   button.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    menu.classList.toggle('hidden');
+    const shouldOpen = menu.classList.contains('hidden');
+    if (!shouldOpen) {
+      closeMenu();
+      return;
+    }
+    if (activeReferencePickerCloser && activeReferencePickerCloser !== closeMenu) {
+      activeReferencePickerCloser();
+    }
+    activeReferencePickerCloser = closeMenu;
+    menu.classList.remove('hidden');
     if (!menu.classList.contains('hidden')) {
       if (usePortaledMenu) {
         positionPortaledMenu();
@@ -18635,7 +18653,7 @@ function createReferencePicker(config) {
     ev.preventDefault();
     ev.stopPropagation();
     if (!selectedJumpTarget) return;
-    menu.classList.add('hidden');
+    closeMenu();
     triggerJump(selectedJumpTarget, selectedOption);
   });
   search.addEventListener('input', () => {
@@ -18663,7 +18681,7 @@ function createReferencePicker(config) {
       priorCleanup();
     };
     registerOutsideClickDismiss(wrap, () => {
-      menu.classList.add('hidden');
+      closeMenu();
     }, {
       extraRoots: [menu],
       onDispose: fullCleanup
@@ -18671,7 +18689,7 @@ function createReferencePicker(config) {
     return wrap;
   }
   registerOutsideClickDismiss(wrap, () => {
-    menu.classList.add('hidden');
+    closeMenu();
   });
   return wrap;
 }
@@ -20775,6 +20793,33 @@ function getUnitAvailabilityClassLabel(entry) {
   return 'Land';
 }
 
+function getUnitReferenceSortOptions() {
+  return [
+    { value: 'ingame', label: 'In-game order' },
+    { value: 'az', label: 'A → Z' },
+    { value: 'za', label: 'Z → A' }
+  ];
+}
+
+function getUnitClassFilterOptions() {
+  return [
+    { value: 'all', label: 'All Classes' },
+    { value: 'land', label: 'Land' },
+    { value: 'sea', label: 'Sea' },
+    { value: 'air', label: 'Air' }
+  ];
+}
+
+function isUnitEraVariantReferenceEntry(entry) {
+  const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+  return key.startsWith('PRTO_') && key.includes('_ERAS_');
+}
+
+function isStandardEraUnitEntry(entry) {
+  const eraIndex = getReferenceEntryEraIndex('units', entry);
+  return !isUnitEraVariantReferenceEntry(entry) && Number.isFinite(eraIndex) && eraIndex >= 0;
+}
+
 function isUnitAvailabilityKingUnit(entry) {
   const abilityField = getBiqFieldByBaseKey(entry, 'king');
   if (String(abilityField && abilityField.value || '').trim().toLowerCase() === 'true') return true;
@@ -20793,8 +20838,7 @@ function getUnitAvailabilityRows(tab) {
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   return entries.map((entry, fallbackIndex) => {
     const key = String(entry && entry.civilopediaKey || '');
-    const upperKey = key.trim().toUpperCase();
-    const isEraVariant = upperKey.startsWith('PRTO_') && upperKey.includes('_ERAS_');
+    const isEraVariant = isUnitEraVariantReferenceEntry(entry);
     const rawEraIndex = getReferenceEntryEraIndex('units', entry);
     const eraIndex = Number.isFinite(rawEraIndex) && rawEraIndex >= 0 ? rawEraIndex : (isEraVariant ? -1 : 0);
     const eraOpt = getReferenceEraFilterOptions().find((item) => String(item.value) === String(eraIndex));
@@ -20831,7 +20875,7 @@ function getDefaultUnitAvailabilityCivValue() {
 
 function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue = '' }) {
   const civOptions = getCivilizationBitmaskOptions();
-  const rows = getUnitAvailabilityRows(tab).filter((row) => !row.isEraVariant && Number.isFinite(row.eraIndex) && row.eraIndex >= 0);
+  const rows = getUnitAvailabilityRows(tab).filter((row) => isStandardEraUnitEntry(row.entry));
   const initialMatch = civOptions.find((opt) => String(opt.value) === String(initialCivValue));
   let selectedCiv = initialMatch ? String(initialMatch.value) : getDefaultUnitAvailabilityCivValue();
   const filters = {
@@ -20885,12 +20929,7 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
 
   const classSelect = document.createElement('select');
   classSelect.className = 'unit-availability-class-select';
-  [
-    { value: 'all', label: 'All Classes' },
-    { value: 'land', label: 'Land' },
-    { value: 'sea', label: 'Sea' },
-    { value: 'air', label: 'Air' }
-  ].forEach((opt) => {
+  getUnitClassFilterOptions().forEach((opt) => {
     const o = document.createElement('option');
     o.value = opt.value;
     o.textContent = opt.label;
@@ -21120,7 +21159,6 @@ function ensureUnitTableModalNode() {
       <div class="unit-table-modal-header">
         <div class="unit-table-modal-head">
           <strong id="unit-table-modal-title">Unit Table</strong>
-          <span class="unit-table-modal-note">Existing units only. Add/copy/delete still happens in the main Units view.</span>
         </div>
         <button type="button" class="ghost" data-act="close">Close</button>
       </div>
@@ -21199,7 +21237,7 @@ function getUnitTableClassValue(row) {
 
 function getUnitTableRows(tab) {
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
-  return entries.map((entry, fallbackIndex) => {
+  return entries.filter((entry) => isStandardEraUnitEntry(entry)).map((entry, fallbackIndex) => {
     const values = {};
     UNIT_TABLE_COLUMNS.forEach((column) => {
       values[column.key] = getUnitTableCellValue(entry, column);
@@ -21228,9 +21266,12 @@ function createUnitTableReferencePicker(column, currentValue, onSelect) {
       ? ((BIQ_FIELD_REFS.units || {})[normalizeRuleLookupKey(column.key)] || '')
       : '',
     currentValue: normalizeUnitTableCellValue(currentValue, column),
+    pickerClassName: 'unit-table-picker',
+    menuClassName: 'unit-table-picker-menu',
     searchPlaceholder: `Search ${getUnitTableColumnDisplayLabel(column)}...`,
     noneLabel: '(none)',
-    showOptionThumbs: false,
+    showOptionThumbs: true,
+    menuPortalRoot: () => unitTableModal.node || document.body,
     onSelect
   });
 }
@@ -21256,20 +21297,14 @@ function sortUnitTableRows(rows, sortMode) {
 
 function createUnitTablePanel({ tab, referenceEditable }) {
   const rows = getUnitTableRows(tab);
-  const sortOptions = [
-    { value: 'ingame', label: 'In-game order' },
-    { value: 'az', label: 'A → Z' },
-    { value: 'za', label: 'Z → A' }
-  ];
+  const sortOptions = getUnitReferenceSortOptions();
   const filters = {
     query: '',
     era: String(state.referenceEraFilter.units || 'all'),
     unitClass: 'all',
-    sort: String(state.referenceUnitSort.units || 'ingame')
+    sort: String(state.referenceUnitSort.units || 'ingame'),
+    showKingUnits: false
   };
-
-  let history = [JSON.stringify(rows.map((row) => ({ identity: row.identity, values: row.values })))];
-  let historyIndex = 0;
   let visibleRows = [];
   let lastFocusedCellId = '';
 
@@ -21312,12 +21347,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
 
   const classSelect = document.createElement('select');
   classSelect.className = 'unit-table-class-select';
-  [
-    { value: 'all', label: 'All Classes' },
-    { value: 'land', label: 'Land' },
-    { value: 'sea', label: 'Sea' },
-    { value: 'air', label: 'Air' }
-  ].forEach((opt) => {
+  getUnitClassFilterOptions().forEach((opt) => {
     const option = document.createElement('option');
     option.value = opt.value;
     option.textContent = opt.label;
@@ -21336,6 +21366,17 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   sortSelect.value = filters.sort;
   filterRow.appendChild(sortSelect);
 
+  const showKingWrap = document.createElement('label');
+  showKingWrap.className = 'unit-table-king-toggle';
+  const showKingCheck = document.createElement('input');
+  showKingCheck.type = 'checkbox';
+  showKingCheck.checked = false;
+  const showKingText = document.createElement('span');
+  showKingText.textContent = 'Show King Units';
+  showKingWrap.appendChild(showKingCheck);
+  showKingWrap.appendChild(showKingText);
+  filterRow.appendChild(showKingWrap);
+
   const summary = document.createElement('div');
   summary.className = 'unit-table-summary';
   actionRow.appendChild(summary);
@@ -21352,60 +21393,15 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   undoAllBtn.innerHTML = '<span class="btn-icon">↺</span>Undo All';
   actionRow.appendChild(undoAllBtn);
 
-  const cancelBtn = document.createElement('button');
-  cancelBtn.type = 'button';
-  cancelBtn.className = 'ghost unit-table-cancel-btn';
-  cancelBtn.textContent = 'Cancel';
-  actionRow.appendChild(cancelBtn);
-
-  const applyBtn = document.createElement('button');
-  applyBtn.type = 'button';
-  applyBtn.className = 'secondary unit-table-apply-btn';
-  applyBtn.innerHTML = '<span class="btn-icon">✓</span>Apply';
-  actionRow.appendChild(applyBtn);
-
   toolbar.appendChild(filterRow);
   toolbar.appendChild(actionRow);
-
-  const snapshotNow = () => JSON.stringify(rows.map((row) => ({
-    identity: row.identity,
-    values: row.values
-  })));
-
-  const restoreSnapshot = (snapshotText) => {
-    const parsed = JSON.parse(String(snapshotText || '[]'));
-    const byIdentity = new Map(parsed.map((row) => [String(row && row.identity || ''), row && row.values ? row.values : {}]));
-    rows.forEach((row) => {
-      const nextValues = byIdentity.get(row.identity) || {};
-      UNIT_TABLE_COLUMNS.forEach((column) => {
-        row.values[column.key] = normalizeUnitTableCellValue(nextValues[column.key], column);
-      });
-    });
-  };
-
-  const pushCurrentSnapshot = (priorSnapshot) => {
-    const current = snapshotNow();
-    if (String(priorSnapshot || '') === current) return;
-    if (historyIndex < history.length - 1) history = history.slice(0, historyIndex + 1);
-    history.push(current);
-    historyIndex = history.length - 1;
-  };
-
-  const getChangedCellCount = () => rows.reduce((count, row) => (
-    count + UNIT_TABLE_COLUMNS.reduce((inner, column) => (
-      inner + (normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column) ? 1 : 0)
-    ), 0)
-  ), 0);
-
-  const getChangedRowCount = () => rows.filter((row) => UNIT_TABLE_COLUMNS.some((column) => (
-    normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column)
-  ))).length;
 
   const getVisibleRows = () => {
     const needle = String(filters.query || '').trim().toLowerCase();
     return sortUnitTableRows(rows, filters.sort).filter((row) => {
       const hay = `${String(row && row.values && row.values.name || '')} ${String(row && row.key || '')}`.toLowerCase();
       if (needle && !hay.includes(needle)) return false;
+      if (!filters.showKingUnits && isUnitAvailabilityKingUnit(row.entry)) return false;
       if (filters.era !== 'all' && String(row.eraIndex) !== String(filters.era)) return false;
       if (filters.unitClass !== 'all' && getUnitTableClassValue(row) !== filters.unitClass) return false;
       return true;
@@ -21413,12 +21409,9 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   };
 
   const updateToolbar = () => {
-    const changedRows = getChangedRowCount();
-    const changedCells = getChangedCellCount();
-    summary.textContent = `${visibleRows.length} shown · ${rows.length} total · ${changedRows} rows changed · ${changedCells} cells changed`;
-    undoBtn.disabled = historyIndex <= 0;
-    undoAllBtn.disabled = historyIndex <= 0;
-    applyBtn.disabled = !referenceEditable || changedCells === 0;
+    summary.textContent = `${visibleRows.length} shown · ${rows.length} total`;
+    undoBtn.disabled = !referenceEditable || !getLatestUndoSnapshot();
+    undoAllBtn.disabled = !referenceEditable || !state.isDirty;
   };
 
   const moveCellFocus = (rowOffset, colOffset, fromElement) => {
@@ -21430,7 +21423,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     if (rowIndex < 0 || colIndex < 0) return;
     const nextRowIndex = Math.max(0, Math.min(visibleRows.length - 1, rowIndex + rowOffset));
     const nextColIndex = Math.max(0, Math.min(UNIT_TABLE_COLUMNS.length - 1, colIndex + colOffset));
-    const target = panel.querySelector(`[data-unit-table-row="${CSS.escape(visibleRows[nextRowIndex].identity)}"][data-unit-table-col="${CSS.escape(UNIT_TABLE_COLUMNS[nextColIndex].key)}"]`);
+      const target = panel.querySelector(`[data-unit-table-row="${CSS.escape(visibleRows[nextRowIndex].identity)}"][data-unit-table-col="${CSS.escape(UNIT_TABLE_COLUMNS[nextColIndex].key)}"]`);
     if (!target) return;
     target.focus({ preventScroll: true });
     if (typeof target.select === 'function' && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
@@ -21458,7 +21451,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     control.dataset.unitTableCol = column.key;
     control.addEventListener('focus', () => {
       lastFocusedCellId = `${row.identity}::${column.key}`;
-      control.__unitTableSnapshotBefore = snapshotNow();
+      control.__unitTableUndoRemembered = false;
     });
     control.addEventListener('keydown', (ev) => {
       if (ev.key === 'ArrowLeft' && shouldHandleHorizontalNav(control, ev.key)) {
@@ -21483,15 +21476,25 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     });
   };
 
-  const commitControlSnapshot = (control) => {
-    const before = control && Object.prototype.hasOwnProperty.call(control, '__unitTableSnapshotBefore')
-      ? control.__unitTableSnapshotBefore
-      : null;
-    if (control && Object.prototype.hasOwnProperty.call(control, '__unitTableSnapshotBefore')) {
-      delete control.__unitTableSnapshotBefore;
+  const rememberCellEdit = (control) => {
+    if (!referenceEditable || !control) return;
+    if (control.__unitTableUndoRemembered) return;
+    rememberUndoSnapshot();
+    control.__unitTableUndoRemembered = true;
+  };
+
+  const setUnitTableLiveValue = (row, column, nextValue) => {
+    const normalized = normalizeUnitTableCellValue(nextValue, column);
+    row.values[column.key] = normalized;
+    if (column.key === 'name') {
+      row.entry.name = normalized;
+      const nameField = ensureBiqFieldByBaseKey(row.entry, getReferenceTopNameBiqFieldKey('units'), 'Name', normalized);
+      if (nameField) nameField.value = normalized;
+    } else {
+      const field = ensureBiqFieldByBaseKey(row.entry, column.key, getUnitTableColumnDisplayLabel(column), normalized);
+      if (field) field.value = normalized;
     }
-    pushCurrentSnapshot(before);
-    updateToolbar();
+    setDirty(true);
   };
 
   const validateRows = () => {
@@ -21525,6 +21528,8 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     UNIT_TABLE_COLUMNS.forEach((column) => {
       const th = document.createElement('th');
       th.textContent = getUnitTableColumnDisplayLabel(column);
+      th.title = getUnitTableColumnDisplayLabel(column);
+      attachRichTooltip(th, () => createRuleFieldTooltipText((rows[0] && rows[0].entry) || null, 'units', getUnitTableFieldStub(column)));
       if (column.key === 'name') th.classList.add('unit-table-col-name');
       if (column.type === 'bool') th.classList.add('unit-table-col-bool');
       if (Number.isFinite(column.width)) th.style.width = `${column.width}px`;
@@ -21537,9 +21542,6 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     const fragment = document.createDocumentFragment();
     visibleRows.forEach((row) => {
       const tr = document.createElement('tr');
-      if (UNIT_TABLE_COLUMNS.some((column) => normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column))) {
-        tr.classList.add('is-dirty');
-      }
 
       const thumbCell = document.createElement('td');
       thumbCell.className = 'unit-table-thumb-cell';
@@ -21553,9 +21555,6 @@ function createUnitTablePanel({ tab, referenceEditable }) {
         const td = document.createElement('td');
         if (column.key === 'name') td.classList.add('unit-table-name-cell');
         if (column.type === 'bool') td.classList.add('unit-table-bool-cell');
-        if (normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column)) {
-          td.classList.add('is-dirty');
-        }
 
         if (column.type === 'text') {
           const wrap = document.createElement('div');
@@ -21566,10 +21565,10 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           input.disabled = !referenceEditable;
           input.className = 'unit-table-text-input';
           input.addEventListener('input', () => {
-            row.values[column.key] = String(input.value || '');
+            rememberCellEdit(input);
+            setUnitTableLiveValue(row, column, input.value);
             updateToolbar();
           });
-          input.addEventListener('change', () => commitControlSnapshot(input));
           wrap.appendChild(input);
           const meta = document.createElement('div');
           meta.className = 'unit-table-name-meta';
@@ -21585,10 +21584,10 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           input.disabled = !referenceEditable;
           input.className = 'unit-table-number-input';
           input.addEventListener('input', () => {
-            row.values[column.key] = String(input.value || '').trim();
+            rememberCellEdit(input);
+            setUnitTableLiveValue(row, column, String(input.value || '').trim());
             updateToolbar();
           });
-          input.addEventListener('change', () => commitControlSnapshot(input));
           td.appendChild(input);
           attachGridNav(input, row, column);
         } else if (column.type === 'bool') {
@@ -21598,16 +21597,34 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           check.disabled = !referenceEditable;
           check.className = 'unit-table-bool-input';
           check.addEventListener('change', () => {
-            row.values[column.key] = check.checked ? 'true' : 'false';
-            commitControlSnapshot(check);
-            render();
+            rememberCellEdit(check);
+            setUnitTableLiveValue(row, column, check.checked ? 'true' : 'false');
+            updateToolbar();
           });
           td.appendChild(check);
           attachGridNav(check, row, column);
+        } else if (column.type === 'enum' && column.key === 'unitclass') {
+          const select = document.createElement('select');
+          select.className = 'unit-table-plain-select';
+          getEnumOptionsForField('units', getUnitTableFieldStub(column)).forEach((opt) => {
+            const option = document.createElement('option');
+            option.value = String(opt.value);
+            option.textContent = String(opt.label || opt.value);
+            select.appendChild(option);
+          });
+          select.value = normalizeUnitTableCellValue(row.values[column.key], column);
+          select.disabled = !referenceEditable;
+          select.addEventListener('change', () => {
+            rememberCellEdit(select);
+            setUnitTableLiveValue(row, column, select.value);
+            updateToolbar();
+          });
+          td.appendChild(select);
+          attachGridNav(select, row, column);
         } else {
           const picker = createUnitTableReferencePicker(column, row.values[column.key], (value) => {
-            row.values[column.key] = normalizeUnitTableCellValue(value, column);
-            commitControlSnapshot(pickerButton);
+            rememberCellEdit(pickerButton || picker);
+            setUnitTableLiveValue(row, column, value);
             render();
           });
           picker.classList.add('unit-table-picker');
@@ -21648,59 +21665,20 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   });
   sortSelect.addEventListener('change', () => {
     filters.sort = sortSelect.value || 'ingame';
+    state.referenceUnitSort.units = filters.sort;
+    render();
+  });
+  showKingCheck.addEventListener('change', () => {
+    filters.showKingUnits = !!showKingCheck.checked;
     render();
   });
   undoBtn.addEventListener('click', () => {
-    if (historyIndex <= 0) return;
-    historyIndex -= 1;
-    restoreSnapshot(history[historyIndex]);
-    render();
+    if (!referenceEditable || !getLatestUndoSnapshot()) return;
+    undoOneStep().then(() => openUnitTableModal({ tab: state.bundle && state.bundle.tabs && state.bundle.tabs.units, referenceEditable: isScenarioMode() }));
   });
   undoAllBtn.addEventListener('click', () => {
-    if (historyIndex <= 0) return;
-    historyIndex = 0;
-    restoreSnapshot(history[historyIndex]);
-    render();
-  });
-  cancelBtn.addEventListener('click', () => {
-    closeUnitTableModal();
-  });
-  applyBtn.addEventListener('click', () => {
-    if (!referenceEditable) return;
-    const issues = validateRows();
-    if (issues.length > 0) {
-      setStatus(issues[0], true);
-      return;
-    }
-    const changedRows = rows.filter((row) => UNIT_TABLE_COLUMNS.some((column) => (
-      normalizeUnitTableCellValue(row.values[column.key], column) !== normalizeUnitTableCellValue(row.originalValues[column.key], column)
-    )));
-    if (changedRows.length === 0) {
-      setStatus('No unit table changes to apply.');
-      return;
-    }
-    rememberUndoSnapshot();
-    changedRows.forEach((row) => {
-      UNIT_TABLE_COLUMNS.forEach((column) => {
-        const nextValue = normalizeUnitTableCellValue(row.values[column.key], column);
-        const originalValue = normalizeUnitTableCellValue(row.originalValues[column.key], column);
-        if (nextValue === originalValue) return;
-        if (column.key === 'name') {
-          row.entry.name = nextValue;
-          const nameField = ensureBiqFieldByBaseKey(row.entry, getReferenceTopNameBiqFieldKey('units'), 'Name', nextValue);
-          if (nameField) nameField.value = nextValue;
-        } else {
-          const field = ensureBiqFieldByBaseKey(row.entry, column.key, getUnitTableColumnDisplayLabel(column), nextValue);
-          if (field) field.value = nextValue;
-        }
-        row.originalValues[column.key] = nextValue;
-      });
-    });
-    state.referenceUnitSort.units = filters.sort;
-    setDirty(true);
-    renderActiveTab({ preserveTabScroll: true });
-    closeUnitTableModal();
-    setStatus(`Applied table edits to ${changedRows.length} unit${changedRows.length === 1 ? '' : 's'}.`);
+    if (!referenceEditable || !state.isDirty) return;
+    undoAllChanges().then(() => openUnitTableModal({ tab: state.bundle && state.bundle.tabs && state.bundle.tabs.units, referenceEditable: isScenarioMode() }));
   });
 
   render();
@@ -26924,12 +26902,7 @@ function renderReferenceTab(tab, tabKey) {
   let unitTableBtn = null;
   if (tabKey === 'units') {
     unitSortSelect = document.createElement('select');
-    const unitSortOptions = [
-      { value: 'ingame', label: 'In-game order' },
-      { value: 'az', label: 'A → Z' },
-      { value: 'za', label: 'Z → A' }
-    ];
-    unitSortOptions.forEach((opt) => {
+    getUnitReferenceSortOptions().forEach((opt) => {
       const o = document.createElement('option');
       o.value = opt.value;
       o.textContent = opt.label;
