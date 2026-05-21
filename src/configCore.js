@@ -1629,7 +1629,7 @@ function loadBiqTab({ mode, civ3Path, scenarioPath, textEncoding = 'windows-1252
     };
   }
   try {
-    const resolvedTextEncoding = resolveAutoTextEncoding(textEncoding);
+    const resolvedTextEncoding = detectBiqTextEncodingFromBuffer(inflated.buffer, textEncoding);
     const headerMeta = parseBiqHeaderMetadata(inflated.buffer, { textEncoding: resolvedTextEncoding });
     const bridged = runBiqBridgeOnInflatedBuffer({ buffer: inflated.buffer, textEncoding: resolvedTextEncoding });
     if (bridged.ok) {
@@ -1763,11 +1763,25 @@ function scoreDecodedTextCandidate(text) {
   const hangulCount = countMatches(value, /[\uAC00-\uD7AF]/g);
   const cyrillicCount = countMatches(value, /[\u0400-\u04FF]/g);
   const latinCount = countMatches(value, /[A-Za-z\u00C0-\u024F]/g);
+  const mixedLatinCyrillicTokenCount = countMatches(value, /\b(?=[A-Za-z\u00C0-\u024F\u0400-\u04FF]*[A-Za-z\u00C0-\u024F])(?=[A-Za-z\u00C0-\u024F\u0400-\u04FF]*[\u0400-\u04FF])[A-Za-z\u00C0-\u024F\u0400-\u04FF]+\b/gu);
+  const mixedLatinCjkTokenCount = countMatches(value, /\b(?=[A-Za-z\u00C0-\u024F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]*[A-Za-z\u00C0-\u024F])(?=[A-Za-z\u00C0-\u024F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]*[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])[A-Za-z\u00C0-\u024F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]+\b/gu);
+  const mixedLatinKanaTokenCount = countMatches(value, /\b(?=[A-Za-z\u00C0-\u024F\u3040-\u30FF]*[A-Za-z\u00C0-\u024F])(?=[A-Za-z\u00C0-\u024F\u3040-\u30FF]*[\u3040-\u30FF])[A-Za-z\u00C0-\u024F\u3040-\u30FF]+\b/gu);
+  const mixedLatinHangulTokenCount = countMatches(value, /\b(?=[A-Za-z\u00C0-\u024F\uAC00-\uD7AF]*[A-Za-z\u00C0-\u024F])(?=[A-Za-z\u00C0-\u024F\uAC00-\uD7AF]*[\uAC00-\uD7AF])[A-Za-z\u00C0-\u024F\uAC00-\uD7AF]+\b/gu);
+  const latinToCyrillicAdjacencyCount = countMatches(value, /[A-Za-z\u00C0-\u024F][\u0400-\u04FF]|[\u0400-\u04FF][A-Za-z\u00C0-\u024F]/gu);
+  const latinToCjkAdjacencyCount = countMatches(value, /[A-Za-z\u00C0-\u024F][\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]|[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF][A-Za-z\u00C0-\u024F]/gu);
+  const latinToKanaAdjacencyCount = countMatches(value, /[A-Za-z\u00C0-\u024F][\u3040-\u30FF]|[\u3040-\u30FF][A-Za-z\u00C0-\u024F]/gu);
+  const latinToHangulAdjacencyCount = countMatches(value, /[A-Za-z\u00C0-\u024F][\uAC00-\uD7AF]|[\uAC00-\uD7AF][A-Za-z\u00C0-\u024F]/gu);
   const whitespaceCount = countMatches(value, /[\t\r\n ]/g);
   const markerCount = countMatches(value, /(^|\n)\s*#[A-Z0-9_]+/g) + countMatches(value, /\$LINK<|\^\{|\b(?:ICON|DESC|RACE|TECH|GOOD|BLDG|PRTO|GCON|TERR|TFRM)_/g);
   const suspiciousMojibakeCount = countMatches(value, /[¤¦¨¯´¸¼½¾Ð×Þàãðõ÷øþÿ]/g)
     + countMatches(value, /[ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝ]/g);
   const printableCount = countMatches(value, /[\p{L}\p{N}\p{P}\p{S}\s]/gu);
+  const eastAsianCount = cjkCount + kanaCount + hangulCount;
+  const mixedEastAsianCount = mixedLatinCjkTokenCount + mixedLatinKanaTokenCount + mixedLatinHangulTokenCount
+    + latinToCjkAdjacencyCount + latinToKanaAdjacencyCount + latinToHangulAdjacencyCount;
+  const mixedCyrillicCount = mixedLatinCyrillicTokenCount + latinToCyrillicAdjacencyCount;
+  const eastAsianShare = eastAsianCount / Math.max(1, latinCount + cyrillicCount + eastAsianCount);
+  const cyrillicShare = cyrillicCount / Math.max(1, latinCount + cyrillicCount + eastAsianCount);
   let score = 0;
   score -= replacementCount * 180;
   score -= controlCount * 60;
@@ -1776,9 +1790,26 @@ function scoreDecodedTextCandidate(text) {
   score += hangulCount * 12;
   score += cyrillicCount * 1.5;
   score += latinCount * 0.5;
+  score -= mixedLatinCyrillicTokenCount * 18;
+  score -= mixedLatinCjkTokenCount * 24;
+  score -= mixedLatinKanaTokenCount * 24;
+  score -= mixedLatinHangulTokenCount * 24;
+  score -= latinToCyrillicAdjacencyCount * 22;
+  score -= latinToCjkAdjacencyCount * 28;
+  score -= latinToKanaAdjacencyCount * 28;
+  score -= latinToHangulAdjacencyCount * 28;
   score += whitespaceCount * 0.1;
   score += markerCount * 12;
   score += printableCount / length;
+  if (eastAsianCount > 0 && mixedEastAsianCount > 0 && latinCount > eastAsianCount * 12) {
+    score -= mixedEastAsianCount * 80;
+    if (eastAsianShare < 0.02) {
+      score -= eastAsianCount * 6;
+    }
+  }
+  if (cyrillicCount > 0 && mixedCyrillicCount > 0 && latinCount > cyrillicCount * 12 && cyrillicShare < 0.04) {
+    score -= mixedCyrillicCount * 32;
+  }
   if (hangulCount > 0 && cjkCount > 0 && kanaCount === 0) {
     score -= Math.min(hangulCount, cjkCount) * 10;
   }
@@ -1809,6 +1840,48 @@ function detectTextFileEncodingFromBuffer(buffer, preferredEncoding = DEFAULT_TE
     if (score > bestScore) {
       bestScore = score;
       bestEncoding = candidate;
+    }
+  }
+  return bestEncoding;
+}
+
+function collectBiqDecodedTextSamples(parsed, headerMeta = {}) {
+  const parts = [
+    headerMeta && headerMeta.biqTitle,
+    headerMeta && headerMeta.biqDescription
+  ];
+  const sections = Array.isArray(parsed && parsed.sections) ? parsed.sections : [];
+  sections.slice(0, 48).forEach((section) => {
+    parts.push(section && section.title);
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.slice(0, 256).forEach((record) => {
+      parts.push(record && record.name);
+      parts.push(record && record.english);
+    });
+  });
+  return parts.filter(Boolean).join('\n');
+}
+
+function detectBiqTextEncodingFromBuffer(buffer, preferredEncoding = DEFAULT_TEXT_FILE_ENCODING) {
+  const preferred = normalizeTextFileEncoding(preferredEncoding);
+  if (preferred !== 'auto') return preferred;
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return 'windows-1252';
+  const hasHighBytes = buffer.some((byte) => byte >= 0x80);
+  if (!hasHighBytes) return 'windows-1252';
+  let bestEncoding = 'windows-1252';
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of ['utf8', 'windows-1252', 'windows-1251', 'gbk', 'big5', 'shift_jis', 'euc-kr']) {
+    try {
+      const headerMeta = parseBiqHeaderMetadata(buffer, { textEncoding: candidate });
+      const bridged = jsParseBiqBuffer(buffer, { textEncoding: candidate });
+      const sampleText = collectBiqDecodedTextSamples(bridged && bridged.ok ? bridged : null, headerMeta);
+      const score = scoreDecodedTextCandidate(sampleText) + (bridged && bridged.ok ? 8 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        bestEncoding = candidate;
+      }
+    } catch (_err) {
+      continue;
     }
   }
   return bestEncoding;
@@ -5051,6 +5124,59 @@ function buildMapTabFromBiq(biqTab, mode, options = {}) {
   };
 }
 
+function detectBiqHasMapData(biqTab) {
+  const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections : [];
+  const wmapSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP');
+  const tileSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE');
+  const wmapCount = Number(
+    (wmapSection && wmapSection.count)
+      || (Array.isArray(wmapSection && wmapSection.records) ? wmapSection.records.length : 0)
+      || 0
+  );
+  const tileCount = Number(
+    (tileSection && tileSection.count)
+      || (Array.isArray(tileSection && tileSection.records) ? tileSection.records.length : 0)
+      || 0
+  );
+  return !!(wmapSection && tileSection && wmapCount > 0 && tileCount > 0);
+}
+
+function buildDeferredMapTab(biqTab, mode, options = {}) {
+  const hasMapData = detectBiqHasMapData(biqTab);
+  return {
+    title: 'Map',
+    type: 'map',
+    readOnly: mode !== 'scenario',
+    sourcePath: (biqTab && biqTab.sourcePath) || '',
+    error: (biqTab && biqTab.error) || '',
+    hasMapData,
+    originalHasMap: hasMapData,
+    mapMutation: null,
+    mapMutationSource: null,
+    recordOps: [],
+    scenarioDistricts: options.scenarioDistricts || null,
+    sections: [],
+    deferred: true
+  };
+}
+
+function materializeMapTab(payload = {}) {
+  const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
+  const biqTab = payload.biqTab || payload.biq || null;
+  const existingMapTab = payload.mapTab && typeof payload.mapTab === 'object' ? payload.mapTab : null;
+  const supportingTabs = payload.tabs && typeof payload.tabs === 'object' ? payload.tabs : {};
+  const scenarioDistricts = Object.prototype.hasOwnProperty.call(payload, 'scenarioDistricts')
+    ? payload.scenarioDistricts
+    : (existingMapTab && existingMapTab.scenarioDistricts) || null;
+  const mapTab = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts });
+  mapTab.recordOps = Array.isArray(existingMapTab && existingMapTab.recordOps) ? existingMapTab.recordOps : [];
+  mapTab.mapMutation = existingMapTab && existingMapTab.mapMutation ? existingMapTab.mapMutation : null;
+  mapTab.mapMutationSource = existingMapTab && existingMapTab.mapMutationSource ? existingMapTab.mapMutationSource : null;
+  mapTab.pendingMapResize = existingMapTab && existingMapTab.pendingMapResize ? existingMapTab.pendingMapResize : null;
+  applyScenarioDistrictsToMapTab(mapTab, supportingTabs);
+  return mapTab;
+}
+
 function buildBiqStructureTabs(biqTab, mode) {
   const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections : [];
   const headerTitle = cleanDisplayText((biqTab && biqTab.biqTitle) || '');
@@ -5746,11 +5872,12 @@ function loadBundle(payload) {
   const readPaths = new Set();
   activeReadCollector = readPaths;
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
+  const deferMapTab = !!(payload && payload.deferMapTab);
   const c3xPath = payload.c3xPath || '';
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
   const textFileEncoding = normalizeTextFileEncoding(payload.textFileEncoding);
-  const initialBiqTextEncoding = resolveAutoTextEncoding(textFileEncoding);
+  const initialBiqTextEncoding = textFileEncoding;
   const scenarioSearchFolderOverride = normalizeScenarioSearchFolderOverride(payload.scenarioSearchFolderOverride);
   log.setCiv3Root(civ3Path);
   log.info('loadBundle', `mode=${mode}`);
@@ -5829,26 +5956,6 @@ function loadBundle(payload) {
       defaultRulesBiqTab: globalBiqTab,
       textFileEncoding
     });
-    const resolvedBiqTextEncoding = inferBiqTextEncodingFromReferenceTabs(referenceTabs, textFileEncoding);
-    if (resolvedBiqTextEncoding !== String(biqTab && biqTab.textEncoding || '')) {
-      biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, textEncoding: resolvedBiqTextEncoding });
-      bundle.biq = biqTab;
-      bundle.biqTextEncoding = String(biqTab && biqTab.textEncoding || resolvedBiqTextEncoding);
-      const reloadedNeedsDefaultRulesFallback = shouldUseScenarioDefaultRulesFallback(mode, biqTab);
-      if (reloadedNeedsDefaultRulesFallback) {
-        globalBiqTab = loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding: resolvedBiqTextEncoding });
-      } else {
-        globalBiqTab = null;
-      }
-      referenceTabs = buildEffectiveReferenceTabs(civ3Path, {
-        mode,
-        scenarioPath: mode === 'scenario' ? (scenarioContext.contentWriteRoot || scenarioDir) : scenarioDir,
-        scenarioPaths: scenarioSearchPaths,
-        biqTab,
-        defaultRulesBiqTab: globalBiqTab,
-        textFileEncoding
-      });
-    }
     for (const spec of REFERENCE_TAB_SPECS) {
       if (referenceTabs[spec.key]) {
         if (spec.key === 'terrainPedia' || spec.key === 'workerActions') continue;
@@ -5863,7 +5970,7 @@ function loadBundle(payload) {
         preferredEncoding: textFileEncoding
       })
       : null;
-    bundle.tabs.map = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts: scenarioDistrictsMetadata });
+    bundle.tabs.map = buildDeferredMapTab(biqTab, mode, { scenarioDistricts: scenarioDistrictsMetadata });
     let biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
     if (shouldUseScenarioDefaultRulesFallback(mode, biqTab)) {
       globalBiqTab = globalBiqTab || loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding: bundle.biqTextEncoding || textFileEncoding });
@@ -5882,6 +5989,15 @@ function loadBundle(payload) {
     } else {
       if (referenceTabs.terrainPedia) bundle.tabs.terrainPedia = referenceTabs.terrainPedia;
       if (referenceTabs.workerActions) bundle.tabs.workerActions = referenceTabs.workerActions;
+    }
+
+    if (!deferMapTab && bundle.tabs.map) {
+      bundle.tabs.map = materializeMapTab({
+        mode,
+        biqTab,
+        mapTab: bundle.tabs.map,
+        tabs: bundle.tabs
+      });
     }
 
     const defaultBaseText = readTextIfExists(filePaths.base.defaultPath) || '';
@@ -5939,8 +6055,6 @@ function loadBundle(payload) {
         }
       };
     }
-    applyScenarioDistrictsToMapTab(bundle.tabs.map, bundle.tabs);
-
     bundle.readFiles = Array.from(readPaths).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
     log.info('loadBundle', `Complete — ${bundle.readFiles.length} file(s) read, tabs=[${Object.keys(bundle.tabs).join(', ')}]`);
     if (mode === 'scenario') {
@@ -6683,9 +6797,8 @@ function buildSavePlan(payload) {
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
   const textFileEncoding = normalizeTextFileEncoding(payload.textFileEncoding);
-  const civSourceDetails = (((payload.tabs || {}).civilizations || {}).sourceDetails || {});
-  const inferredBiqTextEncoding = inferBiqTextEncodingFromReferenceTabs({ civilizations: { sourceDetails: civSourceDetails } }, textFileEncoding);
-  const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, textEncoding: inferredBiqTextEncoding });
+  const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, textEncoding: textFileEncoding });
+  const inferredBiqTextEncoding = String(biqTab && biqTab.textEncoding || resolveAutoTextEncoding(textFileEncoding));
   const pendingSearchFolderOverride = mode === 'scenario'
     ? getPendingScenarioSearchFolderOverride(payload.tabs || {})
     : null;
@@ -9462,6 +9575,7 @@ module.exports = {
   FILE_SPECS,
   normalizeTextFileEncoding,
   detectTextFileEncodingFromBuffer,
+  detectBiqTextEncodingFromBuffer,
   readTextFileWithEncodingInfoIfExists,
   parseIniLines,
   buildBaseModel,
@@ -9491,6 +9605,7 @@ module.exports = {
   resolveBiqPath,
   createScenario,
   deleteScenario,
+  materializeMapTab,
   parseBiqSectionsFromBuffer,
   resolvePaths,
   loadBundle,

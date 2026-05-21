@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadBundle } = require('../src/configCore');
+const { loadBundle, materializeMapTab } = require('../src/configCore');
 
 const CIV3_ROOT = path.resolve(__dirname, '..', '..');
 const SCENARIOS_DIR = path.join(CIV3_ROOT, 'Scenarios');
@@ -55,8 +55,17 @@ LARGE_MAP_FIXTURES.forEach(({ label, fileName }) => {
       scenarioPath
     });
     assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected bundle to include a map tab');
-    const wmap = getSection(bundle.tabs.map, 'WMAP');
-    const tile = getSection(bundle.tabs.map, 'TILE');
+    const mapTab = materializeMapTab({
+      mode: 'scenario',
+      biq: bundle.biq,
+      mapTab: bundle.tabs.map,
+      tabs: {
+        districts: bundle.tabs.districts,
+        naturalWonders: bundle.tabs.naturalWonders
+      }
+    });
+    const wmap = getSection(mapTab, 'WMAP');
+    const tile = getSection(mapTab, 'TILE');
     assert.ok(wmap, 'expected WMAP section');
     assert.ok(tile, 'expected TILE section');
     assert.equal(getIntField((wmap.records || [])[0], 'width', -1), 100, 'expected 100-tile map width');

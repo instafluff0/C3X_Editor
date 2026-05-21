@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   getPreview: (payload) => ipcRenderer.invoke('manager:get-preview', payload),
   emitRendererDebugLog: (entry) => ipcRenderer.send('manager:renderer-debug-log', entry),
   loadBundle: (payload) => ipcRenderer.invoke('manager:load-bundle', payload),
+  materializeMapTab: (payload) => ipcRenderer.invoke('manager:materialize-map-tab', payload),
   validateBundle: (payload) => ipcRenderer.invoke('manager:validate-bundle', payload),
   updateScenarioOptionMenuState: (payload) => ipcRenderer.invoke('manager:update-scenario-option-menu-state', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload),

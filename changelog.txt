@@ -1,4 +1,6 @@
 * RELEASE 27.11
+- Fixed BIQ auto-encoding detection to read BIQ/map strings from the BIQ itself instead of inferring from Civilopedia/PediaIcons text layers, which corrects mixed-language cases such as accented city names rendering as the wrong characters on the Map tab.
+- Deferred full Map-tab BIQ projection until the Map tab is actually opened, improving app load time and scenario switching for large BIQs while preserving on-demand map editing and import behavior.
 - Enabled the new Map tab with in-app scenario map importing, resizing, removal, and editing.
 - Renamed the File menu toggles to `Enable Custom Rules` and `Enable Custom Player Data`, and kept them visible but disabled outside Scenario mode instead of hiding them entirely in Standard Game mode.
 - Unified `Scenario -> Players` custom-player-data field labeling so newly enabled previews and existing BIQs both use the same human-readable `LEAD` labels, and fixed numeric start-unit keys like `starting_units_of_type_0` to render as resolved unit names such as `Settler Units` instead of raw `0 Units`.

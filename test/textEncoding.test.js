@@ -7,12 +7,15 @@ const iconv = require('iconv-lite');
 
 const {
   detectTextFileEncodingFromBuffer,
+  detectBiqTextEncodingFromBuffer,
   readTextFileWithEncodingInfoIfExists,
   loadBundle,
   saveBundle,
   buildScenarioCivilopediaEditResult,
   buildScenarioDiplomacyEditResult
 } = require('../src/configCore');
+const { decompress } = require('../src/biq/decompress');
+const { applyBiqEdits } = require('../src/biq/biqBridgeJs');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-encoding-'));
@@ -20,6 +23,23 @@ function mkTmpDir() {
 
 function writeEncoded(filePath, text, encoding) {
   fs.writeFileSync(filePath, iconv.encode(text, encoding));
+}
+
+function ensureDefaultC3xFiles(root) {
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = Wonder\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = Natural\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = Anim\n', 'utf8');
+}
+
+function loadInflatedFixture(name) {
+  const fixturePath = path.join(__dirname, 'fixtures', name);
+  const raw = fs.readFileSync(fixturePath);
+  if (raw.subarray(0, 4).toString('latin1').startsWith('BIC')) return raw;
+  const result = decompress(raw);
+  if (!result.ok) throw new Error(result.error || 'Failed to decompress BIQ fixture');
+  return result.data;
 }
 
 function norm(text) {
@@ -172,4 +192,88 @@ test('saveBundle preserves localized district config encoding', () => {
   assert.ok(info);
   assert.equal(info.encoding, 'gbk');
   assert.match(info.text, /display_name\s*=\s*"农业中心"/);
+});
+
+test('detectBiqTextEncodingFromBuffer prefers BIQ-local cp1252 accented names over cp1251 text-layer hints', () => {
+  const buffer = loadInflatedFixture('biq_playable_civs_fixture.biq');
+  const edited = applyBiqEdits({
+    buffer,
+    textEncoding: 'windows-1252',
+    edits: [
+      { sectionCode: 'RACE', recordRef: 'RACE_AZTECS', fieldKey: 'civilization_name', value: 'Chichén Itza' },
+      { sectionCode: 'RACE', recordRef: 'RACE_AZTECS', fieldKey: 'name', value: 'Montezúma' }
+    ]
+  });
+
+  assert.equal(edited.ok, true);
+  assert.equal(detectBiqTextEncodingFromBuffer(edited.buffer, 'auto'), 'windows-1252');
+});
+
+test('loadBundle keeps BIQ names correct when BIQ encoding differs from localized text files', () => {
+  const root = mkTmpDir();
+  const c3xPath = path.join(root, 'c3x');
+  const civ3Path = path.join(root, 'Civ3');
+  const scenarioDir = path.join(civ3Path, 'Conquests', 'Scenarios', 'Encoding Scenario');
+  fs.mkdirSync(c3xPath, { recursive: true });
+  fs.mkdirSync(path.join(civ3Path, 'Conquests', 'Text'), { recursive: true });
+  fs.mkdirSync(path.join(scenarioDir, 'Text'), { recursive: true });
+  ensureDefaultC3xFiles(c3xPath);
+
+  writeEncoded(path.join(civ3Path, 'Conquests', 'Text', 'Civilopedia.txt'), '#RACE_TEST\nРусский текст\n', 'windows-1251');
+  writeEncoded(path.join(civ3Path, 'Conquests', 'Text', 'PediaIcons.txt'), '#ICON_RACE_TEST\nart\\civilopedia\\icons\\races\\testlarge.pcx\nart\\civilopedia\\icons\\races\\testsmall.pcx\n', 'windows-1251');
+  writeEncoded(path.join(civ3Path, 'Conquests', 'Text', 'diplomacy.txt'), '#AIFIRSTCONTACT\n^Привет\n', 'windows-1251');
+
+  const buffer = loadInflatedFixture('biq_playable_civs_fixture.biq');
+  const edited = applyBiqEdits({
+    buffer,
+    textEncoding: 'windows-1252',
+    edits: [
+      { sectionCode: 'RACE', recordRef: 'RACE_AZTECS', fieldKey: 'civilization_name', value: 'Chichén Itza' },
+      { sectionCode: 'RACE', recordRef: 'RACE_AZTECS', fieldKey: 'name', value: 'Montezúma' }
+    ]
+  });
+  assert.equal(edited.ok, true);
+
+  const scenarioPath = path.join(scenarioDir, 'encoding-test.biq');
+  fs.writeFileSync(scenarioPath, edited.buffer);
+
+  const bundle = loadBundle({
+    mode: 'scenario',
+    c3xPath,
+    civ3Path,
+    scenarioPath,
+    textFileEncoding: 'auto'
+  });
+  const aztecs = (bundle.tabs.civilizations.entries || []).find((entry) => String(entry.civilopediaKey || '').toUpperCase() === 'RACE_AZTECS');
+  assert.ok(aztecs);
+  assert.equal(bundle.biqTextEncoding, 'windows-1252');
+  assert.equal(String(aztecs.name || ''), 'Chichén Itza');
+  assert.equal(String(aztecs.biqFields.find((field) => String(field.baseKey || field.key).toLowerCase() === 'leadername')?.value || ''), 'Montezúma');
+});
+
+test('detectBiqTextEncodingFromBuffer keeps Age of Discovery BIQ on windows-1252 when present locally', {
+  skip: !fs.existsSync('/Users/nicdobbins/fun/Civilization III Complete/Conquests/Conquests/6 Age of Discovery.biq') && 'local Conquests sample not present'
+}, () => {
+  const biqPath = '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Conquests/6 Age of Discovery.biq';
+  const raw = fs.readFileSync(biqPath);
+  const inflated = raw.subarray(0, 4).toString('latin1').startsWith('BIC') ? raw : decompress(raw).data;
+  assert.equal(detectBiqTextEncodingFromBuffer(inflated, 'auto'), 'windows-1252');
+
+  const bundle = loadBundle({
+    mode: 'scenario',
+    c3xPath: process.cwd(),
+    civ3Path: '/Users/nicdobbins/fun/Civilization III Complete/Conquests',
+    scenarioPath: biqPath,
+    textFileEncoding: 'auto'
+  });
+  assert.equal(bundle.biqTextEncoding, 'windows-1252');
+
+  const citySection = (bundle.biq && Array.isArray(bundle.biq.sections))
+    ? bundle.biq.sections.find((section) => String(section.code || '').toUpperCase() === 'CITY')
+    : null;
+  const chichen = Array.isArray(citySection && citySection.records)
+    ? citySection.records.find((record) => String(record.name || '').includes('Chich'))
+    : null;
+  assert.ok(chichen);
+  assert.equal(String(chichen.name || '').trim(), 'Chichén Itza');
 });

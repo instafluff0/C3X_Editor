@@ -138,6 +138,7 @@ const state = {
   previewContextVersion: 0,
   mapGenerationRuleBundleCache: null,
   mapGenerationRuleBundleCacheKey: '',
+  mapTabLoadPromise: null,
   districtRepresentativePreviewPending: new Map(),
   unitAnimationUiByKey: {},
   activeMapCityEditSessionKey: '',
@@ -2679,10 +2680,65 @@ function getCleanMapUndoSnapshot() {
   return buildSerializedScopedSnapshot('map', { map: cleanTabs.map });
 }
 
+function reconcileMaterializedMapTabSnapshots(mapTab) {
+  if (!mapTab) return;
+  state.cleanSnapshot = replaceMapTabInSnapshot(state.cleanSnapshot, mapTab);
+  state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
+  state.undoHistory = cloneUndoHistoryEntries(state.undoHistory).map((entry) => replaceMapTabInSnapshot(entry, mapTab));
+}
+
 function isMapDirty() {
   const currentMap = state.bundle && state.bundle.tabs ? state.bundle.tabs.map : null;
   const cleanMap = getCleanTabsObject().map || null;
   return hasChangedFromClean(currentMap, cleanMap);
+}
+
+async function ensureMapTabLoaded(options = {}) {
+  if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs.map) return null;
+  const current = state.bundle.tabs.map;
+  if (!current || !current.deferred) return current;
+  if (state.mapTabLoadPromise) return state.mapTabLoadPromise;
+  if (!window.c3xManager || typeof window.c3xManager.materializeMapTab !== 'function') return current;
+  const rerender = options && options.rerender !== false;
+  const openModal = !!(options && options.openModal);
+  const ownsLoadingOverlay = !state.isLoading;
+  if (ownsLoadingOverlay) {
+    setLoadingUi(true, 'Loading map editor...');
+  }
+  state.mapTabLoadPromise = window.c3xManager.materializeMapTab({
+    mode: state.settings && state.settings.mode || 'global',
+    civ3Path: state.settings && state.settings.civ3Path || '',
+    scenarioPath: state.settings && state.settings.scenarioPath || '',
+    biq: state.bundle.biq,
+    mapTab: current,
+    tabs: {
+      districts: state.bundle.tabs.districts || null,
+      naturalWonders: state.bundle.tabs.naturalWonders || null
+    }
+  }).then((materializedTab) => {
+    if (!state.bundle || !state.bundle.tabs || state.bundle.tabs.map !== current) {
+      return materializedTab;
+    }
+    state.bundle.tabs.map = materializedTab;
+    reconcileMaterializedMapTabSnapshots(materializedTab);
+    if (rerender && state.activeTab === 'map') {
+      renderTabs();
+      renderActiveTab({ preserveTabScroll: true });
+    }
+    if (openModal && state.activeTab === 'map') {
+      reopenMapModalForTab(materializedTab);
+    }
+    return materializedTab;
+  }).catch((err) => {
+    setStatus(err && err.message ? err.message : 'Failed to load map editor.', true);
+    return current;
+  }).finally(() => {
+    if (ownsLoadingOverlay) {
+      setLoadingUi(false);
+    }
+    state.mapTabLoadPromise = null;
+  });
+  return state.mapTabLoadPromise;
 }
 
 function replaceMapTabInSnapshot(snapshot, mapTab) {
@@ -3970,7 +4026,8 @@ async function loadGlobalRulesTabsForScenarioOptions() {
     c3xPath: state.settings.c3xPath,
     civ3Path: state.settings.civ3Path,
     scenarioPath: '',
-    textFileEncoding: normalizeTextFileEncoding(state.settings.textFileEncoding)
+    textFileEncoding: normalizeTextFileEncoding(state.settings.textFileEncoding),
+    deferMapTab: true
   });
   return bundle && bundle.tabs ? bundle.tabs : null;
 }
@@ -4867,6 +4924,7 @@ function updateScrollTopFab() {
 function clearBundleView() {
   closeFileDiffModal();
   state.bundle = null;
+  state.mapTabLoadPromise = null;
   state.trackDirty = false;
   state.baseFilter = '';
   state.cleanSnapshot = '';
@@ -5237,7 +5295,7 @@ function applyViewSnapshot(snapshot) {
   renderTabs();
   renderActiveTab({ preserveTabScroll: true });
   if (snapshot.mapModalOpen && state.activeTab === 'map') {
-    reopenMapModalForTab(state.bundle.tabs.map);
+    void ensureMapTabLoaded({ rerender: true, openModal: true });
   }
   updateNavButtons();
   persistCurrentViewSnapshot();
@@ -24730,11 +24788,6 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
 
   const pediaCard = document.createElement('div');
   pediaCard.className = 'unit-art-index-card unit-pediaicons-card';
-  const pediaLabel = document.createElement('label');
-  pediaLabel.className = 'field-meta';
-  pediaLabel.textContent = 'PediaIcons';
-  pediaCard.appendChild(pediaLabel);
-  attachRichTooltip(pediaLabel, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.iconPaths, 'PediaIcons'));
 
   const displayKey = String(getEntryCivilopediaDisplayKey(entry) || entry.civilopediaKey || '').trim();
   const iconHeader = `#ICON_${displayKey || 'PRTO_*'}`;
@@ -26795,7 +26848,19 @@ async function loadImportMapTab(filePath) {
   if (!loaded || !loaded.tabs || !loaded.tabs.map) {
     throw new Error('Could not load import source scenario.');
   }
-  const sourceMapTab = loaded.tabs.map;
+  const sourceMapTab = loaded.tabs.map && loaded.tabs.map.deferred
+    ? await window.c3xManager.materializeMapTab({
+      mode: 'scenario',
+      civ3Path: state.settings && state.settings.civ3Path || '',
+      scenarioPath: filePath,
+      biq: loaded.biq,
+      mapTab: loaded.tabs.map,
+      tabs: {
+        districts: loaded.tabs.districts || null,
+        naturalWonders: loaded.tabs.naturalWonders || null
+      }
+    })
+    : loaded.tabs.map;
   if (!hasMapData(sourceMapTab)) {
     throw new Error('Selected scenario does not contain a map.');
   }
@@ -31221,6 +31286,9 @@ function renderMapTab(tab) {
     wrap.appendChild(error);
     return wrap;
   }
+  if (tab.deferred) {
+    return wrap;
+  }
   const sections = Array.isArray(tab.sections) ? tab.sections : [];
   const tileSection = sections.find((s) => s.code === 'TILE');
   const card = document.createElement('div');
@@ -31438,9 +31506,9 @@ function hasMapData(tab) {
   );
 }
 
-function maybeOpenMapModalForTabClick(tabKey) {
+async function maybeOpenMapModalForTabClick(tabKey) {
   if (String(tabKey || '') !== 'map' || !isScenarioMode() || !state.bundle || !state.bundle.tabs) return false;
-  const tab = state.bundle.tabs.map;
+  const tab = await ensureMapTabLoaded({ rerender: true, openModal: false });
   if (!tab || !hasMapData(tab)) return false;
   const tileSection = Array.isArray(tab.sections)
     ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
@@ -45366,6 +45434,9 @@ function renderActiveTab(options = {}) {
   if (tab.type === 'reference') {
     el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
   } else if (tab.type === 'map') {
+    if (tab.deferred) {
+      void ensureMapTabLoaded({ rerender: true });
+    }
     el.tabContent.appendChild(renderMapTab(tab));
   } else if (tab.type === 'biqStructure') {
     el.tabContent.appendChild(renderBiqTab(tab));
@@ -45451,7 +45522,6 @@ async function loadBundleAndRender(options = {}) {
     if (bundle && bundle.biq && bundle.biq.error) {
       _dbgWarn('loadBundle', `BIQ error: ${bundle.biq.error}`);
     }
-    const cleanSnapshotForLoadedBundle = snapshotEditableTabsFromBundle(bundle);
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
       // Only inject special defaults when loading from the default file.
       // If a user* or scenario* file is present it is authoritative (file-level replacement);
@@ -45528,6 +45598,7 @@ async function loadBundleAndRender(options = {}) {
       });
     }
     state.baseFilter = '';
+    state.mapTabLoadPromise = null;
     state.biqMapArtCache = {};
     state.biqMapArtLoading = {};
     state.biqMapDistrictFallbackCache = new Map();
@@ -45546,6 +45617,10 @@ async function loadBundleAndRender(options = {}) {
     state.biqMapZoomAnchor = null;
     state.biqMapSuppressClickUntilTs = 0;
     el.workspace.classList.remove('hidden');
+    if (state.activeTab === 'map') {
+      await ensureMapTabLoaded({ rerender: false, openModal: false });
+    }
+    const cleanSnapshotForLoadedBundle = snapshotEditableTabsFromBundle(state.bundle);
     if (!preserveDirtyState) {
       state.cleanSnapshot = cleanSnapshotForLoadedBundle;
       state.cleanTabsCache = parseSnapshotTabs(cleanSnapshotForLoadedBundle);
@@ -45554,7 +45629,7 @@ async function loadBundleAndRender(options = {}) {
     renderTabs();
     renderActiveTab(persistedView ? { preserveTabScroll: true } : {});
     if (persistedView && persistedView.mapModalOpen && state.activeTab === 'map') {
-      reopenMapModalForTab(bundle.tabs.map);
+      reopenMapModalForTab(state.bundle.tabs.map);
     } else {
       closeMapModal();
     }
@@ -45840,6 +45915,7 @@ function buildLoadBundlePayload(overrides = {}) {
     civ3Path: state.settings.civ3Path,
     scenarioPath: state.settings.scenarioPath,
     textFileEncoding: normalizeTextFileEncoding(state.settings.textFileEncoding),
+    deferMapTab: true,
     ...overrides
   };
 }

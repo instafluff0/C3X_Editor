@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = requir
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario } = require('./src/configCore');
+const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const log = require('./src/log');
 
@@ -1063,6 +1063,19 @@ ipcMain.handle('manager:load-bundle', async (_event, payload) => {
     return bundle;
   } catch (err) {
     log.error('loadBundle', `Threw: ${err.message}`);
+    throw err;
+  }
+});
+
+ipcMain.handle('manager:materialize-map-tab', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    const tab = materializeMapTab(payload || {});
+    const sectionCount = Array.isArray(tab && tab.sections) ? tab.sections.length : 0;
+    log.info('materializeMapTab', `OK — sections=${sectionCount}, hasMapData=${tab && tab.hasMapData ? 'yes' : 'no'}`);
+    return tab;
+  } catch (err) {
+    log.error('materializeMapTab', `Threw: ${err.message}`);
     throw err;
   }
 });
