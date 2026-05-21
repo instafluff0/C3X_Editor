@@ -328,13 +328,43 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /async function promptEditMapAction\(tab\) \{[\s\S]*?el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Edit Map';[\s\S]*?Expansion keeps placed cities, units, and starting locations on their current coordinates, and the resized map preview opens immediately after you apply it\.[\s\S]*?Map Width[\s\S]*?Map Height[\s\S]*?Total Tiles[\s\S]*?Shrinking to \$\{validation\.width\}x\$\{validation\.height\} will remove[\s\S]*?Odd dimensions will be rounded up to the next even size before saving\.[\s\S]*?Shrinking is allowed\. Anything outside the new bounds will be removed automatically on save so the BIQ stays valid\./,
-    'Edit Map should warn in-modal about exactly what a shrink removes and explain that save sanitizes the BIQ automatically'
+    /el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Resize Map';[\s\S]*?el\.entityModalBody\) \{[\s\S]*?Change the scenario map dimensions\. Resizing keeps the existing map centered\./,
+    'Resize Map should keep the in-modal resize explanation'
   );
   assert.match(
     rendererText,
-    /if \(hasMapData\(tab\) && tileSection\) \{[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Edit Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?widthField\.value = String\(result\.width\);[\s\S]*?heightField\.value = String\(result\.height\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
-    'the map tab should expose Edit Map before Open Map, rebuild the in-memory map immediately, and open the resized preview right away'
+    /miniPreviewLabel\.textContent = 'Resize Preview';[\s\S]*?miniPreviewHint\.textContent = 'Terrain-only minimap preview\. Existing terrain stays centered; new space fills with sea\.';/,
+    'Resize Map should keep the terrain-only preview copy'
+  );
+  assert.match(
+    rendererText,
+    /const statusLine = document\.createElement\('div'\);[\s\S]*?statusLine\.className = 'hint map-resize-status';[\s\S]*?statusLine\.textContent = '\\u00A0';[\s\S]*?statusLine\.className = 'warning map-resize-status';[\s\S]*?Shrinking to \$\{validation\.width\}x\$\{validation\.height\} will remove[\s\S]*?statusLine\.textContent = 'Expansion keeps the existing map centered by adding tiles evenly around it\.';/,
+    'Resize Map should use one reserved status row for shrink warnings and expansion guidance instead of separate stacked text blocks'
+  );
+  assert.match(
+    rendererText,
+    /function computeMapResizePreviewOffsets\(sourceWidth, sourceHeight, targetWidth, targetHeight\) \{[\s\S]*?const candidates = \[0, 1\]\.map\(\(parity\) => \(\{[\s\S]*?x: pickOffset\(widthDiff, parity\),[\s\S]*?y: pickOffset\(heightDiff, parity\)[\s\S]*?\}\)\);[\s\S]*?candidates\.sort\(\(a, b\) => \{[\s\S]*?return a\.parity - b\.parity;[\s\S]*?\}\);[\s\S]*?return \{ x: candidates\[0\]\.x, y: candidates\[0\]\.y \};[\s\S]*?\}/,
+    'Resize Map should choose resize offsets as parity-matched x/y pairs so preview/source tile lookups stay on valid Civ3 coordinates'
+  );
+  assert.match(
+    rendererText,
+    /const MAP_RESIZE_MINI_PREVIEW_MAX_TILES = 50000;[\s\S]*?function buildMapResizeTerrainPreview\(tab, targetWidth, targetHeight\) \{[\s\S]*?getPackedResizePreviewTerrainValue\(BIQ_TERRAIN\.SEA\)[\s\S]*?\}[\s\S]*?function drawMapResizeMiniPreview\(canvas, preview\) \{[\s\S]*?const scale = Math\.min\(stageWidth \/ Math\.max\(1, width\), stageHeight \/ Math\.max\(1, height\)\);[\s\S]*?const originX = Math\.floor\(\(stageWidth - previewWidth\) \/ 2\);[\s\S]*?const getTerrainCodeAt = \(x, y\) => \{[\s\S]*?return BIQ_TERRAIN\.SEA;[\s\S]*?\};[\s\S]*?for \(let y = 0; y < height; y \+= 1\) \{[\s\S]*?for \(let x = 0; x < width; x \+= 1\) \{[\s\S]*?getMapResizeMiniPreviewFillStyle\(getTerrainCodeAt\(x, y\)\)[\s\S]*?\}[\s\S]*?\}[\s\S]*?function drawMapResizeMiniPreviewPlaceholder\(canvas, message\) \{/,
+    'Edit Map should build a terrain-only resize minimap preview, fill new resize space with sea, paint parity gaps from nearby terrain to avoid plaid artifacts, and provide a cheap placeholder path for oversized previews'
+  );
+  assert.match(
+    rendererText,
+    /const miniPreviewFrame = document\.createElement\('div'\);[\s\S]*?miniPreviewFrame\.className = 'map-resize-preview-frame';[\s\S]*?const miniPreviewCanvas = document\.createElement\('canvas'\);[\s\S]*?miniPreviewCanvas\.width = 280;[\s\S]*?miniPreviewCanvas\.height = 220;[\s\S]*?miniPreviewFrame\.appendChild\(miniPreviewCanvas\);/,
+    'Edit Map should mount the resize preview inside a fixed-size frame so extreme aspect ratios do not expand the modal'
+  );
+  assert.match(
+    rendererText,
+    /if \(!validation\.isValid\) \{[\s\S]*?drawMapResizeMiniPreviewPlaceholder\(miniPreviewCanvas, 'Preview unavailable\\nfor invalid dimensions'\);[\s\S]*?\} else if \(validation\.tileCount > MAP_RESIZE_MINI_PREVIEW_MAX_TILES\) \{[\s\S]*?drawMapResizeMiniPreviewPlaceholder\(miniPreviewCanvas, 'Preview hidden for\\nvery large map sizes'\);/,
+    'Edit Map should skip heavy minimap generation for invalid or oversized dimensions so the modal stays responsive'
+  );
+  assert.match(
+    rendererText,
+    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
   );
 });
 

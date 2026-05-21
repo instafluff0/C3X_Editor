@@ -4448,9 +4448,70 @@ function buildResizedTileTemplateCoord(xPos, yPos, width, height) {
   return { x, y };
 }
 
+function computeCenteredResizeOffsets(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const pickOffset = (diff, parity) => {
+    const ideal = Number(diff) / 2;
+    const min = Math.min(0, Number(diff));
+    const max = Math.max(0, Number(diff));
+    const candidates = [];
+    for (let delta = 0; delta <= 4; delta += 1) {
+      candidates.push(Math.floor(ideal) - delta, Math.ceil(ideal) + delta);
+    }
+    candidates.push(min, max);
+    const filtered = candidates
+      .filter((value, index, arr) => Number.isFinite(value) && arr.indexOf(value) === index)
+      .filter((value) => value >= min && value <= max)
+      .filter((value) => (Math.abs(value) % 2) === parity);
+    if (filtered.length <= 0) return Math.max(min, Math.min(max, Math.round(ideal)));
+    filtered.sort((a, b) => {
+      const distance = Math.abs(a - ideal) - Math.abs(b - ideal);
+      if (distance !== 0) return distance;
+      return a - b;
+    });
+    return filtered[0];
+  };
+  const widthDiff = Number(targetWidth) - Number(sourceWidth);
+  const heightDiff = Number(targetHeight) - Number(sourceHeight);
+  const evenOffsets = {
+    x: pickOffset(widthDiff, 0),
+    y: pickOffset(heightDiff, 0)
+  };
+  const oddOffsets = {
+    x: pickOffset(widthDiff, 1),
+    y: pickOffset(heightDiff, 1)
+  };
+  const evenCost = Math.abs(evenOffsets.x - (widthDiff / 2)) + Math.abs(evenOffsets.y - (heightDiff / 2));
+  const oddCost = Math.abs(oddOffsets.x - (widthDiff / 2)) + Math.abs(oddOffsets.y - (heightDiff / 2));
+  return oddCost < evenCost ? oddOffsets : evenOffsets;
+}
+
 function clearResizedTileBackrefs(tile) {
   setTileRecordFieldValue(tile, 'city', -1);
   setTileRecordFieldValue(tile, 'colony', -1);
+}
+
+function resetNewResizedTileToSea(tile) {
+  if (!tile) return;
+  const seaPackedTerrain = ((BIQ_TERRAIN.SEA & 0x0f) << 4) | (BIQ_TERRAIN.SEA & 0x0f);
+  setTileRecordFieldValue(tile, 'riverConnectionInfo', 0);
+  setTileRecordFieldValue(tile, 'border', 0);
+  setTileRecordFieldValue(tile, 'resource', -1);
+  setTileRecordFieldValue(tile, 'image', 0);
+  setTileRecordFieldValue(tile, 'file', 7);
+  setTileRecordFieldValue(tile, 'overlays', 0);
+  setTileRecordFieldValue(tile, 'baseRealTerrain', seaPackedTerrain);
+  setTileRecordFieldValue(tile, 'bonuses', 0);
+  setTileRecordFieldValue(tile, 'riverCrossingData', 0);
+  setTileRecordFieldValue(tile, 'barbarianTribe', -1);
+  setTileRecordFieldValue(tile, 'city', -1);
+  setTileRecordFieldValue(tile, 'colony', -1);
+  setTileRecordFieldValue(tile, 'continent', 0);
+  setTileRecordFieldValue(tile, 'victoryPointLocation', -1);
+  setTileRecordFieldValue(tile, 'ruin', 0);
+  setTileRecordFieldValue(tile, 'c3cOverlays', 0);
+  setTileRecordFieldValue(tile, 'c3cBaseRealTerrain', seaPackedTerrain);
+  setTileRecordFieldValue(tile, 'fogOfWar', 0);
+  setTileRecordFieldValue(tile, 'c3cBonuses', 0);
 }
 
 function getTileBaseTerrain(tile) {
@@ -4580,9 +4641,11 @@ function isMapResizeCoordInBounds(x, y, width, height) {
     && y < height;
 }
 
-function sanitizeResizedMapEntitySections(parsed, width, height) {
+function sanitizeResizedMapEntitySections(parsed, width, height, offsets = {}) {
   const tileSection = getSectionByCode(parsed, 'TILE');
   if (!tileSection || !Array.isArray(tileSection.records)) return;
+  const offsetX = Number.isFinite(offsets.x) ? Number(offsets.x) : 0;
+  const offsetY = Number.isFinite(offsets.y) ? Number(offsets.y) : 0;
   const sectionSpecs = [
     { code: 'CITY', xKey: 'x', yKey: 'y' },
     { code: 'UNIT', xKey: 'x', yKey: 'y' },
@@ -4592,12 +4655,29 @@ function sanitizeResizedMapEntitySections(parsed, width, height) {
   sectionSpecs.forEach((spec) => {
     const section = getSectionByCode(parsed, spec.code);
     if (!section || !Array.isArray(section.records)) return;
+    let changed = false;
     const nextRecords = section.records.filter((record) => {
       const x = Number.parseInt(String(record && record[spec.xKey]), 10);
       const y = Number.parseInt(String(record && record[spec.yKey]), 10);
-      return isMapResizeCoordInBounds(x, y, width, height);
+      const shiftedX = x + offsetX;
+      const shiftedY = y + offsetY;
+      if (!Number.isFinite(shiftedX) || !Number.isFinite(shiftedY)) {
+        changed = true;
+        return false;
+      }
+      if (record && typeof record === 'object') {
+        if (record[spec.xKey] !== shiftedX) changed = true;
+        if (record[spec.yKey] !== shiftedY) changed = true;
+        record[spec.xKey] = shiftedX;
+        record[spec.yKey] = shiftedY;
+      }
+      if (!isMapResizeCoordInBounds(shiftedX, shiftedY, width, height)) {
+        changed = true;
+        return false;
+      }
+      return true;
     });
-    if (nextRecords.length === section.records.length) return;
+    if (!changed && nextRecords.length === section.records.length) return;
     section.records = nextRecords;
     section.records.forEach((record, index) => {
       if (record && typeof record === 'object') record.index = index;
@@ -4657,6 +4737,7 @@ function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight) {
     throw new Error('Cannot resize a BIQ map with invalid source dimensions.');
   }
   if (sourceWidth === width && sourceHeight === height) return;
+  const resizeOffsets = computeCenteredResizeOffsets(sourceWidth, sourceHeight, width, height);
 
   const sourceTileByCoord = new Map();
   const firstTile = tileSection.records[0] || null;
@@ -4671,10 +4752,12 @@ function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight) {
   let nextIndex = 0;
   for (let y = 0; y < height; y += 1) {
     for (let x = (y & 1); x < width; x += 2) {
-      const existing = sourceTileByCoord.get(`${x},${y}`) || null;
+      const sourceX = x - resizeOffsets.x;
+      const sourceY = y - resizeOffsets.y;
+      const existing = sourceTileByCoord.get(`${sourceX},${sourceY}`) || null;
       const templateCoord = existing
         ? null
-        : buildResizedTileTemplateCoord(x, y, sourceWidth, sourceHeight);
+        : buildResizedTileTemplateCoord(sourceX, sourceY, sourceWidth, sourceHeight);
       const template = existing
         || sourceTileByCoord.get(`${templateCoord.x},${templateCoord.y}`)
         || firstTile;
@@ -4685,7 +4768,10 @@ function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight) {
       nextRecord.index = nextIndex;
       nextRecord.xpos = x;
       nextRecord.ypos = y;
-      if (!existing) clearResizedTileBackrefs(nextRecord);
+      if (!existing) {
+        resetNewResizedTileToSea(nextRecord);
+        clearResizedTileBackrefs(nextRecord);
+      }
       nextTileRecords.push(nextRecord);
       nextIndex += 1;
     }
@@ -4701,7 +4787,7 @@ function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight) {
   parsed.io.mapWidth = width;
 
   recomputeResizedTileTerrainFileImage(nextTileRecords, width, height);
-  sanitizeResizedMapEntitySections(parsed, width, height);
+  sanitizeResizedMapEntitySections(parsed, width, height, resizeOffsets);
 
   const contSection = getSectionByCode(parsed, 'CONT');
   recalculateContinentTileCounts(tileSection, contSection);

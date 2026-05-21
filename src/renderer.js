@@ -22685,14 +22685,16 @@ function collectMapResizeTrimSummary(tab, targetWidth, targetHeight) {
   const findSection = (code) => (Array.isArray(tab && tab.sections) ? tab.sections : []).find((section) => (
     String(section && section.code || '').trim().toUpperCase() === String(code || '').trim().toUpperCase()
   )) || null;
-  const getOutOfBoundsCount = (sectionCode) => {
+  const getOutOfBoundsCount = (sectionCode, offsetX = 0, offsetY = 0) => {
     const section = findSection(sectionCode);
     const records = Array.isArray(section && section.records) ? section.records : [];
     return records.reduce((count, record) => {
       const x = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
       const y = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return count;
-      if (x < 0 || y < 0 || x >= width || y >= height) return count + 1;
+      const shiftedX = x + offsetX;
+      const shiftedY = y + offsetY;
+      if (shiftedX < 0 || shiftedY < 0 || shiftedX >= width || shiftedY >= height) return count + 1;
       return count;
     }, 0);
   };
@@ -22700,15 +22702,54 @@ function collectMapResizeTrimSummary(tab, targetWidth, targetHeight) {
   const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
   const currentWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
   const currentHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  const offsets = computeMapResizePreviewOffsets(currentWidth, currentHeight, width, height);
   const currentTileCount = Math.floor((Math.max(0, currentWidth) * Math.max(0, currentHeight)) / 2);
   const nextTileCount = Math.floor((width * height) / 2);
   return {
-    cityCount: getOutOfBoundsCount('CITY'),
-    unitCount: getOutOfBoundsCount('UNIT'),
-    startingLocationCount: getOutOfBoundsCount('SLOC'),
-    colonyCount: getOutOfBoundsCount('CLNY'),
+    cityCount: getOutOfBoundsCount('CITY', offsets.x, offsets.y),
+    unitCount: getOutOfBoundsCount('UNIT', offsets.x, offsets.y),
+    startingLocationCount: getOutOfBoundsCount('SLOC', offsets.x, offsets.y),
+    colonyCount: getOutOfBoundsCount('CLNY', offsets.x, offsets.y),
     trimmedTileCount: Math.max(0, currentTileCount - nextTileCount)
   };
+}
+
+function computeMapResizePreviewOffsets(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const pickOffset = (diff, parity) => {
+    const ideal = Number(diff) / 2;
+    const min = Math.min(0, Number(diff));
+    const max = Math.max(0, Number(diff));
+    const candidates = [];
+    for (let delta = 0; delta <= 4; delta += 1) {
+      candidates.push(Math.floor(ideal) - delta, Math.ceil(ideal) + delta);
+    }
+    candidates.push(min, max);
+    const filtered = candidates
+      .filter((value, index, arr) => Number.isFinite(value) && arr.indexOf(value) === index)
+      .filter((value) => value >= min && value <= max)
+      .filter((value) => (Math.abs(value) % 2) === parity);
+    if (filtered.length <= 0) return Math.max(min, Math.min(max, Math.round(ideal)));
+    filtered.sort((a, b) => {
+      const distance = Math.abs(a - ideal) - Math.abs(b - ideal);
+      if (distance !== 0) return distance;
+      return a - b;
+    });
+    return filtered[0];
+  };
+  const widthDiff = Number(targetWidth) - Number(sourceWidth);
+  const heightDiff = Number(targetHeight) - Number(sourceHeight);
+  const candidates = [0, 1].map((parity) => ({
+    parity,
+    x: pickOffset(widthDiff, parity),
+    y: pickOffset(heightDiff, parity)
+  }));
+  candidates.sort((a, b) => {
+    const aCost = Math.abs(a.x - (widthDiff / 2)) + Math.abs(a.y - (heightDiff / 2));
+    const bCost = Math.abs(b.x - (widthDiff / 2)) + Math.abs(b.y - (heightDiff / 2));
+    if (aCost !== bCost) return aCost - bCost;
+    return a.parity - b.parity;
+  });
+  return { x: candidates[0].x, y: candidates[0].y };
 }
 
 function cloneMapResizePreviewRecord(record) {
@@ -22790,6 +22831,160 @@ function clearNewResizePreviewTileState(tile) {
   });
 }
 
+function getPackedResizePreviewTerrainValue(terrainId) {
+  const code = Number(terrainId) & 0x0f;
+  return ((code & 0x0f) << 4) | (code & 0x0f);
+}
+
+const MAP_RESIZE_MINI_PREVIEW_MAX_TILES = 50000;
+
+function resetNewResizePreviewTileToSea(tile) {
+  if (!tile) return;
+  const packedSea = getPackedResizePreviewTerrainValue(BIQ_TERRAIN.SEA);
+  setPreviewMapFieldValue(tile, 'riverconnectioninfo', 0, 'River Connection Info');
+  setPreviewMapFieldValue(tile, 'border', 0, 'Border');
+  setPreviewMapFieldValue(tile, 'resource', -1, 'Resource');
+  setPreviewMapFieldValue(tile, 'image', 0, 'Image');
+  setPreviewMapFieldValue(tile, 'file', 7, 'File');
+  setPreviewMapFieldValue(tile, 'overlays', 0, 'Overlays');
+  setPreviewMapFieldValue(tile, 'baserealterrain', packedSea, 'Base Real Terrain');
+  setPreviewMapFieldValue(tile, 'bonuses', 0, 'Bonuses');
+  setPreviewMapFieldValue(tile, 'rivercrossingdata', 0, 'River Crossing Data');
+  setPreviewMapFieldValue(tile, 'barbariantribe', -1, 'Barbarian Tribe');
+  setPreviewMapFieldValue(tile, 'city', -1, 'City');
+  setPreviewMapFieldValue(tile, 'colony', -1, 'Colony');
+  setPreviewMapFieldValue(tile, 'continent', 0, 'Continent');
+  setPreviewMapFieldValue(tile, 'victorypointlocation', -1, 'Victory Point Location');
+  setPreviewMapFieldValue(tile, 'ruin', 0, 'Ruin');
+  setPreviewMapFieldValue(tile, 'c3coverlays', 0, 'C3C Overlays');
+  setPreviewMapFieldValue(tile, 'c3cbaserealterrain', packedSea, 'C3C Base Real Terrain');
+  setPreviewMapFieldValue(tile, 'fogofwar', 0, 'Fog Of War');
+  setPreviewMapFieldValue(tile, 'c3cbonuses', 0, 'C3C Bonuses');
+  clearNewResizePreviewTileState(tile);
+}
+
+function buildMapResizeTerrainPreview(tab, targetWidth, targetHeight) {
+  const width = Math.max(0, Number(targetWidth) || 0);
+  const height = Math.max(0, Number(targetHeight) || 0);
+  const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+  const wmapSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP') || null;
+  const tileSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE') || null;
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  const sourceWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+  const sourceHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  const preview = new Map();
+  if (!tileSection || !Array.isArray(tileSection.records) || sourceWidth <= 0 || sourceHeight <= 0 || width <= 0 || height <= 0) {
+    return { width, height, tiles: preview };
+  }
+  const offsets = computeMapResizePreviewOffsets(sourceWidth, sourceHeight, width, height);
+  const sourceTileByCoord = new Map();
+  tileSection.records.forEach((record) => {
+    const x = parseIntLoose(getMapFieldValue(record, 'xpos', ''), NaN);
+    const y = parseIntLoose(getMapFieldValue(record, 'ypos', ''), NaN);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    sourceTileByCoord.set(`${x},${y}`, record);
+  });
+  for (let y = 0; y < height; y += 1) {
+    for (let x = (y & 1); x < width; x += 2) {
+      const sourceX = x - offsets.x;
+      const sourceY = y - offsets.y;
+      const sourceRecord = sourceTileByCoord.get(`${sourceX},${sourceY}`) || null;
+      const packedTerrain = sourceRecord
+        ? parseIntLoose(getMapFieldValue(sourceRecord, 'c3cbaserealterrain', getMapFieldValue(sourceRecord, 'baserealterrain', String(getPackedResizePreviewTerrainValue(BIQ_TERRAIN.SEA)))), getPackedResizePreviewTerrainValue(BIQ_TERRAIN.SEA))
+        : getPackedResizePreviewTerrainValue(BIQ_TERRAIN.SEA);
+      preview.set(`${x},${y}`, packedTerrain & 0x0f);
+    }
+  }
+  return { width, height, tiles: preview };
+}
+
+function drawMapResizeMiniPreview(canvas, preview) {
+  if (!canvas || !preview) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const width = Math.max(0, Number(preview.width) || 0);
+  const height = Math.max(0, Number(preview.height) || 0);
+  const stageWidth = Math.max(1, Number(canvas.width) || 0);
+  const stageHeight = Math.max(1, Number(canvas.height) || 0);
+  ctx.clearRect(0, 0, stageWidth, stageHeight);
+  ctx.fillStyle = 'rgba(214, 226, 236, 0.85)';
+  ctx.fillRect(0, 0, stageWidth, stageHeight);
+  if (width <= 0 || height <= 0) return;
+  const scale = Math.min(stageWidth / Math.max(1, width), stageHeight / Math.max(1, height));
+  const previewWidth = Math.max(1, width * scale);
+  const previewHeight = Math.max(1, height * scale);
+  const originX = Math.floor((stageWidth - previewWidth) / 2);
+  const originY = Math.floor((stageHeight - previewHeight) / 2);
+  const stepX = previewWidth / Math.max(1, width);
+  const stepY = previewHeight / Math.max(1, height);
+  const getTerrainCodeAt = (x, y) => {
+    const direct = preview.tiles.get(`${x},${y}`);
+    if (direct != null) return direct;
+    const left = preview.tiles.get(`${x - 1},${y}`);
+    if (left != null) return left;
+    const right = preview.tiles.get(`${x + 1},${y}`);
+    if (right != null) return right;
+    const above = preview.tiles.get(`${x},${y - 1}`);
+    if (above != null) return above;
+    const below = preview.tiles.get(`${x},${y + 1}`);
+    if (below != null) return below;
+    return BIQ_TERRAIN.SEA;
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const drawX = Math.round(originX + (x * stepX));
+      const drawY = Math.round(originY + (y * stepY));
+      const drawW = Math.max(1, Math.ceil((originX + ((x + 1) * stepX)) - drawX));
+      const drawH = Math.max(1, Math.ceil((originY + ((y + 1) * stepY)) - drawY));
+      ctx.fillStyle = getMapResizeMiniPreviewFillStyle(getTerrainCodeAt(x, y));
+      ctx.fillRect(drawX, drawY, drawW, drawH);
+    }
+  }
+  ctx.strokeStyle = 'rgba(48, 70, 94, 0.16)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(originX + 0.5, originY + 0.5, Math.max(0, Math.round(previewWidth) - 1), Math.max(0, Math.round(previewHeight) - 1));
+  ctx.strokeStyle = 'rgba(48, 70, 94, 0.18)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, Math.max(0, stageWidth - 1), Math.max(0, stageHeight - 1));
+}
+
+function drawMapResizeMiniPreviewPlaceholder(canvas, message) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const stageWidth = Math.max(1, Number(canvas.width) || 0);
+  const stageHeight = Math.max(1, Number(canvas.height) || 0);
+  ctx.clearRect(0, 0, stageWidth, stageHeight);
+  ctx.fillStyle = 'rgba(214, 226, 236, 0.85)';
+  ctx.fillRect(0, 0, stageWidth, stageHeight);
+  ctx.strokeStyle = 'rgba(48, 70, 94, 0.18)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, Math.max(0, stageWidth - 1), Math.max(0, stageHeight - 1));
+  ctx.fillStyle = 'rgba(48, 70, 94, 0.84)';
+  ctx.font = '600 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const lines = String(message || 'Preview unavailable').split('\n');
+  const lineHeight = 18;
+  const startY = Math.round((stageHeight / 2) - (((lines.length - 1) * lineHeight) / 2));
+  lines.forEach((line, index) => {
+    ctx.fillText(line, stageWidth / 2, startY + (index * lineHeight));
+  });
+}
+
+function getMapResizeMiniPreviewFillStyle(terrainCode) {
+  switch (parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND)) {
+    case BIQ_TERRAIN.DESERT: return 'rgba(228, 214, 166, 0.92)';
+    case BIQ_TERRAIN.PLAINS: return 'rgba(189, 179, 112, 0.92)';
+    case BIQ_TERRAIN.GRASSLAND: return 'rgba(119, 156, 88, 0.92)';
+    case BIQ_TERRAIN.TUNDRA: return 'rgba(196, 207, 200, 0.92)';
+    case BIQ_TERRAIN.COAST: return 'rgba(106, 188, 190, 0.92)';
+    case BIQ_TERRAIN.SEA: return 'rgba(71, 150, 173, 0.92)';
+    case BIQ_TERRAIN.OCEAN: return 'rgba(55, 112, 154, 0.92)';
+    default: return 'rgba(140, 146, 150, 0.92)';
+  }
+}
+
 function recalculateResizePreviewContinentTileCounts(tileSection, contSection) {
   if (!tileSection || !Array.isArray(tileSection.records) || !contSection || !Array.isArray(contSection.records)) return;
   const counts = new Array(contSection.records.length).fill(0);
@@ -22804,12 +22999,14 @@ function recalculateResizePreviewContinentTileCounts(tileSection, contSection) {
   });
 }
 
-function sanitizeResizePreviewEntitySections(tab, width, height) {
+function sanitizeResizePreviewEntitySections(tab, width, height, offsets = {}) {
   const findSection = (code) => Array.isArray(tab && tab.sections)
     ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === String(code || '').toUpperCase())
     : null;
   const tileSection = findSection('TILE');
   if (!tileSection || !Array.isArray(tileSection.records)) return;
+  const offsetX = Number.isFinite(offsets.x) ? Number(offsets.x) : 0;
+  const offsetY = Number.isFinite(offsets.y) ? Number(offsets.y) : 0;
   [
     { code: 'CITY', xKey: 'x', yKey: 'y' },
     { code: 'UNIT', xKey: 'x', yKey: 'y' },
@@ -22821,7 +23018,12 @@ function sanitizeResizePreviewEntitySections(tab, width, height) {
     section.records = section.records.filter((record) => {
       const x = parseIntLoose(getMapFieldValue(record, spec.xKey, ''), NaN);
       const y = parseIntLoose(getMapFieldValue(record, spec.yKey, ''), NaN);
-      return isMapResizePreviewCoordInBounds(x, y, width, height);
+      const shiftedX = x + offsetX;
+      const shiftedY = y + offsetY;
+      if (!Number.isFinite(shiftedX) || !Number.isFinite(shiftedY)) return false;
+      setPreviewMapFieldValue(record, spec.xKey, shiftedX, spec.xKey.toUpperCase());
+      setPreviewMapFieldValue(record, spec.yKey, shiftedY, spec.yKey.toUpperCase());
+      return isMapResizePreviewCoordInBounds(shiftedX, shiftedY, width, height);
     });
     section.records.forEach((record, index) => {
       record.index = index;
@@ -22890,12 +23092,36 @@ function applyMapResizePreviewToTab(tab, targetWidth, targetHeight) {
   if (!wmapRecord || !tileSection || !Array.isArray(tileSection.records)) {
     throw new Error('Cannot resize a BIQ map that is missing WMAP or TILE data.');
   }
-  const sourceWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
-  const sourceHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  const inferSourceDimensionsFromTiles = () => {
+    let maxX = -1;
+    let maxY = -1;
+    tileSection.records.forEach((record) => {
+      const x = parseIntLoose(getMapFieldValue(record, 'xpos', ''), NaN);
+      const y = parseIntLoose(getMapFieldValue(record, 'ypos', ''), NaN);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    });
+    return {
+      width: maxX >= 0 ? maxX + 1 : 0,
+      height: maxY >= 0 ? maxY + 1 : 0
+    };
+  };
+  let sourceWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+  let sourceHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  const expectedSourceTileCount = sourceWidth > 0 && sourceHeight > 0
+    ? Math.floor((sourceWidth * sourceHeight) / 2)
+    : 0;
+  if (expectedSourceTileCount !== tileSection.records.length) {
+    const inferred = inferSourceDimensionsFromTiles();
+    sourceWidth = inferred.width;
+    sourceHeight = inferred.height;
+  }
   if (sourceWidth <= 0 || sourceHeight <= 0) {
     throw new Error('Cannot resize a BIQ map with invalid source dimensions.');
   }
   if (sourceWidth === width && sourceHeight === height) return;
+  const resizeOffsets = computeMapResizePreviewOffsets(sourceWidth, sourceHeight, width, height);
 
   const sourceTileByCoord = new Map();
   const firstTile = tileSection.records[0] || null;
@@ -22910,15 +23136,17 @@ function applyMapResizePreviewToTab(tab, targetWidth, targetHeight) {
   let nextIndex = 0;
   for (let y = 0; y < height; y += 1) {
     for (let x = (y & 1); x < width; x += 2) {
-      const existing = sourceTileByCoord.get(`${x},${y}`) || null;
-      const templateCoord = existing ? null : buildMapResizePreviewTemplateCoord(x, y, sourceWidth, sourceHeight);
+      const sourceX = x - resizeOffsets.x;
+      const sourceY = y - resizeOffsets.y;
+      const existing = sourceTileByCoord.get(`${sourceX},${sourceY}`) || null;
+      const templateCoord = existing ? null : buildMapResizePreviewTemplateCoord(sourceX, sourceY, sourceWidth, sourceHeight);
       const template = existing || sourceTileByCoord.get(`${templateCoord.x},${templateCoord.y}`) || firstTile;
       if (!template) throw new Error('Cannot resize a BIQ map without any source TILE records.');
       const nextRecord = cloneMapResizePreviewRecord(template);
       nextRecord.index = nextIndex;
       setPreviewMapFieldValue(nextRecord, 'xpos', x, 'X Pos');
       setPreviewMapFieldValue(nextRecord, 'ypos', y, 'Y Pos');
-      if (!existing) clearNewResizePreviewTileState(nextRecord);
+      if (!existing) resetNewResizePreviewTileToSea(nextRecord);
       nextTileRecords.push(nextRecord);
       nextIndex += 1;
     }
@@ -22927,7 +23155,7 @@ function applyMapResizePreviewToTab(tab, targetWidth, targetHeight) {
   tileSection.records = nextTileRecords;
   setPreviewMapFieldValue(wmapRecord, 'width', width, 'Width');
   setPreviewMapFieldValue(wmapRecord, 'height', height, 'Height');
-  sanitizeResizePreviewEntitySections(tab, width, height);
+  sanitizeResizePreviewEntitySections(tab, width, height, resizeOffsets);
   recalculateResizePreviewContinentTileCounts(tileSection, contSection);
   finalizeGeneratedBlankMapTerrainFileImage(nextTileRecords, width, height);
   tab.pendingMapResize = null;
@@ -22947,9 +23175,9 @@ async function promptEditMapAction(tab) {
     return null;
   }
 
-  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Edit Map';
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Resize Map';
   if (el.entityModalBody) {
-    el.entityModalBody.textContent = 'Change the scenario map dimensions. Expansion keeps placed cities, units, and starting locations on their current coordinates, and the resized map preview opens immediately after you apply it.';
+    el.entityModalBody.textContent = 'Change the scenario map dimensions. Resizing keeps the existing map centered.';
   }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = 'Update Map';
@@ -22961,7 +23189,7 @@ async function promptEditMapAction(tab) {
   form.className = 'entity-modal-content';
   const warning = document.createElement('p');
   warning.className = 'entity-modal-copy-warning';
-  warning.textContent = 'Width and height must stay even. Existing tile contents remain anchored by x/y position when the map grows.';
+  warning.textContent = 'Expanding adds tiles evenly around the existing map so its center stays centered.';
   form.appendChild(warning);
   const grid = document.createElement('div');
   grid.className = 'entity-form-grid';
@@ -23003,12 +23231,28 @@ async function promptEditMapAction(tab) {
   totalField.appendChild(totalValue);
   grid.appendChild(totalField);
 
-  const impact = document.createElement('p');
-  impact.className = 'hint';
-  form.appendChild(impact);
-  const summary = document.createElement('p');
-  summary.className = 'hint';
-  form.appendChild(summary);
+  const statusLine = document.createElement('div');
+  statusLine.className = 'hint map-resize-status';
+  statusLine.textContent = '\u00A0';
+  form.appendChild(statusLine);
+  const miniPreviewField = document.createElement('div');
+  miniPreviewField.className = 'entity-field';
+  const miniPreviewLabel = document.createElement('label');
+  miniPreviewLabel.textContent = 'Resize Preview';
+  const miniPreviewHint = document.createElement('div');
+  miniPreviewHint.className = 'hint';
+  miniPreviewHint.textContent = 'Terrain-only minimap preview. Existing terrain stays centered; new space fills with sea.';
+  const miniPreviewFrame = document.createElement('div');
+  miniPreviewFrame.className = 'map-resize-preview-frame';
+  const miniPreviewCanvas = document.createElement('canvas');
+  miniPreviewCanvas.width = 280;
+  miniPreviewCanvas.height = 220;
+  miniPreviewCanvas.className = 'biq-map-minimap-canvas';
+  miniPreviewFrame.appendChild(miniPreviewCanvas);
+  miniPreviewField.appendChild(miniPreviewLabel);
+  miniPreviewField.appendChild(miniPreviewHint);
+  miniPreviewField.appendChild(miniPreviewFrame);
+  form.appendChild(miniPreviewField);
   el.entityModalContent.appendChild(form);
 
   let validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
@@ -23016,7 +23260,8 @@ async function promptEditMapAction(tab) {
     validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
     const trimSummary = collectMapResizeTrimSummary(tab, validation.width, validation.height);
     totalValue.textContent = `${validation.tileCount.toLocaleString()} (${validation.width}x${validation.height})`;
-    impact.className = 'hint';
+    statusLine.className = 'hint map-resize-status';
+    statusLine.textContent = '\u00A0';
     if (validation.isValid && (validation.width < currentWidth || validation.height < currentHeight)) {
       const lossParts = [];
       if (trimSummary.cityCount > 0) lossParts.push(`${trimSummary.cityCount} ${trimSummary.cityCount === 1 ? 'city' : 'cities'}`);
@@ -23026,26 +23271,27 @@ async function promptEditMapAction(tab) {
       }
       if (trimSummary.colonyCount > 0) lossParts.push(`${trimSummary.colonyCount} ${trimSummary.colonyCount === 1 ? 'colony' : 'colonies'}`);
       if (lossParts.length > 0) {
-        impact.className = 'warning';
-        impact.textContent = `Shrinking to ${validation.width}x${validation.height} will remove ${lossParts.join(', ')} outside the new bounds.`;
+        statusLine.className = 'warning map-resize-status';
+        statusLine.textContent = `Shrinking to ${validation.width}x${validation.height} will remove ${lossParts.join(', ')} outside the new bounds.`;
       } else if (trimSummary.trimmedTileCount > 0) {
-        impact.textContent = `Shrinking trims ${trimSummary.trimmedTileCount.toLocaleString()} map tiles, but no placed cities, units, colonies, or starting locations would be removed.`;
-      } else {
-        impact.textContent = '';
+        statusLine.textContent = `Shrinking trims ${trimSummary.trimmedTileCount.toLocaleString()} map tiles, but no placed cities, units, colonies, or starting locations would be removed.`;
       }
-    } else {
-      impact.textContent = '';
     }
     if (validation.width !== parseIntLoose(widthInput.value, validation.width) || validation.height !== parseIntLoose(heightInput.value, validation.height)) {
-      summary.textContent = validation.isValid
+      statusLine.textContent = validation.isValid
         ? `Odd dimensions will be rounded up to the next even size before saving. Result: ${validation.width}x${validation.height}.`
         : validation.reason;
     } else if (validation.width === currentWidth && validation.height === currentHeight) {
-      summary.textContent = 'No size change yet.';
+      statusLine.textContent = 'No size change yet.';
     } else if (validation.width >= currentWidth && validation.height >= currentHeight) {
-      summary.textContent = 'Expansion keeps existing placed map entities at their current coordinates.';
+      statusLine.textContent = 'Expansion keeps the existing map centered by adding tiles evenly around it.';
+    }
+    if (!validation.isValid) {
+      drawMapResizeMiniPreviewPlaceholder(miniPreviewCanvas, 'Preview unavailable\nfor invalid dimensions');
+    } else if (validation.tileCount > MAP_RESIZE_MINI_PREVIEW_MAX_TILES) {
+      drawMapResizeMiniPreviewPlaceholder(miniPreviewCanvas, 'Preview hidden for\nvery large map sizes');
     } else {
-      summary.textContent = 'Shrinking is allowed. Anything outside the new bounds will be removed automatically on save so the BIQ stays valid.';
+      drawMapResizeMiniPreview(miniPreviewCanvas, buildMapResizeTerrainPreview(tab, validation.width, validation.height));
     }
     if (el.entityModalConfirm) el.entityModalConfirm.disabled = !validation.isValid;
   };
@@ -30941,45 +31187,6 @@ function renderMapTab(tab) {
     actions.appendChild(addCustomBtn);
   }
   if (hasMapData(tab) && tileSection) {
-    const editBtn = document.createElement('button');
-    editBtn.type = 'button';
-    editBtn.className = 'ghost action-edit';
-    editBtn.textContent = '↔ Edit Map';
-    editBtn.addEventListener('click', async () => {
-      const result = await promptEditMapAction(tab);
-      if (!result) return;
-      const wmapSectionForEdit = Array.isArray(tab.sections)
-        ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP')
-        : null;
-      const wmapRecordForEdit = wmapSectionForEdit && Array.isArray(wmapSectionForEdit.records) ? wmapSectionForEdit.records[0] : null;
-      const widthField = getFieldByBaseKey(wmapRecordForEdit, 'width');
-      const heightField = getFieldByBaseKey(wmapRecordForEdit, 'height');
-      if (!widthField || !heightField) {
-        setStatus('This scenario map is missing editable width/height fields.', true);
-        return;
-      }
-      rememberMapUndoSnapshot();
-      widthField.value = String(result.width);
-      heightField.value = String(result.height);
-      try {
-        applyMapResizePreviewToTab(tab, result.width, result.height);
-      } catch (err) {
-        setStatus(err && err.message ? err.message : 'Could not resize the map preview.', true);
-        return;
-      }
-      setDirty(true);
-      renderTabs();
-      renderActiveTab({ preserveTabScroll: true });
-      const resizedTileSection = Array.isArray(tab.sections)
-        ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
-        : null;
-      if (resizedTileSection) {
-        openMapModal({ tab, tileSection: resizedTileSection, title: `${tab.title || 'Map'} Editor` });
-      }
-      setStatus(`Resized map preview to ${result.width}x${result.height}. Save to write the BIQ.`);
-    });
-    actions.appendChild(editBtn);
-
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
     openBtn.className = 'ghost action-open';
@@ -31020,6 +31227,34 @@ function renderMapTab(tab) {
       setStatus(`Imported terrain and overlays from ${getPathTail(result.sourceScenarioPath || '')}${sizeLabel}.`);
     });
     actions.appendChild(importBtn);
+  }
+  if (hasMapData(tab) && tileSection) {
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'ghost action-edit';
+    editBtn.textContent = '↔ Resize Map';
+    editBtn.addEventListener('click', async () => {
+      const result = await promptEditMapAction(tab);
+      if (!result) return;
+      rememberMapUndoSnapshot();
+      try {
+        applyMapResizePreviewToTab(tab, result.width, result.height);
+      } catch (err) {
+        setStatus(err && err.message ? err.message : 'Could not resize the map preview.', true);
+        return;
+      }
+      setDirty(true);
+      renderTabs();
+      renderActiveTab({ preserveTabScroll: true });
+      const resizedTileSection = Array.isArray(tab.sections)
+        ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
+        : null;
+      if (resizedTileSection) {
+        openMapModal({ tab, tileSection: resizedTileSection, title: `${tab.title || 'Map'} Editor` });
+      }
+      setStatus(`Resized map preview to ${result.width}x${result.height}. Save to write the BIQ.`);
+    });
+    actions.appendChild(editBtn);
   }
   if (isScenarioMode() && hasMapData(tab)) {
     const removeBtn = document.createElement('button');
@@ -34731,6 +34966,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (isBarbarianOwnerPickerValue(value)) return parseIntLoose(raceDefaultColorById[0], NaN);
     return getMapUnitOwnerColorSlot(parseIntLoose(value, NaN));
   };
+  const getMapOwnerColorSlotFromOwnership = (ownerTypeRaw, ownerRaw, fallback = NaN) => {
+    const pickerValue = getMapOwnerPickerValueFromOwnership(ownerTypeRaw, ownerRaw);
+    const pickerColorSlot = getMapOwnerColorSlotForPickerValue(pickerValue);
+    if (Number.isFinite(pickerColorSlot)) return pickerColorSlot;
+    const civId = resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw);
+    const civColorSlot = Number.isFinite(raceDefaultColorById[civId]) ? raceDefaultColorById[civId] : NaN;
+    if (Number.isFinite(civColorSlot)) return civColorSlot;
+    return fallback;
+  };
   const getMapOwnerPickerValueFromOwnership = (ownerTypeRaw, ownerRaw) => {
     const ownerType = parseOwnerType(ownerTypeRaw);
     if (ownerType === 1) return getBarbarianCivilizationPickerEntry() ? BARBARIAN_OWNER_PICKER_VALUE : '';
@@ -36844,9 +37088,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const citySize = parseIntLoose(getFieldByBaseKey(cityRecord, 'size')?.value, 1);
     const cityOwnerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
     const cityOwnerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
-    const cityCivId = resolveCivIdFromOwnership(cityOwnerTypeRaw, cityOwnerRaw);
-    const cityCivColorIdx = Number.isFinite(raceDefaultColorById[cityCivId]) ? raceDefaultColorById[cityCivId] : 0;
-    const cityOwnerColor = colorFromCivSlot(cityCivColorIdx);
+    const cityColorSlot = getMapOwnerColorSlotFromOwnership(cityOwnerTypeRaw, cityOwnerRaw, 0);
+    const cityOwnerColor = colorFromCivSlot(cityColorSlot);
     const civRgb = parseRgbCss(cityOwnerColor) || { r: 128, g: 128, b: 128 };
     drawMapTextBadge(ctx, {
       label: cityName,
@@ -37843,8 +38086,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!slocRecord) return;
     const slocOwnerTypeRaw = String(getFieldRawValue(slocRecord, 'ownertype') || getFieldDisplayValue(slocRecord, 'ownertype') || '');
     const slocOwnerRaw = String(getFieldRawValue(slocRecord, 'owner') || getFieldDisplayValue(slocRecord, 'owner') || '');
-    const slocCivId = resolveCivIdFromOwnership(slocOwnerTypeRaw, slocOwnerRaw);
-    const slocColorIdx = ((Number.isFinite(raceDefaultColorById[slocCivId]) ? raceDefaultColorById[slocCivId] : 0) % 32 + 32) % 32;
+    const slocColorIdx = ((getMapOwnerColorSlotFromOwnership(slocOwnerTypeRaw, slocOwnerRaw, 0) % 32) + 32) % 32;
 
     let coloredStartLoc = state.biqMapColoredStartLocCache.get(slocColorIdx);
     if (!coloredStartLoc) {
