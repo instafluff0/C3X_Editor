@@ -5085,6 +5085,34 @@ details > summary:focus-visible {
   gap: 8px;
 }
 
+.unit-pediaicons-card {
+  gap: 10px;
+}
+
+.unit-pediaicons-field {
+  display: grid;
+  gap: 6px;
+}
+
+.unit-pediaicons-field-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.unit-pediaicons-field input[type="text"],
+.unit-pediaicons-field .key-display-chip {
+  width: 100%;
+  min-width: 0;
+}
+
+.unit-pediaicons-header,
+.unit-pediaicons-readonly {
+  font-family: var(--font-mono);
+}
+
 .unit-art-index-card .unit-icon-picker {
   max-width: 100%;
 }

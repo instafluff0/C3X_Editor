@@ -318,6 +318,26 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
   );
 });
 
+test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimension changes for save', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /function collectMapResizeTrimSummary\(tab, targetWidth, targetHeight\) \{[\s\S]*?cityCount:[\s\S]*?unitCount:[\s\S]*?startingLocationCount:[\s\S]*?colonyCount:[\s\S]*?trimmedTileCount:/,
+    'Edit Map should compute a concrete preview of out-of-bounds map content before the user confirms a shrink'
+  );
+  assert.match(
+    rendererText,
+    /async function promptEditMapAction\(tab\) \{[\s\S]*?el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Edit Map';[\s\S]*?Expansion keeps placed cities, units, and starting locations on their current coordinates, and the resized map preview opens immediately after you apply it\.[\s\S]*?Map Width[\s\S]*?Map Height[\s\S]*?Total Tiles[\s\S]*?Shrinking to \$\{validation\.width\}x\$\{validation\.height\} will remove[\s\S]*?Odd dimensions will be rounded up to the next even size before saving\.[\s\S]*?Shrinking is allowed\. Anything outside the new bounds will be removed automatically on save so the BIQ stays valid\./,
+    'Edit Map should warn in-modal about exactly what a shrink removes and explain that save sanitizes the BIQ automatically'
+  );
+  assert.match(
+    rendererText,
+    /if \(hasMapData\(tab\) && tileSection\) \{[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Edit Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?widthField\.value = String\(result\.width\);[\s\S]*?heightField\.value = String\(result\.height\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    'the map tab should expose Edit Map before Open Map, rebuild the in-memory map immediately, and open the resized preview right away'
+  );
+});
+
 test('map tab exposes Quint-style Add Custom Map creation with even-size and tile-cap guardrails', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 

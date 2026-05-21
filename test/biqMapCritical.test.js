@@ -113,6 +113,20 @@ function getRecordsAtCoords(section, x, y) {
   ));
 }
 
+function getTileAtCoords(section, x, y) {
+  return ((section && section.records) || []).find((record) => (
+    getRecordInt(record, 'xpos', -1) === Number(x)
+    && getRecordInt(record, 'ypos', -1) === Number(y)
+  )) || null;
+}
+
+function getParsedTileAtCoords(section, x, y) {
+  return ((section && section.records) || []).find((record) => (
+    Number(record && record.xpos) === Number(x)
+    && Number(record && record.ypos) === Number(y)
+  )) || null;
+}
+
 function addSeedCity(mapTab, citySection, tile, name, owner = 0, ownerType = 2) {
   if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
   const ref = `CITY_${String(name || 'seed').replace(/[^A-Z0-9]+/gi, '_').toUpperCase()}_${Date.now()}_${Math.floor(Math.random() * 10000)}`.slice(0, 28);
@@ -374,6 +388,232 @@ test('critical BIQ map: unchanged loaded map bundle emits no collected map ops o
   assert.deepEqual(collectBiqMapStructureOps(bundle.tabs), [], 'expected unchanged map bundle to emit no map structure ops');
   assert.deepEqual(collectBiqMapRecordOps(bundle.tabs), [], 'expected unchanged map bundle to emit no map record ops');
   assert.deepEqual(collectBiqMapEdits(bundle.tabs), [], 'expected unchanged map bundle to emit no map field edits');
+});
+
+test('critical BIQ map: expanding dimensions preserves existing entity coordinates and tile links', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle.tabs.map;
+  const sections = getMapSectionsOrSkip(t, mapTab);
+  if (!sections) return;
+  const { tileSection, citySection, unitSection } = sections;
+  const slocSection = getSection(mapTab, 'SLOC');
+  assert.ok(slocSection, 'expected SLOC section for resize test');
+  const openTile = (tileSection.records || []).find((tile) => (
+    getRecordInt(tile, 'city', -1) < 0
+  ));
+  assert.ok(openTile, 'expected empty tile for resize test');
+  const seedX = getRecordInt(openTile, 'xpos', -1);
+  const seedY = getRecordInt(openTile, 'ypos', -1);
+  const seededCity = addSeedCity(mapTab, citySection, openTile, 'Resize Seed City');
+  const seededUnit = addSeedUnit(mapTab, unitSection, openTile, 0, 2, 0, 'resize');
+  const seededSloc = addSeedStartingLocation(mapTab, slocSection, seedX, seedY, 0, 3, 'resize');
+  assert.ok(seededSloc && seededSloc.created, 'expected seeded starting location');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed resize entities'));
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const seededMap = seededReload.tabs.map;
+  const seededWmap = getSection(seededMap, 'WMAP');
+  const seededTileSection = getSection(seededMap, 'TILE');
+  const seededCitySection = getSection(seededMap, 'CITY');
+  const seededUnitSection = getSection(seededMap, 'UNIT');
+  const seededSlocSection = getSection(seededMap, 'SLOC');
+  assert.ok(seededWmap && seededTileSection && seededCitySection && seededUnitSection && seededSlocSection, 'expected full map sections after seeding');
+  const seededWmapRecord = seededWmap.records[0];
+  const originalWidth = getRecordInt(seededWmapRecord, 'width', 0);
+  const originalHeight = getRecordInt(seededWmapRecord, 'height', 0);
+  const before = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(before.ok, true, 'expected seeded BIQ parse before resize');
+
+  const stableCoords = [
+    { x: seedX, y: seedY },
+    { x: getRecordInt(seededTileSection.records[0], 'xpos', -1), y: getRecordInt(seededTileSection.records[0], 'ypos', -1) },
+    { x: getRecordInt(seededTileSection.records[Math.floor(seededTileSection.records.length / 2)], 'xpos', -1), y: getRecordInt(seededTileSection.records[Math.floor(seededTileSection.records.length / 2)], 'ypos', -1) }
+  ].filter((coord, index, arr) => (
+    coord.x >= 0
+    && coord.y >= 0
+    && arr.findIndex((other) => other.x === coord.x && other.y === coord.y) === index
+  ));
+  const stableSnapshot = stableCoords.map((coord) => {
+    const tile = getTileAtCoords(seededTileSection, coord.x, coord.y);
+    return {
+      x: coord.x,
+      y: coord.y,
+      base: getRecordInt(tile, 'baserealterrain', -1),
+      overlays: getRecordInt(tile, 'c3coverlays', -1),
+      resource: getRecordInt(tile, 'resource', -1)
+    };
+  });
+
+  const widthField = getRecordField(seededWmapRecord, 'width');
+  const heightField = getRecordField(seededWmapRecord, 'height');
+  widthField.value = String(originalWidth + 2);
+  heightField.value = String(originalHeight + 2);
+
+  const resizeSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(resizeSaveResult.ok, true, String(resizeSaveResult.error || 'resize save failed'));
+
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(after.ok, true, 'expected resized BIQ parse');
+  assert.deepEqual(getChangedSectionCodes(before, after), ['WMAP', 'TILE', 'CONT']);
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = reloaded.tabs.map;
+  const reWmap = getSection(reMap, 'WMAP');
+  const reTileSection = getSection(reMap, 'TILE');
+  const reCitySection = getSection(reMap, 'CITY');
+  const reUnitSection = getSection(reMap, 'UNIT');
+  const reSlocSection = getSection(reMap, 'SLOC');
+  assert.equal(getRecordInt(reWmap.records[0], 'width', 0), originalWidth + 2);
+  assert.equal(getRecordInt(reWmap.records[0], 'height', 0), originalHeight + 2);
+
+  const reSeedTile = getTileAtCoords(reTileSection, seedX, seedY);
+  assert.ok(reSeedTile, 'expected seeded tile to remain after resize');
+  const reCity = (reCitySection.records || []).find((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === seededCity.name);
+  const reUnit = (reUnitSection.records || []).find((record) => (
+    getRecordInt(record, 'x', -1) === seededUnit.x
+    && getRecordInt(record, 'y', -1) === seededUnit.y
+    && getRecordInt(record, 'prtonumber', -1) === seededUnit.prtoNumber
+  ));
+  const reSloc = getRecordsAtCoords(reSlocSection, seedX, seedY)[0];
+  assert.ok(reCity, 'expected seeded city after resize');
+  assert.ok(reUnit, 'expected seeded unit after resize');
+  assert.ok(reSloc, 'expected seeded starting location after resize');
+  assert.equal(getRecordInt(reCity, 'x', -1), seedX);
+  assert.equal(getRecordInt(reCity, 'y', -1), seedY);
+  assert.equal(getRecordInt(reUnit, 'x', -1), seedX);
+  assert.equal(getRecordInt(reUnit, 'y', -1), seedY);
+  assert.equal(getRecordInt(reSloc, 'x', -1), seedX);
+  assert.equal(getRecordInt(reSloc, 'y', -1), seedY);
+  assert.equal(getRecordInt(reSeedTile, 'city', -1), reCity.index);
+
+  stableSnapshot.forEach((expected) => {
+    const tile = getTileAtCoords(reTileSection, expected.x, expected.y);
+    assert.ok(tile, `expected tile ${expected.x},${expected.y} after resize`);
+    assert.equal(getRecordInt(tile, 'baserealterrain', -1), expected.base, `expected terrain at ${expected.x},${expected.y} to stay stable`);
+    assert.equal(getRecordInt(tile, 'c3coverlays', -1), expected.overlays, `expected overlays at ${expected.x},${expected.y} to stay stable`);
+    assert.equal(getRecordInt(tile, 'resource', -1), expected.resource, `expected resource at ${expected.x},${expected.y} to stay stable`);
+  });
+
+  assertMapReferenceIntegrityFromMapTab(reMap, 'expected resized map to keep valid entity/tile references');
+});
+
+test('critical BIQ map: resizing recomputes stored terrain sprite fields for shifted map edges', () => {
+  const raw = fs.readFileSync(getStableLeadNoMapFixturePath());
+  const blankSections = buildGeneratedBlankMapSections(16, 16);
+  const setMapResult = applyEdits(raw, [{
+    op: 'setmap',
+    sections: blankSections,
+    allowSetmapGeneration: true
+  }], {
+    allowSetmapGeneration: true
+  });
+  assert.equal(setMapResult.ok, true, String(setMapResult.error || 'failed to seed blank map'));
+
+  const seededParsed = parseAllSections(setMapResult.buffer);
+  assert.equal(seededParsed.ok, true, 'expected generated blank map to parse');
+  const seededTileSection = getSection({ sections: seededParsed.sections }, 'TILE');
+  const staleEdgeTile = getParsedTileAtCoords(seededTileSection, 15, 3);
+  assert.ok(staleEdgeTile, 'expected old east-edge tile before resize');
+  assert.equal(Number(staleEdgeTile.file), 0, 'expected seeded fixture tile file to start unset');
+  assert.equal(Number(staleEdgeTile.image), 0, 'expected seeded fixture tile image to start unset');
+
+  const resizeResult = applyEdits(setMapResult.buffer, [{
+    op: 'resizemap',
+    width: 18,
+    height: 16
+  }]);
+  assert.equal(resizeResult.ok, true, String(resizeResult.error || 'resize save failed'));
+
+  const resizedParsed = parseAllSections(resizeResult.buffer);
+  assert.equal(resizedParsed.ok, true, 'expected resized blank map to parse');
+  const resizedWmap = getSection({ sections: resizedParsed.sections }, 'WMAP');
+  const resizedTileSection = getSection({ sections: resizedParsed.sections }, 'TILE');
+  assert.equal(Number(resizedWmap.records[0].width), 18);
+  assert.equal(Number(resizedWmap.records[0].height), 16);
+
+  const noLongerEdgeTile = getParsedTileAtCoords(resizedTileSection, 15, 3);
+  const newEastEdgeTile = getParsedTileAtCoords(resizedTileSection, 17, 3);
+  assert.ok(noLongerEdgeTile, 'expected shifted interior tile after resize');
+  assert.ok(newEastEdgeTile, 'expected new east-edge tile after resize');
+  assert.equal(Number(noLongerEdgeTile.file), 4, 'expected shifted interior grassland tile to use inland sprite atlas');
+  assert.equal(Number(noLongerEdgeTile.image), 40, 'expected shifted interior grassland tile to use inland sprite image');
+  assert.equal(Number(newEastEdgeTile.file), 4, 'expected wrapped east-edge grassland tile to recompute from wrapped neighbors');
+  assert.equal(Number(newEastEdgeTile.image), 40, 'expected wrapped east-edge grassland tile to use recomputed wrapped-neighbor sprite image');
+});
+
+test('critical BIQ map: shrinking dimensions removes out-of-bounds entities and still saves a valid BIQ', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle.tabs.map;
+  const sections = getMapSectionsOrSkip(t, mapTab);
+  if (!sections) return;
+  const { tileSection, citySection, unitSection } = sections;
+  const slocSection = getSection(mapTab, 'SLOC');
+  const wmapSection = getSection(mapTab, 'WMAP');
+  assert.ok(slocSection && wmapSection, 'expected SLOC and WMAP sections for shrink test');
+  const wmapRecord = wmapSection.records[0];
+  const originalWidth = getRecordInt(wmapRecord, 'width', 0);
+  const originalHeight = getRecordInt(wmapRecord, 'height', 0);
+  const edgeTile = (tileSection.records || []).find((tile) => {
+    const x = getRecordInt(tile, 'xpos', -1);
+    const y = getRecordInt(tile, 'ypos', -1);
+    return x >= (originalWidth - 2) && y >= (originalHeight - 2) && getRecordInt(tile, 'city', -1) < 0;
+  });
+  assert.ok(edgeTile, 'expected edge tile for shrink test');
+  const edgeX = getRecordInt(edgeTile, 'xpos', -1);
+  const edgeY = getRecordInt(edgeTile, 'ypos', -1);
+  const seededCity = addSeedCity(mapTab, citySection, edgeTile, 'Shrink Seed City');
+  const seededUnit = addSeedUnit(mapTab, unitSection, edgeTile, 0, 2, 0, 'shrink');
+  const seededSloc = addSeedStartingLocation(mapTab, slocSection, edgeX, edgeY, 0, 3, 'shrink');
+  assert.ok(seededSloc && seededSloc.created, 'expected seeded starting location');
+
+  const seedSaveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
+  assert.equal(seedSaveResult.ok, true, String(seedSaveResult.error || 'failed to seed shrink entities'));
+
+  const seededReload = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const seededMap = seededReload.tabs.map;
+  const seededWmap = getSection(seededMap, 'WMAP');
+  const seededWidthField = getRecordField(seededWmap.records[0], 'width');
+  const seededHeightField = getRecordField(seededWmap.records[0], 'height');
+  seededWidthField.value = String(originalWidth - 2);
+  seededHeightField.value = String(originalHeight - 2);
+
+  const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'shrink save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = reloaded.tabs.map;
+  const reWmap = getSection(reMap, 'WMAP');
+  const reTileSection = getSection(reMap, 'TILE');
+  const reCitySection = getSection(reMap, 'CITY');
+  const reUnitSection = getSection(reMap, 'UNIT');
+  const reSlocSection = getSection(reMap, 'SLOC');
+  assert.equal(getRecordInt(reWmap.records[0], 'width', 0), originalWidth - 2);
+  assert.equal(getRecordInt(reWmap.records[0], 'height', 0), originalHeight - 2);
+  assert.equal(getTileAtCoords(reTileSection, edgeX, edgeY), null, 'expected trimmed edge tile to be removed');
+  assert.equal((reCitySection.records || []).some((record) => String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === seededCity.name), false, 'expected out-of-bounds city to be removed');
+  assert.equal((reUnitSection.records || []).some((record) => getRecordInt(record, 'x', -1) === seededUnit.x && getRecordInt(record, 'y', -1) === seededUnit.y), false, 'expected out-of-bounds unit to be removed');
+  assert.equal(getRecordsAtCoords(reSlocSection, edgeX, edgeY).length, 0, 'expected out-of-bounds starting location to be removed');
+  assertMapReferenceIntegrityFromMapTab(reMap, 'expected shrunken map to remain reference-safe after trimming out-of-bounds entities');
 });
 
 test('critical BIQ map: city delete round-trip preserves surviving tile references', (t) => {

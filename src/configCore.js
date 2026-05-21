@@ -8154,7 +8154,10 @@ function collectBiqMapStructureOps(tabs) {
   const tab = tabs && tabs.map;
   if (!tab) return [];
   const mutation = String(tab.mapMutation || '').trim().toLowerCase();
-  if (!mutation) return [];
+  if (!mutation) {
+    const resizeOp = getBiqMapResizeOp(tab);
+    return resizeOp ? [resizeOp] : [];
+  }
   if (mutation === 'remove') {
     return [{ op: 'removemap' }];
   }
@@ -8169,6 +8172,39 @@ function collectBiqMapStructureOps(tabs) {
     sections,
     allowSetmapGeneration: ['generated', 'imported', 'custom'].includes(String(tab && tab.mapMutationSource || '').trim().toLowerCase())
   }];
+}
+
+function getBiqMapResizeOp(tab) {
+  if (!tab || String(tab.mapMutation || '').trim()) return null;
+  if (tab.originalHasMap === false || tab.hasMapData === false) return null;
+  const sections = Array.isArray(tab.sections) ? tab.sections : [];
+  const wmapSection = sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'WMAP') || null;
+  const record = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  if (!record || !Array.isArray(record.fields)) return null;
+  const getField = (targetKey) => record.fields.find((field) => (
+    String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === String(targetKey).trim().toLowerCase()
+  )) || null;
+  const parseIntLooseLocal = (value) => {
+    const match = String(value == null ? '' : value).trim().match(/-?\d+/);
+    if (!match) return NaN;
+    const parsed = Number.parseInt(match[0], 10);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  };
+  const widthField = getField('width');
+  const heightField = getField('height');
+  const nextWidth = parseIntLooseLocal(widthField && widthField.value);
+  const nextHeight = parseIntLooseLocal(heightField && heightField.value);
+  const originalWidth = parseIntLooseLocal(widthField && widthField.originalValue);
+  const originalHeight = parseIntLooseLocal(heightField && heightField.originalValue);
+  if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight) || !Number.isFinite(originalWidth) || !Number.isFinite(originalHeight)) {
+    return null;
+  }
+  if (nextWidth === originalWidth && nextHeight === originalHeight) return null;
+  return {
+    op: 'resizemap',
+    width: nextWidth,
+    height: nextHeight
+  };
 }
 
 function collectBiqMapEdits(tabs) {
@@ -8214,6 +8250,7 @@ function collectBiqMapEdits(tabs) {
         if (!key) return;
         if (isLockedBiqField(sectionCode, key)) return;
         const keyLower = key.toLowerCase();
+        if (sectionCode === 'WMAP' && (keyLower === 'width' || keyLower === 'height')) return;
         if (sectionCode === 'TILE' && ['district', 'districtname', 'wondername', 'wondercity', 'naturalwonder', 'namedtile'].includes(keyLower)) return;
         if (keyLower === 'civilopediaentry' || keyLower === 'note') return;
         const value = getRawMapFieldValue(record, field);

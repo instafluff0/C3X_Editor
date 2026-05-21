@@ -651,7 +651,7 @@ function buildAppMenu() {
     label: 'File',
     submenu: [
       {
-        label: 'Custom Rules',
+        label: 'Enable Custom Rules',
         type: 'checkbox',
         visible: currentScenarioOptionMenuState.visible,
         enabled: currentScenarioOptionMenuState.enabled,
@@ -659,7 +659,7 @@ function buildAppMenu() {
         click: () => sendScenarioOptionToggle('manager:toggle-custom-rules')
       },
       {
-        label: 'Custom Player Data',
+        label: 'Enable Custom Player Data',
         type: 'checkbox',
         visible: currentScenarioOptionMenuState.visible,
         enabled: currentScenarioOptionMenuState.enabled,

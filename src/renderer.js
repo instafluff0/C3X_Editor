@@ -2733,9 +2733,18 @@ function buildUndoHistoryAfterScopedMapUndo(restoredMapTab, { removeAll = false 
   return source;
 }
 
+function normalizeDirtyComparableValue(value) {
+  if (value == null) return null;
+  const cloned = JSON.parse(JSON.stringify(value));
+  if (cloned && typeof cloned === 'object' && Object.prototype.hasOwnProperty.call(cloned, 'previewDirtyBaseline')) {
+    delete cloned.previewDirtyBaseline;
+  }
+  return cloned;
+}
+
 function hasChangedFromClean(currentValue, cleanValue) {
-  return JSON.stringify(currentValue == null ? null : currentValue)
-    !== JSON.stringify(cleanValue == null ? null : cleanValue);
+  return JSON.stringify(normalizeDirtyComparableValue(currentValue))
+    !== JSON.stringify(normalizeDirtyComparableValue(cleanValue));
 }
 
 function normalizeUnitIniActionsForDirty(actions) {
@@ -2785,6 +2794,24 @@ function hasReferenceEntryChangedFromClean(currentEntry, cleanEntry) {
   );
 }
 
+function getEffectiveCleanTabForDirty(tabKey) {
+  const cleanTabs = getCleanTabsObject();
+  const cleanTab = cleanTabs[tabKey] || null;
+  const currentTab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  const pendingCustomRules = String(
+    (((state.bundle || {}).tabs || {}).scenarioSettings || {}).customRulesMutation || ''
+  ).trim().toLowerCase();
+  if (
+    pendingCustomRules
+    && CUSTOM_RULES_UI_TAB_KEYS.includes(tabKey)
+    && currentTab
+    && currentTab.previewDirtyBaseline
+  ) {
+    return currentTab.previewDirtyBaseline;
+  }
+  return cleanTab;
+}
+
 function countCivilizationDiplomacySlotChanges(currentTab, cleanTab) {
   const currentSlots = (currentTab && Array.isArray(currentTab.diplomacySlots)) ? currentTab.diplomacySlots : [];
   const cleanSlots = (cleanTab && Array.isArray(cleanTab.diplomacySlots)) ? cleanTab.diplomacySlots : [];
@@ -2815,16 +2842,14 @@ function countCivilizationDiplomacySlotChanges(currentTab, cleanTab) {
 function isTabDirty(tabKey) {
   if (!state.isDirty || !state.bundle || !state.bundle.tabs) return false;
   if (!EDITABLE_TAB_KEYS.includes(tabKey)) return false;
-  const cleanTabs = getCleanTabsObject();
-  return hasChangedFromClean(state.bundle.tabs[tabKey], cleanTabs[tabKey]);
+  return hasChangedFromClean(state.bundle.tabs[tabKey], getEffectiveCleanTabForDirty(tabKey));
 }
 
 function computeTabDirtyCount(tabKey) {
   if (!EDITABLE_TAB_KEYS.includes(tabKey)) return 0;
   if (!isTabDirty(tabKey) || !state.bundle || !state.bundle.tabs) return 0;
   const currentTab = state.bundle.tabs[tabKey];
-  const cleanTabs = getCleanTabsObject();
-  const cleanTab = cleanTabs[tabKey];
+  const cleanTab = getEffectiveCleanTabForDirty(tabKey);
   if (!currentTab) return 0;
 
   if (currentTab.type === 'reference') {
@@ -2913,8 +2938,7 @@ function recomputeDirtyCountForTab(tabKey) {
 }
 
 function getCleanReferenceEntry(tabKey, entryOrKey, fallbackIndex) {
-  const cleanTabs = getCleanTabsObject();
-  const cleanTab = cleanTabs[tabKey];
+  const cleanTab = getEffectiveCleanTabForDirty(tabKey);
   const cleanEntries = cleanTab && Array.isArray(cleanTab.entries) ? cleanTab.entries : [];
   if (entryOrKey && typeof entryOrKey === 'object') {
     return findCleanReferenceEntry(cleanEntries, tabKey, entryOrKey, fallbackIndex);
@@ -2924,8 +2948,7 @@ function getCleanReferenceEntry(tabKey, entryOrKey, fallbackIndex) {
 }
 
 function getCleanSectionByIndex(tabKey, sectionIndex) {
-  const cleanTabs = getCleanTabsObject();
-  const cleanTab = cleanTabs[tabKey];
+  const cleanTab = getEffectiveCleanTabForDirty(tabKey);
   const cleanSections = cleanTab && cleanTab.model && Array.isArray(cleanTab.model.sections) ? cleanTab.model.sections : [];
   return cleanSections[sectionIndex] || null;
 }
@@ -2956,8 +2979,7 @@ function updateActiveDirtyCaches() {
         const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
         if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(identity);
       });
-      const cleanTabs = getCleanTabsObject();
-      const cleanTab = cleanTabs[tabKey];
+      const cleanTab = getEffectiveCleanTabForDirty(tabKey);
       const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
       setTabDirtyCount(tabKey, set.size + extra);
       return;
@@ -2971,8 +2993,7 @@ function updateActiveDirtyCaches() {
     const cleanEntry = getCleanReferenceEntry(tabKey, entry, selectedIndex);
     if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(identity);
     else set.delete(identity);
-    const cleanTabs = getCleanTabsObject();
-    const cleanTab = cleanTabs[tabKey];
+    const cleanTab = getEffectiveCleanTabForDirty(tabKey);
     const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
     setTabDirtyCount(tabKey, set.size + extra);
     return;
@@ -3002,8 +3023,7 @@ function rebuildDirtyTabCounts() {
         const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
         if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(identity);
       });
-      const cleanTabs = getCleanTabsObject();
-      const cleanTab = cleanTabs[tabKey];
+      const cleanTab = getEffectiveCleanTabForDirty(tabKey);
       const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
       setTabDirtyCount(tabKey, set.size + extra);
       return;
@@ -3043,8 +3063,7 @@ function isReferenceEntryDirty(tabKey, entry) {
 
 function isSectionItemDirty(tabKey, sectionIndex, sectionObj) {
   if (!state.isDirty) return false;
-  const cleanTabs = getCleanTabsObject();
-  const cleanTab = cleanTabs[tabKey];
+  const cleanTab = getEffectiveCleanTabForDirty(tabKey);
   const cleanSections = cleanTab && cleanTab.model && Array.isArray(cleanTab.model.sections) ? cleanTab.model.sections : [];
   const name = (sectionObj && Array.isArray(sectionObj.fields)) ? String(getFieldValue(sectionObj, 'name') || '').trim().toLowerCase() : '';
   const cleanSection = name
@@ -3055,8 +3074,7 @@ function isSectionItemDirty(tabKey, sectionIndex, sectionObj) {
 
 function isBiqRecordDirty(tabKey, sectionCode, recordObj) {
   if (!state.isDirty) return false;
-  const cleanTabs = getCleanTabsObject();
-  const cleanTab = cleanTabs[tabKey];
+  const cleanTab = getEffectiveCleanTabForDirty(tabKey);
   const cleanSections = cleanTab && Array.isArray(cleanTab.sections) ? cleanTab.sections : [];
   const cleanSection = cleanSections.find((s) => String(s && s.code || '').toUpperCase() === String(sectionCode || '').toUpperCase()) || null;
   const cleanRecords = cleanSection && Array.isArray(cleanSection.records) ? cleanSection.records : [];
@@ -3803,6 +3821,11 @@ function formatBiqReferenceValue(sectionCode, index) {
   return match ? `${match.label} (${parsed})` : String(parsed);
 }
 
+function getSeedLeadFieldLabel(baseKey) {
+  const field = { key: baseKey, baseKey };
+  return getBiqStructureDisplayLabel('LEAD', field, [field], 0);
+}
+
 function setLeadFieldValue(record, baseKey, value) {
   const field = getFieldByBaseKey(record, baseKey);
   if (!field) return false;
@@ -3835,7 +3858,7 @@ function makeQuintLeadField(baseKey, value) {
   return {
     key: baseKey,
     baseKey,
-    label: toFriendlyKey(baseKey),
+    label: getSeedLeadFieldLabel(baseKey),
     value: String(value),
     originalValue: ''
   };
@@ -3964,7 +3987,15 @@ function applyCustomRulesFallbackTabs(globalTabs) {
       disabled: true,
       fallbackSourcePath: String(sourceTab.sourcePath || ''),
       fallbackNotice,
-      disabledReason
+      disabledReason,
+      previewDirtyBaseline: {
+        ...deepCloneUiValue(sourceTab),
+        readOnly: true,
+        disabled: true,
+        fallbackSourcePath: String(sourceTab.sourcePath || ''),
+        fallbackNotice,
+        disabledReason
+      }
     };
   });
 }
@@ -3980,6 +4011,7 @@ function applyEditableCustomRulesTabs(globalTabs) {
     delete nextTab.disabledReason;
     delete nextTab.fallbackNotice;
     delete nextTab.fallbackSourcePath;
+    nextTab.previewDirtyBaseline = deepCloneUiValue(nextTab);
     state.bundle.tabs[key] = nextTab;
   });
 }
@@ -4044,12 +4076,13 @@ function toggleScenarioCustomPlayerData() {
 
 function renderScenarioOptionChips() {
   if (!window.c3xManager || typeof window.c3xManager.updateScenarioOptionMenuState !== 'function') return;
-  const show = !!(state.settings && state.settings.mode === 'scenario' && state.bundle && state.bundle.tabs);
+  const show = !!(state.bundle && state.bundle.tabs);
+  const scenarioMode = !!(state.settings && state.settings.mode === 'scenario' && state.bundle && state.bundle.tabs);
   void window.c3xManager.updateScenarioOptionMenuState({
     visible: show,
-    enabled: show && !state.isLoading && !state.isSaving,
-    customRulesEnabled: show && getScenarioCustomRulesStatus(),
-    customPlayerDataEnabled: show && getScenarioCustomPlayerDataStatus()
+    enabled: scenarioMode && !state.isLoading && !state.isSaving,
+    customRulesEnabled: scenarioMode && getScenarioCustomRulesStatus(),
+    customPlayerDataEnabled: scenarioMode && getScenarioCustomPlayerDataStatus()
   });
 }
 
@@ -11175,6 +11208,19 @@ const BIQ_FIELD_REFS = {
     prerequisite2: 'technologies',
     prerequisite3: 'technologies',
     prerequisite4: 'technologies'
+  },
+  rules: {
+    slave: 'units',
+    startunit1: 'units',
+    startunit2: 'units',
+    scout: 'units',
+    battlecreatedunit: 'units',
+    buildarmyunit: 'units',
+    basicbarbarian: 'units',
+    advancedbarbarian: 'units',
+    barbarianseaunit: 'units',
+    flagunit: 'units',
+    defaultmoneyresource: 'resources'
   }
 };
 
@@ -11666,18 +11712,18 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
     fields: {
       civ: { group: 'Player', control: 'reference', label: 'Civilization' },
       leadername: { group: 'Civilization Details', control: 'text', label: 'Leader Name' },
-      genderofleadername: { group: 'Civilization Details', control: 'select', label: 'Gender' },
-      color: { group: 'Civilization Details', control: 'number', min: 0, max: 31, label: 'Team Color' },
-      startcash: { group: 'Player', control: 'number', min: 0, label: 'Starting Treasury' },
+      genderofleadername: { group: 'Civilization Details', control: 'select', label: 'Leader Name Gender' },
+      color: { group: 'Civilization Details', control: 'number', min: 0, max: 31, label: 'Color Index' },
+      startcash: { group: 'Player', control: 'number', min: 0, label: 'Start Cash' },
       government: { group: 'Player', control: 'reference', label: 'Government' },
       initialera: { group: 'Player', control: 'reference', label: 'Initial Era' },
-      difficulty: { group: 'Player', control: 'select', label: 'Difficulty Level' },
+      difficulty: { group: 'Player', control: 'select', label: 'Difficulty' },
       humanplayer: { group: 'Player', control: 'bool', label: 'Human Player' },
-      customcivdata: { group: 'Player', control: 'bool', label: 'Civilization Defaults' },
-      skipfirstturn: { group: 'Player', control: 'bool', label: 'Skip 1st Turn' },
-      startembassies: { group: 'Player', control: 'bool', label: 'Starts with Embassies' },
-      numberofdifferentstartunits: { group: 'Starting Units', control: 'number', min: 0, label: 'How Many Types' },
-      numberofstartingtechnologies: { group: 'Free Techs', control: 'number', min: 0, label: 'How Many' }
+      customcivdata: { group: 'Player', control: 'bool', label: 'Custom Civilization Data' },
+      skipfirstturn: { group: 'Player', control: 'bool', label: 'Skip First Turn' },
+      startembassies: { group: 'Player', control: 'bool', label: 'Start Embassies' },
+      numberofdifferentstartunits: { group: 'Starting Units', control: 'number', min: 0, label: 'Number Of Different Start Units' },
+      numberofstartingtechnologies: { group: 'Free Techs', control: 'number', min: 0, label: 'Number Of Starting Technologies' }
     }
   },
   RULE: {
@@ -11858,16 +11904,43 @@ function getFriendlyBiqSectionTitle(section) {
   return BIQ_SECTION_FRIENDLY_NAMES[code] || String((section && section.title) || code || 'Section');
 }
 
+function getFallbackBiqSectionForOptions(sectionCode) {
+  const code = String(sectionCode || '').toUpperCase();
+  if (!state.bundle || !state.bundle.tabs) return null;
+  const tabKeys = Object.keys(state.bundle.tabs);
+  for (let i = 0; i < tabKeys.length; i += 1) {
+    const tab = state.bundle.tabs[tabKeys[i]];
+    const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+    const match = sections.find((section) => String(section && section.code || '').toUpperCase() === code);
+    if (match) return match;
+  }
+  return null;
+}
+
 function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
   const code = String(sectionCode || '').toUpperCase();
   const biq = state.bundle && state.bundle.biq;
   const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
-  const section = sections.find((s) => String(s.code || '').toUpperCase() === code);
+  const section = getFallbackBiqSectionForOptions(code)
+    || sections.find((s) => String(s.code || '').toUpperCase() === code);
   const records = Array.isArray(section && section.fullRecords)
     ? section.fullRecords
     : (section && Array.isArray(section.records) ? section.records : []);
-  if (!section || !Array.isArray(records)) return [];
   const targetTabKey = BIQ_SECTION_TO_REFERENCE_TAB[code] || '';
+  if ((!section || !Array.isArray(records) || records.length === 0) && targetTabKey) {
+    const targetTab = state.bundle && state.bundle.tabs && state.bundle.tabs[targetTabKey];
+    const targetEntries = targetTab && Array.isArray(targetTab.entries) ? targetTab.entries : [];
+    return targetEntries.map((entry, idx) => {
+      const entryIndex = getReferenceEntryIndexForOption(targetTabKey, entry, idx, { allowFallback: true });
+      return {
+        value: String(oneBased ? (entryIndex + 1) : entryIndex),
+        label: String(entry && entry.name || `${code} ${idx + 1}`),
+        entry,
+        recIndex: entryIndex
+      };
+    }).filter((opt) => Number.isFinite(opt.recIndex) && opt.recIndex >= 0);
+  }
+  if (!section || !Array.isArray(records)) return [];
   const targetTab = targetTabKey && state.bundle && state.bundle.tabs && state.bundle.tabs[targetTabKey];
   const targetEntries = targetTab && Array.isArray(targetTab.entries) ? targetTab.entries : [];
   const entryByIndex = new Map();
@@ -11987,6 +12060,47 @@ function getBiqStructureFieldSpec(sectionCode, field) {
     if (key.replace(/[^a-z0-9]/g, '') === canon) return schema.fields[key];
   }
   return null;
+}
+
+function getLeadStartUnitDisplayLabel(field) {
+  const baseKey = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const suffix = baseKey.replace(/^starting_units_of_type_/, '').trim();
+  if (!suffix) return String(field && (field.label || field.key) || 'Starting Unit');
+  const numericIndex = Number.parseInt(suffix, 10);
+  if (Number.isFinite(numericIndex) && numericIndex >= 0) {
+    const unitOptions = makeBiqSectionIndexOptions('PRTO', false);
+    const match = unitOptions.find((opt) => Number.parseInt(String(opt && opt.value || ''), 10) === numericIndex);
+    if (match && match.label) return `${match.label} Units`;
+  }
+  const unitName = suffix
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+  return unitName ? `${unitName} Units` : String(field && (field.label || field.key) || 'Starting Unit');
+}
+
+function getBiqStructureDisplayLabel(sectionCode, field, groupFields, fieldIdx) {
+  const code = String(sectionCode || '').toUpperCase();
+  const baseKeyRaw = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const rawKey = String(field && (field.baseKey || field.key) || '');
+  const rawLabel = String(field && (field.label || '') || '');
+  if (code === 'GAME' && baseKeyRaw === 'playable_civ') {
+    const playableIdx = (Array.isArray(groupFields) ? groupFields : [])
+      .slice(0, Number(fieldIdx || 0) + 1)
+      .filter((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'playable_civ')
+      .length;
+    return `Playable Civilization ${playableIdx}`;
+  }
+  if (code === 'LEAD' && /^starting_units_of_type_/.test(baseKeyRaw)) {
+    return getLeadStartUnitDisplayLabel(field);
+  }
+  if (code === 'LEAD' && /^starting_technology_\d+$/.test(baseKeyRaw)) {
+    const techIdx = Number.parseInt(baseKeyRaw.replace(/^starting_technology_/, ''), 10);
+    if (Number.isFinite(techIdx)) return `Free Technology ${techIdx + 1}`;
+  }
+  const spec = getBiqStructureFieldSpec(sectionCode, field);
+  if (spec && spec.label) return String(spec.label);
+  if (rawLabel && rawLabel.toLowerCase() !== rawKey.toLowerCase()) return rawLabel;
+  return toFriendlyKey(rawKey);
 }
 
 function getBiqStructureFieldGroup(sectionCode, field) {
@@ -13231,6 +13345,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
       } else if (useReferencePicker) {
         const labelText = String(field.label || field.key || 'value').trim();
         const isTechPrereqField = tabKey === 'technologies' && /^prerequisite/i.test(String(field.baseKey || field.key || ''));
+        const targetTabKey = (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '';
         const normalizedCurrentValue = isTechPrereqField
           ? (() => {
               const idx = resolveTechIndexFromValue(field.value);
@@ -13239,10 +13354,11 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           : field.value;
         const picker = createReferencePicker({
           options: refOptions,
-          targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
+          targetTabKey,
           currentValue: normalizedCurrentValue,
           searchPlaceholder: `Search ${labelText}...`,
           noneLabel: '(none)',
+          showOptionThumbs: targetTabKey === 'units',
           onSelect: (value) => {
             rememberUndoSnapshot();
             field.value = String(value);
@@ -22563,6 +22679,413 @@ async function promptAddCustomMapAction(tab) {
   });
 }
 
+function collectMapResizeTrimSummary(tab, targetWidth, targetHeight) {
+  const width = Math.max(0, Number(targetWidth) || 0);
+  const height = Math.max(0, Number(targetHeight) || 0);
+  const findSection = (code) => (Array.isArray(tab && tab.sections) ? tab.sections : []).find((section) => (
+    String(section && section.code || '').trim().toUpperCase() === String(code || '').trim().toUpperCase()
+  )) || null;
+  const getOutOfBoundsCount = (sectionCode) => {
+    const section = findSection(sectionCode);
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    return records.reduce((count, record) => {
+      const x = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
+      const y = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return count;
+      if (x < 0 || y < 0 || x >= width || y >= height) return count + 1;
+      return count;
+    }, 0);
+  };
+  const wmapSection = findSection('WMAP');
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  const currentWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+  const currentHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  const currentTileCount = Math.floor((Math.max(0, currentWidth) * Math.max(0, currentHeight)) / 2);
+  const nextTileCount = Math.floor((width * height) / 2);
+  return {
+    cityCount: getOutOfBoundsCount('CITY'),
+    unitCount: getOutOfBoundsCount('UNIT'),
+    startingLocationCount: getOutOfBoundsCount('SLOC'),
+    colonyCount: getOutOfBoundsCount('CLNY'),
+    trimmedTileCount: Math.max(0, currentTileCount - nextTileCount)
+  };
+}
+
+function cloneMapResizePreviewRecord(record) {
+  if (!record || typeof record !== 'object') return record;
+  const clone = { ...record };
+  if (Array.isArray(record.fields)) {
+    clone.fields = record.fields.map((field) => ({ ...field }));
+  }
+  return clone;
+}
+
+function setPreviewMapFieldValue(record, key, value, label = '') {
+  if (!record) return false;
+  const normalizedValue = String(value == null ? '' : value);
+  const updatedDirect = setRecordDirectValueByBaseKey(record, key, normalizedValue);
+  if (!updatedDirect) record[String(key || '')] = normalizedValue;
+  const field = getFieldByBaseKey(record, key);
+  if (field) {
+    field.value = normalizedValue;
+    field.mapEditorValueEdited = false;
+    return true;
+  }
+  if (!Array.isArray(record.fields)) record.fields = [];
+  record.fields.push({
+    key: String(key || ''),
+    baseKey: String(key || ''),
+    label: String(label || toFriendlyKey(key)),
+    value: normalizedValue,
+    originalValue: normalizedValue,
+    mapEditorValueEdited: false
+  });
+  return true;
+}
+
+function normalizeMapResizePreviewDimension(value, label) {
+  const parsed = Number.parseInt(String(value == null ? '' : value).trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Map ${label} must be a positive integer.`);
+  }
+  if ((parsed % 2) !== 0) {
+    throw new Error(`Map ${label} must be even for Civ 3 BIQ map storage.`);
+  }
+  return parsed;
+}
+
+function buildMapResizePreviewTemplateCoord(xPos, yPos, width, height) {
+  const maxX = Math.max(0, Number(width) - 1);
+  const maxY = Math.max(0, Number(height) - 1);
+  let y = Math.max(0, Math.min(maxY, Number(yPos) || 0));
+  let x = Math.max(0, Math.min(maxX, Number(xPos) || 0));
+  const desiredParity = y & 1;
+  if ((x & 1) !== desiredParity) {
+    if ((x + 1) <= maxX) x += 1;
+    else if ((x - 1) >= 0) x -= 1;
+  }
+  return { x, y };
+}
+
+function isMapResizePreviewCoordInBounds(x, y, width, height) {
+  return Number.isFinite(x)
+    && Number.isFinite(y)
+    && x >= 0
+    && y >= 0
+    && x < width
+    && y < height;
+}
+
+function clearNewResizePreviewTileState(tile) {
+  setPreviewMapFieldValue(tile, 'city', -1, 'City');
+  setPreviewMapFieldValue(tile, 'colony', -1, 'Colony');
+  setPreviewMapFieldValue(tile, 'unit_on_tile', '', 'Unit On Tile');
+  ['district', 'districtname', 'wondername', 'wondercity', 'naturalwonder', 'namedtile'].forEach((key) => {
+    const field = getFieldByBaseKey(tile, key);
+    if (field) {
+      field.value = '';
+      field.mapEditorValueEdited = false;
+    }
+    setRecordDirectValueByBaseKey(tile, key, '');
+  });
+}
+
+function recalculateResizePreviewContinentTileCounts(tileSection, contSection) {
+  if (!tileSection || !Array.isArray(tileSection.records) || !contSection || !Array.isArray(contSection.records)) return;
+  const counts = new Array(contSection.records.length).fill(0);
+  tileSection.records.forEach((tile) => {
+    const idx = parseIntLoose(getMapFieldValue(tile, 'continent', '-1'), -1);
+    if (idx < 0 || idx >= counts.length) return;
+    counts[idx] += 1;
+  });
+  contSection.records.forEach((record, index) => {
+    setPreviewMapFieldValue(record, 'numtiles', counts[index] || 0, 'Num Tiles');
+    record.numTiles = counts[index] || 0;
+  });
+}
+
+function sanitizeResizePreviewEntitySections(tab, width, height) {
+  const findSection = (code) => Array.isArray(tab && tab.sections)
+    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === String(code || '').toUpperCase())
+    : null;
+  const tileSection = findSection('TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return;
+  [
+    { code: 'CITY', xKey: 'x', yKey: 'y' },
+    { code: 'UNIT', xKey: 'x', yKey: 'y' },
+    { code: 'SLOC', xKey: 'x', yKey: 'y' },
+    { code: 'CLNY', xKey: 'x', yKey: 'y' }
+  ].forEach((spec) => {
+    const section = findSection(spec.code);
+    if (!section || !Array.isArray(section.records)) return;
+    section.records = section.records.filter((record) => {
+      const x = parseIntLoose(getMapFieldValue(record, spec.xKey, ''), NaN);
+      const y = parseIntLoose(getMapFieldValue(record, spec.yKey, ''), NaN);
+      return isMapResizePreviewCoordInBounds(x, y, width, height);
+    });
+    section.records.forEach((record, index) => {
+      record.index = index;
+    });
+  });
+
+  const tileByCoord = new Map();
+  tileSection.records.forEach((record) => {
+    const x = parseIntLoose(getMapFieldValue(record, 'xpos', ''), NaN);
+    const y = parseIntLoose(getMapFieldValue(record, 'ypos', ''), NaN);
+    if (!isMapResizePreviewCoordInBounds(x, y, width, height)) return;
+    tileByCoord.set(`${x},${y}`, record);
+    setPreviewMapFieldValue(record, 'city', -1, 'City');
+    setPreviewMapFieldValue(record, 'colony', -1, 'Colony');
+    setPreviewMapFieldValue(record, 'unit_on_tile', '', 'Unit On Tile');
+  });
+
+  const citySection = findSection('CITY');
+  if (citySection && Array.isArray(citySection.records)) {
+    citySection.records.forEach((record, index) => {
+      const tile = tileByCoord.get(`${getMapFieldValue(record, 'x', '')},${getMapFieldValue(record, 'y', '')}`) || null;
+      if (!tile) return;
+      setPreviewMapFieldValue(tile, 'city', index, 'City');
+    });
+  }
+
+  const colonySection = findSection('CLNY');
+  if (colonySection && Array.isArray(colonySection.records)) {
+    colonySection.records.forEach((record, index) => {
+      const tile = tileByCoord.get(`${getMapFieldValue(record, 'x', '')},${getMapFieldValue(record, 'y', '')}`) || null;
+      if (!tile) return;
+      setPreviewMapFieldValue(tile, 'colony', index, 'Colony');
+    });
+  }
+
+  const unitSection = findSection('UNIT');
+  if (unitSection && Array.isArray(unitSection.records)) {
+    const firstUnitByCoord = new Map();
+    unitSection.records.forEach((record, index) => {
+      const coordKey = `${getMapFieldValue(record, 'x', '')},${getMapFieldValue(record, 'y', '')}`;
+      if (!firstUnitByCoord.has(coordKey)) firstUnitByCoord.set(coordKey, index);
+    });
+    firstUnitByCoord.forEach((unitIndex, coordKey) => {
+      const tile = tileByCoord.get(coordKey) || null;
+      if (!tile) return;
+      setPreviewMapFieldValue(tile, 'unit_on_tile', unitIndex, 'Unit On Tile');
+    });
+  }
+}
+
+function applyMapResizePreviewToTab(tab, targetWidth, targetHeight) {
+  const width = normalizeMapResizePreviewDimension(targetWidth, 'width');
+  const height = normalizeMapResizePreviewDimension(targetHeight, 'height');
+  const tileCount = Math.floor((width * height) / 2);
+  if (tileCount > QUINT_CUSTOM_MAP_MAX_TILES) {
+    throw new Error(`Map dimensions ${width}x${height} exceed the Civ 3 custom-map limit of ${QUINT_CUSTOM_MAP_MAX_TILES} tiles.`);
+  }
+  if (!tab || !Array.isArray(tab.sections)) {
+    throw new Error('Cannot resize a map tab without section data.');
+  }
+  const findSection = (code) => tab.sections.find((section) => String(section && section.code || '').toUpperCase() === String(code || '').toUpperCase()) || null;
+  const wmapSection = findSection('WMAP');
+  const tileSection = findSection('TILE');
+  const contSection = findSection('CONT');
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  if (!wmapRecord || !tileSection || !Array.isArray(tileSection.records)) {
+    throw new Error('Cannot resize a BIQ map that is missing WMAP or TILE data.');
+  }
+  const sourceWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+  const sourceHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    throw new Error('Cannot resize a BIQ map with invalid source dimensions.');
+  }
+  if (sourceWidth === width && sourceHeight === height) return;
+
+  const sourceTileByCoord = new Map();
+  const firstTile = tileSection.records[0] || null;
+  tileSection.records.forEach((record) => {
+    const x = parseIntLoose(getMapFieldValue(record, 'xpos', ''), NaN);
+    const y = parseIntLoose(getMapFieldValue(record, 'ypos', ''), NaN);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    sourceTileByCoord.set(`${x},${y}`, record);
+  });
+
+  const nextTileRecords = [];
+  let nextIndex = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = (y & 1); x < width; x += 2) {
+      const existing = sourceTileByCoord.get(`${x},${y}`) || null;
+      const templateCoord = existing ? null : buildMapResizePreviewTemplateCoord(x, y, sourceWidth, sourceHeight);
+      const template = existing || sourceTileByCoord.get(`${templateCoord.x},${templateCoord.y}`) || firstTile;
+      if (!template) throw new Error('Cannot resize a BIQ map without any source TILE records.');
+      const nextRecord = cloneMapResizePreviewRecord(template);
+      nextRecord.index = nextIndex;
+      setPreviewMapFieldValue(nextRecord, 'xpos', x, 'X Pos');
+      setPreviewMapFieldValue(nextRecord, 'ypos', y, 'Y Pos');
+      if (!existing) clearNewResizePreviewTileState(nextRecord);
+      nextTileRecords.push(nextRecord);
+      nextIndex += 1;
+    }
+  }
+
+  tileSection.records = nextTileRecords;
+  setPreviewMapFieldValue(wmapRecord, 'width', width, 'Width');
+  setPreviewMapFieldValue(wmapRecord, 'height', height, 'Height');
+  sanitizeResizePreviewEntitySections(tab, width, height);
+  recalculateResizePreviewContinentTileCounts(tileSection, contSection);
+  finalizeGeneratedBlankMapTerrainFileImage(nextTileRecords, width, height);
+  tab.pendingMapResize = null;
+  state.biqMapStatsDirty = true;
+}
+
+async function promptEditMapAction(tab) {
+  if (!el.entityModalOverlay || !el.entityModalContent) return null;
+  const wmapSection = Array.isArray(tab && tab.sections)
+    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP')
+    : null;
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  const currentWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, QUINT_CUSTOM_MAP_DEFAULT_WIDTH);
+  const currentHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, QUINT_CUSTOM_MAP_DEFAULT_HEIGHT);
+  if (!wmapRecord) {
+    setStatus('This scenario map is missing WMAP data.', true);
+    return null;
+  }
+
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Edit Map';
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = 'Change the scenario map dimensions. Expansion keeps placed cities, units, and starting locations on their current coordinates, and the resized map preview opens immediately after you apply it.';
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Update Map';
+    el.entityModalConfirm.disabled = false;
+  }
+  el.entityModalContent.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.className = 'entity-modal-content';
+  const warning = document.createElement('p');
+  warning.className = 'entity-modal-copy-warning';
+  warning.textContent = 'Width and height must stay even. Existing tile contents remain anchored by x/y position when the map grows.';
+  form.appendChild(warning);
+  const grid = document.createElement('div');
+  grid.className = 'entity-form-grid';
+  form.appendChild(grid);
+
+  const widthField = document.createElement('div');
+  widthField.className = 'entity-field';
+  const widthLabel = document.createElement('label');
+  widthLabel.textContent = 'Map Width';
+  const widthInput = document.createElement('input');
+  widthInput.type = 'number';
+  widthInput.min = String(QUINT_CUSTOM_MAP_MIN_DIMENSION);
+  widthInput.step = '1';
+  widthInput.value = String(currentWidth);
+  widthField.appendChild(widthLabel);
+  widthField.appendChild(widthInput);
+  grid.appendChild(widthField);
+
+  const heightField = document.createElement('div');
+  heightField.className = 'entity-field';
+  const heightLabel = document.createElement('label');
+  heightLabel.textContent = 'Map Height';
+  const heightInput = document.createElement('input');
+  heightInput.type = 'number';
+  heightInput.min = String(QUINT_CUSTOM_MAP_MIN_DIMENSION);
+  heightInput.step = '1';
+  heightInput.value = String(currentHeight);
+  heightField.appendChild(heightLabel);
+  heightField.appendChild(heightInput);
+  grid.appendChild(heightField);
+
+  const totalField = document.createElement('div');
+  totalField.className = 'entity-field';
+  const totalLabel = document.createElement('label');
+  totalLabel.textContent = 'Total Tiles';
+  const totalValue = document.createElement('div');
+  totalValue.className = 'hint';
+  totalField.appendChild(totalLabel);
+  totalField.appendChild(totalValue);
+  grid.appendChild(totalField);
+
+  const impact = document.createElement('p');
+  impact.className = 'hint';
+  form.appendChild(impact);
+  const summary = document.createElement('p');
+  summary.className = 'hint';
+  form.appendChild(summary);
+  el.entityModalContent.appendChild(form);
+
+  let validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
+  const refreshValidation = () => {
+    validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
+    const trimSummary = collectMapResizeTrimSummary(tab, validation.width, validation.height);
+    totalValue.textContent = `${validation.tileCount.toLocaleString()} (${validation.width}x${validation.height})`;
+    impact.className = 'hint';
+    if (validation.isValid && (validation.width < currentWidth || validation.height < currentHeight)) {
+      const lossParts = [];
+      if (trimSummary.cityCount > 0) lossParts.push(`${trimSummary.cityCount} ${trimSummary.cityCount === 1 ? 'city' : 'cities'}`);
+      if (trimSummary.unitCount > 0) lossParts.push(`${trimSummary.unitCount} ${trimSummary.unitCount === 1 ? 'unit' : 'units'}`);
+      if (trimSummary.startingLocationCount > 0) {
+        lossParts.push(`${trimSummary.startingLocationCount} ${trimSummary.startingLocationCount === 1 ? 'starting location' : 'starting locations'}`);
+      }
+      if (trimSummary.colonyCount > 0) lossParts.push(`${trimSummary.colonyCount} ${trimSummary.colonyCount === 1 ? 'colony' : 'colonies'}`);
+      if (lossParts.length > 0) {
+        impact.className = 'warning';
+        impact.textContent = `Shrinking to ${validation.width}x${validation.height} will remove ${lossParts.join(', ')} outside the new bounds.`;
+      } else if (trimSummary.trimmedTileCount > 0) {
+        impact.textContent = `Shrinking trims ${trimSummary.trimmedTileCount.toLocaleString()} map tiles, but no placed cities, units, colonies, or starting locations would be removed.`;
+      } else {
+        impact.textContent = '';
+      }
+    } else {
+      impact.textContent = '';
+    }
+    if (validation.width !== parseIntLoose(widthInput.value, validation.width) || validation.height !== parseIntLoose(heightInput.value, validation.height)) {
+      summary.textContent = validation.isValid
+        ? `Odd dimensions will be rounded up to the next even size before saving. Result: ${validation.width}x${validation.height}.`
+        : validation.reason;
+    } else if (validation.width === currentWidth && validation.height === currentHeight) {
+      summary.textContent = 'No size change yet.';
+    } else if (validation.width >= currentWidth && validation.height >= currentHeight) {
+      summary.textContent = 'Expansion keeps existing placed map entities at their current coordinates.';
+    } else {
+      summary.textContent = 'Shrinking is allowed. Anything outside the new bounds will be removed automatically on save so the BIQ stays valid.';
+    }
+    if (el.entityModalConfirm) el.entityModalConfirm.disabled = !validation.isValid;
+  };
+  const normalizeInputsToEven = () => {
+    widthInput.value = String(normalizeQuintCustomMapDimension(widthInput.value, currentWidth));
+    heightInput.value = String(normalizeQuintCustomMapDimension(heightInput.value, currentHeight));
+    refreshValidation();
+  };
+  widthInput.addEventListener('input', refreshValidation);
+  heightInput.addEventListener('input', refreshValidation);
+  widthInput.addEventListener('change', normalizeInputsToEven);
+  heightInput.addEventListener('change', normalizeInputsToEven);
+  widthInput.addEventListener('blur', normalizeInputsToEven);
+  heightInput.addEventListener('blur', normalizeInputsToEven);
+  refreshValidation();
+
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => widthInput.focus({ preventScroll: true }), 0);
+
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const onConfirm = () => {
+      normalizeInputsToEven();
+      if (!validation.isValid) {
+        setStatus(validation.reason || 'Choose a valid map size first.', true);
+        return;
+      }
+      resolveEntityModal({
+        width: validation.width,
+        height: validation.height
+      });
+    };
+    const onCancel = () => resolveEntityModal(null);
+    if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
+    if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
+  });
+}
+
 function openGenerateMapModal(tab) {
   if (!tab) return;
   const overlay = ensureGenerateMapModalNode();
@@ -23891,6 +24414,93 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
     }));
   });
   wrap.appendChild(iconGrid);
+
+  const pediaCard = document.createElement('div');
+  pediaCard.className = 'unit-art-index-card unit-pediaicons-card';
+  const pediaLabel = document.createElement('label');
+  pediaLabel.className = 'field-meta';
+  pediaLabel.textContent = 'PediaIcons';
+  pediaCard.appendChild(pediaLabel);
+  attachRichTooltip(pediaLabel, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.iconPaths, 'PediaIcons'));
+
+  const displayKey = String(getEntryCivilopediaDisplayKey(entry) || entry.civilopediaKey || '').trim();
+  const iconHeader = `#ICON_${displayKey || 'PRTO_*'}`;
+  const animHeader = `#ANIMNAME_${displayKey || 'PRTO_*'}`;
+
+  const makePediaField = ({ labelText, headerText, value, placeholder, onCommit, sourceMeta }) => {
+    const field = document.createElement('label');
+    field.className = 'unit-pediaicons-field';
+    const top = document.createElement('div');
+    top.className = 'unit-pediaicons-field-top';
+    const label = document.createElement('span');
+    label.className = 'field-meta';
+    label.textContent = labelText;
+    top.appendChild(label);
+    const header = document.createElement('span');
+    header.className = 'key-display-chip unit-pediaicons-header';
+    header.textContent = headerText;
+    top.appendChild(header);
+    field.appendChild(top);
+    attachRichTooltip(top, formatSourceInfo(sourceMeta, 'PediaIcons'));
+    const input = document.createElement(referenceEditable ? 'input' : 'span');
+    if (referenceEditable) {
+      input.type = 'text';
+      input.value = value;
+      input.placeholder = placeholder;
+      input.spellcheck = false;
+      input.addEventListener('change', () => {
+        const next = String(input.value || '').trim();
+        if (next === value) return;
+        rememberUndoSnapshot();
+        onCommit(next);
+        setDirty(true);
+        if (onChanged) onChanged();
+      });
+    } else {
+      input.className = 'key-display-chip unit-pediaicons-readonly';
+      input.textContent = value || '(not set)';
+    }
+    field.appendChild(input);
+    return field;
+  };
+
+  pediaCard.appendChild(makePediaField({
+    labelText: 'Civilopedia Large Path',
+    headerText: iconHeader,
+    value: String(icons[0] || ''),
+    placeholder: 'Art/Civilopedia/Icons/Units/MyUnit-large.pcx',
+    onCommit: (next) => {
+      const nextIcons = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
+      nextIcons[0] = next;
+      entry.iconPaths = nextIcons;
+    },
+    sourceMeta: entry.sourceMeta && entry.sourceMeta.iconPaths
+  }));
+  pediaCard.appendChild(makePediaField({
+    labelText: 'Civilopedia Small Path',
+    headerText: iconHeader,
+    value: String(icons[1] || ''),
+    placeholder: 'Art/Civilopedia/Icons/Units/MyUnit-small.pcx',
+    onCommit: (next) => {
+      const nextIcons = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
+      nextIcons[1] = next;
+      entry.iconPaths = nextIcons;
+    },
+    sourceMeta: entry.sourceMeta && entry.sourceMeta.iconPaths
+  }));
+  pediaCard.appendChild(makePediaField({
+    labelText: 'Animation Folder Key',
+    headerText: animHeader,
+    value: String(entry && entry.animationName || ''),
+    placeholder: 'e.g. Slinger',
+    onCommit: (next) => {
+      entry.animationName = next;
+      entry.unitAnimationEdited = true;
+      entry.unitIniEditor = null;
+    },
+    sourceMeta: entry.sourceMeta && entry.sourceMeta.animationName
+  }));
+  wrap.appendChild(pediaCard);
 
   const iconIndexField = getBiqFieldByBaseKey(entry, 'iconindex');
   if (iconIndexField) {
@@ -26452,6 +27062,31 @@ function normalizeImportedImprovementReferenceFields(entry) {
   });
 }
 
+function normalizeImportedRuleReferenceFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: [
+      'slave',
+      'startunit1',
+      'startunit2',
+      'scout',
+      'battlecreatedunit',
+      'buildarmyunit',
+      'basicbarbarian',
+      'advancedbarbarian',
+      'barbarianseaunit',
+      'flagunit'
+    ],
+    sourceTabKey: 'units',
+    targetTabKey: 'units'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['defaultmoneyresource'],
+    sourceTabKey: 'resources',
+    targetTabKey: 'resources'
+  });
+}
+
 function normalizeImportedReferenceFields(tabKey, entry) {
   if (!entry || !Array.isArray(entry.biqFields)) return;
   if (tabKey === 'civilizations') {
@@ -26476,6 +27111,10 @@ function normalizeImportedReferenceFields(tabKey, entry) {
   }
   if (tabKey === 'improvements') {
     normalizeImportedImprovementReferenceFields(entry);
+    return;
+  }
+  if (tabKey === 'rules') {
+    normalizeImportedRuleReferenceFields(entry);
   }
 }
 
@@ -29893,23 +30532,7 @@ function renderBiqTab(tab) {
           const label = document.createElement('label');
           label.className = 'field-meta';
           const baseKeyRaw = String(field.baseKey || field.key || '').toLowerCase();
-          let displayLabel = String(field.label || field.key);
-          if (selected.code === 'GAME' && baseKeyRaw === 'playable_civ') {
-            const playableIdx = groupFields
-              .slice(0, fieldIdx + 1)
-              .filter((f) => String(f.baseKey || f.key || '').toLowerCase() === 'playable_civ')
-              .length;
-            displayLabel = `Playable Civilization ${playableIdx}`;
-          } else if (selected.code === 'LEAD' && /^starting_units_of_type_/.test(baseKeyRaw)) {
-            const unitName = baseKeyRaw
-              .replace(/^starting_units_of_type_/, '')
-              .replace(/_/g, ' ')
-              .replace(/\b\w/g, (m) => m.toUpperCase());
-            displayLabel = unitName ? `${unitName} Units` : displayLabel;
-          } else if (selected.code === 'LEAD' && /^starting_technology_\d+$/.test(baseKeyRaw)) {
-            const techIdx = Number.parseInt(baseKeyRaw.replace(/^starting_technology_/, ''), 10);
-            if (Number.isFinite(techIdx)) displayLabel = `Free Technology ${techIdx + 1}`;
-          }
+          const displayLabel = getBiqStructureDisplayLabel(selected.code, field, groupFields, fieldIdx);
           label.textContent = displayLabel;
           const biqFieldKey = String(field.baseKey || field.key || '');
           const lockNote = (selected.code === 'GAME' && isScenarioSearchFolderField(baseKeyRaw))
@@ -30318,6 +30941,45 @@ function renderMapTab(tab) {
     actions.appendChild(addCustomBtn);
   }
   if (hasMapData(tab) && tileSection) {
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'ghost action-edit';
+    editBtn.textContent = '↔ Edit Map';
+    editBtn.addEventListener('click', async () => {
+      const result = await promptEditMapAction(tab);
+      if (!result) return;
+      const wmapSectionForEdit = Array.isArray(tab.sections)
+        ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP')
+        : null;
+      const wmapRecordForEdit = wmapSectionForEdit && Array.isArray(wmapSectionForEdit.records) ? wmapSectionForEdit.records[0] : null;
+      const widthField = getFieldByBaseKey(wmapRecordForEdit, 'width');
+      const heightField = getFieldByBaseKey(wmapRecordForEdit, 'height');
+      if (!widthField || !heightField) {
+        setStatus('This scenario map is missing editable width/height fields.', true);
+        return;
+      }
+      rememberMapUndoSnapshot();
+      widthField.value = String(result.width);
+      heightField.value = String(result.height);
+      try {
+        applyMapResizePreviewToTab(tab, result.width, result.height);
+      } catch (err) {
+        setStatus(err && err.message ? err.message : 'Could not resize the map preview.', true);
+        return;
+      }
+      setDirty(true);
+      renderTabs();
+      renderActiveTab({ preserveTabScroll: true });
+      const resizedTileSection = Array.isArray(tab.sections)
+        ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
+        : null;
+      if (resizedTileSection) {
+        openMapModal({ tab, tileSection: resizedTileSection, title: `${tab.title || 'Map'} Editor` });
+      }
+      setStatus(`Resized map preview to ${result.width}x${result.height}. Save to write the BIQ.`);
+    });
+    actions.appendChild(editBtn);
+
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
     openBtn.className = 'ghost action-open';
@@ -30815,6 +31477,7 @@ function applyWholeMapSectionsToTab(tab, mapSectionsInput, mutation = 'set', mut
   tab.hasMapData = hasMapData(tab);
   tab.mapMutation = mutation;
   tab.mapMutationSource = mutation === 'set' ? String(mutationSource || 'generated') : null;
+  tab.pendingMapResize = null;
   tab.recordOps = [];
   state.biqMapSelectedTile = tab.hasMapData ? 0 : -1;
   return true;
@@ -30860,6 +31523,7 @@ function removeMapFromTab(tab) {
   tab.hasMapData = false;
   tab.mapMutation = tab.originalHasMap ? 'remove' : null;
   tab.mapMutationSource = null;
+  tab.pendingMapResize = null;
   tab.recordOps = [];
   state.biqMapSelectedTile = -1;
   return true;
@@ -31157,7 +31821,7 @@ function requestBiqMapNtpPalette(slot, assetPath) {
   });
 }
 
-function requestBiqMapUnitFlcFrame(prtoIdx, prtoName) {
+function requestBiqMapUnitFlcFrame(prtoIdx, prtoName, civilopediaKey = '') {
   if (!state.settings || !state.settings.civ3Path) return;
   const cacheKey = `unitFlc-${prtoIdx}`;
   if (state.biqMapArtCache[cacheKey] !== undefined || state.biqMapArtLoading[cacheKey]) return;
@@ -31169,7 +31833,8 @@ function requestBiqMapUnitFlcFrame(prtoIdx, prtoName) {
     civ3Path: state.settings.civ3Path,
     scenarioPath,
     scenarioPaths,
-    prtoName
+    prtoName,
+    civilopediaKey
   }).then((res) => {
     if (res && res.ok && res.indexedBase64 && res.paletteBase64) {
       const idxBin = atob(res.indexedBase64);
@@ -33078,6 +33743,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const prtoIndexByName = {};
   const prtoIconById = {};
   const prtoNameById = {};
+  const prtoCivilopediaKeyById = {};
   const prtoClassById = {};
   const prtoDefenseById = {};
   (prtoSection?.records || []).forEach((record, idx) => {
@@ -33085,6 +33751,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     prtoIndexByName[name.toLowerCase()] = idx;
     prtoIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'iconindex')?.value, -1);
     prtoNameById[idx] = name;
+    prtoCivilopediaKeyById[idx] = String(getFieldByBaseKey(record, 'civilopediaentry')?.value || '').trim().toUpperCase();
     prtoClassById[idx] = normalizeUnitClassValue(getFieldByBaseKey(record, 'unitclass')?.value);
     prtoDefenseById[idx] = parseIntLoose(getFieldByBaseKey(record, 'defence')?.value, 0);
   });
@@ -35898,7 +36565,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const flcCanvas = state.biqMapArtCache[flcCacheKey];
     if (flcCanvas === undefined) {
       const prtoName = prtoNameById[unitId];
-      if (prtoName) requestBiqMapUnitFlcFrame(unitId, prtoName);
+      const civilopediaKey = prtoCivilopediaKeyById[unitId];
+      if (prtoName || civilopediaKey) requestBiqMapUnitFlcFrame(unitId, prtoName, civilopediaKey);
     }
 
     let dx, dy, size;

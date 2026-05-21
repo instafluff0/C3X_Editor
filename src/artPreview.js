@@ -1002,11 +1002,14 @@ function getPreview(request) {
   }
 
   if (kind === 'unitFlcFirstFrame') {
-    // Resolve ANIMNAME_PRTO_<NAME> from PediaIcons layers, then decode frame 0 (SW direction).
+    // Resolve ANIMNAME_PRTO_* from the unit's Civilopedia key when available.
     const prtoName = String(request.prtoName || '').trim();
-    if (!prtoName) return { ok: false, error: 'No prtoName provided' };
+    const civilopediaKey = String(request.civilopediaKey || '').trim().toUpperCase();
+    if (!prtoName && !civilopediaKey) return { ok: false, error: 'No unit identifier provided' };
     const upperName = prtoName.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
-    const animKey = `ANIMNAME_PRTO_${upperName}`;
+    const animKey = civilopediaKey.startsWith('PRTO_')
+      ? `ANIMNAME_${civilopediaKey}`
+      : `ANIMNAME_PRTO_${upperName}`;
     const animationName = readAnimNameFromPedia(civ3Path, scenarioPath, scenarioPaths, animKey);
     if (!animationName) {
       log.warn('getPreview', `unitFlcFirstFrame: ${animKey} not found in PediaIcons`);

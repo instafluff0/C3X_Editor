@@ -15,12 +15,24 @@ const {
   parseBiqSectionsFromBuffer,
   resolveScenarioDir,
   resolvePaths,
+  collectBiqMapEdits,
+  collectBiqMapStructureOps,
   loadBundle,
   saveBundle
 } = require('../src/configCore');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-config-manager-'));
+}
+
+function makeMapField(baseKey, value, originalValue) {
+  return {
+    key: baseKey,
+    baseKey,
+    label: baseKey,
+    value: String(value),
+    originalValue: String(originalValue == null ? value : originalValue)
+  };
 }
 
 test('base config precedence is default -> scenario -> custom', () => {
@@ -206,6 +218,39 @@ test('loadBundle + saveBundle writes to scope targets', () => {
   assert.equal(fs.existsSync(customPath), true);
   const savedText = fs.readFileSync(customPath, 'utf8');
   assert.match(savedText, /flag = false/);
+});
+
+test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips WMAP dimensions', () => {
+  const tabs = {
+    map: {
+      hasMapData: true,
+      originalHasMap: true,
+      mapMutation: null,
+      sections: [
+        {
+          code: 'WMAP',
+          records: [{
+            index: 0,
+            fields: [
+              makeMapField('width', 140, 130),
+              makeMapField('height', 120, 110),
+              makeMapField('flags', 3, 1)
+            ]
+          }]
+        }
+      ]
+    }
+  };
+
+  assert.deepEqual(collectBiqMapStructureOps(tabs), [{ op: 'resizemap', width: 140, height: 120 }]);
+  assert.deepEqual(collectBiqMapEdits(tabs), [
+    {
+      sectionCode: 'WMAP',
+      recordRef: '@INDEX:0',
+      fieldKey: 'flags',
+      value: '3'
+    }
+  ]);
 });
 
 test('loadBundle does not write target files before save', () => {

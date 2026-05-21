@@ -4414,6 +4414,299 @@ function setMapSectionsOnParsed(parsed, uiSections) {
   else parsed.sections.push(...builtSections);
 }
 
+function normalizeResizeMapDimension(value, label) {
+  const parsed = Number.parseInt(String(value == null ? '' : value).trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Map ${label} must be a positive integer.`);
+  }
+  if ((parsed % 2) !== 0) {
+    throw new Error(`Map ${label} must be even for Civ 3 BIQ map storage.`);
+  }
+  return parsed;
+}
+
+const BIQ_TERRAIN = {
+  TUNDRA: 0,
+  PLAINS: 1,
+  GRASSLAND: 2,
+  DESERT: 3,
+  COAST: 11,
+  SEA: 12,
+  OCEAN: 13
+};
+
+function buildResizedTileTemplateCoord(xPos, yPos, width, height) {
+  const maxX = Math.max(0, Number(width) - 1);
+  const maxY = Math.max(0, Number(height) - 1);
+  let y = Math.max(0, Math.min(maxY, Number(yPos) || 0));
+  let x = Math.max(0, Math.min(maxX, Number(xPos) || 0));
+  const desiredParity = y & 1;
+  if ((x & 1) !== desiredParity) {
+    if ((x + 1) <= maxX) x += 1;
+    else if ((x - 1) >= 0) x -= 1;
+  }
+  return { x, y };
+}
+
+function clearResizedTileBackrefs(tile) {
+  setTileRecordFieldValue(tile, 'city', -1);
+  setTileRecordFieldValue(tile, 'colony', -1);
+}
+
+function getTileBaseTerrain(tile) {
+  if (!tile) return BIQ_TERRAIN.COAST;
+  const packed = Number.parseInt(String(
+    tile.c3cBaseRealTerrain != null ? tile.c3cBaseRealTerrain : tile.baseRealTerrain
+  ), 10);
+  if (!Number.isFinite(packed)) return BIQ_TERRAIN.COAST;
+  return packed & 0x0f;
+}
+
+function computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec) {
+  if (!spec) return -1;
+  if (!spec.needImage) return spec.image;
+  let sum = 0;
+  if (northBase === spec.terr2) sum += 1;
+  if (northBase === spec.terr3) sum += 2;
+  if (westBase === spec.terr2) sum += 3;
+  if (westBase === spec.terr3) sum += 6;
+  if (eastBase === spec.terr2) sum += 9;
+  if (eastBase === spec.terr3) sum += 18;
+  if (southBase === spec.terr2) sum += 27;
+  if (southBase === spec.terr3) sum += 54;
+  return sum;
+}
+
+function computeBiqStoredTerrainSpriteSpec(southBase, westBase, northBase, eastBase) {
+  const s = Number(southBase);
+  const w = Number(westBase);
+  const n = Number(northBase);
+  const e = Number(eastBase);
+  if (s === BIQ_TERRAIN.OCEAN && w === BIQ_TERRAIN.OCEAN && n === BIQ_TERRAIN.OCEAN && e === BIQ_TERRAIN.OCEAN) {
+    return { file: 8, image: 0, needImage: false, terr2: 0, terr3: 0 };
+  }
+  if (s === BIQ_TERRAIN.SEA && w === BIQ_TERRAIN.SEA && n === BIQ_TERRAIN.SEA && e === BIQ_TERRAIN.SEA) {
+    return { file: 7, image: 0, needImage: false, terr2: 0, terr3: 0 };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.TUNDRA)) {
+    return { file: 0, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.SEA)) {
+    return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+  }
+  if ([s, w, n, e].every((t) => t !== BIQ_TERRAIN.COAST)) {
+    return { file: 4, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.PLAINS };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.DESERT)) {
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+      return { file: 3, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+      return { file: 2, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+      return { file: 2, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+    }
+    return null;
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+    return { file: 1, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+    return { file: 5, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+  }
+  if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+    return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+  }
+  return null;
+}
+
+function recomputeResizedTileTerrainFileImage(tileRecords, width, height) {
+  if (!Array.isArray(tileRecords) || !tileRecords.length) return;
+  const tileByCoord = new Map();
+  tileRecords.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!isMapResizeCoordInBounds(x, y, width, height)) return;
+    tileByCoord.set(`${x},${y}`, record);
+  });
+  const getTerrainBaseForCoord = (xPos, yPos) => {
+    let x = Number(xPos);
+    const y = Number(yPos);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return BIQ_TERRAIN.COAST;
+    if (y < 0 || y >= height) return BIQ_TERRAIN.COAST;
+    x = ((x % width) + width) % width;
+    return getTileBaseTerrain(tileByCoord.get(`${x},${y}`) || null);
+  };
+  tileRecords.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!isMapResizeCoordInBounds(x, y, width, height)) return;
+    const southBase = getTerrainBaseForCoord(x, y);
+    const westBase = getTerrainBaseForCoord(x - 1, y - 1);
+    const northBase = getTerrainBaseForCoord(x, y - 2);
+    const eastBase = getTerrainBaseForCoord(x + 1, y - 1);
+    const spec = computeBiqStoredTerrainSpriteSpec(southBase, westBase, northBase, eastBase);
+    if (!spec) return;
+    setTileRecordFieldValue(record, 'file', spec.file);
+    setTileRecordFieldValue(record, 'image', computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec));
+  });
+}
+
+function recalculateContinentTileCounts(tileSection, contSection) {
+  if (!tileSection || !Array.isArray(tileSection.records) || !contSection || !Array.isArray(contSection.records)) return;
+  const counts = new Array(contSection.records.length).fill(0);
+  tileSection.records.forEach((tile) => {
+    const idx = Number.parseInt(String(tile && tile.continent), 10);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= counts.length) return;
+    counts[idx] += 1;
+  });
+  let changed = false;
+  contSection.records.forEach((record, index) => {
+    const next = counts[index] || 0;
+    if (Number(record && record.numTiles) === next) return;
+    if (record && typeof record === 'object') record.numTiles = next;
+    changed = true;
+  });
+  if (changed) contSection._modified = true;
+}
+
+function isMapResizeCoordInBounds(x, y, width, height) {
+  return Number.isFinite(x)
+    && Number.isFinite(y)
+    && x >= 0
+    && y >= 0
+    && x < width
+    && y < height;
+}
+
+function sanitizeResizedMapEntitySections(parsed, width, height) {
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return;
+  const sectionSpecs = [
+    { code: 'CITY', xKey: 'x', yKey: 'y' },
+    { code: 'UNIT', xKey: 'x', yKey: 'y' },
+    { code: 'SLOC', xKey: 'x', yKey: 'y' },
+    { code: 'CLNY', xKey: 'x', yKey: 'y' }
+  ];
+  sectionSpecs.forEach((spec) => {
+    const section = getSectionByCode(parsed, spec.code);
+    if (!section || !Array.isArray(section.records)) return;
+    const nextRecords = section.records.filter((record) => {
+      const x = Number.parseInt(String(record && record[spec.xKey]), 10);
+      const y = Number.parseInt(String(record && record[spec.yKey]), 10);
+      return isMapResizeCoordInBounds(x, y, width, height);
+    });
+    if (nextRecords.length === section.records.length) return;
+    section.records = nextRecords;
+    section.records.forEach((record, index) => {
+      if (record && typeof record === 'object') record.index = index;
+    });
+    section.count = section.records.length;
+    section._modified = true;
+  });
+
+  const tileByCoord = new Map();
+  tileSection.records.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!isMapResizeCoordInBounds(x, y, width, height)) return;
+    tileByCoord.set(`${x},${y}`, record);
+    setTileRecordFieldValue(record, 'city', -1);
+    setTileRecordFieldValue(record, 'colony', -1);
+  });
+
+  const citySection = getSectionByCode(parsed, 'CITY');
+  if (citySection && Array.isArray(citySection.records)) {
+    citySection.records.forEach((record, index) => {
+      const tile = tileByCoord.get(`${record.x},${record.y}`) || null;
+      if (!tile) return;
+      setTileRecordFieldValue(tile, 'city', index);
+    });
+  }
+
+  const clnySection = getSectionByCode(parsed, 'CLNY');
+  if (clnySection && Array.isArray(clnySection.records)) {
+    clnySection.records.forEach((record, index) => {
+      const tile = tileByCoord.get(`${record.x},${record.y}`) || null;
+      if (!tile) return;
+      setTileRecordFieldValue(tile, 'colony', index);
+    });
+  }
+
+  tileSection._modified = true;
+}
+
+function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight) {
+  const width = normalizeResizeMapDimension(targetWidth, 'width');
+  const height = normalizeResizeMapDimension(targetHeight, 'height');
+  const tileCount = Math.floor((width * height) / 2);
+  if (tileCount > 65536) {
+    throw new Error(`Map dimensions ${width}x${height} exceed the Civ 3 custom-map limit of 65,536 tiles.`);
+  }
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!wmapSection || !Array.isArray(wmapSection.records) || !wmapSection.records[0] || !tileSection || !Array.isArray(tileSection.records)) {
+    throw new Error('Cannot resize a BIQ map that is missing WMAP or TILE data.');
+  }
+  const sourceWidth = Number(parsed && parsed.io && parsed.io.mapWidth)
+    || Number(wmapSection.records[0] && wmapSection.records[0].width)
+    || 0;
+  const sourceHeight = Number(wmapSection.records[0] && wmapSection.records[0].height) || 0;
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    throw new Error('Cannot resize a BIQ map with invalid source dimensions.');
+  }
+  if (sourceWidth === width && sourceHeight === height) return;
+
+  const sourceTileByCoord = new Map();
+  const firstTile = tileSection.records[0] || null;
+  tileSection.records.forEach((record) => {
+    const x = Number.parseInt(String(record && record.xpos), 10);
+    const y = Number.parseInt(String(record && record.ypos), 10);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    sourceTileByCoord.set(`${x},${y}`, record);
+  });
+
+  const nextTileRecords = [];
+  let nextIndex = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = (y & 1); x < width; x += 2) {
+      const existing = sourceTileByCoord.get(`${x},${y}`) || null;
+      const templateCoord = existing
+        ? null
+        : buildResizedTileTemplateCoord(x, y, sourceWidth, sourceHeight);
+      const template = existing
+        || sourceTileByCoord.get(`${templateCoord.x},${templateCoord.y}`)
+        || firstTile;
+      if (!template) {
+        throw new Error('Cannot resize a BIQ map without any source TILE records.');
+      }
+      const nextRecord = copyRecord(template);
+      nextRecord.index = nextIndex;
+      nextRecord.xpos = x;
+      nextRecord.ypos = y;
+      if (!existing) clearResizedTileBackrefs(nextRecord);
+      nextTileRecords.push(nextRecord);
+      nextIndex += 1;
+    }
+  }
+
+  tileSection.records = nextTileRecords;
+  tileSection.count = nextTileRecords.length;
+  tileSection._modified = true;
+
+  wmapSection.records[0].width = width;
+  wmapSection.records[0].height = height;
+  wmapSection._modified = true;
+  parsed.io.mapWidth = width;
+
+  recomputeResizedTileTerrainFileImage(nextTileRecords, width, height);
+  sanitizeResizedMapEntitySections(parsed, width, height);
+
+  const contSection = getSectionByCode(parsed, 'CONT');
+  recalculateContinentTileCounts(tileSection, contSection);
+}
+
 function setCustomRulesSectionsOnParsed(parsed, uiSections) {
   removeCustomRulesSectionsFromParsed(parsed);
   const ruleSectionCodes = new Set(['BLDG', 'CTZN', 'CULT', 'DIFF', 'ERAS', 'ESPN', 'EXPR', 'FLAV', 'GOOD', 'GOVT', 'PRTO', 'RACE', 'RULE', 'TECH', 'TERR', 'TFRM', 'WSIZ']);
@@ -4483,6 +4776,18 @@ function applyEdits(buf, edits, options = {}) {
       const mapSecCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
       log.debug('BiqApplyEdits', `op=setmap: replacing map sections [${mapSecCodes}]`);
       setMapSectionsOnParsed(parsed, edit.sections);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'resizemap') {
+      try {
+        resizeMapSectionsOnParsed(parsed, edit.width, edit.height);
+      } catch (err) {
+        const errorText = err && err.message ? err.message : 'Failed to resize BIQ map.';
+        log.error('BiqApplyEdits', `op=resizemap rejected: ${errorText}`);
+        return { ok: false, error: errorText };
+      }
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
       continue;
@@ -4705,7 +5010,7 @@ function applyEdits(buf, edits, options = {}) {
     const op = String(edit && edit.op || 'set').toLowerCase();
     const sectionCode = String(edit && edit.sectionCode || '').toUpperCase();
     const fieldKey = canonicalKey(edit && edit.fieldKey);
-    if (op === 'setmap') return true;
+    if (op === 'setmap' || op === 'resizemap') return true;
     if (sectionCode === 'CLNY') return true;
     if (sectionCode === 'TILE' && (fieldKey === 'colony' || fieldKey === 'c3coverlays')) return true;
     return false;

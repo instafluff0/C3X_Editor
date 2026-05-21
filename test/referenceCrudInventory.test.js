@@ -79,6 +79,7 @@ function loadRendererImportHelpers(targetBundle) {
     'normalizeImportedUnitAvailableTo',
     'normalizeImportedUnitReferenceFields',
     'normalizeImportedImprovementReferenceFields',
+    'normalizeImportedRuleReferenceFields',
     'normalizeImportedReferenceFields'
   ];
 
