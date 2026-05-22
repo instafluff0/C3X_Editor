@@ -67,6 +67,7 @@ const state = {
   cleanSnapshot: '',
   cleanTabsCache: null,
   undoHistory: [],
+  pendingDirtyUiRefreshReasons: [],
   sectionListScrollTop: {
     districts: 0,
     wonders: 0,
@@ -2186,21 +2187,82 @@ function enableBooleanRowToggle(rowEl, checkEl) {
 }
 
 function refreshDirtyUi() {
+  const startedAt = debugNowMs();
+  const activeTabKey = String(state.activeTab || '').trim().toLowerCase();
+  const activeTab = activeTabKey && state.bundle && state.bundle.tabs ? state.bundle.tabs[activeTabKey] : null;
+  const shouldLogReferencePerf = !!(activeTab && activeTab.type === 'reference');
+  const validationStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   state.sectionValidationError = getSectionValidationError();
+  const validationMs = shouldLogReferencePerf ? Number((debugNowMs() - validationStartedAt).toFixed(2)) : 0;
+  const saveBtnDirtyBefore = !!(el.saveBtn && el.saveBtn.classList.contains('dirty'));
   if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
+  const saveBtnDirtyChanged = !!(el.saveBtn && saveBtnDirtyBefore !== el.saveBtn.classList.contains('dirty'));
+  const saveButtonLabelStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   updateSaveButtonLabel();
+  const saveButtonLabelMs = shouldLogReferencePerf ? Number((debugNowMs() - saveButtonLabelStartedAt).toFixed(2)) : 0;
+  const saveAsStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   updateSaveAsButtonState();
+  const saveAsMs = shouldLogReferencePerf ? Number((debugNowMs() - saveAsStartedAt).toFixed(2)) : 0;
+  const deleteScenarioStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   updateDeleteScenarioButtonState();
+  const deleteScenarioMs = shouldLogReferencePerf ? Number((debugNowMs() - deleteScenarioStartedAt).toFixed(2)) : 0;
+  let saveBtnDisabledChanged = false;
+  let saveBtnTitleChanged = false;
+  let dirtyIndicatorChanged = false;
+  let filesReadToggleChanged = false;
+  let undoBtnDisabledChanged = false;
+  let undoAllBtnDisabledChanged = false;
+  const saveBtnDisabledBefore = !!(el.saveBtn && el.saveBtn.disabled);
+  const saveBtnTitleBefore = el.saveBtn ? String(el.saveBtn.title || '') : '';
   if (el.saveBtn) {
     el.saveBtn.disabled = !state.isDirty || state.isLoading || state.isSaving || !!state.sectionValidationError;
     el.saveBtn.title = state.sectionValidationError || '';
+    saveBtnDisabledChanged = saveBtnDisabledBefore !== el.saveBtn.disabled;
+    saveBtnTitleChanged = saveBtnTitleBefore !== String(el.saveBtn.title || '');
   }
-  if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
-  if (el.filesReadToggle) el.filesReadToggle.classList.toggle('dirty', state.isDirty);
+  const dirtyIndicatorHiddenBefore = !!(el.dirtyIndicator && el.dirtyIndicator.classList.contains('hidden'));
+  if (el.dirtyIndicator) {
+    el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
+    dirtyIndicatorChanged = dirtyIndicatorHiddenBefore !== el.dirtyIndicator.classList.contains('hidden');
+  }
+  const filesReadToggleDirtyBefore = !!(el.filesReadToggle && el.filesReadToggle.classList.contains('dirty'));
+  if (el.filesReadToggle) {
+    el.filesReadToggle.classList.toggle('dirty', state.isDirty);
+    filesReadToggleChanged = filesReadToggleDirtyBefore !== el.filesReadToggle.classList.contains('dirty');
+  }
   const hasUndoHistory = (Array.isArray(state.undoHistory) && state.undoHistory.length > 0) || hasPendingTrackedEditSessions();
-  if (el.undoBtn) el.undoBtn.disabled = !hasUndoHistory || state.isLoading;
-  if (el.undoAllBtn) el.undoAllBtn.disabled = !state.isDirty || state.isLoading;
+  const undoBtnDisabledBefore = !!(el.undoBtn && el.undoBtn.disabled);
+  if (el.undoBtn) {
+    el.undoBtn.disabled = !hasUndoHistory || state.isLoading;
+    undoBtnDisabledChanged = undoBtnDisabledBefore !== el.undoBtn.disabled;
+  }
+  const undoAllBtnDisabledBefore = !!(el.undoAllBtn && el.undoAllBtn.disabled);
+  if (el.undoAllBtn) {
+    el.undoAllBtn.disabled = !state.isDirty || state.isLoading;
+    undoAllBtnDisabledChanged = undoAllBtnDisabledBefore !== el.undoAllBtn.disabled;
+  }
+  const mapUndoButtonsStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   refreshMapModalUndoButtons();
+  const mapUndoButtonsMs = shouldLogReferencePerf ? Number((debugNowMs() - mapUndoButtonsStartedAt).toFixed(2)) : 0;
+  if (shouldLogReferencePerf) {
+    appendReferencePerfLog('biq-ref:refresh-dirty-ui-breakdown', {
+      activeTab: activeTabKey,
+      reasons: Array.isArray(state.pendingDirtyUiRefreshReasons) ? state.pendingDirtyUiRefreshReasons.slice() : [],
+      validationMs,
+      saveButtonLabelMs,
+      saveAsMs,
+      deleteScenarioMs,
+      mapUndoButtonsMs,
+      saveBtnDirtyChanged,
+      saveBtnDisabledChanged,
+      saveBtnTitleChanged,
+      dirtyIndicatorChanged,
+      filesReadToggleChanged,
+      undoBtnDisabledChanged,
+      undoAllBtnDisabledChanged,
+      totalMs: Number((debugNowMs() - startedAt).toFixed(2))
+    });
+  }
 }
 
 function getLatestUndoSnapshot() {
@@ -2419,7 +2481,7 @@ function rememberUndoSnapshotForKey(key = '') {
     const clonePushStartedAt = debugNowMs();
     state.undoHistory.push(cloneUndoSnapshotEntry(snapshot));
     const clonePushMs = Number((debugNowMs() - clonePushStartedAt).toFixed(2));
-    scheduleDirtyUiRefresh();
+    scheduleDirtyUiRefresh(`undo-snapshot:${String(key || '').trim().toLowerCase() || 'full'}`);
     appendReferencePerfLog('biq-ref:undo-snapshot-push', {
       key: String(key || ''),
       scope: getUndoSnapshotScope(snapshot) || 'full',
@@ -2511,7 +2573,7 @@ function rememberMapUndoSnapshot() {
     refreshDirtyUiMs: null,
     durationMs: Number((performance.now() - startedAt).toFixed(2))
   });
-  scheduleDirtyUiRefresh();
+  scheduleDirtyUiRefresh('map-undo-snapshot');
   appendDebugLog('biq-map:undo-snapshot-refresh', {
     scope: 'map',
     refreshDirtyUiMs: Number((performance.now() - refreshStartedAt).toFixed(2)),
@@ -2605,7 +2667,7 @@ function pushUndoSnapshot(snapshot) {
   if (!normalized || signature === 'full:null' || signature === 'null') return;
   if (signature !== getUndoSnapshotSignature(getLatestUndoSnapshot())) {
     state.undoHistory.push(normalized);
-    scheduleDirtyUiRefresh();
+    scheduleDirtyUiRefresh('push-undo-snapshot');
   }
 }
 
@@ -2873,11 +2935,19 @@ function flushDirtyUiRefresh() {
   }
 }
 
-function scheduleDirtyUiRefresh() {
+function scheduleDirtyUiRefresh(reason = '') {
+  const normalizedReason = String(reason || '').trim();
+  if (normalizedReason) {
+    if (!Array.isArray(state.pendingDirtyUiRefreshReasons)) state.pendingDirtyUiRefreshReasons = [];
+    if (!state.pendingDirtyUiRefreshReasons.includes(normalizedReason)) {
+      state.pendingDirtyUiRefreshReasons.push(normalizedReason);
+    }
+  }
   if (state.dirtyUiRefreshRaf) return;
   state.dirtyUiRefreshRaf = window.requestAnimationFrame(() => {
     state.dirtyUiRefreshRaf = 0;
     flushDirtyUiRefresh();
+    state.pendingDirtyUiRefreshReasons = [];
   });
 }
 
@@ -2913,7 +2983,7 @@ function setDirty(next, options = {}) {
         nextCount: Number(state.dirtyTabCounts && state.dirtyTabCounts[knownDirtyTab] || 0)
       });
     }
-    scheduleDirtyUiRefresh();
+    scheduleDirtyUiRefresh(`set-dirty:${knownDirtyTab}`);
     return;
   }
   if (!state.isDirty) {
@@ -2928,7 +2998,7 @@ function setDirty(next, options = {}) {
       return;
     }
   }
-  scheduleDirtyUiRefresh();
+  scheduleDirtyUiRefresh('set-dirty:generic');
 }
 
 function parseSnapshotTabs(snapshotText) {
@@ -22057,6 +22127,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   };
   let visibleRows = [];
   let lastFocusedCellId = '';
+  let activeEditingRowId = '';
 
   const panel = document.createElement('div');
   panel.className = 'unit-table-panel';
@@ -22176,6 +22247,32 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     undoAllBtn.disabled = !referenceEditable || !state.isDirty;
   };
 
+  const updateActiveEditingRowStyles = () => {
+    Array.from(tbody.querySelectorAll('tr[data-unit-table-row-id]')).forEach((rowEl) => {
+      rowEl.classList.toggle('unit-table-row-editing', String(rowEl.dataset.unitTableRowId || '') === activeEditingRowId);
+    });
+  };
+
+  const setActiveEditingRow = (rowId = '') => {
+    activeEditingRowId = String(rowId || '').trim();
+    updateActiveEditingRowStyles();
+  };
+
+  const isUnitTableRowDirty = (row) => {
+    if (!row || !row.entry) return false;
+    const dirtySet = ensureReferenceDirtySet('units');
+    const identity = String(row.identity || '').trim();
+    if (!identity) return false;
+    const cleanEntry = getCleanReferenceEntry('units', row.entry, row.entry && row.entry.biqIndex);
+    const activeDirty = hasReferenceEntryChangedFromClean(row.entry, cleanEntry, {
+      tabKey: 'units',
+      fallbackIndex: row.entry && row.entry.biqIndex
+    });
+    if (activeDirty) dirtySet.add(identity);
+    else dirtySet.delete(identity);
+    return activeDirty;
+  };
+
   const moveCellFocus = (rowOffset, colOffset, fromElement) => {
     const rowId = String(fromElement && fromElement.dataset.unitTableRow || '');
     const colKey = String(fromElement && fromElement.dataset.unitTableCol || '');
@@ -22213,6 +22310,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     control.dataset.unitTableCol = column.key;
     control.addEventListener('focus', () => {
       lastFocusedCellId = `${row.identity}::${column.key}`;
+      setActiveEditingRow(row.identity);
       control.__unitTableUndoRemembered = false;
     });
     control.addEventListener('keydown', (ev) => {
@@ -22305,6 +22403,8 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     const fragment = document.createDocumentFragment();
     visibleRows.forEach((row) => {
       const tr = document.createElement('tr');
+      tr.dataset.unitTableRowId = row.identity;
+      if (row.identity === activeEditingRowId) tr.classList.add('unit-table-row-editing');
 
       const thumbCell = document.createElement('td');
       thumbCell.className = 'unit-table-thumb-cell';
@@ -22312,6 +22412,9 @@ function createUnitTablePanel({ tab, referenceEditable }) {
       thumb.className = 'entry-thumb unit-table-thumb';
       thumbCell.appendChild(thumb);
       loadReferenceListThumbnail('units', row.entry, thumb);
+      if (isUnitTableRowDirty(row)) {
+        appendDirtyBadge(thumbCell, `${row.values.name || row.key || 'Unit'} has unsaved edits`);
+      }
       tr.appendChild(thumbCell);
 
       UNIT_TABLE_COLUMNS.forEach((column) => {
@@ -22412,7 +22515,20 @@ function createUnitTablePanel({ tab, referenceEditable }) {
         window.requestAnimationFrame(() => target.focus({ preventScroll: true }));
       }
     }
+    updateActiveEditingRowStyles();
   };
+
+  panel.addEventListener('focusout', () => {
+    window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement;
+      if (!(activeElement instanceof Element) || !panel.contains(activeElement)) {
+        setActiveEditingRow('');
+        return;
+      }
+      const rowId = String(activeElement.dataset && activeElement.dataset.unitTableRow || '').trim();
+      setActiveEditingRow(rowId);
+    });
+  });
 
   searchInput.addEventListener('input', () => {
     filters.query = searchInput.value;
@@ -22523,6 +22639,12 @@ function ensureMapModalNode() {
 }
 
 function refreshMapModalUndoButtons() {
+  const mapModalVisible = !!(
+    mapModal.node
+    && mapModal.node.isConnected
+    && !mapModal.node.classList.contains('hidden')
+  );
+  if (!mapModalVisible) return;
   if (mapModal.saveBtn) {
     mapModal.saveBtn.disabled = !state.isDirty || state.isSaving || state.isLoading || !state.bundle || !!state.sectionValidationError;
     mapModal.saveBtn.title = state.sectionValidationError || '';

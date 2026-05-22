@@ -1,6 +1,11 @@
 * RELEASE 27.11.1
+- Added Unit Table dirty badges beside unit thumbnails and a focus-driven row highlight so changed units and the actively edited row are easier to track during bulk edits.
+- Stopped normal rules-editor dirty refreshes from forcing expensive map dirty checks just to update hidden Map modal undo buttons; those button states now refresh only while the Map modal is actually open.
+- Expanded the `AGENTS.md` daily log note to include both macOS and Windows log paths so future debugging guidance matches the user's current machine.
+- Documented the daily app log location in `AGENTS.md` so future agents can tail the current-day log directly during debugging instead of asking users to paste log output.
 - Fixed clipped Map modal edit redraws so long river and overlay pixels are repainted from farther source tiles when a nearby tile edit clears their area, preventing partial river cutoffs a few tiles away from district edits.
 - Added focused `biq-ref` performance logs for reference-edit undo capture, dirty comparison, and dirty-refresh work so normal rules-editor lag can be profiled alongside the existing map instrumentation.
+- Added a second-pass `biq-ref` refresh breakdown log that times each `refreshDirtyUi()` sub-step and records why each scheduled dirty refresh ran, so UI-side stalls can be separated from data and undo work.
 - Added grouped Map modal terrain-sprite miss logging so fallback-color terrain redraws can be traced to missing atlases, invalid image indexes, or related atlas lookup failures from a single debug log.
 - Fixed a Map modal regression where hover-only district preview rerenders could suppress the pending full terrain-art refresh, leaving the map stuck on flat fallback colors and glyphs even after terrain atlases finished loading.
 - Stopped district hover-preview art cache misses from forcing full Map modal canvas and minimap rerenders; newly loaded district preview variants now refresh the hover layer in place.

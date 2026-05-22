@@ -7619,6 +7619,33 @@ details > summary:focus-visible {
   background: rgba(251, 252, 255, 0.99);
 }
 
+.unit-table-thumb-cell {
+  position: sticky;
+}
+
+.unit-table-thumb-cell .dirty-dot-badge {
+  top: 5px;
+  right: 5px;
+  left: auto;
+  transform: none;
+}
+
+.unit-table-grid tr.unit-table-row-editing td {
+  background: rgba(235, 243, 255, 0.92);
+}
+
+.unit-table-grid tr.unit-table-row-editing .unit-table-thumb-cell,
+.unit-table-grid tr.unit-table-row-editing .unit-table-name-cell {
+  background: rgba(228, 238, 255, 0.98);
+}
+
+.unit-table-grid tr.unit-table-row-editing .unit-table-text-input,
+.unit-table-grid tr.unit-table-row-editing .unit-table-number-input,
+.unit-table-grid tr.unit-table-row-editing .unit-table-plain-select,
+.unit-table-grid tr.unit-table-row-editing .unit-table-picker .tech-picker-btn {
+  background: rgba(255, 255, 255, 0.68);
+}
+
 .unit-table-thumb {
   width: 20px;
   height: 20px;

@@ -301,7 +301,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /function setDirty\(next, options = \{\}\) \{[\s\S]*?const knownDirtyTab = next[\s\S]*?if \(knownDirtyTab\) \{[\s\S]*?state\.isDirty = true;[\s\S]*?setTabDirtyCount\(knownDirtyTab, Math\.max\(1, previousCount\)\);[\s\S]*?scheduleDirtyUiRefresh\(\);[\s\S]*?return;[\s\S]*?\}/,
+    /function setDirty\(next, options = \{\}\) \{[\s\S]*?const knownDirtyTab = next[\s\S]*?if \(knownDirtyTab\) \{[\s\S]*?state\.isDirty = true;[\s\S]*?setTabDirtyCount\(knownDirtyTab, Math\.max\(1, previousCount\)\);[\s\S]*?scheduleDirtyUiRefresh\([^)]*\);[\s\S]*?return;[\s\S]*?\}/,
     'setDirty should support a known-dirty-tab fast path so map edits can skip the first-dirty full snapshot comparison'
   );
   assert.match(

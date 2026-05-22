@@ -134,6 +134,12 @@ npm test
 
 `npm test` runs the fast tier. For BIQ parser/save/reference changes, also run `npm run test:biq`. Before release/version prep, run `npm run test:full`; it includes every test and can take 10+ minutes.
 
+## Debug Logs
+- For live app debugging, check the daily renderer/app log directly before asking the user to paste log lines.
+- macOS log path: `~/Library/Application Support/Civ 3 C3X Modern Editor/logs/c3x-config-manager-YYYY-MM-DD.log`
+- Windows log path: `%APPDATA%\Civ 3 C3X Modern Editor\logs\c3x-config-manager-YYYY-MM-DD.log`
+- Use the user's local current date for `YYYY-MM-DD` and prefer tailing/filtering that file while reproducing issues.
+
 ## Deep-Dive References
 - `docs/DomainGroundTruth.md` for detailed precedence and file semantics.
 - `docs/UIInvariants.md` for stable UI/save behavior contracts.
