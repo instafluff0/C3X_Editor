@@ -440,3 +440,14 @@ test('improvements top board renderer receives the reference context it uses for
     'Improvements rules layout should pass the active reference context into the top board renderer'
   );
 });
+
+test('improvements required districts picker wires district dropdown thumbnails', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /renderImprovementRequiredDistrictsControl[\s\S]*createReferencePicker\(\{[\s\S]*renderOptionThumb:\s*\(\{\s*holder,\s*option\s*\}\)\s*=>\s*\{[\s\S]*findDistrictSectionByName\(option\.value\)[\s\S]*loadDistrictRepresentativePreview\(section,\s*holder,\s*14\)[\s\S]*return true;[\s\S]*\}[\s\S]*\}\)/m,
+    'Improvements required-district picker should provide the shared district thumbnail renderer so dropdown options do not collapse to empty placeholder boxes'
+  );
+});

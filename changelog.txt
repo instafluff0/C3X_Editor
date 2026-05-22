@@ -1,4 +1,8 @@
 * RELEASE 27.11.1.0
+- Unified Civs, Resources, and Governments with the shared deferred reference-tab utility-section renderer, so their Civilopedia and art panels now lazy-mount like Units, Techs, and Improvements instead of eagerly building closed editors.
+- Fixed Improvements -> Required Districts dropdown thumbnails by wiring that picker through the shared district preview renderer, so district options now show their representative art instead of empty placeholder squares.
+- Fixed shared reference-list thumbnail hydration to retry a couple of likely transient blank visible slots instead of permanently giving up after one missed load attempt, so fast scrolling is less likely to leave icons unrendered.
+- Changed shared reference-tab utility sections such as Civilopedia and Tech/Improvement art panels to lazy-mount their heavy editors only when opened, so long tabs reuse the same fast shell without paying closed-section render costs up front.
 - Changed Units reference-list thumbnail loading to use a small viewport-prioritized in-flight queue, so fast scrolling no longer gets stuck behind thumbnail requests for rows you already flung past.
 - Fixed reference-list lazy thumbnail hydration to keep scheduling follow-up viewport passes while visible rows are still pending, so Units list icons now appear as items scroll into view instead of waiting for a click or extra scroll nudge.
 - Stopped hidden reference-picker dropdowns from preloading option thumbnails while a tab detail pane is being rebuilt, so selecting a new Unit no longer fans out into thumbnail loads for unopened prerequisite/resource/upgrade pickers.

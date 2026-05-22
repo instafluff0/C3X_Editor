@@ -16713,6 +16713,49 @@ function createUnitCollapsibleSection(titleText, { open = false, sourceInfo = ''
   return details;
 }
 
+function createDeferredReferenceUtilityDetails({
+  titleText,
+  open = false,
+  openStateKey = '',
+  summaryTooltip = '',
+  bodyClassName = 'unit-collapsible-body',
+  buildBody,
+  wideToggleIgnoreSelectors = ''
+} = {}) {
+  const details = document.createElement('details');
+  details.className = 'reference-art-collapse unit-compact-collapse';
+  details.open = !!open;
+  const summary = document.createElement('summary');
+  summary.textContent = String(titleText || '');
+  if (summaryTooltip) attachRichTooltip(summary, summaryTooltip);
+  details.appendChild(summary);
+  const body = document.createElement('div');
+  body.className = bodyClassName;
+  details.appendChild(body);
+  let mounted = false;
+  const mountBody = () => {
+    if (mounted || typeof buildBody !== 'function') return;
+    const content = buildBody();
+    if (Array.isArray(content)) {
+      content.filter(Boolean).forEach((node) => body.appendChild(node));
+    } else if (content) {
+      body.appendChild(content);
+    }
+    mounted = true;
+  };
+  if (details.open) mountBody();
+  details.addEventListener('toggle', () => {
+    if (openStateKey) state.unitUtilitySectionOpenByKey[openStateKey] = !!details.open;
+    if (details.open) mountBody();
+  });
+  if (wideToggleIgnoreSelectors) {
+    enableWideDetailsToggle(details, {
+      ignoreSelectors: wideToggleIgnoreSelectors
+    });
+  }
+  return details;
+}
+
 function enableWideDetailsToggle(details, { ignoreSelectors = '' } = {}) {
   if (!details) return;
   details.addEventListener('click', (ev) => {
@@ -18818,6 +18861,13 @@ function renderImprovementRequiredDistrictsControl(entry, referenceEditable) {
         currentValue: '-1',
         searchPlaceholder: 'Add District...',
         noneLabel: 'Add District...',
+        renderOptionThumb: ({ holder, option }) => {
+          if (!holder || !option) return false;
+          const section = findDistrictSectionByName(option.value);
+          if (!section) return false;
+          loadDistrictRepresentativePreview(section, holder, 14);
+          return true;
+        },
         resetAfterSelect: true,
         onSelect: (next) => {
           const normalized = normalizeConfigToken(next);
@@ -29472,7 +29522,31 @@ function renderReferenceTab(tab, tabKey) {
       target.thumb.dataset.thumbLoading = '1';
       listThumbsInFlight.add(target.thumb);
       Promise.resolve(loadReferenceListThumbnail(tabKey, target.entry, target.thumb))
-        .catch(() => false)
+        .then((loaded) => {
+          if (loaded === true) {
+            if (target.thumb && target.thumb.isConnected) delete target.thumb.dataset.thumbRetryCount;
+            return true;
+          }
+          if (!target.thumb || !target.thumb.isConnected) return false;
+          const itemBtn = target.thumb.closest('.entry-list-item');
+          const hasIssueBadge = !!(itemBtn && itemBtn.classList.contains('entry-item-has-issue'));
+          const alreadyPainted = target.thumb.childElementCount > 0;
+          const retryCount = Number(target.thumb.dataset.thumbRetryCount || 0);
+          if (!hasIssueBadge && !alreadyPainted && retryCount < 2) {
+            target.thumb.dataset.thumbPending = '1';
+            target.thumb.dataset.thumbRetryCount = String(retryCount + 1);
+          }
+          return false;
+        })
+        .catch(() => {
+          if (!target.thumb || !target.thumb.isConnected) return false;
+          const retryCount = Number(target.thumb.dataset.thumbRetryCount || 0);
+          if (retryCount < 2) {
+            target.thumb.dataset.thumbPending = '1';
+            target.thumb.dataset.thumbRetryCount = String(retryCount + 1);
+          }
+          return false;
+        })
         .finally(() => {
           listThumbsInFlight.delete(target.thumb);
           if (target.thumb && target.thumb.isConnected) delete target.thumb.dataset.thumbLoading;
@@ -30078,344 +30152,265 @@ function renderReferenceTab(tab, tabKey) {
     if (tabKey === 'units') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
-      const pediaDetails = document.createElement('details');
-      pediaDetails.className = 'reference-art-collapse unit-compact-collapse';
       const pediaOpenKey = 'units:civilopedia';
-      pediaDetails.open = !!state.unitUtilitySectionOpenByKey[pediaOpenKey];
-      const pediaSummary = document.createElement('summary');
-      pediaSummary.textContent = 'Civilopedia';
-      attachRichTooltip(pediaSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
-      pediaDetails.appendChild(pediaSummary);
-      pediaDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[pediaOpenKey] = !!pediaDetails.open;
-      });
-      const pediaBody = document.createElement('div');
-      pediaBody.className = 'unit-collapsible-body';
-      const editorBlock = createCivilopediaEditorBlock({
-        entry,
-        fieldKey: 'civilopedia',
+      const pediaDetails = createDeferredReferenceUtilityDetails({
         titleText: 'Civilopedia',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
-        emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
-        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
-      });
-      editorBlock.classList.remove('section-card', 'source-section');
-      const editorTop = editorBlock.querySelector(':scope > .section-top');
-      if (editorTop) {
-        const editorTitle = editorTop.querySelector('strong');
-        if (editorTitle) editorTitle.remove();
-      }
-      editorBlock.style.marginTop = '0';
-      pediaBody.appendChild(editorBlock);
-      pediaDetails.appendChild(pediaBody);
-      enableWideDetailsToggle(pediaDetails, {
-        ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
+        open: !!state.unitUtilitySectionOpenByKey[pediaOpenKey],
+        openStateKey: pediaOpenKey,
+        summaryTooltip: formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'),
+        wideToggleIgnoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel',
+        buildBody: () => {
+          const editorBlock = createCivilopediaEditorBlock({
+            entry,
+            fieldKey: 'civilopedia',
+            titleText: 'Civilopedia',
+            sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+            emptyText: 'Civilopedia text',
+            getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
+            setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
+          });
+          editorBlock.classList.remove('section-card', 'source-section');
+          const editorTop = editorBlock.querySelector(':scope > .section-top');
+          if (editorTop) {
+            const editorTitle = editorTop.querySelector('strong');
+            if (editorTitle) editorTitle.remove();
+          }
+          editorBlock.style.marginTop = '0';
+          return editorBlock;
+        }
       });
       utilityStack.appendChild(pediaDetails);
 
-      const artAnimationDetails = document.createElement('details');
-      artAnimationDetails.className = 'reference-art-collapse unit-compact-collapse';
       const artAnimationOpenKey = 'units:art-animation';
-      artAnimationDetails.open = !!state.unitUtilitySectionOpenByKey[artAnimationOpenKey]
-        || !!state.unitUtilitySectionOpenByKey['units:other-art']
-        || !!state.unitUtilitySectionOpenByKey['units:animation'];
-      const artAnimationSummary = document.createElement('summary');
-      artAnimationSummary.textContent = 'Unit Art and Animations';
-      attachRichTooltip(artAnimationSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
-      artAnimationDetails.appendChild(artAnimationSummary);
-      artAnimationDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[artAnimationOpenKey] = !!artAnimationDetails.open;
+      const artAnimationDetails = createDeferredReferenceUtilityDetails({
+        titleText: 'Unit Art and Animations',
+        open: !!state.unitUtilitySectionOpenByKey[artAnimationOpenKey]
+          || !!state.unitUtilitySectionOpenByKey['units:other-art']
+          || !!state.unitUtilitySectionOpenByKey['units:animation'],
+        openStateKey: artAnimationOpenKey,
+        summaryTooltip: formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'),
+        bodyClassName: 'unit-collapsible-body unit-art-animation-body',
+        buildBody: () => {
+          const nodes = [];
+          if (artSlots.length > 0 || getBiqFieldByBaseKey(entry, 'iconindex')) {
+            nodes.push(renderUnitArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
+          }
+          const animationBody = document.createElement('div');
+          animationBody.className = 'unit-animation-embedded';
+          renderUnitAnimationPanel(tabKey, entry, animationBody, referenceEditable, { showTitle: false });
+          nodes.push(animationBody);
+          return nodes;
+        }
       });
-      const artAnimationBody = document.createElement('div');
-      artAnimationBody.className = 'unit-collapsible-body unit-art-animation-body';
-      if (artSlots.length > 0 || getBiqFieldByBaseKey(entry, 'iconindex')) {
-        artAnimationBody.appendChild(renderUnitArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
-      }
-      const animationBody = document.createElement('div');
-      animationBody.className = 'unit-animation-embedded';
-      renderUnitAnimationPanel(tabKey, entry, animationBody, referenceEditable, { showTitle: false });
-      artAnimationBody.appendChild(animationBody);
-      artAnimationDetails.appendChild(artAnimationBody);
       utilityStack.appendChild(artAnimationDetails);
       unitUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'improvements') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
-      const pediaDetails = document.createElement('details');
-      pediaDetails.className = 'reference-art-collapse unit-compact-collapse';
       const pediaOpenKey = 'improvements:civilopedia';
-      pediaDetails.open = !!state.unitUtilitySectionOpenByKey[pediaOpenKey];
-      const pediaSummary = document.createElement('summary');
-      pediaSummary.textContent = 'Civilopedia';
-      attachRichTooltip(pediaSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
-      pediaDetails.appendChild(pediaSummary);
-      pediaDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[pediaOpenKey] = !!pediaDetails.open;
-      });
-      const pediaBody = document.createElement('div');
-      pediaBody.className = 'unit-collapsible-body';
-      const editorBlock = createCivilopediaEditorBlock({
-        entry,
-        fieldKey: 'civilopedia',
+      const pediaDetails = createDeferredReferenceUtilityDetails({
         titleText: 'Civilopedia',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
-        emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
-        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
-      });
-      editorBlock.classList.remove('section-card', 'source-section');
-      const editorTop = editorBlock.querySelector(':scope > .section-top');
-      if (editorTop) {
-        const editorTitle = editorTop.querySelector('strong');
-        if (editorTitle) editorTitle.remove();
-      }
-      editorBlock.style.marginTop = '0';
-      pediaBody.appendChild(editorBlock);
-      pediaDetails.appendChild(pediaBody);
-      enableWideDetailsToggle(pediaDetails, {
-        ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
+        open: !!state.unitUtilitySectionOpenByKey[pediaOpenKey],
+        openStateKey: pediaOpenKey,
+        summaryTooltip: formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'),
+        wideToggleIgnoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel',
+        buildBody: () => {
+          const editorBlock = createCivilopediaEditorBlock({
+            entry,
+            fieldKey: 'civilopedia',
+            titleText: 'Civilopedia',
+            sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+            emptyText: 'Civilopedia text',
+            getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
+            setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
+          });
+          editorBlock.classList.remove('section-card', 'source-section');
+          const editorTop = editorBlock.querySelector(':scope > .section-top');
+          if (editorTop) {
+            const editorTitle = editorTop.querySelector('strong');
+            if (editorTitle) editorTitle.remove();
+          }
+          editorBlock.style.marginTop = '0';
+          return editorBlock;
+        }
       });
       utilityStack.appendChild(pediaDetails);
       if (artSlots.length > 0) {
-        const otherArtDetails = document.createElement('details');
-        otherArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const otherArtOpenKey = 'improvements:other-art';
-        otherArtDetails.open = !!state.unitUtilitySectionOpenByKey[otherArtOpenKey];
-        const otherArtSummary = document.createElement('summary');
-        otherArtSummary.textContent = 'Building Art';
-        otherArtDetails.appendChild(otherArtSummary);
-        otherArtDetails.addEventListener('toggle', () => {
-          state.unitUtilitySectionOpenByKey[otherArtOpenKey] = !!otherArtDetails.open;
+        const otherArtDetails = createDeferredReferenceUtilityDetails({
+          titleText: 'Building Art',
+          open: !!state.unitUtilitySectionOpenByKey[otherArtOpenKey],
+          openStateKey: otherArtOpenKey,
+          buildBody: () => renderImprovementBuildingArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true }))
         });
-        const otherArtBody = document.createElement('div');
-        otherArtBody.className = 'unit-collapsible-body';
-        otherArtBody.appendChild(renderImprovementBuildingArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
-        otherArtDetails.appendChild(otherArtBody);
         utilityStack.appendChild(otherArtDetails);
       }
       improvementUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'technologies') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
-      const pediaDetails = document.createElement('details');
-      pediaDetails.className = 'reference-art-collapse unit-compact-collapse';
       const pediaOpenKey = 'technologies:civilopedia';
-      pediaDetails.open = !!state.unitUtilitySectionOpenByKey[pediaOpenKey];
-      const pediaSummary = document.createElement('summary');
-      pediaSummary.textContent = 'Civilopedia';
-      attachRichTooltip(pediaSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
-      pediaDetails.appendChild(pediaSummary);
-      pediaDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[pediaOpenKey] = !!pediaDetails.open;
-      });
-      const pediaBody = document.createElement('div');
-      pediaBody.className = 'unit-collapsible-body';
-      const editorBlock = createCivilopediaEditorBlock({
-        entry,
-        fieldKey: 'civilopedia',
+      const pediaDetails = createDeferredReferenceUtilityDetails({
         titleText: 'Civilopedia',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
-        emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
-        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
-      });
-      editorBlock.classList.remove('section-card', 'source-section');
-      const editorTop = editorBlock.querySelector(':scope > .section-top');
-      if (editorTop) {
-        const editorTitle = editorTop.querySelector('strong');
-        if (editorTitle) editorTitle.remove();
-      }
-      editorBlock.style.marginTop = '0';
-      pediaBody.appendChild(editorBlock);
-      pediaDetails.appendChild(pediaBody);
-      enableWideDetailsToggle(pediaDetails, {
-        ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
+        open: !!state.unitUtilitySectionOpenByKey[pediaOpenKey],
+        openStateKey: pediaOpenKey,
+        summaryTooltip: formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'),
+        wideToggleIgnoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel',
+        buildBody: () => {
+          const editorBlock = createCivilopediaEditorBlock({
+            entry,
+            fieldKey: 'civilopedia',
+            titleText: 'Civilopedia',
+            sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+            emptyText: 'Civilopedia text',
+            getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
+            setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
+          });
+          editorBlock.classList.remove('section-card', 'source-section');
+          const editorTop = editorBlock.querySelector(':scope > .section-top');
+          if (editorTop) {
+            const editorTitle = editorTop.querySelector('strong');
+            if (editorTitle) editorTitle.remove();
+          }
+          editorBlock.style.marginTop = '0';
+          return editorBlock;
+        }
       });
       utilityStack.appendChild(pediaDetails);
       if (artSlots.length > 0) {
-        const techArtDetails = document.createElement('details');
-        techArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const techArtOpenKey = 'technologies:art';
-        techArtDetails.open = !!state.unitUtilitySectionOpenByKey[techArtOpenKey];
-        const techArtSummary = document.createElement('summary');
-        techArtSummary.textContent = 'Technology Icons';
-        techArtDetails.appendChild(techArtSummary);
-        techArtDetails.addEventListener('toggle', () => {
-          state.unitUtilitySectionOpenByKey[techArtOpenKey] = !!techArtDetails.open;
+        const techArtDetails = createDeferredReferenceUtilityDetails({
+          titleText: 'Technology Icons',
+          open: !!state.unitUtilitySectionOpenByKey[techArtOpenKey],
+          openStateKey: techArtOpenKey,
+          buildBody: () => renderTechnologyArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true }))
         });
-        const techArtBody = document.createElement('div');
-        techArtBody.className = 'unit-collapsible-body';
-        techArtBody.appendChild(renderTechnologyArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
-        techArtDetails.appendChild(techArtBody);
         utilityStack.appendChild(techArtDetails);
       }
       technologyUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'resources') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
-      const pediaDetails = document.createElement('details');
-      pediaDetails.className = 'reference-art-collapse unit-compact-collapse';
       const pediaOpenKey = 'resources:civilopedia';
-      pediaDetails.open = !!state.unitUtilitySectionOpenByKey[pediaOpenKey];
-      const pediaSummary = document.createElement('summary');
-      pediaSummary.textContent = 'Civilopedia';
-      attachRichTooltip(pediaSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
-      pediaDetails.appendChild(pediaSummary);
-      pediaDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[pediaOpenKey] = !!pediaDetails.open;
-      });
-      const pediaBody = document.createElement('div');
-      pediaBody.className = 'unit-collapsible-body';
-      const editorBlock = createCivilopediaEditorBlock({
-        entry,
-        fieldKey: 'civilopedia',
+      const pediaDetails = createDeferredReferenceUtilityDetails({
         titleText: 'Civilopedia',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
-        emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
-        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
-      });
-      editorBlock.classList.remove('section-card', 'source-section');
-      const editorTop = editorBlock.querySelector(':scope > .section-top');
-      if (editorTop) {
-        const editorTitle = editorTop.querySelector('strong');
-        if (editorTitle) editorTitle.remove();
-      }
-      editorBlock.style.marginTop = '0';
-      pediaBody.appendChild(editorBlock);
-      pediaDetails.appendChild(pediaBody);
-      enableWideDetailsToggle(pediaDetails, {
-        ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
+        open: !!state.unitUtilitySectionOpenByKey[pediaOpenKey],
+        openStateKey: pediaOpenKey,
+        summaryTooltip: formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'),
+        wideToggleIgnoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel',
+        buildBody: () => {
+          const editorBlock = createCivilopediaEditorBlock({
+            entry,
+            fieldKey: 'civilopedia',
+            titleText: 'Civilopedia',
+            sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+            emptyText: 'Civilopedia text',
+            getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
+            setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
+          });
+          editorBlock.classList.remove('section-card', 'source-section');
+          const editorTop = editorBlock.querySelector(':scope > .section-top');
+          if (editorTop) {
+            const editorTitle = editorTop.querySelector('strong');
+            if (editorTitle) editorTitle.remove();
+          }
+          editorBlock.style.marginTop = '0';
+          return editorBlock;
+        }
       });
       utilityStack.appendChild(pediaDetails);
       if (artSlots.length > 0 || getBiqFieldByBaseKey(entry, 'icon')) {
-        const otherArtDetails = document.createElement('details');
-        otherArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const otherArtOpenKey = 'resources:art';
-        otherArtDetails.open = !!state.unitUtilitySectionOpenByKey[otherArtOpenKey];
-        const otherArtSummary = document.createElement('summary');
-        otherArtSummary.textContent = 'Resource Icons';
-        otherArtDetails.appendChild(otherArtSummary);
-        otherArtDetails.addEventListener('toggle', () => {
-          state.unitUtilitySectionOpenByKey[otherArtOpenKey] = !!otherArtDetails.open;
+        const otherArtDetails = createDeferredReferenceUtilityDetails({
+          titleText: 'Resource Icons',
+          open: !!state.unitUtilitySectionOpenByKey[otherArtOpenKey],
+          openStateKey: otherArtOpenKey,
+          buildBody: () => renderResourceArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true }))
         });
-        const otherArtBody = document.createElement('div');
-        otherArtBody.className = 'unit-collapsible-body';
-        otherArtBody.appendChild(renderResourceArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
-        otherArtDetails.appendChild(otherArtBody);
         utilityStack.appendChild(otherArtDetails);
       }
       resourceUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'governments') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
-      const pediaDetails = document.createElement('details');
-      pediaDetails.className = 'reference-art-collapse unit-compact-collapse';
       const pediaOpenKey = 'governments:civilopedia';
-      pediaDetails.open = !!state.unitUtilitySectionOpenByKey[pediaOpenKey];
-      const pediaSummary = document.createElement('summary');
-      pediaSummary.textContent = 'Civilopedia';
-      attachRichTooltip(pediaSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
-      pediaDetails.appendChild(pediaSummary);
-      pediaDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[pediaOpenKey] = !!pediaDetails.open;
-      });
-      const pediaBody = document.createElement('div');
-      pediaBody.className = 'unit-collapsible-body';
-      const editorBlock = createCivilopediaEditorBlock({
-        entry,
-        fieldKey: 'civilopedia',
+      const pediaDetails = createDeferredReferenceUtilityDetails({
         titleText: 'Civilopedia',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
-        emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
-        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
-      });
-      editorBlock.classList.remove('section-card', 'source-section');
-      const editorTop = editorBlock.querySelector(':scope > .section-top');
-      if (editorTop) {
-        const editorTitle = editorTop.querySelector('strong');
-        if (editorTitle) editorTitle.remove();
-      }
-      editorBlock.style.marginTop = '0';
-      pediaBody.appendChild(editorBlock);
-      pediaDetails.appendChild(pediaBody);
-      enableWideDetailsToggle(pediaDetails, {
-        ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
+        open: !!state.unitUtilitySectionOpenByKey[pediaOpenKey],
+        openStateKey: pediaOpenKey,
+        summaryTooltip: formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'),
+        wideToggleIgnoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel',
+        buildBody: () => {
+          const editorBlock = createCivilopediaEditorBlock({
+            entry,
+            fieldKey: 'civilopedia',
+            titleText: 'Civilopedia',
+            sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+            emptyText: 'Civilopedia text',
+            getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
+            setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
+          });
+          editorBlock.classList.remove('section-card', 'source-section');
+          const editorTop = editorBlock.querySelector(':scope > .section-top');
+          if (editorTop) {
+            const editorTitle = editorTop.querySelector('strong');
+            if (editorTitle) editorTitle.remove();
+          }
+          editorBlock.style.marginTop = '0';
+          return editorBlock;
+        }
       });
       utilityStack.appendChild(pediaDetails);
       if (artSlots.length > 0) {
-        const govArtDetails = document.createElement('details');
-        govArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const govArtOpenKey = 'governments:art';
-        govArtDetails.open = !!state.unitUtilitySectionOpenByKey[govArtOpenKey];
-        const govArtSummary = document.createElement('summary');
-        govArtSummary.textContent = 'Government Icons';
-        govArtDetails.appendChild(govArtSummary);
-        govArtDetails.addEventListener('toggle', () => {
-          state.unitUtilitySectionOpenByKey[govArtOpenKey] = !!govArtDetails.open;
+        const govArtDetails = createDeferredReferenceUtilityDetails({
+          titleText: 'Government Icons',
+          open: !!state.unitUtilitySectionOpenByKey[govArtOpenKey],
+          openStateKey: govArtOpenKey,
+          buildBody: () => renderGovernmentArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true }))
         });
-        const govArtBody = document.createElement('div');
-        govArtBody.className = 'unit-collapsible-body';
-        govArtBody.appendChild(renderGovernmentArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true })));
-        govArtDetails.appendChild(govArtBody);
         utilityStack.appendChild(govArtDetails);
       }
       governmentUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (tabKey === 'civilizations') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
-      const pediaDetails = document.createElement('details');
-      pediaDetails.className = 'reference-art-collapse unit-compact-collapse';
       const pediaOpenKey = 'civilizations:civilopedia';
-      pediaDetails.open = !!state.unitUtilitySectionOpenByKey[pediaOpenKey];
-      const pediaSummary = document.createElement('summary');
-      pediaSummary.textContent = 'Civilopedia';
-      attachRichTooltip(pediaSummary, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
-      pediaDetails.appendChild(pediaSummary);
-      pediaDetails.addEventListener('toggle', () => {
-        state.unitUtilitySectionOpenByKey[pediaOpenKey] = !!pediaDetails.open;
-      });
-      const pediaBody = document.createElement('div');
-      pediaBody.className = 'unit-collapsible-body';
-      const editorBlock = createCivilopediaEditorBlock({
-        entry,
-        fieldKey: 'civilopedia',
+      const pediaDetails = createDeferredReferenceUtilityDetails({
         titleText: 'Civilopedia',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
-        emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
-        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
-      });
-      editorBlock.classList.remove('section-card', 'source-section');
-      const editorTop = editorBlock.querySelector(':scope > .section-top');
-      if (editorTop) {
-        const editorTitle = editorTop.querySelector('strong');
-        if (editorTitle) editorTitle.remove();
-      }
-      editorBlock.style.marginTop = '0';
-      pediaBody.appendChild(editorBlock);
-      pediaDetails.appendChild(pediaBody);
-      enableWideDetailsToggle(pediaDetails, {
-        ignoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel'
+        open: !!state.unitUtilitySectionOpenByKey[pediaOpenKey],
+        openStateKey: pediaOpenKey,
+        summaryTooltip: formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'),
+        wideToggleIgnoreSelectors: 'button, input, textarea, select, option, a, label, .civilopedia-editor-controls, .civilopedia-editor-toolbar, .civilopedia-link-panel',
+        buildBody: () => {
+          const editorBlock = createCivilopediaEditorBlock({
+            entry,
+            fieldKey: 'civilopedia',
+            titleText: 'Civilopedia',
+            sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+            emptyText: 'Civilopedia text',
+            getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, getEntryCivilopediaHeaderKey(entry)),
+            setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
+          });
+          editorBlock.classList.remove('section-card', 'source-section');
+          const editorTop = editorBlock.querySelector(':scope > .section-top');
+          if (editorTop) {
+            const editorTitle = editorTop.querySelector('strong');
+            if (editorTitle) editorTitle.remove();
+          }
+          editorBlock.style.marginTop = '0';
+          return editorBlock;
+        }
       });
       utilityStack.appendChild(pediaDetails);
       if (artSlots.length > 0 || hasCivilizationAnimationFields(entry)) {
-        const civArtDetails = document.createElement('details');
-        civArtDetails.className = 'reference-art-collapse unit-compact-collapse';
         const civArtOpenKey = 'civilizations:art';
-        civArtDetails.open = !!state.unitUtilitySectionOpenByKey[civArtOpenKey];
-        const civArtSummary = document.createElement('summary');
-        civArtSummary.textContent = 'Civilization Art and Animations';
-        civArtDetails.appendChild(civArtSummary);
-        civArtDetails.addEventListener('toggle', () => {
-          state.unitUtilitySectionOpenByKey[civArtOpenKey] = !!civArtDetails.open;
+        const civArtDetails = createDeferredReferenceUtilityDetails({
+          titleText: 'Civilization Art and Animations',
+          open: !!state.unitUtilitySectionOpenByKey[civArtOpenKey],
+          openStateKey: civArtOpenKey,
+          buildBody: () => renderCivilizationArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true }), selectedBaseIndex)
         });
-        const civArtBody = document.createElement('div');
-        civArtBody.className = 'unit-collapsible-body';
-        civArtBody.appendChild(renderCivilizationArtEditor(entry, referenceEditable, () => renderActiveTab({ preserveTabScroll: true }), selectedBaseIndex));
-        civArtDetails.appendChild(civArtBody);
         utilityStack.appendChild(civArtDetails);
       }
       civilizationUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
