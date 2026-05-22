@@ -310,7 +310,11 @@ const artFocus = {
 const techTreeModal = {
   node: null,
   body: null,
-  title: null
+  title: null,
+  undoBtn: null,
+  undoAllBtn: null,
+  needsActiveTabRefresh: false,
+  lastConfig: null
 };
 const unitAvailabilityModal = {
   node: null,
@@ -320,7 +324,12 @@ const unitAvailabilityModal = {
 const unitTableModal = {
   node: null,
   body: null,
-  title: null
+  title: null,
+  undoBtn: null,
+  undoAllBtn: null,
+  needsActiveTabRefresh: false,
+  lastConfig: null,
+  dirtyCacheInitialized: false
 };
 const civilizationAnimationPreviewQueue = {
   active: 0,
@@ -2287,6 +2296,16 @@ function cloneUndoSnapshotEntry(entry) {
       records: Array.isArray(entry.records) ? JSON.parse(JSON.stringify(entry.records)) : []
     };
   }
+  if (entry && typeof entry === 'object' && entry.kind === 'serialized-section-item') {
+    return {
+      kind: 'serialized-section-item',
+      scope: entry.scope,
+      tabKey: entry.tabKey,
+      sectionName: entry.sectionName,
+      selectedIndex: entry.selectedIndex,
+      json: String(entry.json || 'null')
+    };
+  }
   if (typeof entry === 'object') return JSON.parse(JSON.stringify(entry));
   return String(entry);
 }
@@ -2305,6 +2324,10 @@ function getUndoSnapshotSignature(snapshot) {
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'map-record-diff') {
     const scope = String(snapshot.scope || '').trim().toLowerCase();
     return `map-record-diff:${scope}:${JSON.stringify(Array.isArray(snapshot.records) ? snapshot.records : [])}`;
+  }
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-section-item') {
+    const scope = String(snapshot.scope || '').trim().toLowerCase();
+    return `serialized-section:${scope}:${String(snapshot.sectionName || '')}:${Number(snapshot.selectedIndex)}:${String(snapshot.json || 'null')}`;
   }
   return `obj:${JSON.stringify(snapshot)}`;
 }
@@ -2378,10 +2401,65 @@ function buildSerializedReferenceEntrySnapshot(tabKey, identity, entry, selected
   };
 }
 
+function buildSectionItemUndoKey(tabKey, section, fallbackIndex) {
+  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  if (!normalizedTabKey || !EDITABLE_TAB_KEYS.includes(normalizedTabKey) || !section) return '';
+  const sectionName = Array.isArray(section && section.fields) ? String(getFieldValue(section, 'name') || '').trim() : '';
+  if (sectionName) return `SECTION_ITEM:${normalizedTabKey}:name:${sectionName}`;
+  const idx = Number(fallbackIndex);
+  if (Number.isFinite(idx) && idx >= 0) return `SECTION_ITEM:${normalizedTabKey}:idx:${idx}`;
+  return `SECTION_TAB:${normalizedTabKey}`;
+}
+
+function getSectionItemUndoKey(section) {
+  const location = findSectionUndoLocation(section);
+  return location ? buildSectionItemUndoKey(location.tabKey, section, location.sectionIndex) : '';
+}
+
+function buildSectionFieldEditSessionKey(section, fieldKey, itemIndex = null) {
+  const location = findSectionUndoLocation(section);
+  if (!location) return '';
+  const normalizedFieldKey = String(fieldKey || '').trim();
+  if (!normalizedFieldKey) return '';
+  const key = `SECTION_FIELD_EDIT:${location.tabKey}:${location.sectionIndex}:${normalizedFieldKey}`;
+  return Number.isFinite(Number(itemIndex)) ? `${key}:${Number(itemIndex)}` : key;
+}
+
+function findSectionUndoLocation(section) {
+  if (!section || !state.bundle || !state.bundle.tabs) return null;
+  const activeTabKey = String(state.activeTab || '').trim().toLowerCase();
+  const activeTab = activeTabKey ? state.bundle.tabs[activeTabKey] : null;
+  if (activeTab && activeTab.model && Array.isArray(activeTab.model.sections)) {
+    const activeIndex = activeTab.model.sections.indexOf(section);
+    if (activeIndex >= 0) return { tabKey: activeTabKey, sectionIndex: activeIndex };
+  }
+  for (const tabKey of EDITABLE_TAB_KEYS) {
+    const tab = state.bundle.tabs[tabKey];
+    if (!tab || !tab.model || !Array.isArray(tab.model.sections)) continue;
+    const sectionIndex = tab.model.sections.indexOf(section);
+    if (sectionIndex >= 0) return { tabKey, sectionIndex };
+  }
+  return null;
+}
+
+function buildSerializedSectionSnapshot(tabKey, section, selectedIndex) {
+  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  if (!normalizedTabKey || !section) return 'null';
+  const sectionName = Array.isArray(section && section.fields) ? String(getFieldValue(section, 'name') || '').trim() : '';
+  return {
+    kind: 'serialized-section-item',
+    scope: `section:${normalizedTabKey}`,
+    tabKey: normalizedTabKey,
+    sectionName,
+    selectedIndex: Number.isFinite(Number(selectedIndex)) ? Number(selectedIndex) : null,
+    json: JSON.stringify(section)
+  };
+}
+
 function getUndoSnapshotForKey(key = '') {
   const normalizedKey = String(key || '').trim().toUpperCase();
   if (normalizedKey.startsWith('BASE:')) {
-    return snapshotSelectedEditableTabs(['base']);
+    return snapshotSelectedEditableTabs({ tabKeys: ['base'], scope: 'base' });
   }
   if (normalizedKey.startsWith('RULE_FIELD:')) {
     const parts = normalizedKey.split(':');
@@ -2417,6 +2495,29 @@ function getUndoSnapshotForKey(key = '') {
       return snapshotSelectedEditableTabs([tabKey]);
     }
   }
+  if (normalizedKey.startsWith('SECTION_ITEM:')) {
+    const parts = String(key || '').trim().split(':');
+    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    const mode = String(parts[2] || '').trim().toLowerCase();
+    const rawValue = parts.slice(3).join(':').trim();
+    const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+    const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+    if (tabKey && sections.length > 0) {
+      let sectionIndex = -1;
+      if (mode === 'name' && rawValue) {
+        sectionIndex = sections.findIndex((section) => String(getFieldValue(section, 'name') || '').trim() === rawValue);
+      } else if (mode === 'idx') {
+        const parsedIndex = Number(rawValue);
+        if (Number.isFinite(parsedIndex) && parsedIndex >= 0 && parsedIndex < sections.length) sectionIndex = parsedIndex;
+      }
+      if (sectionIndex >= 0) {
+        return buildSerializedSectionSnapshot(tabKey, sections[sectionIndex], sectionIndex);
+      }
+    }
+    if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
+      return snapshotSelectedEditableTabs([tabKey]);
+    }
+  }
   if (normalizedKey === 'MAP' || normalizedKey.startsWith('MAP:')) {
     if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs.map) return 'null';
     return buildSerializedScopedSnapshot('map', { map: state.bundle.tabs.map });
@@ -2428,6 +2529,10 @@ function getUndoSnapshotScope(snapshot) {
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-reference-entry') {
     const tabKey = String(snapshot.tabKey || '').trim().toLowerCase();
     return tabKey ? `reference:${tabKey}` : 'reference';
+  }
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-section-item') {
+    const tabKey = String(snapshot.tabKey || '').trim().toLowerCase();
+    return tabKey ? `section:${tabKey}` : 'section';
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-partial-tabs') {
     const explicitScope = String(snapshot.scope || '').trim().toLowerCase();
@@ -2675,22 +2780,23 @@ function normalizeEditSessionValue(value) {
   return String(value == null ? '' : value);
 }
 
-function beginTrackedEditSession(key, initialValue, getValue = null) {
+function beginTrackedEditSession(key, initialValue, getValue = null, undoKey = '') {
   const sessionKey = String(key || '');
   if (!sessionKey) return;
   if (state.editSessionByKey[sessionKey]) return;
+  const snapshotKey = String(undoKey || key || '');
   state.editSessionByKey[sessionKey] = {
-    snapshot: getUndoSnapshotForKey(sessionKey),
+    snapshot: getUndoSnapshotForKey(snapshotKey),
     initialValue: normalizeEditSessionValue(initialValue),
     getValue: typeof getValue === 'function' ? getValue : null
   };
 }
 
-function ensureTrackedEditSession(key, initialValue, getValue = null) {
+function ensureTrackedEditSession(key, initialValue, getValue = null, undoKey = '') {
   const sessionKey = String(key || '');
   if (!sessionKey) return;
   if (!state.editSessionByKey[sessionKey]) {
-    beginTrackedEditSession(sessionKey, initialValue, getValue);
+    beginTrackedEditSession(sessionKey, initialValue, getValue, undoKey);
     return;
   }
   if (typeof getValue === 'function' && !state.editSessionByKey[sessionKey].getValue) {
@@ -2824,9 +2930,10 @@ function syncActiveMapUnitEditSession(nextKey, getValue) {
   }, 0);
 }
 
-function wireGroupedUndoSession(input, { key, getValue, commitOnChange = false } = {}) {
+function wireGroupedUndoSession(input, { key, undoKey, getValue, commitOnChange = false } = {}) {
   if (!input || !key || typeof getValue !== 'function') return;
-  const start = () => ensureTrackedEditSession(key, getValue(), getValue);
+  const resolvedUndoKey = String(undoKey || key || '');
+  const start = () => ensureTrackedEditSession(key, getValue(), getValue, resolvedUndoKey);
   const commit = () => commitTrackedEditSession(key, getValue());
   input.addEventListener('focus', start);
   input.addEventListener('blur', commit);
@@ -3171,6 +3278,42 @@ function cloneMapTabWithUndoDiffApplied(mapTab, snapshot) {
   return applyMapRecordDiffToTab(cloned, snapshot);
 }
 
+function getMapSectionByCode(mapTab, sectionCode) {
+  const sections = Array.isArray(mapTab && mapTab.sections) ? mapTab.sections : [];
+  const targetCode = String(sectionCode || '').trim().toUpperCase();
+  return sections.find((section) => String(section && section.code || '').trim().toUpperCase() === targetCode) || null;
+}
+
+function getMapUndoChangedTileIndexes(snapshot) {
+  if (!snapshot || snapshot.kind !== 'map-record-diff') return null;
+  const records = Array.isArray(snapshot.records) ? snapshot.records : [];
+  if (records.length === 0) return [];
+  const indexes = [];
+  for (let i = 0; i < records.length; i += 1) {
+    const entry = records[i];
+    const sectionCode = String(entry && entry.sectionCode || '').trim().toUpperCase();
+    const recordIndex = Number(entry && entry.recordIndex);
+    if (sectionCode !== 'TILE') return null;
+    if (!Number.isFinite(recordIndex) || recordIndex < 0) continue;
+    indexes.push(recordIndex);
+  }
+  return Array.from(new Set(indexes));
+}
+
+function getChangedTileIndexesBetweenMapTabs(currentMapTab, restoredMapTab) {
+  const currentTileSection = getMapSectionByCode(currentMapTab, 'TILE');
+  const restoredTileSection = getMapSectionByCode(restoredMapTab, 'TILE');
+  const currentRecords = Array.isArray(currentTileSection && currentTileSection.records) ? currentTileSection.records : [];
+  const restoredRecords = Array.isArray(restoredTileSection && restoredTileSection.records) ? restoredTileSection.records : [];
+  if (currentRecords.length === 0 || restoredRecords.length === 0 || currentRecords.length !== restoredRecords.length) return null;
+  const changedIndexes = [];
+  for (let i = 0; i < currentRecords.length; i += 1) {
+    if (!hasChangedFromClean(currentRecords[i], restoredRecords[i])) continue;
+    changedIndexes.push(i);
+  }
+  return changedIndexes;
+}
+
 function buildUndoHistoryAfterScopedMapUndo(restoredMapTab, { removeAll = false } = {}) {
   const source = cloneUndoHistoryEntries(state.undoHistory);
   if (source.length === 0) return source;
@@ -3488,24 +3631,15 @@ function updateActiveDirtyCaches() {
 
   if (tab.type === 'reference' && Array.isArray(tab.entries)) {
     if (tabKey === 'units' && unitTableModal.node && unitTableModal.node.isConnected && !unitTableModal.node.classList.contains('hidden')) {
-      const set = ensureReferenceDirtySet(tabKey);
-      set.clear();
-      let comparedCount = 0;
-      tab.entries.forEach((entry, idx) => {
-        const identity = getReferenceEntryIdentity(tabKey, entry, idx);
-        if (!identity) return;
-        const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
-        comparedCount += 1;
-        if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex: idx })) set.add(identity);
-      });
-      const cleanTab = getEffectiveCleanTabForDirty(tabKey);
-      const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
-      setTabDirtyCount(tabKey, set.size + extra);
+      const comparedCount = unitTableModal.dirtyCacheInitialized ? 0 : tab.entries.length;
+      const dirtyCount = unitTableModal.dirtyCacheInitialized
+        ? ensureReferenceDirtySet(tabKey).size
+        : rebuildUnitTableDirtyCache(tab);
       appendReferencePerfLog('biq-ref:dirty-cache-update', {
         tabKey,
-        mode: 'unit-table-full-scan',
+        mode: unitTableModal.dirtyCacheInitialized && comparedCount === 0 ? 'unit-table-cached' : 'unit-table-full-scan',
         comparedCount,
-        dirtyCount: set.size + extra,
+        dirtyCount,
         totalMs: Number((debugNowMs() - startedAt).toFixed(2))
       });
       return;
@@ -3587,6 +3721,172 @@ function recomputeDirtyStateFromBundle() {
   state.isDirty = true;
   rebuildDirtyTabCounts();
   state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+}
+
+function recomputeDirtyStateForSerializedReferenceEntrySnapshot(snapshot) {
+  const tabKey = String(snapshot && snapshot.tabKey || '').trim().toLowerCase();
+  if (!tabKey || !state.bundle || !state.bundle.tabs) return false;
+  const tab = state.bundle.tabs[tabKey];
+  if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return false;
+  const identity = String(snapshot && snapshot.identity || '').trim();
+  const selectedIndex = Number(snapshot && snapshot.selectedIndex);
+  const targetIndex = tab.entries.findIndex((entry, idx) => getReferenceEntryIdentity(tabKey, entry, idx) === identity);
+  const resolvedIndex = targetIndex >= 0
+    ? targetIndex
+    : (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < tab.entries.length ? selectedIndex : -1);
+  if (resolvedIndex < 0) return false;
+  const entry = tab.entries[resolvedIndex] || null;
+  const dirtySet = ensureReferenceDirtySet(tabKey);
+  if (entry && identity) {
+    const cleanEntry = getCleanReferenceEntry(tabKey, entry, resolvedIndex);
+    if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex: resolvedIndex })) dirtySet.add(identity);
+    else dirtySet.delete(identity);
+  }
+  const cleanTab = getEffectiveCleanTabForDirty(tabKey);
+  const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
+  setTabDirtyCount(tabKey, dirtySet.size + extra);
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+  return true;
+}
+
+function isScopedBaseUndoSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  const kind = String(snapshot.kind || '').trim().toLowerCase();
+  const scope = String(snapshot.scope || '').trim().toLowerCase();
+  return (kind === 'partial-tabs' || kind === 'serialized-partial-tabs') && scope === 'base';
+}
+
+function recomputeDirtyStateForScopedBaseSnapshot(snapshot) {
+  if (!isScopedBaseUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs || !state.bundle.tabs.base) return false;
+  setTabDirtyCount('base', computeTabDirtyCount('base'));
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+  return true;
+}
+
+function applySerializedSectionSnapshotToTabs(mergedTabs, snapshot) {
+  const tabKey = String(snapshot && snapshot.tabKey || '').trim().toLowerCase();
+  const currentTab = mergedTabs && mergedTabs[tabKey];
+  const currentSections = currentTab && currentTab.model && Array.isArray(currentTab.model.sections) ? currentTab.model.sections : null;
+  if (!tabKey || !currentSections) return false;
+  const nextSections = currentSections.slice();
+  const sectionName = String(snapshot && snapshot.sectionName || '').trim();
+  let targetIndex = sectionName
+    ? nextSections.findIndex((section) => String(getFieldValue(section, 'name') || '').trim() === sectionName)
+    : -1;
+  if (targetIndex < 0) {
+    const selectedIndex = Number(snapshot && snapshot.selectedIndex);
+    if (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < nextSections.length) {
+      targetIndex = selectedIndex;
+    }
+  }
+  if (targetIndex < 0) return false;
+  let restoredSection = null;
+  try {
+    restoredSection = JSON.parse(String(snapshot && snapshot.json || 'null'));
+  } catch (_err) {
+    restoredSection = null;
+  }
+  if (!restoredSection || typeof restoredSection !== 'object') return false;
+  nextSections[targetIndex] = restoredSection;
+  mergedTabs[tabKey] = Object.assign({}, currentTab, {
+    model: Object.assign({}, currentTab.model, { sections: nextSections })
+  });
+  state.sectionSelection[tabKey] = targetIndex;
+  return true;
+}
+
+function recomputeDirtyStateForSerializedSectionSnapshot(snapshot) {
+  const tabKey = String(snapshot && snapshot.tabKey || '').trim().toLowerCase();
+  if (!tabKey || !state.bundle || !state.bundle.tabs) return false;
+  const tab = state.bundle.tabs[tabKey];
+  const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : null;
+  if (!sections) return false;
+  const sectionName = String(snapshot && snapshot.sectionName || '').trim();
+  let targetIndex = sectionName
+    ? sections.findIndex((section) => String(getFieldValue(section, 'name') || '').trim() === sectionName)
+    : -1;
+  if (targetIndex < 0) {
+    const selectedIndex = Number(snapshot && snapshot.selectedIndex);
+    if (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < sections.length) targetIndex = selectedIndex;
+  }
+  if (targetIndex < 0) return false;
+  const dirtySet = ensureSectionDirtySet(tabKey);
+  const section = sections[targetIndex] || null;
+  const cleanSection = getCleanSectionByIndex(tabKey, targetIndex);
+  if (hasChangedFromClean(section, cleanSection)) dirtySet.add(targetIndex);
+  else dirtySet.delete(targetIndex);
+  setTabDirtyCount(tabKey, dirtySet.size);
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+  return true;
+}
+
+function isTechTreeModalVisible() {
+  return !!(
+    techTreeModal.node
+    && techTreeModal.node.isConnected
+    && !techTreeModal.node.classList.contains('hidden')
+  );
+}
+
+function reopenTechTreeModalForCurrentState() {
+  const tabKey = 'technologies';
+  const currentTab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  if (!currentTab || !Array.isArray(currentTab.entries) || currentTab.entries.length === 0) return;
+  let baseIndex = Number(state.referenceSelection[tabKey]);
+  if (!Number.isFinite(baseIndex) || baseIndex < 0 || baseIndex >= currentTab.entries.length) baseIndex = 0;
+  const lastConfig = techTreeModal.lastConfig && typeof techTreeModal.lastConfig === 'object'
+    ? techTreeModal.lastConfig
+    : {};
+  openTechTreeModal({
+    ...lastConfig,
+    tab: currentTab,
+    tabKey,
+    selectedEntry: currentTab.entries[baseIndex],
+    selectedBaseIndex: baseIndex,
+    referenceEditable: isScenarioMode(),
+    initialCivFilter: String(state.techTreeCivFilterByTab[tabKey] || '')
+  });
+}
+
+function isUnitTableModalVisible() {
+  return !!(
+    unitTableModal.node
+    && unitTableModal.node.isConnected
+    && !unitTableModal.node.classList.contains('hidden')
+  );
+}
+
+function reopenUnitTableModalForCurrentState() {
+  const currentTab = state.bundle && state.bundle.tabs ? state.bundle.tabs.units : null;
+  if (!currentTab || !Array.isArray(currentTab.entries)) return;
+  const lastConfig = unitTableModal.lastConfig && typeof unitTableModal.lastConfig === 'object'
+    ? unitTableModal.lastConfig
+    : {};
+  openUnitTableModal({
+    ...lastConfig,
+    tab: currentTab,
+    referenceEditable: isScenarioMode(),
+    syncHistory: false
+  });
+}
+
+function rebuildUnitTableDirtyCache(tab = null) {
+  const resolvedTab = tab || (state.bundle && state.bundle.tabs ? state.bundle.tabs.units : null);
+  if (!resolvedTab || resolvedTab.type !== 'reference' || !Array.isArray(resolvedTab.entries)) return 0;
+  const tabKey = 'units';
+  const dirtySet = ensureReferenceDirtySet(tabKey);
+  dirtySet.clear();
+  resolvedTab.entries.forEach((entry, idx) => {
+    const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+    if (!identity) return;
+    const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
+    if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex: idx })) {
+      dirtySet.add(identity);
+    }
+  });
+  setTabDirtyCount(tabKey, dirtySet.size);
+  unitTableModal.dirtyCacheInitialized = true;
+  return dirtySet.size;
 }
 
 function isReferenceEntryDirty(tabKey, entry) {
@@ -8579,8 +8879,10 @@ function getFieldValues(section, key) {
   return section.fields.filter((f) => f.key === key).map((f) => f.value || '');
 }
 
-function setSingleFieldValue(section, key, value) {
-  rememberUndoSnapshot();
+function setSingleFieldValue(section, key, value, options = {}) {
+  if (!options || options.captureUndo !== false) {
+    rememberUndoSnapshotForKey(getSectionItemUndoKey(section));
+  }
   section.fields = section.fields.filter((f) => f.key !== key);
   if (value !== '') {
     section.fields.push({ key, value });
@@ -8588,8 +8890,10 @@ function setSingleFieldValue(section, key, value) {
   setDirty(true);
 }
 
-function setMultiFieldValues(section, key, values) {
-  rememberUndoSnapshot();
+function setMultiFieldValues(section, key, values, options = {}) {
+  if (!options || options.captureUndo !== false) {
+    rememberUndoSnapshotForKey(getSectionItemUndoKey(section));
+  }
   section.fields = section.fields.filter((f) => f.key !== key);
   for (const value of values) {
     if (value !== '') {
@@ -8599,12 +8903,14 @@ function setMultiFieldValues(section, key, values) {
   setDirty(true);
 }
 
-function setSectionFieldValues(section, valuesByKey) {
+function setSectionFieldValues(section, valuesByKey, options = {}) {
   const entries = Object.entries(valuesByKey || {})
     .map(([key, value]) => [String(key || '').trim(), String(value == null ? '' : value).trim()])
     .filter(([key]) => !!key);
   if (entries.length === 0) return;
-  rememberUndoSnapshot();
+  if (!options || options.captureUndo !== false) {
+    rememberUndoSnapshotForKey(getSectionItemUndoKey(section));
+  }
   const keys = new Set(entries.map(([key]) => key));
   section.fields = section.fields.filter((f) => !keys.has(String(f && f.key || '')));
   entries.forEach(([key, value]) => {
@@ -13955,7 +14261,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           currentValue: normalizedCurrentValue,
           searchPlaceholder: `Search ${labelText}...`,
           noneLabel: '(none)',
-          showOptionThumbs: targetTabKey === 'units',
+          showOptionThumbs: targetTabKey === 'units' || targetTabKey === 'governments',
           onSelect: (value) => {
             rememberUndoSnapshotForKey(fieldUndoKey);
             field.value = String(value);
@@ -18604,7 +18910,7 @@ function renderImprovementWonderDistrictLink(entry) {
   return button;
 }
 
-function renderImprovementDenseTopBoard(entry, referenceEditable) {
+function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, referenceEditable) {
   const wrap = document.createElement('div');
   wrap.className = 'improvement-main-board';
 
@@ -18699,7 +19005,7 @@ function renderImprovementDenseRulesLayout({ entry, tabKey, selectedBaseIndex, r
   const layoutMode = getImprovementDenseLayoutMode();
   state.improvementLayoutMode = layoutMode;
   wrapper.dataset.layoutMode = layoutMode;
-  wrapper.appendChild(renderImprovementDenseTopBoard(entry, referenceEditable));
+  wrapper.appendChild(renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, referenceEditable));
   const board = document.createElement('div');
   board.className = 'improvement-dashboard-grid';
   const bottomStack = document.createElement('div');
@@ -19338,6 +19644,22 @@ function createReferencePicker(config) {
     const thumb = document.createElement('span');
     thumb.className = 'entry-thumb';
     if (thumbClassName) thumb.classList.add(...thumbClassName.split(/\s+/).filter(Boolean));
+    const resolvedRowThumbEntry = targetTabKey
+      ? resolveReferenceEntryForPicker(targetTabKey, opt.value, normalizedOptions)
+      : null;
+    const rowThumbEntry = (() => {
+      const hasThumbData = (entry) => !!(
+        entry
+        && (
+          String(entry.thumbPath || '').trim()
+          || (Array.isArray(entry.iconPaths) && entry.iconPaths.some((value) => String(value || '').trim()))
+          || (Array.isArray(entry.racePaths) && entry.racePaths.some((value) => String(value || '').trim()))
+        )
+      );
+      if (hasThumbData(resolvedRowThumbEntry)) return resolvedRowThumbEntry;
+      if (hasThumbData(opt.entry)) return opt.entry;
+      return resolvedRowThumbEntry || opt.entry || null;
+    })();
     let customThumbPainted = false;
     if (showOptionThumbs && renderOptionThumb) {
       customThumbPainted = !!renderOptionThumb({
@@ -19348,10 +19670,15 @@ function createReferencePicker(config) {
         selected: false
       });
     }
-    if (showOptionThumbs && !customThumbPainted && opt.entry && targetTabKey) {
-      thumb.dataset.thumbPending = '1';
-      thumb.__thumbEntry = opt.entry;
-      pendingThumbNodes.push(thumb);
+    if (showOptionThumbs && !customThumbPainted && rowThumbEntry && targetTabKey) {
+      const eagerThumbLoadLimit = 16;
+      if (pendingThumbNodes.length < eagerThumbLoadLimit) {
+        loadReferenceListThumbnail(targetTabKey, rowThumbEntry, thumb);
+      } else {
+        thumb.dataset.thumbPending = '1';
+        thumb.__thumbEntry = rowThumbEntry;
+        pendingThumbNodes.push(thumb);
+      }
     }
     selectBtn.appendChild(thumb);
     const textWrap = document.createElement('span');
@@ -20284,8 +20611,13 @@ function createWonderCoordinatePairEditor(section, rowKey, colKey, onValueChange
     input.type = 'number';
     input.min = '0';
     input.value = getFieldValue(section, key) || '0';
+    wireGroupedUndoSession(input, {
+      key: buildSectionFieldEditSessionKey(section, key),
+      undoKey: getSectionItemUndoKey(section),
+      getValue: () => String(input.value || '').trim()
+    });
     input.addEventListener('input', () => {
-      setSingleFieldValue(section, key, String(input.value || '').trim());
+      setSingleFieldValue(section, key, String(input.value || '').trim(), { captureUndo: false });
       if (onValueChange) onValueChange(key, String(input.value || '').trim());
     });
     return input;
@@ -20335,8 +20667,13 @@ function createNaturalWonderCoordinatePairEditor(section, onValueChange) {
     input.type = 'number';
     input.min = '0';
     input.value = getFieldValue(section, key) || '0';
+    wireGroupedUndoSession(input, {
+      key: buildSectionFieldEditSessionKey(section, key),
+      undoKey: getSectionItemUndoKey(section),
+      getValue: () => String(input.value || '').trim()
+    });
     input.addEventListener('input', () => {
-      setSingleFieldValue(section, key, String(input.value || '').trim());
+      setSingleFieldValue(section, key, String(input.value || '').trim(), { captureUndo: false });
       if (onValueChange) onValueChange(key, String(input.value || '').trim());
     });
     return input;
@@ -20886,28 +21223,6 @@ function createTechTreePanel({
   snapWrap.appendChild(snapCheck);
   snapWrap.appendChild(snapText);
   toolbarRow.appendChild(snapWrap);
-  const undoBtn = document.createElement('button');
-  undoBtn.type = 'button';
-  undoBtn.className = 'ghost tech-tree-inline-btn tech-tree-undo-btn';
-  const undoIcon = document.createElement('span');
-  undoIcon.className = 'tech-tree-btn-icon';
-  undoIcon.textContent = '↶';
-  const undoLabel = document.createElement('span');
-  undoLabel.textContent = 'Undo';
-  undoBtn.appendChild(undoIcon);
-  undoBtn.appendChild(undoLabel);
-  toolbarRow.appendChild(undoBtn);
-  const undoAllBtn = document.createElement('button');
-  undoAllBtn.type = 'button';
-  undoAllBtn.className = 'ghost tech-tree-inline-btn tech-tree-undo-all-btn';
-  const undoAllIcon = document.createElement('span');
-  undoAllIcon.className = 'tech-tree-btn-icon';
-  undoAllIcon.textContent = '↺';
-  const undoAllLabel = document.createElement('span');
-  undoAllLabel.textContent = 'Undo All';
-  undoAllBtn.appendChild(undoAllIcon);
-  undoAllBtn.appendChild(undoAllLabel);
-  toolbarRow.appendChild(undoAllBtn);
   controls.appendChild(toolbarRow);
 
   const metaRow = document.createElement('div');
@@ -20979,8 +21294,8 @@ function createTechTreePanel({
     techTreeModal.title.textContent = `Tech Tree - ${node.entry.name}`;
   };
   const refreshUndoButton = () => {
-    if (undoBtn) undoBtn.disabled = !getLatestUndoSnapshot();
-    if (undoAllBtn) undoAllBtn.disabled = !state.isDirty;
+    if (techTreeModal.undoBtn) techTreeModal.undoBtn.disabled = !getLatestUndoSnapshot();
+    if (techTreeModal.undoAllBtn) techTreeModal.undoAllBtn.disabled = !state.isDirty;
   };
   const reopenForCurrentSelection = () => {
     const currentTab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
@@ -21001,18 +21316,6 @@ function createTechTreePanel({
       initialCivFilter: selectedCivFilterValue
     });
   };
-  undoBtn.addEventListener('click', async () => {
-    if (!getLatestUndoSnapshot()) return;
-    await undoOneStep();
-    refreshUndoButton();
-    reopenForCurrentSelection();
-  });
-  undoAllBtn.addEventListener('click', async () => {
-    if (!state.isDirty) return;
-    await undoAllChanges();
-    refreshUndoButton();
-    reopenForCurrentSelection();
-  });
   refreshUndoButton();
 
   const renderForEra = async () => {
@@ -21508,7 +21811,11 @@ function ensureTechTreeModalNode() {
     <div class="tech-tree-modal-panel" role="dialog" aria-modal="true" aria-label="Tech Tree">
       <div class="tech-tree-modal-header">
         <strong id="tech-tree-modal-title">Tech Tree</strong>
-        <button type="button" class="ghost" data-act="close">Close</button>
+        <div class="tech-tree-modal-actions">
+          <button type="button" class="ghost tech-tree-inline-btn tech-tree-undo-btn" data-act="undo"><span class="tech-tree-btn-icon">↶</span><span>Undo</span></button>
+          <button type="button" class="ghost tech-tree-inline-btn tech-tree-undo-all-btn" data-act="undo-all"><span class="tech-tree-btn-icon">↺</span><span>Undo All</span></button>
+          <button type="button" class="ghost" data-act="close">Close</button>
+        </div>
       </div>
       <div id="tech-tree-modal-body" class="tech-tree-modal-body"></div>
     </div>
@@ -21517,6 +21824,8 @@ function ensureTechTreeModalNode() {
   techTreeModal.node = overlay;
   techTreeModal.body = overlay.querySelector('#tech-tree-modal-body');
   techTreeModal.title = overlay.querySelector('#tech-tree-modal-title');
+  techTreeModal.undoBtn = overlay.querySelector('[data-act="undo"]');
+  techTreeModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
   const closeBtn = overlay.querySelector('[data-act="close"]');
   if (closeBtn) closeBtn.addEventListener('click', () => closeTechTreeModal());
   overlay.addEventListener('click', (ev) => {
@@ -21530,10 +21839,18 @@ function closeTechTreeModal() {
   overlay.classList.add('hidden');
   overlay.setAttribute('aria-hidden', 'true');
   if (techTreeModal.body) techTreeModal.body.innerHTML = '';
+  if (techTreeModal.needsActiveTabRefresh && state.activeTab === 'technologies') {
+    techTreeModal.needsActiveTabRefresh = false;
+    renderActiveTab({ preserveTabScroll: true });
+  } else {
+    techTreeModal.needsActiveTabRefresh = false;
+  }
+  techTreeModal.lastConfig = null;
 }
 
 function openTechTreeModal(config) {
   const overlay = ensureTechTreeModalNode();
+  techTreeModal.lastConfig = config && typeof config === 'object' ? Object.assign({}, config) : null;
   if (techTreeModal.title) {
     const selected = config && config.selectedEntry;
     const label = selected && selected.name ? `Tech Tree - ${selected.name}` : 'Tech Tree';
@@ -21543,6 +21860,44 @@ function openTechTreeModal(config) {
     techTreeModal.body.innerHTML = '';
     const panel = createTechTreePanel(config || {});
     techTreeModal.body.appendChild(panel);
+  }
+  if (techTreeModal.undoBtn && !techTreeModal.undoBtn.dataset.bound) {
+    techTreeModal.undoBtn.dataset.bound = '1';
+    techTreeModal.undoBtn.addEventListener('click', async () => {
+      if (!getLatestUndoSnapshot()) return;
+      await undoOneStep();
+      const currentTab = config && config.tabKey && state.bundle && state.bundle.tabs
+        ? state.bundle.tabs[config.tabKey]
+        : null;
+      if (!currentTab || !Array.isArray(currentTab.entries) || currentTab.entries.length === 0) return;
+      let baseIndex = Number(state.referenceSelection[config.tabKey]);
+      if (!Number.isFinite(baseIndex) || baseIndex < 0 || baseIndex >= currentTab.entries.length) baseIndex = 0;
+      openTechTreeModal({
+        ...config,
+        tab: currentTab,
+        selectedEntry: currentTab.entries[baseIndex],
+        selectedBaseIndex: baseIndex
+      });
+    });
+  }
+  if (techTreeModal.undoAllBtn && !techTreeModal.undoAllBtn.dataset.bound) {
+    techTreeModal.undoAllBtn.dataset.bound = '1';
+    techTreeModal.undoAllBtn.addEventListener('click', async () => {
+      if (!state.isDirty) return;
+      await undoAllChanges();
+      const currentTab = config && config.tabKey && state.bundle && state.bundle.tabs
+        ? state.bundle.tabs[config.tabKey]
+        : null;
+      if (!currentTab || !Array.isArray(currentTab.entries) || currentTab.entries.length === 0) return;
+      let baseIndex = Number(state.referenceSelection[config.tabKey]);
+      if (!Number.isFinite(baseIndex) || baseIndex < 0 || baseIndex >= currentTab.entries.length) baseIndex = 0;
+      openTechTreeModal({
+        ...config,
+        tab: currentTab,
+        selectedEntry: currentTab.entries[baseIndex],
+        selectedBaseIndex: baseIndex
+      });
+    });
   }
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
@@ -21970,7 +22325,11 @@ function ensureUnitTableModalNode() {
         <div class="unit-table-modal-head">
           <strong id="unit-table-modal-title">Unit Table</strong>
         </div>
-        <button type="button" class="ghost" data-act="close">Close</button>
+        <div class="unit-table-modal-actions">
+          <button type="button" class="ghost unit-table-undo-btn" data-act="undo"><span class="btn-icon">↶</span>Undo</button>
+          <button type="button" class="ghost unit-table-undo-all-btn" data-act="undo-all"><span class="btn-icon">↺</span>Undo All</button>
+          <button type="button" class="ghost" data-act="close">Close</button>
+        </div>
       </div>
       <div id="unit-table-modal-body" class="unit-table-modal-body"></div>
     </div>
@@ -21979,6 +22338,8 @@ function ensureUnitTableModalNode() {
   unitTableModal.node = overlay;
   unitTableModal.body = overlay.querySelector('#unit-table-modal-body');
   unitTableModal.title = overlay.querySelector('#unit-table-modal-title');
+  unitTableModal.undoBtn = overlay.querySelector('[data-act="undo"]');
+  unitTableModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
   const closeBtn = overlay.querySelector('[data-act="close"]');
   if (closeBtn) closeBtn.addEventListener('click', () => closeUnitTableModal());
   overlay.addEventListener('click', (ev) => {
@@ -21996,6 +22357,14 @@ function closeUnitTableModal(options = {}) {
   overlay.classList.add('hidden');
   overlay.setAttribute('aria-hidden', 'true');
   if (unitTableModal.body) unitTableModal.body.innerHTML = '';
+  if (unitTableModal.needsActiveTabRefresh && state.activeTab === 'units') {
+    unitTableModal.needsActiveTabRefresh = false;
+    renderActiveTab({ preserveTabScroll: true });
+  } else {
+    unitTableModal.needsActiveTabRefresh = false;
+  }
+  unitTableModal.lastConfig = null;
+  unitTableModal.dirtyCacheInitialized = false;
   if (!options.skipHistorySync) syncCurrentNavigationSnapshot();
 }
 
@@ -22202,18 +22571,6 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   summary.className = 'unit-table-summary';
   actionRow.appendChild(summary);
 
-  const undoBtn = document.createElement('button');
-  undoBtn.type = 'button';
-  undoBtn.className = 'ghost unit-table-undo-btn';
-  undoBtn.innerHTML = '<span class="btn-icon">↶</span>Undo';
-  actionRow.appendChild(undoBtn);
-
-  const undoAllBtn = document.createElement('button');
-  undoAllBtn.type = 'button';
-  undoAllBtn.className = 'ghost unit-table-undo-all-btn';
-  undoAllBtn.innerHTML = '<span class="btn-icon">↺</span>Undo All';
-  actionRow.appendChild(undoAllBtn);
-
   toolbar.appendChild(filterRow);
   toolbar.appendChild(actionRow);
 
@@ -22243,8 +22600,8 @@ function createUnitTablePanel({ tab, referenceEditable }) {
 
   const updateToolbar = () => {
     summary.textContent = `${visibleRows.length} shown · ${rows.length} total`;
-    undoBtn.disabled = !referenceEditable || !getLatestUndoSnapshot();
-    undoAllBtn.disabled = !referenceEditable || !state.isDirty;
+    if (unitTableModal.undoBtn) unitTableModal.undoBtn.disabled = !referenceEditable || !getLatestUndoSnapshot();
+    if (unitTableModal.undoAllBtn) unitTableModal.undoAllBtn.disabled = !referenceEditable || !state.isDirty;
   };
 
   const updateActiveEditingRowStyles = () => {
@@ -22259,6 +22616,18 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   };
 
   const isUnitTableRowDirty = (row) => {
+    if (!row) return false;
+    const identity = String(row.identity || '').trim();
+    if (!identity) return false;
+    return ensureReferenceDirtySet('units').has(identity);
+  };
+
+  const syncUnitTableDirtyCount = () => {
+    const dirtySet = ensureReferenceDirtySet('units');
+    setTabDirtyCount('units', dirtySet.size);
+  };
+
+  const updateUnitTableRowDirtyState = (row) => {
     if (!row || !row.entry) return false;
     const dirtySet = ensureReferenceDirtySet('units');
     const identity = String(row.identity || '').trim();
@@ -22270,7 +22639,20 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     });
     if (activeDirty) dirtySet.add(identity);
     else dirtySet.delete(identity);
+    syncUnitTableDirtyCount();
     return activeDirty;
+  };
+
+  const updateUnitTableRowDirtyBadge = (row) => {
+    if (!row || !row.identity) return;
+    const rowEl = tbody.querySelector(`tr[data-unit-table-row-id="${CSS.escape(row.identity)}"]`);
+    if (!rowEl) return;
+    const thumb = rowEl.querySelector('.unit-table-thumb');
+    if (!thumb) return;
+    Array.from(thumb.querySelectorAll('.dirty-dot-badge')).forEach((node) => node.remove());
+    if (updateUnitTableRowDirtyState(row)) {
+      appendDirtyBadge(thumb, `${row.values.name || row.key || 'Unit'} has unsaved edits`);
+    }
   };
 
   const moveCellFocus = (rowOffset, colOffset, fromElement) => {
@@ -22311,7 +22693,6 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     control.addEventListener('focus', () => {
       lastFocusedCellId = `${row.identity}::${column.key}`;
       setActiveEditingRow(row.identity);
-      control.__unitTableUndoRemembered = false;
     });
     control.addEventListener('keydown', (ev) => {
       if (ev.key === 'ArrowLeft' && shouldHandleHorizontalNav(control, ev.key)) {
@@ -22344,6 +22725,17 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     control.__unitTableUndoRemembered = true;
   };
 
+  const wireUnitTableGroupedUndo = (control, row, column, getValue) => {
+    if (!control || !row || !column || typeof getValue !== 'function') return;
+    const rowIdentity = String(row.identity || '').trim();
+    if (!rowIdentity) return;
+    wireGroupedUndoSession(control, {
+      key: `UNIT_TABLE:${rowIdentity}:${String(column.key || '').trim()}`,
+      undoKey: `REFERENCE_ENTRY:units:${rowIdentity}`,
+      getValue
+    });
+  };
+
   const setUnitTableLiveValue = (row, column, nextValue) => {
     const normalized = normalizeUnitTableCellValue(nextValue, column);
     row.values[column.key] = normalized;
@@ -22355,7 +22747,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
       const field = ensureBiqFieldByBaseKey(row.entry, column.key, getUnitTableColumnDisplayLabel(column), normalized);
       if (field) field.value = normalized;
     }
-    setDirty(true);
+    setDirty(true, { knownDirtyTab: 'units' });
   };
 
   const validateRows = () => {
@@ -22413,7 +22805,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
       thumbCell.appendChild(thumb);
       loadReferenceListThumbnail('units', row.entry, thumb);
       if (isUnitTableRowDirty(row)) {
-        appendDirtyBadge(thumbCell, `${row.values.name || row.key || 'Unit'} has unsaved edits`);
+        appendDirtyBadge(thumb, `${row.values.name || row.key || 'Unit'} has unsaved edits`);
       }
       tr.appendChild(thumbCell);
 
@@ -22430,9 +22822,10 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           input.value = String(row.values[column.key] || '');
           input.disabled = !referenceEditable;
           input.className = 'unit-table-text-input';
+          wireUnitTableGroupedUndo(input, row, column, () => input.value);
           input.addEventListener('input', () => {
-            rememberCellEdit(input);
             setUnitTableLiveValue(row, column, input.value);
+            updateUnitTableRowDirtyBadge(row);
             updateToolbar();
           });
           wrap.appendChild(input);
@@ -22449,9 +22842,10 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           input.value = String(row.values[column.key] || '');
           input.disabled = !referenceEditable;
           input.className = 'unit-table-number-input';
+          wireUnitTableGroupedUndo(input, row, column, () => String(input.value || '').trim());
           input.addEventListener('input', () => {
-            rememberCellEdit(input);
             setUnitTableLiveValue(row, column, String(input.value || '').trim());
+            updateUnitTableRowDirtyBadge(row);
             updateToolbar();
           });
           td.appendChild(input);
@@ -22465,6 +22859,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           check.addEventListener('change', () => {
             rememberCellEdit(check);
             setUnitTableLiveValue(row, column, check.checked ? 'true' : 'false');
+            updateUnitTableRowDirtyBadge(row);
             updateToolbar();
           });
           td.appendChild(check);
@@ -22483,6 +22878,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           select.addEventListener('change', () => {
             rememberCellEdit(select);
             setUnitTableLiveValue(row, column, select.value);
+            updateUnitTableRowDirtyBadge(row);
             updateToolbar();
           });
           td.appendChild(select);
@@ -22556,15 +22952,6 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     syncUnitTableView();
     render();
   });
-  undoBtn.addEventListener('click', () => {
-    if (!referenceEditable || !getLatestUndoSnapshot()) return;
-    undoOneStep().then(() => openUnitTableModal({ tab: state.bundle && state.bundle.tabs && state.bundle.tabs.units, referenceEditable: isScenarioMode() }));
-  });
-  undoAllBtn.addEventListener('click', () => {
-    if (!referenceEditable || !state.isDirty) return;
-    undoAllChanges().then(() => openUnitTableModal({ tab: state.bundle && state.bundle.tabs && state.bundle.tabs.units, referenceEditable: isScenarioMode() }));
-  });
-
   syncUnitTableView();
   render();
   return panel;
@@ -22572,6 +22959,10 @@ function createUnitTablePanel({ tab, referenceEditable }) {
 
 function openUnitTableModal({ tab, referenceEditable, syncHistory = true } = {}) {
   const overlay = ensureUnitTableModalNode();
+  unitTableModal.lastConfig = {
+    referenceEditable: !!referenceEditable
+  };
+  rebuildUnitTableDirtyCache(tab);
   state.unitTableView = {
     ...sanitizeUnitTableView(state.unitTableView),
     isOpen: true
@@ -22580,6 +22971,23 @@ function openUnitTableModal({ tab, referenceEditable, syncHistory = true } = {})
   if (unitTableModal.body) {
     unitTableModal.body.innerHTML = '';
     unitTableModal.body.appendChild(createUnitTablePanel({ tab, referenceEditable }));
+  }
+  if (unitTableModal.undoBtn && !unitTableModal.undoBtn.dataset.bound) {
+    unitTableModal.undoBtn.dataset.bound = '1';
+    unitTableModal.undoBtn.addEventListener('click', async () => {
+      if (!isScenarioMode() || !getLatestUndoSnapshot()) return;
+      await undoOneStep();
+    });
+  }
+  if (unitTableModal.undoAllBtn && !unitTableModal.undoAllBtn.dataset.bound) {
+    unitTableModal.undoAllBtn.dataset.bound = '1';
+    unitTableModal.undoAllBtn.addEventListener('click', async () => {
+      if (!isScenarioMode() || !state.isDirty) return;
+      await undoAllChanges();
+      if (state.activeTab === 'units' && isUnitTableModalVisible()) {
+        reopenUnitTableModalForCurrentState();
+      }
+    });
   }
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
@@ -35129,6 +35537,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	    }
 	    return -1;
 	  };
+	  const resolveOwnerIdFromOwnership = (ownerTypeRaw, ownerRaw) => {
+	    const ownerType = parseOwnerType(ownerTypeRaw);
+	    if (ownerType === 1) return 0;
+	    if (ownerType === 2) return parseIntLoose(resolveCivIdFromRaw(ownerRaw), -1);
+	    if (ownerType === 3) return parseIntLoose(resolvePlayerIdFromOwnerRaw(ownerRaw), -1);
+	    return -1;
+	  };
 	  const makeTerritoryOwnerKey = (ownerType, ownerId, civId, ownerFallback = '') => {
 	    if (Number.isFinite(civId) && civId >= 0) return `civ:${civId}`;
 	    if (Number.isFinite(ownerId) && ownerId >= 0) return `${Number.isFinite(ownerType) ? ownerType : 0}:${ownerId}`;
@@ -36543,10 +36958,20 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const canUseRecordDiffUndoForPaint = () => {
     const mode = String(state.mapEditorTool && state.mapEditorTool.paintCategory || 'terrain');
-    return mode === 'terrain' || mode === 'resource' || mode === 'visibility' || mode === 'fog';
+    return (
+      mode === 'terrain'
+      || mode === 'resource'
+      || mode === 'visibility'
+      || mode === 'fog'
+    );
   };
   const canUseRecordDiffUndoForSelectedTileEdit = (kind, spec = null) => {
-    if (kind === 'terrain' || kind === 'terrainVariants' || kind === 'resource') return true;
+    if (
+      kind === 'terrain'
+      || kind === 'terrainVariants'
+      || kind === 'resource'
+      || kind === 'visibility'
+    ) return true;
     return false;
   };
   const applyBrushAtIndex = (centerIndex) => {
@@ -37471,6 +37896,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     terrainCode === BIQ_TERRAIN.FOREST
     || terrainCode === BIQ_TERRAIN.JUNGLE
     || terrainCode === BIQ_TERRAIN.MARSH
+    || terrainCode === BIQ_TERRAIN.HILLS
     || terrainCode === BIQ_TERRAIN.MOUNTAIN
     || terrainCode === BIQ_TERRAIN.VOLCANO
   );
@@ -38771,6 +39197,22 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const drawsOverResources = getFieldValue(districtSection, 'draw_over_resources') === '1';
     if (phase === 'under' && drawsOverResources) return;
     if (phase === 'over' && !drawsOverResources) return;
+    if (isCanalDistrictSection(districtSection)) {
+      drawCanalDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });
+      return;
+    }
+    if (isBridgeDistrictSection(districtSection)) {
+      drawBridgeDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });
+      return;
+    }
+    if (isPortDistrictSection(districtSection)) {
+      drawPortDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });
+      return;
+    }
+    if (isGreatWallDistrictSection(districtSection)) {
+      drawGreatWallDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });
+      return;
+    }
 
     const territoryInfo = resolveTileTerritoryInfo(record, geom);
     const hasTerritoryOwner = !!(territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0);
@@ -38911,6 +39353,42 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
       const districtSection = districtMeta && (districtMeta.renderDistrictSection || districtMeta.districtSection);
       if (!districtSection) continue;
+      if (isCanalDistrictSection(districtSection)) {
+        const tileIndex = item.geom ? getTileIndexAtCoord(item.geom.xPos, item.geom.yPos) : -1;
+        const visual = getDistrictVisualContext(districtSection, item.record, item.geom, tileIndex);
+        requestBiqMapCanalAtlasCanvas(districtSection, visual);
+        queued += 1;
+        continue;
+      }
+      if (isBridgeDistrictSection(districtSection)) {
+        const tileIndex = item.geom ? getTileIndexAtCoord(item.geom.xPos, item.geom.yPos) : -1;
+        const visual = getDistrictVisualContext(districtSection, item.record, item.geom, tileIndex);
+        requestBiqMapDistrictCanvas(districtSection, {
+          ...visual,
+          buildingCol: getBridgeImageIndex(item.record, item.geom),
+          buildingCols: []
+        });
+        queued += 1;
+        continue;
+      }
+      if (isPortDistrictSection(districtSection)) {
+        const tileIndex = item.geom ? getTileIndexAtCoord(item.geom.xPos, item.geom.yPos) : -1;
+        const visual = getDistrictVisualContext(districtSection, item.record, item.geom, tileIndex);
+        const fileName = getPortDistrictFileName(districtSection, item.record, item.geom);
+        if (fileName) {
+          requestBiqMapPortCanvas(districtSection, {
+            ...visual,
+            fileName
+          });
+          queued += 1;
+          continue;
+        }
+      }
+      if (isGreatWallDistrictSection(districtSection)) {
+        requestBiqMapGreatWallAtlasCanvas(districtSection);
+        queued += 1;
+        continue;
+      }
       const usesSpecificWonderDistrictArt = !!(
         districtMeta
         && districtMeta.renderDistrictSection
@@ -39158,10 +39636,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
   const redrawMapAfterTileChanges = (changedIndexes, options = {}) => {
     const startedAt = mapPerfNowMs();
+    const eventPrefix = String(options.eventPrefix || 'paint').trim().toLowerCase() || 'paint';
+    const settleEvent = String(options.settleEvent || `biq-map:${eventPrefix}-settled`).trim() || `biq-map:${eventPrefix}-settled`;
     const expandedIndexes = expandTileIndexesForRedraw(changedIndexes, options);
     if (expandedIndexes.length === 0) return false;
     const redrawRects = expandedIndexes.flatMap((idx) => tileEditRedrawRects(idx) || []);
-    appendDebugLog('biq-map:paint-redraw', {
+    appendDebugLog(`biq-map:${eventPrefix}-redraw`, {
       changedSummary: summarizeTileIndexes(changedIndexes),
       redrawSummary: summarizeTileIndexes(expandedIndexes),
       rectSummary: summarizeRects(redrawRects)
@@ -39175,14 +39655,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       tileInfoMs = Number((mapPerfNowMs() - tileInfoStartedAt).toFixed(2));
     }
     scheduleDeferredMiniMapRefresh({
-      settleEvent: 'biq-map:paint-settled',
+      settleEvent,
       redrawSummary: summarizeTileIndexes(expandedIndexes),
       redrawMs,
       tileInfoMs,
       scheduledAt: mapPerfNowMs(),
       totalStartedAt: Number(options.totalStartedAt || startedAt)
     });
-    appendDebugLog('biq-map:paint-redraw-timing', {
+    appendDebugLog(`biq-map:${eventPrefix}-redraw-timing`, {
       changedSummary: summarizeTileIndexes(changedIndexes),
       redrawSummary: summarizeTileIndexes(expandedIndexes),
       redrawMs,
@@ -40711,6 +41191,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   function isNeighborhoodDistrictSection(section) {
     return normalizeConfigToken(getFieldValue(section, 'name') || '').toLowerCase() === 'neighborhood';
   }
+  function isCanalDistrictSection(section) {
+    return normalizeConfigToken(getFieldValue(section, 'name') || '').toLowerCase() === 'canal';
+  }
+  function isBridgeDistrictSection(section) {
+    return normalizeConfigToken(getFieldValue(section, 'name') || '').toLowerCase() === 'bridge';
+  }
+  function isPortDistrictSection(section) {
+    return normalizeConfigToken(getFieldValue(section, 'name') || '').toLowerCase() === 'port';
+  }
+  function isGreatWallDistrictSection(section) {
+    return normalizeConfigToken(getFieldValue(section, 'name') || '').toLowerCase() === 'great wall';
+  }
   function getNeighborhoodDistrictBuildingVariant(xPos, yPos) {
     let v = (Math.imul((Number(xPos) || 0) >>> 0, 0x9E3779B1) + Math.imul((Number(yPos) || 0) >>> 0, 0x85EBCA6B)) >>> 0;
     v ^= v >>> 16;
@@ -40855,6 +41347,365 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       buildingCols: renderStrategy === 'by-building' ? presentBuildingCols : []
     };
   }
+  const DIR_NE = 1;
+  const DIR_E = 2;
+  const DIR_SE = 3;
+  const DIR_S = 4;
+  const DIR_SW = 5;
+  const DIR_W = 6;
+  const DIR_NW = 7;
+  const DIR_N = 8;
+  const CANAL_DIRECTION_ORDER = [DIR_NE, DIR_NW, DIR_SE, DIR_SW, DIR_N, DIR_E, DIR_S, DIR_W];
+  const CANAL_DIRECTION_COORD_OFFSETS = {
+    [DIR_NE]: [1, -1],
+    [DIR_E]: [2, 0],
+    [DIR_SE]: [1, 1],
+    [DIR_S]: [0, 2],
+    [DIR_SW]: [-1, 1],
+    [DIR_W]: [-2, 0],
+    [DIR_NW]: [-1, -1],
+    [DIR_N]: [0, -2]
+  };
+  const CANAL_DIRECTION_WEIGHT = {
+    [DIR_NE]: -1,
+    [DIR_E]: 0,
+    [DIR_SE]: 1,
+    [DIR_S]: 2,
+    [DIR_SW]: 1,
+    [DIR_W]: 0,
+    [DIR_NW]: -1,
+    [DIR_N]: -1
+  };
+  const CANAL_DISALLOWED_PAIRS = [
+    [DIR_N, DIR_NE], [DIR_NE, DIR_E], [DIR_E, DIR_SE], [DIR_SE, DIR_S],
+    [DIR_S, DIR_SW], [DIR_SW, DIR_W], [DIR_W, DIR_NW], [DIR_NW, DIR_N]
+  ];
+  const getCanalDirectionCoord = (xPos, yPos, dir) => {
+    const offset = CANAL_DIRECTION_COORD_OFFSETS[dir];
+    if (!offset) return null;
+    return normalizeWrappedCoord(xPos + offset[0], yPos + offset[1]);
+  };
+  const tileHasCanalDistrictAt = (xPos, yPos) => {
+    const coord = normalizeWrappedCoord(xPos, yPos);
+    if (!coord) return false;
+    const tile = getTileAtCoord(coord.xPos, coord.yPos);
+    if (!tile) return false;
+    const districtMeta = getDistrictRecordMeta(tile, coord);
+    return !!(districtMeta && districtMeta.districtSection && isCanalDistrictSection(districtMeta.districtSection));
+  };
+  const tileHasBridgeDistrictAt = (xPos, yPos) => {
+    const coord = normalizeWrappedCoord(xPos, yPos);
+    if (!coord) return false;
+    const tile = getTileAtCoord(coord.xPos, coord.yPos);
+    if (!tile) return false;
+    const districtMeta = getDistrictRecordMeta(tile, coord);
+    return !!(districtMeta && districtMeta.districtSection && isBridgeDistrictSection(districtMeta.districtSection));
+  };
+  const tileHasGreatWallDistrictAtWithOwnerId = (xPos, yPos, ownerId) => {
+    const coord = normalizeWrappedCoord(xPos, yPos);
+    if (!coord) return false;
+    const tile = getTileAtCoord(coord.xPos, coord.yPos);
+    if (!tile) return false;
+    const districtMeta = getDistrictRecordMeta(tile, coord);
+    if (!(districtMeta && districtMeta.districtSection && isGreatWallDistrictSection(districtMeta.districtSection))) return false;
+    const ownerInfo = resolveTileTerritoryInfo(tile, coord);
+    return !!ownerInfo && parseIntLoose(ownerInfo.ownerId, -1) === parseIntLoose(ownerId, -1);
+  };
+  const tileIsWaterAt = (xPos, yPos) => {
+    const coord = normalizeWrappedCoord(xPos, yPos);
+    if (!coord) return false;
+    const tile = getTileAtCoord(coord.xPos, coord.yPos);
+    if (!tile) return false;
+    return isWaterTerrain(terrainInfo(tile).realTerrain);
+  };
+  const tileIsLandAt = (xPos, yPos) => {
+    const coord = normalizeWrappedCoord(xPos, yPos);
+    if (!coord) return false;
+    const tile = getTileAtCoord(coord.xPos, coord.yPos);
+    if (!tile) return false;
+    return !isWaterTerrain(terrainInfo(tile).realTerrain);
+  };
+  const tileIsLandAtWithOwner = (ownerId, xPos, yPos, mustBeSameOwner) => {
+    if (mustBeSameOwner && parseIntLoose(ownerId, -1) <= 0) return false;
+    const coord = normalizeWrappedCoord(xPos, yPos);
+    if (!coord) return false;
+    const tile = getTileAtCoord(coord.xPos, coord.yPos);
+    if (!tile || isWaterTerrain(terrainInfo(tile).realTerrain)) return false;
+    if (!mustBeSameOwner) return true;
+    const ownerInfo = resolveTileTerritoryInfo(tile, coord);
+    return !!ownerInfo && parseIntLoose(ownerInfo.ownerId, -1) === parseIntLoose(ownerId, -1);
+  };
+  function wrappedDelta(from, to, span, allowWrap) {
+    let delta = to - from;
+    if (!allowWrap || !Number.isFinite(span) || span <= 0) return delta;
+    const half = span / 2;
+    if (delta > half) delta -= span;
+    else if (delta < -half) delta += span;
+    return delta;
+  }
+  function getPortImageVariant(record, geom) {
+    const ownerInfo = resolveTileTerritoryInfo(record, geom);
+    const ownerId = parseIntLoose(ownerInfo && ownerInfo.ownerId, -1);
+    if (!geom) return 0;
+    if (!(ownerId > 0)) return 0;
+    let closestCity = null;
+    let closestDx = 0;
+    let closestDy = 0;
+    const offsets = getDistrictWorkAreaOffsets();
+    for (let i = 0; i < offsets.length; i += 1) {
+      const [dx, dy] = offsets[i];
+      const coord = normalizeWrappedCoord(geom.xPos + dx, geom.yPos + dy);
+      if (!coord) continue;
+      const cityRecord = cityRecordByCoord.get(`${coord.xPos},${coord.yPos}`);
+      if (!cityRecord) continue;
+      const cityOwnerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
+      const cityOwnerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
+      const cityOwnerId = parseIntLoose(resolveOwnerIdFromOwnership(cityOwnerTypeRaw, cityOwnerRaw), -1);
+      if (cityOwnerId !== ownerId) continue;
+      closestCity = cityRecord;
+      const cityX = parseIntLoose(getFieldByBaseKey(cityRecord, 'x')?.value, coord.xPos);
+      const cityY = parseIntLoose(getFieldByBaseKey(cityRecord, 'y')?.value, coord.yPos);
+      closestDx = wrappedDelta(geom.xPos, cityX, width, xWrap);
+      closestDy = wrappedDelta(geom.yPos, cityY, height, yWrap);
+      break;
+    }
+    if (!closestCity) return 0;
+
+    const NONE = -1;
+    const NW = 0;
+    const NE = 1;
+    const SE = 2;
+    const SW = 3;
+
+    const cityIsDirectlyAbovePort = (closestDx === 0) && (closestDy === -2);
+    const cityIsDirectlyBelowPort = (closestDx === 0) && (closestDy === 2);
+    const cityIsDirectlyWestOfPort = (closestDx < 0) && (closestDy === 0);
+    const cityIsDirectlyEastOfPort = (closestDx > 0) && (closestDy === 0);
+    const cityIsDirectlyNortheastOfPort = (closestDx === 1) && (closestDy === -1);
+    const cityIsDirectlySoutheastOfPort = (closestDx === 1) && (closestDy === 1);
+    const cityIsDirectlySouthwestOfPort = (closestDx === -1) && (closestDy === 1);
+    const cityIsDirectlyNorthwestOfPort = (closestDx === -1) && (closestDy === -1);
+
+    let variant = NONE;
+
+    if (cityIsDirectlyNortheastOfPort) variant = SW;
+    else if (cityIsDirectlySoutheastOfPort) variant = NW;
+    else if (cityIsDirectlySouthwestOfPort) variant = NE;
+    else if (cityIsDirectlyNorthwestOfPort) variant = SE;
+    else {
+      const cityIsWestOfPort = closestDx < 0;
+      const cityIsEastOfPort = closestDx > 0;
+      const cityIsNorthOfPort = closestDy < 0;
+      const cityIsSouthOfPort = closestDy > 0;
+      const northwestTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos - 1, geom.yPos - 1, true);
+      const northTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos, geom.yPos - 2, true);
+      const northeastTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos + 1, geom.yPos - 1, true);
+      const eastTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos + 2, geom.yPos, true);
+      const southeastTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos + 1, geom.yPos + 1, true);
+      const southTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos, geom.yPos + 2, true);
+      const southwestTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos - 1, geom.yPos + 1, true);
+      const westTileIsOwnedLand = tileIsLandAtWithOwner(ownerId, geom.xPos - 2, geom.yPos, true);
+
+      if (cityIsDirectlyAbovePort) {
+        if (northwestTileIsOwnedLand && !tileIsLandAtWithOwner(ownerId, geom.xPos + 1, geom.yPos + 1, true)) variant = SE;
+        else if (northeastTileIsOwnedLand && !tileIsLandAtWithOwner(ownerId, geom.xPos - 1, geom.yPos + 1, true)) variant = SW;
+        else variant = SW;
+      } else if (cityIsDirectlyBelowPort) {
+        if (southeastTileIsOwnedLand) variant = NW;
+        else if (southwestTileIsOwnedLand) variant = NE;
+        else variant = NE;
+      } else if (cityIsDirectlyWestOfPort) {
+        if (northwestTileIsOwnedLand) variant = SE;
+        else if (southwestTileIsOwnedLand) variant = NE;
+        else variant = SE;
+      } else if (cityIsDirectlyEastOfPort) {
+        if (northeastTileIsOwnedLand) variant = SW;
+        else if (southeastTileIsOwnedLand) variant = NW;
+        else variant = SW;
+      } else if (cityIsNorthOfPort && cityIsWestOfPort) {
+        if (northwestTileIsOwnedLand) variant = SE;
+        else if (southwestTileIsOwnedLand) variant = NE;
+      } else if (cityIsNorthOfPort && cityIsEastOfPort) {
+        if (northeastTileIsOwnedLand) variant = SW;
+        else if (southeastTileIsOwnedLand) variant = NW;
+      } else if (cityIsSouthOfPort && cityIsEastOfPort) {
+        if (southeastTileIsOwnedLand) variant = NW;
+        else if (northeastTileIsOwnedLand) variant = SW;
+      } else if (cityIsSouthOfPort && cityIsWestOfPort) {
+        if (southwestTileIsOwnedLand) variant = NE;
+        else if (northwestTileIsOwnedLand) variant = SE;
+      }
+
+      if (variant === NONE) {
+        if (northeastTileIsOwnedLand) variant = SW;
+        else if (southeastTileIsOwnedLand) variant = NW;
+        else if (southwestTileIsOwnedLand) variant = NE;
+        else if (northwestTileIsOwnedLand) variant = SE;
+        else if (northTileIsOwnedLand) variant = SW;
+        else if (eastTileIsOwnedLand) variant = SW;
+        else if (southTileIsOwnedLand) variant = NE;
+        else if (westTileIsOwnedLand) variant = SE;
+      }
+
+      if (variant === NONE) {
+        const northwestTileIsLand = tileIsLandAtWithOwner(ownerId, geom.xPos - 1, geom.yPos - 1, false);
+        const northTileIsLand = tileIsLandAtWithOwner(ownerId, geom.xPos, geom.yPos - 2, false);
+        const northeastTileIsLand = tileIsLandAtWithOwner(ownerId, geom.xPos + 1, geom.yPos - 1, false);
+        const eastTileIsLand2 = tileIsLandAtWithOwner(ownerId, geom.xPos + 2, geom.yPos, false);
+        const southeastTileIsLand = tileIsLandAtWithOwner(ownerId, geom.xPos + 1, geom.yPos + 1, false);
+        const southTileIsLand = tileIsLandAtWithOwner(ownerId, geom.xPos, geom.yPos + 2, false);
+        const southwestTileIsLand = tileIsLandAtWithOwner(ownerId, geom.xPos - 1, geom.yPos + 1, false);
+        const westTileIsLand2 = tileIsLandAtWithOwner(ownerId, geom.xPos - 2, geom.yPos, false);
+        if (northeastTileIsLand) variant = SW;
+        else if (southeastTileIsLand) variant = NW;
+        else if (southwestTileIsLand) variant = NE;
+        else if (northwestTileIsLand) variant = SE;
+        else if (northTileIsLand) variant = SW;
+        else if (eastTileIsLand2) variant = SW;
+        else if (southTileIsLand) variant = NE;
+        else if (westTileIsLand2) variant = SE;
+        else variant = SW;
+      }
+    }
+    return variant;
+  }
+  function getPortDistrictFileName(section, record, geom) {
+    const allPaths = getDistrictImagePaths(section);
+    if (!allPaths.length) return '';
+    const variant = Math.max(0, Math.min(parseIntLoose(getPortImageVariant(record, geom), 0), allPaths.length - 1));
+    return String(allPaths[variant] || allPaths[0] || '');
+  }
+  function getBridgeImageIndex(record, geom) {
+    let swNe = 0;
+    let nwSe = 1;
+    let nS = 2;
+    let wE = 3;
+    const c3cOverlays = parseIntLoose(getMapFieldStoredValue(record, 'c3coverlays', '0'), 0) >>> 0;
+    if ((c3cOverlays & 0x00000002) === 0x00000002) {
+      swNe += 4;
+      nwSe += 4;
+      nS += 4;
+      wE += 4;
+    }
+    const bridgeN = tileHasBridgeDistrictAt(geom.xPos, geom.yPos - 2);
+    const bridgeS = tileHasBridgeDistrictAt(geom.xPos, geom.yPos + 2);
+    const bridgeW = tileHasBridgeDistrictAt(geom.xPos - 2, geom.yPos);
+    const bridgeE = tileHasBridgeDistrictAt(geom.xPos + 2, geom.yPos);
+    const bridgeNe = tileHasBridgeDistrictAt(geom.xPos + 1, geom.yPos - 1);
+    const bridgeNw = tileHasBridgeDistrictAt(geom.xPos - 1, geom.yPos - 1);
+    const bridgeSe = tileHasBridgeDistrictAt(geom.xPos + 1, geom.yPos + 1);
+    const bridgeSw = tileHasBridgeDistrictAt(geom.xPos - 1, geom.yPos + 1);
+
+    if (bridgeN || bridgeS || bridgeW || bridgeE || bridgeNe || bridgeNw || bridgeSe || bridgeSw) {
+      const nsCount = (bridgeN ? 1 : 0) + (bridgeS ? 1 : 0);
+      const weCount = (bridgeW ? 1 : 0) + (bridgeE ? 1 : 0);
+      const swNeCount = (bridgeSw ? 1 : 0) + (bridgeNe ? 1 : 0);
+      const nwSeCount = (bridgeNw ? 1 : 0) + (bridgeSe ? 1 : 0);
+      if (swNeCount === 2) return swNe;
+      if (nwSeCount === 2) return nwSe;
+      if (nsCount === 2) return nS;
+      if (weCount === 2) return wE;
+      if (bridgeNe || bridgeSw) return swNe;
+      if (bridgeNw || bridgeSe) return nwSe;
+      if (bridgeN || bridgeS) return nS;
+      if (bridgeW || bridgeE) return wE;
+    }
+
+    const northLink = tileIsLandAt(geom.xPos, geom.yPos - 2) || bridgeN;
+    const southLink = tileIsLandAt(geom.xPos, geom.yPos + 2) || bridgeS;
+    const westLink = tileIsLandAt(geom.xPos - 2, geom.yPos) || bridgeW;
+    const eastLink = tileIsLandAt(geom.xPos + 2, geom.yPos) || bridgeE;
+    const neLink = tileIsLandAt(geom.xPos + 1, geom.yPos - 1) || bridgeNe;
+    const nwLink = tileIsLandAt(geom.xPos - 1, geom.yPos - 1) || bridgeNw;
+    const seLink = tileIsLandAt(geom.xPos + 1, geom.yPos + 1) || bridgeSe;
+    const swLink = tileIsLandAt(geom.xPos - 1, geom.yPos + 1) || bridgeSw;
+
+    if (swLink && neLink) return swNe;
+    if (nwLink && seLink) return nwSe;
+    if (northLink && southLink) return nS;
+    if (westLink && eastLink) return wE;
+    if (neLink || swLink) return swNe;
+    if (nwLink || seLink) return nwSe;
+    if (northLink || southLink) return nS;
+    if (westLink || eastLink) return wE;
+    return swNe;
+  }
+  function getCanalDistrictDirections(geom) {
+    if (!geom) {
+      return {
+        waterDirs: new Array(9).fill(false),
+        drawDir1: -1,
+        drawDir2: -1
+      };
+    }
+    const canalDirs = new Array(9).fill(false);
+    const waterDirs = new Array(9).fill(false);
+    const availableDirs = new Array(9).fill(false);
+    for (let i = 0; i < CANAL_DIRECTION_ORDER.length; i += 1) {
+      const dir = CANAL_DIRECTION_ORDER[i];
+      const coord = getCanalDirectionCoord(geom.xPos, geom.yPos, dir);
+      if (!coord) continue;
+      canalDirs[dir] = tileHasCanalDistrictAt(coord.xPos, coord.yPos);
+      waterDirs[dir] = tileIsWaterAt(coord.xPos, coord.yPos);
+      availableDirs[dir] = canalDirs[dir] || waterDirs[dir];
+    }
+    const hasCanalDir = CANAL_DIRECTION_ORDER.some((dir) => canalDirs[dir]);
+    let drawDir1 = -1;
+    let drawDir2 = -1;
+    const firstPassDirs = hasCanalDir ? canalDirs : availableDirs;
+    for (let i = 0; i < CANAL_DIRECTION_ORDER.length && drawDir1 < 0; i += 1) {
+      const dir = CANAL_DIRECTION_ORDER[i];
+      if (firstPassDirs[dir]) drawDir1 = dir;
+    }
+    if (drawDir1 >= 0) {
+      for (let pass = 0; pass < 2 && drawDir2 < 0; pass += 1) {
+        const dirs = pass === 0 ? canalDirs : availableDirs;
+        for (let i = 0; i < CANAL_DIRECTION_ORDER.length; i += 1) {
+          const dir = CANAL_DIRECTION_ORDER[i];
+          if (dir === drawDir1 || !dirs[dir]) continue;
+          const pairTooClose = CANAL_DISALLOWED_PAIRS.some(([a, b]) => (
+            (drawDir1 === a && dir === b) || (drawDir1 === b && dir === a)
+          ));
+          if (pairTooClose) continue;
+          drawDir2 = dir;
+          break;
+        }
+      }
+    }
+    if (drawDir1 >= 0 && drawDir2 >= 0 && (CANAL_DIRECTION_WEIGHT[drawDir1] || 0) > (CANAL_DIRECTION_WEIGHT[drawDir2] || 0)) {
+      const swap = drawDir1;
+      drawDir1 = drawDir2;
+      drawDir2 = swap;
+    }
+    if (!hasCanalDir && waterDirs[DIR_NE] && waterDirs[DIR_SW]) { drawDir1 = DIR_NE; drawDir2 = DIR_SW; }
+    if (drawDir1 === DIR_NE && drawDir2 === DIR_S && waterDirs[DIR_N] && waterDirs[DIR_NE]) { drawDir1 = DIR_N; drawDir2 = DIR_S; }
+    if (drawDir1 === DIR_NE && drawDir2 === DIR_SE && waterDirs[DIR_SE] && waterDirs[DIR_SW]) { drawDir2 = DIR_SW; }
+    if (drawDir1 === DIR_NE && drawDir2 === DIR_SE && waterDirs[DIR_NE] && waterDirs[DIR_N]) { drawDir1 = DIR_N; }
+    if (drawDir1 === DIR_NE && drawDir2 === DIR_NW && waterDirs[DIR_S]) { drawDir2 = DIR_S; }
+    if (drawDir1 === DIR_NE && drawDir2 === DIR_NW && canalDirs[DIR_NE] && waterDirs[DIR_SW]) { drawDir2 = DIR_SW; }
+    if (drawDir1 === DIR_NE && drawDir2 === DIR_S && canalDirs[DIR_NE] && waterDirs[DIR_S]) { drawDir2 = DIR_SW; }
+    if (drawDir1 === DIR_NW && drawDir2 === DIR_NE && canalDirs[DIR_NW] && waterDirs[DIR_SE]) { drawDir2 = DIR_SE; }
+    if (drawDir1 === DIR_NW && drawDir2 === DIR_S && canalDirs[DIR_NW] && waterDirs[DIR_S]) { drawDir2 = DIR_SE; }
+    return { waterDirs, drawDir1, drawDir2 };
+  }
+  function getGreatWallDistrictConnections(record, geom) {
+    const ownerInfo = resolveTileTerritoryInfo(record, geom);
+    if (!geom || !ownerInfo) {
+      return {
+        wallNw: false,
+        wallNe: false,
+        wallSe: false,
+        wallSw: false
+      };
+    }
+    const ownerId = parseIntLoose(ownerInfo.ownerId, -1);
+    return {
+      wallNw: tileHasGreatWallDistrictAtWithOwnerId(geom.xPos - 1, geom.yPos - 1, ownerId),
+      wallNe: tileHasGreatWallDistrictAtWithOwnerId(geom.xPos + 1, geom.yPos - 1, ownerId),
+      wallSe: tileHasGreatWallDistrictAtWithOwnerId(geom.xPos + 1, geom.yPos + 1, ownerId),
+      wallSw: tileHasGreatWallDistrictAtWithOwnerId(geom.xPos - 1, geom.yPos + 1, ownerId)
+    };
+  }
   function getMapDistrictCanvasCacheKey(section, context) {
     return JSON.stringify({
       kind: 'map-district-cell',
@@ -40908,6 +41759,82 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!section || !canvas) return;
     getMapDistrictFallbackCacheKeys(section, context).forEach((key) => setMapDistrictFallbackCanvas(key, canvas));
   }
+  function getMapCanalAtlasCacheKey(section, context) {
+    const spec = getDistrictPreviewSpec(section);
+    return JSON.stringify({
+      kind: 'map-canal-atlas',
+      c3xPath: state.settings && state.settings.c3xPath,
+      scenarioPath: state.settings && state.settings.scenarioPath,
+      district: normalizeConfigToken(getFieldValue(section, 'name') || ''),
+      fileName: String(context && context.fileName || (spec && spec.fileName) || ''),
+      cultureIndex: Number(context && context.cultureIndex) || 0
+    });
+  }
+  function requestBiqMapCanalAtlasCanvas(section, context, options = {}) {
+    if (!section || !state.settings || !state.settings.c3xPath) return null;
+    const spec = getDistrictPreviewSpec(section);
+    if (!spec || !spec.fileName) return null;
+    const allPaths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'))
+      .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
+      .filter(Boolean);
+    const cultureIndex = Number(context && context.cultureIndex) || 0;
+    const fileName = allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))] || spec.fileName;
+    const refreshMode = String(options && options.refreshMode || 'map');
+    const cacheKey = getMapCanalAtlasCacheKey(section, { cultureIndex, fileName });
+    if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) return cacheKey;
+    state.biqMapArtLoading[cacheKey] = true;
+    window.c3xManager.getPreview({
+      kind: 'district',
+      c3xPath: state.settings.c3xPath,
+      fileName,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths()
+    }).then((preview) => {
+      state.biqMapArtCache[cacheKey] = preview ? (rgbaToCanvas(preview) || null) : null;
+    }).catch(() => {
+      state.biqMapArtCache[cacheKey] = null;
+    }).finally(() => {
+      delete state.biqMapArtLoading[cacheKey];
+      biqMapArtRerender({
+        reason: refreshMode === 'hover-only' ? 'hover-preview-asset-load' : 'asset-load',
+        assetKey: cacheKey
+      });
+    });
+    return cacheKey;
+  }
+  function requestBiqMapGreatWallAtlasCanvas(section, options = {}) {
+    if (!section || !state.settings || !state.settings.c3xPath) return null;
+    const spec = getDistrictPreviewSpec(section);
+    if (!spec || !spec.fileName) return null;
+    const refreshMode = String(options && options.refreshMode || 'map');
+    const cacheKey = JSON.stringify({
+      kind: 'map-great-wall-atlas',
+      c3xPath: state.settings.c3xPath,
+      scenarioPath: state.settings.scenarioPath,
+      district: normalizeConfigToken(getFieldValue(section, 'name') || ''),
+      fileName: spec.fileName
+    });
+    if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) return cacheKey;
+    state.biqMapArtLoading[cacheKey] = true;
+    window.c3xManager.getPreview({
+      kind: 'district',
+      c3xPath: state.settings.c3xPath,
+      fileName: spec.fileName,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths()
+    }).then((preview) => {
+      state.biqMapArtCache[cacheKey] = preview ? (rgbaToCanvas(preview) || null) : null;
+    }).catch(() => {
+      state.biqMapArtCache[cacheKey] = null;
+    }).finally(() => {
+      delete state.biqMapArtLoading[cacheKey];
+      biqMapArtRerender({
+        reason: refreshMode === 'hover-only' ? 'hover-preview-asset-load' : 'asset-load',
+        assetKey: cacheKey
+      });
+    });
+    return cacheKey;
+  }
   function requestBiqMapDistrictCanvas(section, context, options = {}) {
     if (!section || !state.settings || !state.settings.c3xPath) return null;
     const refreshMode = String(options && options.refreshMode || 'map');
@@ -40923,6 +41850,43 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const canvas = preview ? (rgbaToCanvas(preview) || null) : null;
       state.biqMapArtCache[cacheKey] = canvas;
       if (canvas) storeMapDistrictFallbackCanvas(section, context, canvas);
+    }).catch(() => {
+      state.biqMapArtCache[cacheKey] = null;
+    }).finally(() => {
+      delete state.biqMapArtLoading[cacheKey];
+      biqMapArtRerender({
+        reason: refreshMode === 'hover-only' ? 'hover-preview-asset-load' : 'asset-load',
+        assetKey: cacheKey
+      });
+    });
+    return cacheKey;
+  }
+  function requestBiqMapPortCanvas(section, context, options = {}) {
+    if (!section || !state.settings || !state.settings.c3xPath) return null;
+    const refreshMode = String(options && options.refreshMode || 'map');
+    const fileName = String(context && context.fileName || '');
+    if (!fileName) return null;
+    const cacheKey = JSON.stringify({
+      kind: 'map-port-cell',
+      c3xPath: state.settings.c3xPath,
+      scenarioPath: state.settings.scenarioPath,
+      district: normalizeConfigToken(getFieldValue(section, 'name') || ''),
+      fileName,
+      eraIndex: Number(context && context.eraIndex) || 0,
+      buildingCol: Number(context && context.buildingCol) || 0,
+      buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : []
+    });
+    if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, cacheKey) || state.biqMapArtLoading[cacheKey]) return cacheKey;
+    state.biqMapArtLoading[cacheKey] = true;
+    fetchDistrictCellPreview(section, {
+      cultureIndex: 0,
+      eraIndex: Number(context && context.eraIndex) || 0,
+      buildingCol: Number(context && context.buildingCol) || 0,
+      buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : [],
+      fileNameOverride: fileName
+    }).then((preview) => {
+      const canvas = preview ? (rgbaToCanvas(preview) || null) : null;
+      state.biqMapArtCache[cacheKey] = canvas;
     }).catch(() => {
       state.biqMapArtCache[cacheKey] = null;
     }).finally(() => {
@@ -41056,6 +42020,144 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     drawCtx.drawImage(previewCanvas, drawX, drawY, drawW, drawH);
     drawCtx.imageSmoothingEnabled = true;
     return true;
+  }
+  function drawCanalDistrictOverlay(drawCtx, section, record, geom, sx, sy, tileIndex, options = {}) {
+    if (!drawCtx || !section || !geom) return false;
+    const visual = getDistrictVisualContext(section, record, geom, tileIndex);
+    const atlasKey = requestBiqMapCanalAtlasCanvas(section, visual, options);
+    const atlas = atlasKey ? state.biqMapArtCache[atlasKey] : null;
+    const spec = getDistrictPreviewSpec(section);
+    if (!atlas || !spec || !spec.cellW || !spec.cellH) return false;
+    const row = Math.max(0, Math.min(3, Number(visual && visual.eraIndex) || 0));
+    const { waterDirs, drawDir1, drawDir2 } = getCanalDistrictDirections(geom);
+    const tileScale = tileW / 128;
+    const nativeWidth = spec.cellW;
+    const nativeHeight = spec.cellH;
+    const drawW = Math.max(1, Math.round(nativeWidth * tileScale));
+    const drawH = Math.max(1, Math.round(nativeHeight * tileScale));
+    const defaultPixelY = sy + Math.floor(tileH / 2);
+    const baseDrawX = sx + Math.round(parseConfigInteger(getFieldValue(section, 'x_offset'), 0) * tileScale) - Math.round(((nativeWidth - 128) * tileScale) / 2);
+    const baseDrawY = defaultPixelY + Math.round(parseConfigInteger(getFieldValue(section, 'y_offset'), 0) * tileScale) - Math.round((nativeHeight - 64) * tileScale);
+    let dir1DrawX = baseDrawX;
+    let dir1DrawY = baseDrawY;
+    let dir2DrawX = baseDrawX;
+    let dir2DrawY = baseDrawY;
+    if (drawDir1 === DIR_NE && drawDir2 === DIR_S) {
+      dir1DrawX += Math.round(7 * tileScale);
+      dir1DrawY -= Math.round(2 * tileScale);
+    } else if (drawDir1 === DIR_N && drawDir2 === DIR_W) {
+      dir2DrawX -= Math.round(12 * tileScale);
+    } else if (drawDir1 === DIR_N && drawDir2 === DIR_SE) {
+      dir2DrawX += Math.round(4 * tileScale);
+    }
+    const drawCanalSprite = (dir, drawX, drawY) => {
+      if (!(dir >= DIR_NE && dir <= DIR_N)) return;
+      const cropX = dir * nativeWidth;
+      const cropY = row * nativeHeight;
+      if ((cropX + nativeWidth) > atlas.width || (cropY + nativeHeight) > atlas.height) return;
+      drawCtx.imageSmoothingEnabled = false;
+      drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX, drawY, drawW, drawH);
+      const yOffset = Math.round(9 * tileScale);
+      const xOffset = yOffset * 2;
+      if (waterDirs[dir]) {
+        if (dir === DIR_N) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX, drawY - yOffset, drawW, drawH);
+        else if (dir === DIR_NE) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX + xOffset, drawY - yOffset, drawW, drawH);
+        else if (dir === DIR_E) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX + xOffset, drawY, drawW, drawH);
+        else if (dir === DIR_SE) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX + xOffset, drawY + yOffset, drawW, drawH);
+        else if (dir === DIR_S) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX, drawY + yOffset, drawW, drawH);
+        else if (dir === DIR_SW) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX - xOffset, drawY + yOffset, drawW, drawH);
+        else if (dir === DIR_W) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX - xOffset, drawY, drawW, drawH);
+        else if (dir === DIR_NW) drawCtx.drawImage(atlas, cropX, cropY, nativeWidth, nativeHeight, drawX - xOffset, drawY - yOffset, drawW, drawH);
+      }
+    };
+    if (drawDir1 >= 0) drawCanalSprite(drawDir1, dir1DrawX, dir1DrawY);
+    if (drawDir2 >= 0) drawCanalSprite(drawDir2, dir2DrawX, dir2DrawY);
+    drawCtx.imageSmoothingEnabled = true;
+    return drawDir1 >= 0 || drawDir2 >= 0;
+  }
+  function drawGreatWallDistrictOverlay(drawCtx, section, record, geom, sx, sy, tileIndex, options = {}) {
+    if (!drawCtx || !section || !geom) return false;
+    const atlasKey = requestBiqMapGreatWallAtlasCanvas(section, options);
+    const atlas = atlasKey ? state.biqMapArtCache[atlasKey] : null;
+    const spec = getDistrictPreviewSpec(section);
+    if (!atlas || !spec || !spec.cellW || !spec.cellH) return false;
+    const nativeWidth = spec.cellW;
+    const nativeHeight = spec.cellH;
+    const tileScale = tileW / 128;
+    const drawW = Math.max(1, Math.round(nativeWidth * tileScale));
+    const drawH = Math.max(1, Math.round(nativeHeight * tileScale));
+    const defaultPixelY = sy + Math.floor(tileH / 2);
+    const drawX = sx + Math.round(parseConfigInteger(getFieldValue(section, 'x_offset'), 0) * tileScale) - Math.round(((nativeWidth - 128) * tileScale) / 2);
+    const drawY = defaultPixelY + Math.round(parseConfigInteger(getFieldValue(section, 'y_offset'), 0) * tileScale) - Math.round((nativeHeight - 64) * tileScale);
+    const { wallNw, wallNe, wallSe, wallSw } = getGreatWallDistrictConnections(record, geom);
+    const drawGreatWallSprite = (column) => {
+      const cropX = column * nativeWidth;
+      if ((cropX + nativeWidth) > atlas.width || nativeHeight > atlas.height) return;
+      drawCtx.drawImage(atlas, cropX, 0, nativeWidth, nativeHeight, drawX, drawY, drawW, drawH);
+    };
+    drawCtx.imageSmoothingEnabled = false;
+    if (wallNw) drawGreatWallSprite(DIR_NW);
+    if (wallNe) drawGreatWallSprite(DIR_NE);
+    drawGreatWallSprite(0);
+    if (wallSw) drawGreatWallSprite(DIR_SW);
+    if (wallSe) drawGreatWallSprite(DIR_SE);
+    drawCtx.imageSmoothingEnabled = true;
+    return true;
+  }
+  function drawBridgeDistrictOverlay(drawCtx, section, record, geom, sx, sy, tileIndex, options = {}) {
+    if (!drawCtx || !section || !geom) return false;
+    const visual = getDistrictVisualContext(section, record, geom, tileIndex);
+    const bridgeImageIndex = getBridgeImageIndex(record, geom);
+    const cacheKey = requestBiqMapDistrictCanvas(section, {
+      ...visual,
+      buildingCol: bridgeImageIndex,
+      buildingCols: []
+    }, options);
+    const previewCanvas = cacheKey ? state.biqMapArtCache[cacheKey] : null;
+    const crop = getCropDimensions(section, { w: 128, h: 64 });
+    if (!previewCanvas) return false;
+    return drawDistrictCanvasAtTile(
+      drawCtx,
+      previewCanvas,
+      sx,
+      sy,
+      crop.w,
+      crop.h,
+      parseConfigInteger(getFieldValue(section, 'x_offset'), 0),
+      parseConfigInteger(getFieldValue(section, 'y_offset'), 0)
+    );
+  }
+  function drawPortDistrictOverlay(drawCtx, section, record, geom, sx, sy, tileIndex, options = {}) {
+    if (!drawCtx || !section || !geom) return false;
+    const territoryInfo = resolveTileTerritoryInfo(record, geom);
+    const hasTerritoryOwner = !!(territoryInfo && territoryInfo.hasOwner && territoryInfo.ownerId >= 0);
+    if (!hasTerritoryOwner) {
+      const abandonedKey = requestBiqMapAbandonedDistrictCanvas(options);
+      const abandonedCanvas = abandonedKey ? state.biqMapArtCache[abandonedKey] : null;
+      if (!abandonedCanvas) return false;
+      drawDistrictCanvasAtTile(drawCtx, abandonedCanvas, sx, sy, 128, 64, 0, 0);
+      return true;
+    }
+    const fileName = getPortDistrictFileName(section, record, geom);
+    if (!fileName) return false;
+    const visual = getDistrictVisualContext(section, record, geom, tileIndex);
+    const cacheKey = requestBiqMapPortCanvas(section, {
+      ...visual,
+      fileName
+    }, options);
+    const previewCanvas = cacheKey ? state.biqMapArtCache[cacheKey] : null;
+    const crop = getCropDimensions(section, { w: 128, h: 64 });
+    if (!previewCanvas) return false;
+    return drawDistrictCanvasAtTile(
+      drawCtx,
+      previewCanvas,
+      sx,
+      sy,
+      crop.w,
+      crop.h,
+      parseConfigInteger(getFieldValue(section, 'x_offset'), 0),
+      parseConfigInteger(getFieldValue(section, 'y_offset'), 0)
+    );
   }
   const getActiveOverlayLabels = (tile) => {
     return mapInfoOverlayOptions.filter((spec) => isTileOverlayActive(tile, spec)).map((spec) => spec.label);
@@ -43020,6 +44122,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       refreshPendingMapOverlayThumbs(container);
       minimapBaseDirty = true;
       redrawMapCanvasInPlace();
+      if (typeof renderTileInfoPanel === 'function') renderTileInfoPanel();
       if (typeof renderMiniMap === 'function') renderMiniMap();
       return true;
     };
@@ -43028,7 +44131,19 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   return container;
 }
 
-function createFieldInput(schemaField, value, onChange) {
+function createFieldInput(schemaField, value, onChange, options = {}) {
+  const undoConfig = options && typeof options === 'object' ? options.groupedUndo : null;
+  const wireFieldGroupedUndo = (input, getValue = null) => {
+    if (!undoConfig || !input) return;
+    const resolveValue = typeof getValue === 'function'
+      ? getValue
+      : (() => String(input.value || ''));
+    wireGroupedUndoSession(input, {
+      key: undoConfig.key,
+      undoKey: undoConfig.undoKey,
+      getValue: resolveValue
+    });
+  };
   if (schemaField.type === 'bonus') {
     const parsed = parseBonusValue(value);
     const widget = document.createElement('div');
@@ -43222,6 +44337,7 @@ function createFieldInput(schemaField, value, onChange) {
     input.type = 'text';
     input.value = value || '';
     input.placeholder = schemaField.required ? 'required' : '';
+    wireFieldGroupedUndo(input);
     input.addEventListener('input', () => onChange(input.value));
     if (isSectionArtImagePathField(state.activeTab, schemaField.key)) {
       input.addEventListener('blur', () => {
@@ -43253,6 +44369,7 @@ function createFieldInput(schemaField, value, onChange) {
   input.type = schemaField.type === 'number' ? 'number' : 'text';
   input.value = value || '';
   input.placeholder = schemaField.required ? 'required' : '';
+  wireFieldGroupedUndo(input);
   input.addEventListener('input', () => onChange(input.value));
   return input;
 }
@@ -43676,6 +44793,12 @@ function getDistrictPreviewSpec(section) {
   return { fileName: firstPath, cellW, cellH, varyByEra };
 }
 
+function getDistrictImagePaths(section) {
+  return tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'))
+    .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+}
+
 function getDistrictRenderStrategy(section) {
   const raw = String(getFieldValue(section, 'render_strategy') || '').trim().toLowerCase();
   return raw === 'by-building' ? 'by-building' : 'by-count';
@@ -43897,13 +45020,11 @@ async function fetchDistrictRepresentativePreview(section) {
   }
 }
 
-async function fetchDistrictSingleCellPreview(section, { cultureIndex = 0, eraIndex = 0, buildingCol = 0 } = {}) {
+async function fetchDistrictSingleCellPreview(section, { cultureIndex = 0, eraIndex = 0, buildingCol = 0, fileNameOverride = '' } = {}) {
   if (!state.settings || !state.settings.c3xPath) return null;
-  const allPaths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'))
-    .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
-    .filter(Boolean);
+  const allPaths = getDistrictImagePaths(section);
   if (!allPaths.length) return null;
-  const fileName = allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))];
+  const fileName = String(fileNameOverride || allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))] || '');
   if (!fileName) return null;
   const customW = Number.parseInt(getFieldValue(section, 'custom_width') || '', 10);
   const customH = Number.parseInt(getFieldValue(section, 'custom_height') || '', 10);
@@ -43933,15 +45054,13 @@ async function fetchDistrictSingleCellPreview(section, { cultureIndex = 0, eraIn
   return result;
 }
 
-async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 0, buildingCol = 0, buildingCols = null } = {}) {
+async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 0, buildingCol = 0, buildingCols = null, fileNameOverride = '' } = {}) {
   const renderStrategy = getDistrictRenderStrategy(section);
   if (renderStrategy !== 'by-building') {
-    return fetchDistrictSingleCellPreview(section, { cultureIndex, eraIndex, buildingCol });
+    return fetchDistrictSingleCellPreview(section, { cultureIndex, eraIndex, buildingCol, fileNameOverride });
   }
-  const allPaths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'))
-    .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
-    .filter(Boolean);
-  const fileName = allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))] || '';
+  const allPaths = getDistrictImagePaths(section);
+  const fileName = String(fileNameOverride || allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))] || '');
   const normalizedCols = Array.from(new Set(
     (Array.isArray(buildingCols) ? buildingCols : [buildingCol])
       .map((value) => Number.parseInt(value, 10))
@@ -43965,7 +45084,8 @@ async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 
   const parts = await Promise.all(compositeCols.map((col) => fetchDistrictSingleCellPreview(section, {
     cultureIndex,
     eraIndex,
-    buildingCol: col
+    buildingCol: col,
+    fileNameOverride: fileName
   })));
   const composed = composeDistrictCellPreviews(parts);
   if (!composed) return null;
@@ -45329,12 +46449,12 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
   controlWrap.className = 'rule-control section-rule-control';
 
   const values = getFieldValues(section, effectiveField.key);
-  const serializeListValues = (nextValues) => {
+  const serializeListValues = (nextValues, options = {}) => {
     const cleaned = (Array.isArray(nextValues) ? nextValues : []).map((v) => String(v || '').trim()).filter(Boolean);
     if (effectiveField.type === 'list' && !effectiveField.multi) {
-      setSingleFieldValue(section, effectiveField.key, cleaned.join(', '));
+      setSingleFieldValue(section, effectiveField.key, cleaned.join(', '), options);
     } else {
-      setMultiFieldValues(section, effectiveField.key, cleaned);
+      setMultiFieldValues(section, effectiveField.key, cleaned, options);
     }
     if (onValueChange) onValueChange(effectiveField.key, cleaned.join(', '));
   };
@@ -45432,10 +46552,15 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
       input.type = 'text';
       input.placeholder = 'item';
       input.value = current;
+      wireGroupedUndoSession(input, {
+        key: buildSectionFieldEditSessionKey(section, effectiveField.key, idx),
+        undoKey: getSectionItemUndoKey(section),
+        getValue: () => String(input.value || '')
+      });
       input.addEventListener('input', () => {
         const next = [...list];
         next[idx] = input.value;
-        serializeListValues(next);
+        serializeListValues(next, { captureUndo: false });
       });
       line.appendChild(input);
 
@@ -45688,8 +46813,13 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
   }
 
   const input = createFieldInput(effectiveField, values[0] || '', (newValue) => {
-    setSingleFieldValue(section, effectiveField.key, String(newValue || '').trim());
+    setSingleFieldValue(section, effectiveField.key, String(newValue || '').trim(), { captureUndo: false });
     if (onValueChange) onValueChange(effectiveField.key, String(newValue || '').trim());
+  }, {
+    groupedUndo: {
+      key: buildSectionFieldEditSessionKey(section, effectiveField.key),
+      undoKey: getSectionItemUndoKey(section)
+    }
   });
   if (effectiveField.type === 'bool' && input instanceof Element) {
     const check = input.querySelector('input[type="checkbox"]');
@@ -48120,16 +49250,24 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
   }
   const nextUndoHistory = cloneUndoHistoryEntries(options.undoHistory);
   const restoredEditableTabs = extractUndoSnapshotTabs(targetSnapshot);
+  const isScopedBaseSnapshot = isScopedBaseUndoSnapshot(targetSnapshot);
   const isSerializedReferenceEntrySnapshot = !!(
     targetSnapshot
     && typeof targetSnapshot === 'object'
     && targetSnapshot.kind === 'serialized-reference-entry'
   );
+  const isSerializedSectionSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'serialized-section-item'
+  );
   const restoredSearchFolder = Object.prototype.hasOwnProperty.call(restoredEditableTabs, 'scenarioSettings')
     ? getScenarioSearchFolderValueFromTabs(restoredEditableTabs)
     : getScenarioSearchFolderValueFromTabs(state.bundle && state.bundle.tabs ? state.bundle.tabs : {});
   if (
+    !isScopedBaseSnapshot &&
     !isSerializedReferenceEntrySnapshot
+    && !isSerializedSectionSnapshot
     && state.settings
     && state.settings.mode === 'scenario'
     && state.settings.scenarioPath
@@ -48191,6 +49329,12 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
     && typeof targetSnapshot === 'object'
     && targetSnapshot.kind === 'serialized-reference-entry'
   );
+  const isSerializedSectionSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'serialized-section-item'
+  );
+  const isScopedBaseSnapshot = isScopedBaseUndoSnapshot(targetSnapshot);
   const restoredEditableTabs = isSerializedReferenceEntrySnapshot ? {} : extractUndoSnapshotTabs(targetSnapshot);
   const isMapRecordDiffSnapshot = !!(
     targetSnapshot
@@ -48205,11 +49349,14 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   if (isSerializedReferenceEntrySnapshot) {
     applySerializedReferenceEntrySnapshotToTabs(mergedTabs, targetSnapshot);
   }
+  if (isSerializedSectionSnapshot) {
+    applySerializedSectionSnapshotToTabs(mergedTabs, targetSnapshot);
+  }
   const restoredKeys = Object.keys(restoredEditableTabs || {});
   if (restoredKeys.length === 0) {
     if (isMapRecordDiffSnapshot) {
       state.bundle.tabs = mergedTabs;
-    } else if (isSerializedReferenceEntrySnapshot) {
+    } else if (isSerializedReferenceEntrySnapshot || isSerializedSectionSnapshot) {
       state.bundle.tabs = mergedTabs;
     } else {
       EDITABLE_TAB_KEYS.forEach((key) => {
@@ -48223,6 +49370,63 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
     });
     state.bundle.tabs = mergedTabs;
   }
+  applyUndoRestoreEphemeralState(nextUndoHistory);
+  const appliedFastReferenceDirtyState = isSerializedReferenceEntrySnapshot
+    ? recomputeDirtyStateForSerializedReferenceEntrySnapshot(targetSnapshot)
+    : false;
+  const appliedFastSectionDirtyState = !appliedFastReferenceDirtyState && isSerializedSectionSnapshot
+    ? recomputeDirtyStateForSerializedSectionSnapshot(targetSnapshot)
+    : false;
+  const appliedFastBaseDirtyState = !appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && isScopedBaseSnapshot
+    ? recomputeDirtyStateForScopedBaseSnapshot(targetSnapshot)
+    : false;
+  if (!appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState) {
+    recomputeDirtyStateFromBundle();
+  }
+  markFilesReadEntriesDirty();
+  recomputeFilesReadIssueCount();
+  refreshDirtyUi();
+  refreshTabDirtyBadges();
+  refreshActiveReferenceListDirtyBadges();
+  refreshActiveBiqRecordListDirtyBadges();
+  const restoredReferenceTabKey = isSerializedReferenceEntrySnapshot
+    ? String(targetSnapshot && targetSnapshot.tabKey || '').trim().toLowerCase()
+    : '';
+  const shouldDeferActiveTabRenderToTechTreeModal = (
+    isSerializedReferenceEntrySnapshot
+    && restoredReferenceTabKey === 'technologies'
+    && state.activeTab === 'technologies'
+    && isTechTreeModalVisible()
+  );
+  const shouldDeferActiveTabRenderToUnitTableModal = (
+    isSerializedReferenceEntrySnapshot
+    && restoredReferenceTabKey === 'units'
+    && state.activeTab === 'units'
+    && isUnitTableModalVisible()
+  );
+  if (shouldDeferActiveTabRenderToTechTreeModal) {
+    techTreeModal.needsActiveTabRefresh = true;
+    reopenTechTreeModalForCurrentState();
+  } else if (shouldDeferActiveTabRenderToUnitTableModal) {
+    unitTableModal.needsActiveTabRefresh = true;
+    reopenUnitTableModalForCurrentState();
+  } else {
+    renderTabs();
+    renderActiveTab({ preserveTabScroll: true });
+  }
+  if (state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
+    refreshOpenMapModalForTab(state.bundle.tabs.map);
+  }
+  if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
+    renderFilesReadModal();
+  }
+  if (options.statusMessage) {
+    setStatus(options.statusMessage);
+  }
+  return true;
+}
+
+function applyUndoRestoreEphemeralState(nextUndoHistory) {
   state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
   clearCleanReferenceDirtySignatureCache();
   state.undoHistory = cloneUndoHistoryEntries(nextUndoHistory);
@@ -48242,14 +49446,59 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   state.civilopediaEditorOpen = {};
   state.civilopediaEditSessionByKey = {};
   state.civilopediaPreviewVisible = {};
+}
+
+function applyMapUndoSnapshotToCurrentBundle(targetSnapshot, options = {}) {
+  if (!state.bundle || !state.bundle.tabs) return false;
+  const currentMapTab = state.bundle.tabs.map || null;
+  if (!currentMapTab) return false;
+  const nextUndoHistory = cloneUndoHistoryEntries(options.undoHistory);
+  const isMapRecordDiffSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'map-record-diff'
+  );
+  const changedTileIndexes = Array.isArray(options.changedTileIndexes) ? options.changedTileIndexes.slice() : null;
+  let nextMapTab = currentMapTab;
+  if (isMapRecordDiffSnapshot) {
+    nextMapTab = applyMapRecordDiffToTab(currentMapTab, targetSnapshot);
+    state.bundle.tabs = Object.assign({}, state.bundle.tabs, { map: nextMapTab });
+  } else {
+    const restoredEditableTabs = extractUndoSnapshotTabs(targetSnapshot);
+    if (!restoredEditableTabs || !restoredEditableTabs.map) return false;
+    nextMapTab = restoredEditableTabs.map;
+    state.bundle.tabs = Object.assign({}, state.bundle.tabs, { map: nextMapTab });
+  }
+  applyUndoRestoreEphemeralState(nextUndoHistory);
   recomputeDirtyStateFromBundle();
   markFilesReadEntriesDirty();
   recomputeFilesReadIssueCount();
   refreshDirtyUi();
-  renderTabs();
-  renderActiveTab({ preserveTabScroll: true });
-  if (state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
+  refreshTabDirtyBadges();
+  refreshActiveReferenceListDirtyBadges();
+  refreshActiveBiqRecordListDirtyBadges();
+  const mapModalVisible = !!(
+    mapModal.node
+    && mapModal.node.isConnected
+    && !mapModal.node.classList.contains('hidden')
+    && mapModal.tab
+    && mapModal.tileSection
+  );
+  if (isMapRecordDiffSnapshot && mapModalVisible && typeof mapModal.refreshVisuals === 'function') {
+    mapModal.tab = state.bundle.tabs.map;
+    const tileSection = Array.isArray(state.bundle.tabs.map && state.bundle.tabs.map.sections)
+      ? state.bundle.tabs.map.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
+      : null;
+    if (tileSection) mapModal.tileSection = tileSection;
+    mapModal.refreshVisuals({
+      reason: 'map-undo',
+      changedTileIndexes,
+      totalStartedAt: Number(options.totalStartedAt || mapPerfNowMs())
+    });
+  } else if (state.bundle && state.bundle.tabs && state.bundle.tabs.map) {
     refreshOpenMapModalForTab(state.bundle.tabs.map);
+  } else if (state.activeTab === 'map') {
+    renderActiveTab({ preserveTabScroll: true });
   }
   if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
     renderFilesReadModal();
@@ -48280,11 +49529,17 @@ async function undoOneStep() {
 }
 
 async function undoMapOneStep() {
+  const startedAt = mapPerfNowMs();
   const undoSnapshot = getLatestScopedUndoSnapshot('map');
   if (!state.bundle || !undoSnapshot) {
     setStatus('No unsaved map changes to undo.');
     return false;
   }
+  appendDebugLog('biq-map:undo-start', {
+    kind: undoSnapshot && typeof undoSnapshot === 'object' ? String(undoSnapshot.kind || '') : typeof undoSnapshot,
+    undoHistoryLength: Array.isArray(state.undoHistory) ? state.undoHistory.length : 0
+  });
+  const restorePrepareStartedAt = mapPerfNowMs();
   const restoredMapTab = (
     undoSnapshot && typeof undoSnapshot === 'object' && undoSnapshot.kind === 'map-record-diff'
   )
@@ -48293,13 +49548,35 @@ async function undoMapOneStep() {
       const restoredMapTabs = extractUndoSnapshotTabs(undoSnapshot);
       return restoredMapTabs && restoredMapTabs.map ? restoredMapTabs.map : null;
     })();
+  const restorePrepareMs = Number((mapPerfNowMs() - restorePrepareStartedAt).toFixed(2));
+  const historyBuildStartedAt = mapPerfNowMs();
+  const nextUndoHistory = buildUndoHistoryAfterScopedMapUndo(restoredMapTab);
+  const historyBuildMs = Number((mapPerfNowMs() - historyBuildStartedAt).toFixed(2));
+  const changedTileIndexes = getMapUndoChangedTileIndexes(undoSnapshot)
+    || getChangedTileIndexesBetweenMapTabs(state.bundle && state.bundle.tabs ? state.bundle.tabs.map : null, restoredMapTab);
   try {
-    applyEditableSnapshotToCurrentBundle(undoSnapshot, {
-      undoHistory: buildUndoHistoryAfterScopedMapUndo(restoredMapTab),
+    const applyStartedAt = mapPerfNowMs();
+    applyMapUndoSnapshotToCurrentBundle(undoSnapshot, {
+      undoHistory: nextUndoHistory,
+      changedTileIndexes,
+      totalStartedAt: startedAt,
       statusMessage: 'Undid the last map change.'
+    });
+    appendDebugLog('biq-map:undo-end', {
+      kind: undoSnapshot && typeof undoSnapshot === 'object' ? String(undoSnapshot.kind || '') : typeof undoSnapshot,
+      restorePrepareMs,
+      historyBuildMs,
+      applyMs: Number((mapPerfNowMs() - applyStartedAt).toFixed(2)),
+      totalMs: Number((mapPerfNowMs() - startedAt).toFixed(2))
     });
     return true;
   } catch (_err) {
+    appendDebugLog('biq-map:undo-failed', {
+      kind: undoSnapshot && typeof undoSnapshot === 'object' ? String(undoSnapshot.kind || '') : typeof undoSnapshot,
+      restorePrepareMs,
+      historyBuildMs,
+      totalMs: Number((mapPerfNowMs() - startedAt).toFixed(2))
+    });
     setStatus('Map undo failed.', true);
     return false;
   }
@@ -48336,7 +49613,7 @@ async function undoAllMapChanges() {
   const cleanMapTabs = extractUndoSnapshotTabs(cleanMapSnapshot);
   const cleanMapTab = cleanMapTabs && cleanMapTabs.map ? cleanMapTabs.map : null;
   try {
-    applyEditableSnapshotToCurrentBundle(cleanMapSnapshot, {
+    applyMapUndoSnapshotToCurrentBundle(cleanMapSnapshot, {
       undoHistory: buildUndoHistoryAfterScopedMapUndo(cleanMapTab, { removeAll: true }),
       statusMessage: 'Undid all unsaved map changes.'
     });

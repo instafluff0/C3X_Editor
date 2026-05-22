@@ -7124,6 +7124,14 @@ details > summary:focus-visible {
   background: linear-gradient(145deg, rgba(250, 252, 255, 0.97), rgba(240, 246, 255, 0.97));
 }
 
+.tech-tree-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .tech-tree-modal-body {
   overflow: hidden;
   display: flex;
@@ -7443,6 +7451,14 @@ details > summary:focus-visible {
   gap: 3px;
 }
 
+.unit-table-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .unit-table-modal-note {
   color: var(--muted);
   font-size: 0.7rem;
@@ -7621,13 +7637,20 @@ details > summary:focus-visible {
 
 .unit-table-thumb-cell {
   position: sticky;
+  overflow: visible;
+}
+
+.unit-table-thumb-cell .entry-thumb canvas {
+  border: none;
 }
 
 .unit-table-thumb-cell .dirty-dot-badge {
-  top: 5px;
-  right: 5px;
+  top: -2px;
+  right: -14px;
   left: auto;
   transform: none;
+  z-index: 8;
+  pointer-events: none;
 }
 
 .unit-table-grid tr.unit-table-row-editing td {
@@ -7636,20 +7659,28 @@ details > summary:focus-visible {
 
 .unit-table-grid tr.unit-table-row-editing .unit-table-thumb-cell,
 .unit-table-grid tr.unit-table-row-editing .unit-table-name-cell {
-  background: rgba(228, 238, 255, 0.98);
+  background: rgba(235, 243, 255, 0.92) !important;
 }
 
 .unit-table-grid tr.unit-table-row-editing .unit-table-text-input,
 .unit-table-grid tr.unit-table-row-editing .unit-table-number-input,
 .unit-table-grid tr.unit-table-row-editing .unit-table-plain-select,
 .unit-table-grid tr.unit-table-row-editing .unit-table-picker .tech-picker-btn {
-  background: rgba(255, 255, 255, 0.68);
+  background: transparent;
+}
+
+.unit-table-grid tr.unit-table-row-editing .unit-table-name-wrap,
+.unit-table-grid tr.unit-table-row-editing .unit-table-name-meta {
+  background: transparent;
 }
 
 .unit-table-thumb {
   width: 20px;
   height: 20px;
   margin: 0 auto;
+  position: relative;
+  display: inline-block;
+  overflow: visible;
 }
 
 .unit-table-name-wrap {

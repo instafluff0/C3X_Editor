@@ -298,7 +298,7 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
 
   assert.match(
     text,
-    /function getUndoSnapshotForKey\(key = ''\) \{[\s\S]*?if \(normalizedKey\.startsWith\('BASE:'\)\) \{\s*return snapshotSelectedEditableTabs\(\['base'\]\);/m,
+    /function getUndoSnapshotForKey\(key = ''\) \{[\s\S]*?if \(normalizedKey\.startsWith\('BASE:'\)\) \{\s*return snapshotSelectedEditableTabs\(\{\s*tabKeys: \['base'\],\s*scope: 'base'\s*\}\);/m,
     'Base undo capture should snapshot only the base tab instead of every editable tab'
   );
 
@@ -316,8 +316,8 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
 
   assert.match(
     text,
-    /const isSerializedReferenceEntrySnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-reference-entry'[\s\S]*?\);[\s\S]*?if \(\s*!isSerializedReferenceEntrySnapshot[\s\S]*?await loadBundleAndRender\(\{/m,
-    'Entry-scoped reference undo should skip the scenario reload path so unrelated in-memory edits are not discarded before the snapshot is applied'
+    /const isScopedBaseSnapshot = isScopedBaseUndoSnapshot\(targetSnapshot\);[\s\S]*?const isSerializedReferenceEntrySnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-reference-entry'[\s\S]*?\);[\s\S]*?const isSerializedSectionSnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-section-item'[\s\S]*?\);[\s\S]*?if \(\s*!isScopedBaseSnapshot[\s\S]*?!isSerializedReferenceEntrySnapshot[\s\S]*?&& !isSerializedSectionSnapshot[\s\S]*?await loadBundleAndRender\(\{/m,
+    'Scoped base, entry-scoped reference, and section-scoped undo should skip the scenario reload path so unrelated in-memory edits are not discarded before the snapshot is applied'
   );
 });
 
@@ -421,5 +421,22 @@ test('C3X base search debounces filter work instead of running on every keystrok
     text,
     /filterInput\.addEventListener\('input', applyFilter\);/,
     'Base-tab search should no longer run applyFilter directly on every keystroke'
+  );
+});
+
+test('improvements top board renderer receives the reference context it uses for undo keys', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function renderImprovementDenseTopBoard\(entry, tabKey, selectedBaseIndex, referenceEditable\)/,
+    'Improvements top board should accept tabKey and selectedBaseIndex because its controls build entry-scoped undo keys'
+  );
+
+  assert.match(
+    text,
+    /renderImprovementDenseTopBoard\(entry, tabKey, selectedBaseIndex, referenceEditable\)/,
+    'Improvements rules layout should pass the active reference context into the top board renderer'
   );
 });

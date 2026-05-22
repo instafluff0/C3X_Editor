@@ -46,6 +46,16 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const canUseRecordDiffUndoForPaint = \(\) => \{[\s\S]*?mode === 'terrain'[\s\S]*?mode === 'resource'[\s\S]*?mode === 'visibility'[\s\S]*?mode === 'fog'[\s\S]*?\};[\s\S]*?const canUseRecordDiffUndoForSelectedTileEdit = \(kind, spec = null\) => \{[\s\S]*?kind === 'terrainVariants'[\s\S]*?kind === 'resource'[\s\S]*?kind === 'visibility'/,
+    'map edit undo should keep the fast record-diff path for simple tile-field edits, while district and overlay edits fall back to full map snapshots for correctness'
+  );
+  assert.match(
+    rendererText,
+    /async function undoMapOneStep\(\) \{[\s\S]*?appendDebugLog\('biq-map:undo-start', \{[\s\S]*?const restorePrepareStartedAt = mapPerfNowMs\(\);[\s\S]*?const historyBuildStartedAt = mapPerfNowMs\(\);[\s\S]*?appendDebugLog\('biq-map:undo-end', \{[\s\S]*?restorePrepareMs,[\s\S]*?historyBuildMs,[\s\S]*?applyMs:[\s\S]*?totalMs:/,
+    'map undo should log restore preparation, history rebuild, and apply timings so remaining undo stalls can be profiled directly'
+  );
+  assert.match(
+    rendererText,
     /const getTerrainAtlasCacheKey = \(fileIdx, useLandmarkAtlas = false\) => \{[\s\S]*?if \(useLandmarkAtlas && idx < BIQ_TERRAIN_LM_ATLAS_FILES\.length\) return `terrain-lm-\$\{idx\}`;[\s\S]*?return `terrain-\$\{idx\}`;[\s\S]*?\};[\s\S]*?const drawTerrainSpriteToContext = \(drawCtx, record, geom, sx, sy, drawW = tileW, drawH = tileH\) => \{[\s\S]*?const useLandmarkAtlas = terrainVariantStateForTile\(record\)\.landmark;[\s\S]*?drawTerrainAtlasSpriteToContext\([\s\S]*?useLandmarkAtlas[\s\S]*?\);/,
     'map terrain rendering should switch flat tile atlases to the landmark sheets when the tile has the LM variant'
   );
@@ -58,6 +68,64 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     rendererText,
     /const diagnoseTerrainAtlasSpriteMiss = \(fileIdx, imageIdx, useLandmarkAtlas = false\) => \{[\s\S]*?reason: 'missing-atlas'[\s\S]*?reason: 'invalid-image-index'[\s\S]*?reason: 'image-row-out-of-range'[\s\S]*?\};[\s\S]*?const terrainSpriteMissStats = \{[\s\S]*?total: 0,[\s\S]*?samples: \[\][\s\S]*?\};[\s\S]*?appendDebugLog\('biq-map:terrain-sprite-miss', \{[\s\S]*?total: terrainSpriteMissStats\.total,[\s\S]*?samples: terrainSpriteMissStats\.samples[\s\S]*?\}\);/,
     'map redraws should summarize terrain sprite fallback misses so atlas-key and image-index failures can be diagnosed from one trace'
+  );
+  assert.match(
+    rendererText,
+    /const terrainUsesGrasslandBase = \(terrainCode\) => \([\s\S]*?terrainCode === BIQ_TERRAIN\.MARSH[\s\S]*?terrainCode === BIQ_TERRAIN\.HILLS[\s\S]*?terrainCode === BIQ_TERRAIN\.MOUNTAIN[\s\S]*?terrainCode === BIQ_TERRAIN\.VOLCANO[\s\S]*?\);/,
+    'hill, mountain, volcano, and similar feature terrains should paint over a grassland base, matching Civ3 and Quint map semantics'
+  );
+  assert.ok(
+    rendererText.includes("function isCanalDistrictSection(section) {")
+      && rendererText.includes("const DIR_NE = 1;")
+      && rendererText.includes("const DIR_N = 8;")
+      && rendererText.includes("function getCanalDistrictDirections(geom) {")
+      && rendererText.includes("if (!hasCanalDir && waterDirs[DIR_NE] && waterDirs[DIR_SW]) { drawDir1 = DIR_NE; drawDir2 = DIR_SW; }")
+      && rendererText.includes("if (drawDir1 === DIR_NE && drawDir2 === DIR_S && waterDirs[DIR_N] && waterDirs[DIR_NE]) { drawDir1 = DIR_N; drawDir2 = DIR_S; }")
+      && rendererText.includes("function requestBiqMapCanalAtlasCanvas(section, context, options = {}) {")
+      && rendererText.includes("kind: 'district',")
+      && rendererText.includes("drawCanalDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });"),
+    'canal districts should bypass the generic district-cell preview path and use a C3X-style directional atlas render with neighbor-aware direction overrides'
+  );
+  assert.ok(
+    rendererText.includes("function isBridgeDistrictSection(section) {")
+      && rendererText.includes("const tileHasBridgeDistrictAt = (xPos, yPos) => {")
+      && rendererText.includes("function getBridgeImageIndex(record, geom) {")
+      && rendererText.includes("if ((c3cOverlays & 0x00000002) === 0x00000002) {")
+      && rendererText.includes("if (swNeCount === 2) return swNe;")
+      && rendererText.includes("if (neLink || swLink) return swNe;")
+      && rendererText.includes("function drawBridgeDistrictOverlay(drawCtx, section, record, geom, sx, sy, tileIndex, options = {}) {")
+      && rendererText.includes("drawBridgeDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });"),
+    'bridge districts should bypass the generic representative-building logic and use a C3X-style bridge image index based on neighboring bridges, land links, and rail overlays'
+  );
+  assert.ok(
+    rendererText.includes("function isPortDistrictSection(section) {")
+      && rendererText.includes("function wrappedDelta(from, to, span, allowWrap) {")
+      && rendererText.includes("function getPortImageVariant(record, geom) {")
+      && rendererText.includes("function getPortDistrictFileName(section, record, geom) {")
+      && rendererText.includes("const cityIsDirectlyNortheastOfPort = (closestDx === 1) && (closestDy === -1);")
+      && rendererText.includes("if (northeastTileIsOwnedLand) variant = SW;")
+      && rendererText.includes("else if (southeastTileIsOwnedLand) variant = NW;")
+      && rendererText.includes("else if (southwestTileIsOwnedLand) variant = NE;")
+      && rendererText.includes("else if (northwestTileIsOwnedLand) variant = SE;")
+      && rendererText.includes("function requestBiqMapPortCanvas(section, context, options = {}) {")
+      && rendererText.includes("fileNameOverride: fileName")
+      && rendererText.includes("function drawPortDistrictOverlay(drawCtx, section, record, geom, sx, sy, tileIndex, options = {}) {")
+      && rendererText.includes("const fileName = getPortDistrictFileName(section, record, geom);")
+      && rendererText.includes("drawPortDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });"),
+    'port districts should bypass the generic district-cell crop path, choose one of the Port_NW/NE/SE/SW files from C3X-style nearby-city and coastline direction logic, and then apply the normal era/building-column crop inside that chosen file before any pixel-offset adjustments'
+  );
+  assert.ok(
+    rendererText.includes("function isGreatWallDistrictSection(section) {")
+      && rendererText.includes("const tileHasGreatWallDistrictAtWithOwnerId = (xPos, yPos, ownerId) => {")
+      && rendererText.includes("function getGreatWallDistrictConnections(record, geom) {")
+      && rendererText.includes("parseIntLoose(ownerInfo.ownerId, -1) === parseIntLoose(ownerId, -1)")
+      && rendererText.includes("function requestBiqMapGreatWallAtlasCanvas(section, options = {}) {")
+      && rendererText.includes("function drawGreatWallDistrictOverlay(drawCtx, section, record, geom, sx, sy, tileIndex, options = {}) {")
+      && rendererText.includes("if (wallNw) drawGreatWallSprite(DIR_NW);")
+      && rendererText.includes("drawGreatWallSprite(0);")
+      && rendererText.includes("if (wallSe) drawGreatWallSprite(DIR_SE);")
+      && rendererText.includes("drawGreatWallDistrictOverlay(drawCtx, districtSection, record, geom, sx, sy, tileIndex, { assetRefreshMode });"),
+    'great wall districts should bypass the generic district-cell preview path and render base-plus-segment art using the same raw owner-id matching as C3X, including neutral tiles'
   );
   assert.match(
     rendererText,
@@ -553,8 +621,8 @@ test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered c
 
   assert.match(
     rendererText,
-    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?const redrawRects = expandedIndexes\.flatMap\(\(idx\) => tileEditRedrawRects\(idx\) \|\| \[\]\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?scheduleDeferredMiniMapRefresh\(\{[\s\S]*?settleEvent: 'biq-map:paint-settled'/,
-    'map edits should use partial redraw rects, defer minimap refresh, and emit a settled timing event after the visual work completes'
+    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const eventPrefix = String\(options\.eventPrefix \|\| 'paint'\)\.trim\(\)\.toLowerCase\(\) \|\| 'paint';[\s\S]*?const settleEvent = String\(options\.settleEvent \|\| `biq-map:\$\{eventPrefix\}-settled`\)\.trim\(\) \|\| `biq-map:\$\{eventPrefix\}-settled`[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?const redrawRects = expandedIndexes\.flatMap\(\(idx\) => tileEditRedrawRects\(idx\) \|\| \[\]\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?scheduleDeferredMiniMapRefresh\(\{[\s\S]*?settleEvent,/,
+    'map edits should use partial redraw rects, defer minimap refresh, and emit a configurable settled timing event after the visual work completes'
   );
   assert.match(
     rendererText,
