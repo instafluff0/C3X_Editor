@@ -320,7 +320,10 @@ const techTreeModal = {
 const unitAvailabilityModal = {
   node: null,
   body: null,
-  title: null
+  title: null,
+  saveBtn: null,
+  undoBtn: null,
+  undoAllBtn: null
 };
 const unitTableModal = {
   node: null,
@@ -2139,7 +2142,7 @@ function openFilesReadModal() {
 }
 
 function getSaveButtons() {
-  return [el.saveBtn, unitTableModal.saveBtn].filter((btn) => btn && btn.isConnected);
+  return [el.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn].filter((btn) => btn && btn.isConnected);
 }
 
 function updateSaveButtonLabel() {
@@ -2561,6 +2564,13 @@ function getUndoSnapshotForKey(key = '') {
     }
     if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
       return snapshotSelectedEditableTabs([tabKey]);
+    }
+  }
+  if (normalizedKey.startsWith('SECTION_TAB:')) {
+    const parts = String(key || '').trim().split(':');
+    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
+      return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `section:${tabKey}` });
     }
   }
   if (normalizedKey === 'MAP' || normalizedKey.startsWith('MAP:')) {
@@ -3801,9 +3811,26 @@ function isScopedBaseUndoSnapshot(snapshot) {
   return (kind === 'partial-tabs' || kind === 'serialized-partial-tabs') && scope === 'base';
 }
 
+function isScopedSectionTabUndoSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  const kind = String(snapshot.kind || '').trim().toLowerCase();
+  const scope = String(snapshot.scope || '').trim().toLowerCase();
+  return (kind === 'partial-tabs' || kind === 'serialized-partial-tabs') && scope.startsWith('section:');
+}
+
 function recomputeDirtyStateForScopedBaseSnapshot(snapshot) {
   if (!isScopedBaseUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs || !state.bundle.tabs.base) return false;
   setTabDirtyCount('base', computeTabDirtyCount('base'));
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+  return true;
+}
+
+function recomputeDirtyStateForScopedSectionTabSnapshot(snapshot) {
+  if (!isScopedSectionTabUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs) return false;
+  const scope = String(snapshot.scope || '').trim().toLowerCase();
+  const tabKey = scope.slice('section:'.length).trim();
+  if (!tabKey || !state.bundle.tabs[tabKey]) return false;
+  setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
   return true;
 }
@@ -7668,6 +7695,7 @@ function makeInputForBaseRow(row, onChange, options = {}) {
       : (() => String(input.value || ''));
     wireGroupedUndoSession(input, {
       key: baseUndoKey,
+      undoKey: baseUndoKey,
       getValue: resolveValue,
       commitOnChange: config.commitOnChange === true
     });
@@ -7818,7 +7846,7 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           captureBaseUndoSnapshot();
           items.splice(idx, 1);
           if (items.length === 0) items.push('');
-          onChange(serializeStructuredEntries(items));
+          onChange(serializeStructuredEntries(items), { captureUndo: false });
           rerender();
         });
         line.appendChild(input);
@@ -7830,7 +7858,7 @@ function makeInputForBaseRow(row, onChange, options = {}) {
       add.addEventListener('click', () => {
         captureBaseUndoSnapshot();
         items.push('');
-        onChange(serializeStructuredEntries(items));
+        onChange(serializeStructuredEntries(items), { captureUndo: false });
         rerender();
       });
       wrap.appendChild(add);
@@ -9130,7 +9158,7 @@ function getNaturalWonderAnimationIniPath(spec) {
   return String(parsed.ini || '').trim();
 }
 
-function syncNaturalWonderAnimationDirections(section) {
+function syncNaturalWonderAnimationDirections(section, options = {}) {
   const adjacencyDirection = String(getFieldValue(section, 'adjacency_dir') || '').trim();
   const specs = getFieldValuesRaw(section, 'animation');
   if (!adjacencyDirection || specs.length === 0) return;
@@ -9142,7 +9170,7 @@ function syncNaturalWonderAnimationDirections(section) {
     })
     .map((raw) => String(raw || '').trim())
     .filter(Boolean);
-  setMultiFieldValues(section, 'animation', nextSpecs);
+  setMultiFieldValues(section, 'animation', nextSpecs, options);
 }
 
 function parseFrameSecondsFromSpec(spec) {
@@ -14497,8 +14525,9 @@ function createImprovementCompactRow(entry, labelText) {
   return { row, label, controlWrap };
 }
 
-function buildImprovementBoolChip(field, chipLabel, editable) {
+function buildImprovementBoolChip(field, chipLabel, editable, undoKey = '') {
   if (!field) return null;
+  const entryUndoKey = String(undoKey || '').trim();
   if (editable) {
     const toggle = document.createElement('label');
     toggle.className = 'bool-toggle';
@@ -14508,7 +14537,8 @@ function buildImprovementBoolChip(field, chipLabel, editable) {
     const text = document.createElement('span');
     text.textContent = chipLabel;
     check.addEventListener('change', () => {
-      rememberUndoSnapshot();
+      if (entryUndoKey) rememberUndoSnapshotForKey(entryUndoKey);
+      else rememberUndoSnapshot();
       field.value = check.checked ? 'true' : 'false';
       setDirty(true);
     });
@@ -14522,7 +14552,7 @@ function buildImprovementBoolChip(field, chipLabel, editable) {
   return chip;
 }
 
-function buildImprovementNumberPill(field, pillLabel, editable, min = null) {
+function buildImprovementNumberPill(field, pillLabel, editable, min = null, undoKey = '') {
   if (!field) return null;
   const wrap = document.createElement('div');
   wrap.className = 'improvement-number-pill';
@@ -14538,6 +14568,7 @@ function buildImprovementNumberPill(field, pillLabel, editable, min = null) {
     input.value = n == null ? '' : String(n);
     wireGroupedUndoSession(input, {
       key: `IMPROVEMENT_PILL:${normalizeRuleLookupKey(field && (field.baseKey || field.key))}`,
+      undoKey,
       getValue: () => input.value
     });
     input.addEventListener('input', () => {
@@ -14634,6 +14665,7 @@ function renderImprovementTopControls(entry, identityGrid, referenceEditable) {
 
 function appendImprovementSpecialRows(groupCard, groupName, fields, entry, referenceEditable) {
   const consumed = new Set();
+  const entryUndoKey = buildReferenceEntryUndoKey('improvements', entry);
   if (groupName === 'Properties') {
     // Category is intentionally rendered under Requirements so it sits with the
     // rest of the prerequisite/setup controls.
@@ -14648,7 +14680,7 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
       const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Veteran Units');
       veteranFields.forEach((item) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', item.field)));
       veteranFields.forEach((item) => {
-        controlWrap.appendChild(buildImprovementBoolChip(item.field, item.label, referenceEditable));
+        controlWrap.appendChild(buildImprovementBoolChip(item.field, item.label, referenceEditable, entryUndoKey));
       });
       groupCard.appendChild(row);
     }
@@ -14687,7 +14719,7 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
           showOptionThumbs: true,
           readOnly: !referenceEditable,
           onSelect: referenceEditable ? (value) => {
-            rememberUndoSnapshot();
+            rememberUndoSnapshotForKey(entryUndoKey);
             field.value = String(value);
             setDirty(true);
             renderActiveTab({ preserveTabScroll: true });
@@ -14696,7 +14728,7 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
         cell.appendChild(picker);
         controlWrap.appendChild(cell);
       });
-      if (radiusField) controlWrap.appendChild(buildImprovementBoolChip(radiusField, 'In city radius', referenceEditable));
+      if (radiusField) controlWrap.appendChild(buildImprovementBoolChip(radiusField, 'In city radius', referenceEditable, entryUndoKey));
       groupCard.appendChild(row);
     }
     const wonder = getRuleFieldByBaseKey(fields, 'wonder');
@@ -14719,7 +14751,7 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
         referenceEditable ? (nextLabel) => {
           const selected = options.find((item) => item.label === nextLabel);
           if (!selected) return;
-          rememberUndoSnapshot();
+          rememberUndoSnapshotForKey(entryUndoKey);
           options.forEach((opt) => {
             opt.field.value = opt.field === selected.field ? 'true' : 'false';
           });
@@ -14738,8 +14770,8 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
       pair.forEach((field) => consumed.add(field));
       const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Reduces Corruption');
       pair.forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
-      if (cityField) controlWrap.appendChild(buildImprovementBoolChip(cityField, 'City', referenceEditable));
-      if (empireField) controlWrap.appendChild(buildImprovementBoolChip(empireField, 'Empire', referenceEditable));
+      if (cityField) controlWrap.appendChild(buildImprovementBoolChip(cityField, 'City', referenceEditable, entryUndoKey));
+      if (empireField) controlWrap.appendChild(buildImprovementBoolChip(empireField, 'Empire', referenceEditable, entryUndoKey));
       groupCard.appendChild(row);
     }
   } else if (groupName === 'Happiness') {
@@ -14754,24 +14786,24 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
       [happy, happyAll].filter(Boolean).forEach((field) => consumed.add(field));
       const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Happy Faces');
       [happy, happyAll].filter(Boolean).forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
-      if (happy) controlWrap.appendChild(buildImprovementNumberPill(happy, 'City', referenceEditable, 0));
-      if (happyAll) controlWrap.appendChild(buildImprovementNumberPill(happyAll, 'Global', referenceEditable, 0));
+      if (happy) controlWrap.appendChild(buildImprovementNumberPill(happy, 'City', referenceEditable, 0, entryUndoKey));
+      if (happyAll) controlWrap.appendChild(buildImprovementNumberPill(happyAll, 'Global', referenceEditable, 0, entryUndoKey));
       groupCard.appendChild(row);
     }
     if (unhappy || unhappyAll) {
       [unhappy, unhappyAll].filter(Boolean).forEach((field) => consumed.add(field));
       const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Unhappy Faces');
       [unhappy, unhappyAll].filter(Boolean).forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
-      if (unhappy) controlWrap.appendChild(buildImprovementNumberPill(unhappy, 'City', referenceEditable, 0));
-      if (unhappyAll) controlWrap.appendChild(buildImprovementNumberPill(unhappyAll, 'Global', referenceEditable, 0));
+      if (unhappy) controlWrap.appendChild(buildImprovementNumberPill(unhappy, 'City', referenceEditable, 0, entryUndoKey));
+      if (unhappyAll) controlWrap.appendChild(buildImprovementNumberPill(unhappyAll, 'Global', referenceEditable, 0, entryUndoKey));
       groupCard.appendChild(row);
     }
     if (warCity || warEmpire) {
       [warCity, warEmpire, warEmpireAlias].filter(Boolean).forEach((field) => consumed.add(field));
       const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Reduces War Weariness');
       [warCity, warEmpire].filter(Boolean).forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
-      if (warCity) controlWrap.appendChild(buildImprovementBoolChip(warCity, 'City', referenceEditable));
-      if (warEmpire) controlWrap.appendChild(buildImprovementBoolChip(warEmpire, 'Empire', referenceEditable));
+      if (warCity) controlWrap.appendChild(buildImprovementBoolChip(warCity, 'City', referenceEditable, entryUndoKey));
+      if (warEmpire) controlWrap.appendChild(buildImprovementBoolChip(warEmpire, 'Empire', referenceEditable, entryUndoKey));
       groupCard.appendChild(row);
     }
   } else if (groupName === 'Food') {
@@ -14782,8 +14814,8 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
       pair.forEach((field) => consumed.add(field));
       const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Allows City Size');
       pair.forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
-      if (level2) controlWrap.appendChild(buildImprovementBoolChip(level2, '2', referenceEditable));
-      if (level3) controlWrap.appendChild(buildImprovementBoolChip(level3, '3', referenceEditable));
+      if (level2) controlWrap.appendChild(buildImprovementBoolChip(level2, '2', referenceEditable, entryUndoKey));
+      if (level3) controlWrap.appendChild(buildImprovementBoolChip(level3, '3', referenceEditable, entryUndoKey));
       groupCard.appendChild(row);
     }
   }
@@ -15182,6 +15214,7 @@ function renderCivilizationNoteListEditor(entry, cfg, referenceEditable) {
         input.className = 'civilization-name-list-input';
         wireGroupedUndoSession(input, {
           key: `CIV_NOTE:${String(cfg.countKey || '')}:${idx}`,
+          undoKey: entryUndoKey,
           getValue: () => input.value
         });
         input.addEventListener('input', () => {
@@ -15373,9 +15406,10 @@ function buildGovernmentRelationsRows(entry) {
   return rows.sort((a, b) => a.index - b.index);
 }
 
-function renderGovernmentRelationsCard(entry, referenceEditable) {
+function renderGovernmentRelationsCard(entry, referenceEditable, selectedBaseIndex = null) {
   const rows = buildGovernmentRelationsRows(entry);
   if (rows.length === 0) return null;
+  const entryUndoKey = buildReferenceEntryUndoKey('governments', entry, selectedBaseIndex);
   const card = document.createElement('div');
   card.className = 'rule-group-card';
   const title = document.createElement('div');
@@ -15414,6 +15448,7 @@ function renderGovernmentRelationsCard(entry, referenceEditable) {
       input.value = n == null ? '' : String(n);
       wireGroupedUndoSession(input, {
         key: `GOV_REL_RESIST:${row.index}`,
+        undoKey: entryUndoKey,
         getValue: () => input.value
       });
       input.addEventListener('input', () => {
@@ -15433,6 +15468,7 @@ function renderGovernmentRelationsCard(entry, referenceEditable) {
       input.value = n == null ? '' : String(n);
       wireGroupedUndoSession(input, {
         key: `GOV_REL_PROP:${row.index}`,
+        undoKey: entryUndoKey,
         getValue: () => input.value
       });
       input.addEventListener('input', () => {
@@ -15478,6 +15514,7 @@ function isCivilizationBuildPriorityField(field) {
 }
 
 function renderCivilizationBuildPriorityCard(entry, referenceEditable) {
+  const entryUndoKey = buildReferenceEntryUndoKey('civilizations', entry);
   const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
   const hasAny = CIV_BUILD_PRIORITY_ROWS.some((row) => {
     return fields.some((f) => {
@@ -15548,7 +15585,7 @@ function renderCivilizationBuildPriorityCard(entry, referenceEditable) {
         check.checked = checked;
         wrap.classList.toggle('active', check.checked);
         check.addEventListener('change', () => {
-          rememberUndoSnapshot();
+          rememberUndoSnapshotForKey(entryUndoKey);
           if (field) field.value = check.checked ? 'true' : 'false';
           wrap.classList.toggle('active', check.checked);
           setDirty(true);
@@ -16202,6 +16239,7 @@ function renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable, 
         input.placeholder = labelText;
         wireGroupedUndoSession(input, {
           key: `CIV_DIPLOMACY_SLOT:${slotIndex}:${key}`,
+          undoKey: entryUndoKey,
           getValue: () => input.value
         });
         input.addEventListener('input', () => {
@@ -16290,7 +16328,7 @@ function renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable, 
         if (isEditing) {
           commitTrackedEditSession(editorKey, sectionLines.join('\n'));
         } else {
-          beginTrackedEditSession(editorKey, sectionLines.join('\n'));
+          beginTrackedEditSession(editorKey, sectionLines.join('\n'), null, entryUndoKey);
         }
         state.civilopediaEditorOpen[editorKey] = !isEditing;
         renderActiveTab({ preserveTabScroll: true });
@@ -16310,6 +16348,7 @@ function renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable, 
       editor.value = sectionLines.join('\n');
       wireGroupedUndoSession(editor, {
         key: editorKey,
+        undoKey: entryUndoKey,
         getValue: () => editor.value
       });
       editor.addEventListener('input', () => {
@@ -16383,6 +16422,7 @@ function renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable, 
 }
 
 function renderCivilizationDiplomacyCard(tab, entry, referenceEditable) {
+  const entryUndoKey = buildReferenceEntryUndoKey('civilizations', entry);
   const slotIndex = getCivilizationDiplomacySlotIndex(entry);
   if (slotIndex == null) return null;
   const slot = referenceEditable
@@ -16420,6 +16460,7 @@ function renderCivilizationDiplomacyCard(tab, entry, referenceEditable) {
       input.placeholder = labelText;
       wireGroupedUndoSession(input, {
         key: `CIV_DIPLOMACY_SLOT:${slotIndex}:${key}`,
+        undoKey: entryUndoKey,
         getValue: () => input.value
       });
       input.addEventListener('input', () => {
@@ -17284,6 +17325,7 @@ function createTechnologyTopBoardCell(entry, labelText, sourceFields = []) {
 
 function buildTechnologyTopReferenceControl(field, labelText, referenceEditable, options = {}) {
   if (!field) return null;
+  const undoKey = String(options.undoKey || '').trim();
   const normalizedCurrentValue = options.normalizeTechIndex
     ? (() => {
         const idx = resolveTechIndexFromValue(field.value);
@@ -17299,7 +17341,8 @@ function buildTechnologyTopReferenceControl(field, labelText, referenceEditable,
     showOptionThumbs: !!options.showOptionThumbs || !referenceEditable,
     readOnly: !referenceEditable,
     onSelect: referenceEditable ? (value) => {
-      rememberUndoSnapshot();
+      if (undoKey) rememberUndoSnapshotForKey(undoKey);
+      else rememberUndoSnapshot();
       field.value = String(value);
       setDirty(true);
       if (typeof options.onSelect === 'function') options.onSelect(value);
@@ -17308,7 +17351,7 @@ function buildTechnologyTopReferenceControl(field, labelText, referenceEditable,
   return picker;
 }
 
-function buildTechnologyTopNumberControl(field, referenceEditable, min = null) {
+function buildTechnologyTopNumberControl(field, referenceEditable, min = null, undoKey = '') {
   if (!field) return null;
   if (!referenceEditable) {
     const chip = document.createElement('span');
@@ -17323,6 +17366,7 @@ function buildTechnologyTopNumberControl(field, referenceEditable, min = null) {
   input.value = n == null ? '' : String(n);
   wireGroupedUndoSession(input, {
     key: `TECH_TOP:${normalizeRuleLookupKey(field && (field.baseKey || field.key))}`,
+    undoKey,
     getValue: () => input.value
   });
   input.addEventListener('input', () => {
@@ -18183,6 +18227,7 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
 function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields, openCurrentTechTree }) {
   const wrapper = document.createElement('div');
   wrapper.className = 'technology-rules-layout';
+  const entryUndoKey = buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex);
 
   const mainBoard = document.createElement('div');
   mainBoard.className = 'technology-main-board';
@@ -18200,19 +18245,19 @@ function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, re
 
   if (eraField) {
     const { cell, control } = createTechnologyTopBoardCell(entry, 'Era', [eraField]);
-    control.appendChild(buildTechnologyTopReferenceControl(eraField, 'era', referenceEditable));
+    control.appendChild(buildTechnologyTopReferenceControl(eraField, 'era', referenceEditable, { undoKey: entryUndoKey }));
     primaryRow.appendChild(cell);
   }
 
   if (costField) {
     const { cell, control } = createTechnologyTopBoardCell(entry, 'Cost', [costField]);
-    control.appendChild(buildTechnologyTopNumberControl(costField, referenceEditable, 0));
+    control.appendChild(buildTechnologyTopNumberControl(costField, referenceEditable, 0, entryUndoKey));
     primaryRow.appendChild(cell);
   }
 
   if (iconField) {
     const { cell, control } = createTechnologyTopBoardCell(entry, 'Icon', [iconField]);
-    control.appendChild(buildTechnologyTopNumberControl(iconField, referenceEditable, 0));
+    control.appendChild(buildTechnologyTopNumberControl(iconField, referenceEditable, 0, entryUndoKey));
     primaryRow.appendChild(cell);
   }
 
@@ -18228,7 +18273,7 @@ function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, re
       xLabel.className = 'field-meta';
       xLabel.textContent = 'X';
       xWrap.appendChild(xLabel);
-      xWrap.appendChild(buildTechnologyTopNumberControl(xField, referenceEditable, 0));
+      xWrap.appendChild(buildTechnologyTopNumberControl(xField, referenceEditable, 0, entryUndoKey));
       coords.appendChild(xWrap);
     }
       if (yField) {
@@ -18238,7 +18283,7 @@ function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, re
       yLabel.className = 'field-meta';
       yLabel.textContent = 'Y';
       yWrap.appendChild(yLabel);
-      yWrap.appendChild(buildTechnologyTopNumberControl(yField, referenceEditable, 0));
+      yWrap.appendChild(buildTechnologyTopNumberControl(yField, referenceEditable, 0, entryUndoKey));
       coords.appendChild(yWrap);
     }
     control.appendChild(coords);
@@ -18263,6 +18308,7 @@ function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, re
     const visibleCount = Math.max(2, Math.min(4, lastUsedIndex + 2));
     prereqFields.slice(0, visibleCount).forEach((field) => {
       const picker = buildTechnologyTopReferenceControl(field, 'prerequisite tech', referenceEditable, {
+        undoKey: entryUndoKey,
         normalizeTechIndex: true,
         showOptionThumbs: true,
         onSelect: () => renderActiveTab({ preserveTabScroll: true })
@@ -18776,7 +18822,7 @@ function setDistrictDependentImprovementMembership(entry, districtNames) {
     .map((name) => normalizeConfigToken(name).toLowerCase())
     .filter(Boolean));
 
-  rememberUndoSnapshotForKey(`DISTRICTS:dependent_improvs:${buildingName.toLowerCase()}`);
+  rememberUndoSnapshotForKey('SECTION_TAB:districts');
   let changed = false;
   sections.forEach((section) => {
     const districtName = normalizeConfigToken(getFieldValue(section, 'name'));
@@ -18925,7 +18971,8 @@ function renderImprovementRequiredDistrictsControl(entry, referenceEditable) {
   return cell;
 }
 
-function buildImprovementCategorySegmentedControl(entry, referenceEditable, fields = []) {
+function buildImprovementCategorySegmentedControl(entry, referenceEditable, fields = [], undoKey = '') {
+  const entryUndoKey = String(undoKey || '').trim();
   const wonder = fields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'wonder') || getBiqFieldByBaseKey(entry, 'wonder');
   const smallWonder = fields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'smallwonder') || getBiqFieldByBaseKey(entry, 'smallwonder');
   const improvement = fields.find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === 'improvement') || getBiqFieldByBaseKey(entry, 'improvement');
@@ -18942,7 +18989,8 @@ function buildImprovementCategorySegmentedControl(entry, referenceEditable, fiel
     referenceEditable ? (nextLabel) => {
       const selected = options.find((item) => item.label === nextLabel);
       if (!selected) return;
-      rememberUndoSnapshot();
+      if (entryUndoKey) rememberUndoSnapshotForKey(entryUndoKey);
+      else rememberUndoSnapshot();
       options.forEach((opt) => {
         opt.field.value = opt.field === selected.field ? 'true' : 'false';
       });
@@ -19042,6 +19090,7 @@ function renderImprovementWonderDistrictLink(entry) {
 function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, referenceEditable) {
   const wrap = document.createElement('div');
   wrap.className = 'improvement-main-board';
+  const entryUndoKey = buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex);
 
   const requiredTechField = getBiqFieldByBaseKey(entry, 'reqadvance');
   const obsoleteField = getBiqFieldByBaseKey(entry, 'obsoleteby');
@@ -19060,7 +19109,7 @@ function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, refere
 
   if (requiredTechField) {
     const { cell, control } = createImprovementTopBoardCell(entry, 'Required Tech', [requiredTechField]);
-    control.appendChild(buildImprovementTopReferenceControl(requiredTechField, 'Required Tech', referenceEditable, buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex)));
+    control.appendChild(buildImprovementTopReferenceControl(requiredTechField, 'Required Tech', referenceEditable, entryUndoKey));
     primaryRow.appendChild(cell);
   }
 
@@ -19077,7 +19126,7 @@ function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, refere
     let visibleCount = 1;
     if (normalizedValues[0]) visibleCount = Math.min(resources.length, 2);
     resources.slice(0, visibleCount).forEach((field) => {
-      resourceList.appendChild(buildImprovementTopReferenceControl(field, 'Required Resource', referenceEditable, buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex)));
+      resourceList.appendChild(buildImprovementTopReferenceControl(field, 'Required Resource', referenceEditable, entryUndoKey));
     });
     control.appendChild(resourceList);
     primaryRow.appendChild(cell);
@@ -19090,19 +19139,19 @@ function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, refere
 
   if (governmentField) {
     const { cell, control } = createImprovementTopBoardCell(entry, 'Required Government', [governmentField]);
-    control.appendChild(buildImprovementTopReferenceControl(governmentField, 'Required Government', referenceEditable, buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex)));
+    control.appendChild(buildImprovementTopReferenceControl(governmentField, 'Required Government', referenceEditable, entryUndoKey));
     secondaryRow.appendChild(cell);
   }
 
   if (improvementField) {
     const { cell, control } = createImprovementTopBoardCell(entry, 'Required Improvement', [improvementField]);
-    control.appendChild(buildImprovementTopReferenceControl(improvementField, 'Required Improvement', referenceEditable, buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex)));
+    control.appendChild(buildImprovementTopReferenceControl(improvementField, 'Required Improvement', referenceEditable, entryUndoKey));
     secondaryRow.appendChild(cell);
   }
 
   if (categoryFields.length > 0) {
     const { cell, control } = createImprovementTopBoardCell(entry, 'Category', categoryFields);
-    const segmented = buildImprovementCategorySegmentedControl(entry, referenceEditable, categoryFields);
+    const segmented = buildImprovementCategorySegmentedControl(entry, referenceEditable, categoryFields, entryUndoKey);
     if (segmented) control.appendChild(segmented);
     const wonderDistrictLink = renderImprovementWonderDistrictLink(entry);
     if (wonderDistrictLink) control.appendChild(wonderDistrictLink);
@@ -19111,7 +19160,7 @@ function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, refere
 
   if (obsoleteField) {
     const { cell, control } = createImprovementTopBoardCell(entry, 'Made Obsolete By', [obsoleteField]);
-    control.appendChild(buildImprovementTopReferenceControl(obsoleteField, 'Made Obsolete By', referenceEditable, buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex)));
+    control.appendChild(buildImprovementTopReferenceControl(obsoleteField, 'Made Obsolete By', referenceEditable, entryUndoKey));
     secondaryRow.appendChild(cell);
   }
 
@@ -20223,7 +20272,7 @@ function getPendingAtlasCopy(tabKey, atlasKey) {
 function stageScenarioAtlasCopy({ tabKey, atlasKey, relativePath, sourcePath }) {
   const tab = getAtlasCopyTab(tabKey);
   if (!tab || !atlasKey || !relativePath || !sourcePath) return false;
-  rememberUndoSnapshot();
+  rememberUndoSnapshotForKey(`SECTION_TAB:${String(tabKey || '').trim()}`);
   if (!tab.pendingAtlasCopies || typeof tab.pendingAtlasCopies !== 'object') tab.pendingAtlasCopies = {};
   tab.pendingAtlasCopies[atlasKey] = {
     staged: true,
@@ -20945,12 +20994,13 @@ function formatIdentityTechValues(techCtx) {
     .filter(Boolean);
 }
 
-function createTechIdentityPicker(field, onChange) {
+function createTechIdentityPicker(field, onChange, undoKey = '') {
   const techOptions = getTechEntries().map((tech, fallbackIdx) => ({
     value: String(getReferenceEntryIndexForOption('technologies', tech, fallbackIdx, { allowFallback: true })),
     label: String(tech.name || ''),
     entry: tech
   }));
+  const entryUndoKey = String(undoKey || '').trim();
   const parsedCurrent = resolveTechIndexFromValue(field && field.value);
   return createReferencePicker({
     options: techOptions,
@@ -20959,7 +21009,8 @@ function createTechIdentityPicker(field, onChange) {
     searchPlaceholder: 'Search tech...',
     noneLabel: '(none)',
     onSelect: (value) => {
-      rememberUndoSnapshot();
+      if (entryUndoKey) rememberUndoSnapshotForKey(entryUndoKey);
+      else rememberUndoSnapshot();
       field.value = String(value);
       if (onChange) onChange();
     }
@@ -22031,7 +22082,12 @@ function ensureUnitAvailabilityModalNode() {
     <div class="unit-availability-modal-panel" role="dialog" aria-modal="true" aria-label="Availability by Civ">
       <div class="unit-availability-modal-header">
         <strong id="unit-availability-modal-title">Availability by Civ</strong>
-        <button type="button" class="ghost" data-act="close">Close</button>
+        <div class="unit-availability-modal-actions">
+          <button type="button" class="secondary unit-availability-save-btn" data-act="save"><span class="btn-icon">💾</span>Save</button>
+          <button type="button" class="ghost unit-availability-undo-btn" data-act="undo"><span class="btn-icon">↶</span>Undo</button>
+          <button type="button" class="ghost unit-availability-undo-all-btn" data-act="undo-all"><span class="btn-icon">↺</span>Undo All</button>
+          <button type="button" class="ghost" data-act="close">Close</button>
+        </div>
       </div>
       <div id="unit-availability-modal-body" class="unit-availability-modal-body"></div>
     </div>
@@ -22040,6 +22096,9 @@ function ensureUnitAvailabilityModalNode() {
   unitAvailabilityModal.node = overlay;
   unitAvailabilityModal.body = overlay.querySelector('#unit-availability-modal-body');
   unitAvailabilityModal.title = overlay.querySelector('#unit-availability-modal-title');
+  unitAvailabilityModal.saveBtn = overlay.querySelector('[data-act="save"]');
+  unitAvailabilityModal.undoBtn = overlay.querySelector('[data-act="undo"]');
+  unitAvailabilityModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
   const closeBtn = overlay.querySelector('[data-act="close"]');
   if (closeBtn) closeBtn.addEventListener('click', () => closeUnitAvailabilityModal());
   overlay.addEventListener('click', (ev) => {
@@ -22159,7 +22218,9 @@ function getDefaultUnitAvailabilityCivValue() {
 
 function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue = '' }) {
   const civOptions = getCivilizationBitmaskOptions();
-  const rows = getUnitAvailabilityRows(tab).filter((row) => isStandardEraUnitEntry(row.entry));
+  const getCurrentUnitsTab = () => (
+    state.bundle && state.bundle.tabs && state.bundle.tabs.units
+  ) || tab;
   const initialMatch = civOptions.find((opt) => String(opt.value) === String(initialCivValue));
   let selectedCiv = initialMatch ? String(initialMatch.value) : getDefaultUnitAvailabilityCivValue();
   const filters = {
@@ -22260,18 +22321,8 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   clearVisibleBtn.type = 'button';
   clearVisibleBtn.className = 'ghost unit-availability-bulk-btn unit-availability-bulk-unavailable';
   clearVisibleBtn.innerHTML = '<span class="btn-icon">✕</span>Mark shown as Unavailable';
-  const undoBtn = document.createElement('button');
-  undoBtn.type = 'button';
-  undoBtn.className = 'ghost unit-availability-undo-btn';
-  undoBtn.innerHTML = '<span class="btn-icon">↶</span>Undo';
-  const undoAllBtn = document.createElement('button');
-  undoAllBtn.type = 'button';
-  undoAllBtn.className = 'ghost unit-availability-undo-all-btn';
-  undoAllBtn.innerHTML = '<span class="btn-icon">↺</span>Undo All';
   actionRow.appendChild(setVisibleBtn);
   actionRow.appendChild(clearVisibleBtn);
-  actionRow.appendChild(undoBtn);
-  actionRow.appendChild(undoAllBtn);
   toolbar.appendChild(actionRow);
   panel.appendChild(toolbar);
 
@@ -22289,29 +22340,60 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
     return Number.isFinite(idx) && idx >= 0 && idx <= 31 ? idx : null;
   };
 
-  const reopenForCurrentState = () => {
-    const currentTab = state.bundle && state.bundle.tabs && state.bundle.tabs.units;
-    if (!currentTab) return;
-    openUnitAvailabilityModal({ tab: currentTab, referenceEditable: isScenarioMode(), initialCivValue: selectedCiv });
+  const rowElementsByIdentity = new Map();
+  const pendingThumbHosts = new Set();
+  let currentRows = [];
+  let currentRowByIdentity = new Map();
+  let availabilityThumbsInFlight = 0;
+  let availabilityThumbHydrationRaf = 0;
+  let searchRenderTimer = 0;
+  const AVAILABILITY_THUMB_CONCURRENCY = 6;
+  const AVAILABILITY_THUMB_BATCH = 18;
+
+  const syncCurrentRows = () => {
+    currentRows = getUnitAvailabilityRows(getCurrentUnitsTab()).filter((row) => isStandardEraUnitEntry(row.entry));
+    currentRowByIdentity = new Map(currentRows.map((row) => [row.identity, row]));
+    return currentRows;
   };
+
+  const getCurrentRowByIdentity = (identity) => currentRowByIdentity.get(identity) || null;
 
   const refreshUndoButtons = () => {
-    undoBtn.disabled = !referenceEditable || !getLatestUndoSnapshot();
-    undoAllBtn.disabled = !referenceEditable || !state.isDirty;
+    if (unitAvailabilityModal.undoBtn) unitAvailabilityModal.undoBtn.disabled = !referenceEditable || !getLatestUndoSnapshot();
+    if (unitAvailabilityModal.undoAllBtn) unitAvailabilityModal.undoAllBtn.disabled = !referenceEditable || !state.isDirty;
   };
 
-  const getVisibleRows = () => {
+  const getAvailabilityForCivilization = (civIdx) => {
+    const map = new Map();
+    if (!Number.isFinite(civIdx) || civIdx < 0) return map;
+    currentRows.forEach((row) => {
+      map.set(row.identity, isUnitAvailableToCivilization(row.entry, civIdx));
+    });
+    return map;
+  };
+
+  const getVisibleRows = (availabilityByIdentity = null) => {
     const needle = filters.query.trim().toLowerCase();
     const civIdx = getSelectedCivIndex();
-    return rows.filter((row) => {
+    return currentRows.filter((row) => {
       if (needle && !`${row.name} ${row.key}`.toLowerCase().includes(needle)) return false;
       if (!filters.showKingUnits && row.isKingUnit) return false;
       if (filters.era !== 'all' && String(row.eraIndex) !== String(filters.era)) return false;
       if (filters.unitClass !== 'all' && row.classKey !== filters.unitClass) return false;
-      const available = civIdx == null ? false : isUnitAvailableToCivilization(row.entry, civIdx);
+      const available = availabilityByIdentity instanceof Map
+        ? !!availabilityByIdentity.get(row.identity)
+        : (civIdx == null ? false : isUnitAvailableToCivilization(row.entry, civIdx));
       if (filters.status === 'available' && !available) return false;
       if (filters.status === 'unavailable' && available) return false;
       return true;
+    });
+  };
+
+  const scheduleHydrateVisibleAvailabilityThumbs = () => {
+    if (availabilityThumbHydrationRaf) return;
+    availabilityThumbHydrationRaf = window.requestAnimationFrame(() => {
+      availabilityThumbHydrationRaf = 0;
+      hydrateVisibleAvailabilityThumbs();
     });
   };
 
@@ -22319,57 +22401,124 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
     host.textContent = '';
     const thumb = document.createElement('span');
     thumb.className = 'entry-thumb';
+    thumb.dataset.thumbPending = '1';
+    thumb.__thumbRow = row;
     host.appendChild(thumb);
-    loadReferenceListThumbnail('units', row.entry, thumb);
+    pendingThumbHosts.add(thumb);
+  };
+
+  const hydrateVisibleAvailabilityThumbs = () => {
+    if (availabilityThumbsInFlight >= AVAILABILITY_THUMB_CONCURRENCY) return;
+    const gridRect = grid.getBoundingClientRect();
+    const candidates = Array.from(pendingThumbHosts).filter((thumb) => {
+      if (!thumb || thumb.dataset.thumbPending !== '1' || !thumb.isConnected) {
+        pendingThumbHosts.delete(thumb);
+        return false;
+      }
+      const rowEl = thumb.closest('.unit-availability-item');
+      if (!rowEl || rowEl.classList.contains('hidden')) return false;
+      const rowRect = rowEl.getBoundingClientRect();
+      return rowRect.bottom >= (gridRect.top - 80) && rowRect.top <= (gridRect.bottom + 80);
+    }).slice(0, AVAILABILITY_THUMB_BATCH);
+    candidates.forEach((thumb) => {
+      if (availabilityThumbsInFlight >= AVAILABILITY_THUMB_CONCURRENCY) return;
+      const row = thumb.__thumbRow || null;
+      if (!row) {
+        thumb.dataset.thumbPending = '0';
+        pendingThumbHosts.delete(thumb);
+        return;
+      }
+      thumb.dataset.thumbPending = '0';
+      pendingThumbHosts.delete(thumb);
+      availabilityThumbsInFlight += 1;
+      Promise.resolve(loadReferenceListThumbnail('units', row.entry, thumb))
+        .catch(() => {})
+        .finally(() => {
+          availabilityThumbsInFlight = Math.max(0, availabilityThumbsInFlight - 1);
+          if (pendingThumbHosts.size > 0) scheduleHydrateVisibleAvailabilityThumbs();
+        });
+    });
+  };
+
+  const buildRowElement = (row) => {
+    const item = document.createElement('label');
+    item.className = 'unit-availability-item';
+    item.dataset.rowIdentity = row.identity;
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.disabled = !referenceEditable;
+    const thumbHost = document.createElement('span');
+    thumbHost.className = 'unit-availability-thumb';
+    const text = document.createElement('span');
+    text.className = 'unit-availability-text';
+    const name = document.createElement('strong');
+    name.textContent = row.name;
+    text.appendChild(name);
+    item.appendChild(input);
+    item.appendChild(thumbHost);
+    item.appendChild(text);
+    input.addEventListener('change', () => {
+      const idx = getSelectedCivIndex();
+      const liveRow = getCurrentRowByIdentity(row.identity);
+      if (!liveRow) return;
+      if (idx == null) return;
+      const next = !!input.checked;
+      if (isUnitAvailableToCivilization(liveRow.entry, idx) === next) return;
+      rememberUndoSnapshotForKey(buildReferenceEntryUndoKey('units', liveRow.entry));
+      setUnitAvailableToCivilization(liveRow.entry, idx, next);
+      setDirty(true);
+      render();
+    });
+    renderUnitThumb(row, thumbHost);
+    rowElementsByIdentity.set(row.identity, { item, input, thumbHost });
+    return item;
   };
 
   const render = () => {
+    syncCurrentRows();
     const civIdx = getSelectedCivIndex();
-    const visibleRows = getVisibleRows();
-    const availableCount = civIdx == null ? 0 : rows.filter((row) => isUnitAvailableToCivilization(row.entry, civIdx)).length;
-    summary.textContent = `${availableCount} of ${rows.length} for ${getSelectedCivLabel()} · ${visibleRows.length} shown`;
-    grid.innerHTML = '';
+    const availabilityByIdentity = getAvailabilityForCivilization(civIdx);
+    const visibleRows = getVisibleRows(availabilityByIdentity);
+    const visibleIdentitySet = new Set(visibleRows.map((row) => row.identity));
+    const availableCount = civIdx == null
+      ? 0
+      : currentRows.reduce((count, row) => count + (availabilityByIdentity.get(row.identity) ? 1 : 0), 0);
+    summary.textContent = `${availableCount} of ${currentRows.length} for ${getSelectedCivLabel()} · ${visibleRows.length} shown`;
     empty.classList.toggle('hidden', visibleRows.length > 0);
     setVisibleBtn.disabled = !referenceEditable || visibleRows.length === 0;
     clearVisibleBtn.disabled = !referenceEditable || visibleRows.length === 0;
     refreshUndoButtons();
-    const fragment = document.createDocumentFragment();
-    visibleRows.forEach((row) => {
-      const item = document.createElement('label');
-      item.className = 'unit-availability-item';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.checked = civIdx == null ? false : isUnitAvailableToCivilization(row.entry, civIdx);
-      input.disabled = !referenceEditable;
-      const thumbHost = document.createElement('span');
-      thumbHost.className = 'unit-availability-thumb';
-      const text = document.createElement('span');
-      text.className = 'unit-availability-text';
-      const name = document.createElement('strong');
-      name.textContent = row.name;
-      text.appendChild(name);
-      item.appendChild(input);
-      item.appendChild(thumbHost);
-      item.appendChild(text);
-      input.addEventListener('change', () => {
-        const idx = getSelectedCivIndex();
-        if (idx == null) return;
-        const next = !!input.checked;
-        if (isUnitAvailableToCivilization(row.entry, idx) === next) return;
-        rememberUndoSnapshotForKey(buildReferenceEntryUndoKey('units', row.entry));
-        setUnitAvailableToCivilization(row.entry, idx, next);
-        setDirty(true);
-        render();
-      });
-      renderUnitThumb(row, thumbHost);
-      fragment.appendChild(item);
+    Array.from(rowElementsByIdentity.keys()).forEach((identity) => {
+      if (currentRowByIdentity.has(identity)) return;
+      const staleRefs = rowElementsByIdentity.get(identity);
+      if (staleRefs && staleRefs.item && staleRefs.item.parentNode === grid) {
+        grid.removeChild(staleRefs.item);
+      }
+      rowElementsByIdentity.delete(identity);
     });
-    grid.appendChild(fragment);
+    currentRows.forEach((row) => {
+      let rowEl = rowElementsByIdentity.get(row.identity);
+      if (!rowEl) {
+        rowEl = buildRowElement(row);
+        grid.appendChild(rowEl);
+      }
+      const refs = rowElementsByIdentity.get(row.identity);
+      if (!refs) return;
+      const isVisible = visibleIdentitySet.has(row.identity);
+      refs.item.classList.toggle('hidden', !isVisible);
+      refs.item.style.display = isVisible ? '' : 'none';
+      refs.input.checked = civIdx == null ? false : !!availabilityByIdentity.get(row.identity);
+    });
+    scheduleHydrateVisibleAvailabilityThumbs();
   };
 
   searchInput.addEventListener('input', () => {
     filters.query = searchInput.value;
-    render();
+    if (searchRenderTimer) window.clearTimeout(searchRenderTimer);
+    searchRenderTimer = window.setTimeout(() => {
+      searchRenderTimer = 0;
+      render();
+    }, typeof TAB_SEARCH_RENDER_DELAY_MS === 'number' ? TAB_SEARCH_RENDER_DELAY_MS : 90);
   });
   eraSelect.addEventListener('change', () => {
     filters.era = eraSelect.value;
@@ -22407,16 +22556,26 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
     setDirty(true);
     render();
   });
-  undoBtn.addEventListener('click', async () => {
-    if (!referenceEditable || !getLatestUndoSnapshot()) return;
-    await undoOneStep();
-    reopenForCurrentState();
-  });
-  undoAllBtn.addEventListener('click', async () => {
-    if (!referenceEditable || !state.isDirty) return;
-    await undoAllChanges();
-    reopenForCurrentState();
-  });
+  if (unitAvailabilityModal.undoBtn) {
+    unitAvailabilityModal.undoBtn.onclick = async () => {
+      if (!referenceEditable || !getLatestUndoSnapshot()) return;
+      await undoOneStep();
+      render();
+    };
+  }
+  if (unitAvailabilityModal.undoAllBtn) {
+    unitAvailabilityModal.undoAllBtn.onclick = async () => {
+      if (!referenceEditable || !state.isDirty) return;
+      await undoAllChanges();
+      render();
+    };
+  }
+  grid.addEventListener('scroll', () => {
+    scheduleHydrateVisibleAvailabilityThumbs();
+  }, { passive: true });
+  if (unitAvailabilityModal.body) {
+    unitAvailabilityModal.body.addEventListener('scroll', scheduleHydrateVisibleAvailabilityThumbs, { passive: true });
+  }
 
   render();
   return panel;
@@ -22429,8 +22588,13 @@ function openUnitAvailabilityModal({ tab, referenceEditable, initialCivValue = '
     unitAvailabilityModal.body.innerHTML = '';
     unitAvailabilityModal.body.appendChild(createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue }));
   }
+  if (unitAvailabilityModal.saveBtn && !unitAvailabilityModal.saveBtn.dataset.bound) {
+    unitAvailabilityModal.saveBtn.dataset.bound = '1';
+    unitAvailabilityModal.saveBtn.addEventListener('click', saveCurrentBundle);
+  }
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
+  refreshDirtyUi();
 }
 
 function ensureUnitTableModalNode() {
@@ -22524,6 +22688,15 @@ function normalizeUnitTableCellValue(rawValue, column) {
     return String(rawValue == null ? '' : rawValue).trim();
   }
   return String(rawValue == null ? '' : rawValue);
+}
+
+function sanitizeUnitTableNumberValue(rawValue, column) {
+  const allowNegative = !(Number.isFinite(column && column.min) && Number(column.min) >= 0);
+  const text = String(rawValue == null ? '' : rawValue).trim();
+  if (!allowNegative) return text.replace(/\D+/g, '');
+  const negative = text.startsWith('-');
+  const digits = text.replace(/\D+/g, '');
+  return negative && digits ? `-${digits}` : digits;
 }
 
 function getUnitTableCellValue(entry, column) {
@@ -22819,7 +22992,8 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   const shouldHandleHorizontalNav = (target, key) => {
     if (!(target instanceof HTMLInputElement)) return true;
     if (target.type === 'checkbox') return true;
-    const textLike = target.type === 'text' || target.type === 'search' || target.type === 'number' || target.type === '';
+    if (target.type === 'number') return true;
+    const textLike = target.type === 'text' || target.type === 'search' || target.type === '';
     if (!textLike) return true;
     const start = Number(target.selectionStart);
     const end = Number(target.selectionEnd);
@@ -22981,14 +23155,19 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           attachGridNav(input, row, column);
         } else if (column.type === 'number') {
           const input = document.createElement('input');
-          input.type = 'text';
+          input.type = 'number';
           input.inputMode = 'numeric';
+          input.step = '1';
+          if (Number.isFinite(column.min)) input.min = String(column.min);
+          if (Number.isFinite(column.max)) input.max = String(column.max);
           input.value = String(row.values[column.key] || '');
           input.disabled = !referenceEditable;
           input.className = 'unit-table-number-input';
           wireUnitTableGroupedUndo(input, row, column, () => String(input.value || '').trim());
           input.addEventListener('input', () => {
-            setUnitTableLiveValue(row, column, String(input.value || '').trim());
+            const sanitized = sanitizeUnitTableNumberValue(input.value, column);
+            if (input.value !== sanitized) input.value = sanitized;
+            setUnitTableLiveValue(row, column, sanitized);
             updateUnitTableRowDirtyBadge(row);
             updateToolbar();
           });
@@ -25347,10 +25526,11 @@ function renderCivilopediaRichText(container, text, options = {}) {
   });
 }
 
-function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, emptyText, getValue, setValue }) {
+function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, emptyText, getValue, setValue, undoKey = '' }) {
   const getVal = getValue || (() => String(entry[fieldKey] || ''));
   const setVal = setValue || ((v) => { entry[fieldKey] = v; });
   const editorKey = `${String(entry && entry.civilopediaKey || '').toUpperCase()}:${fieldKey}`;
+  const editorUndoKey = String(undoKey || '').trim();
   const isEditing = !!state.civilopediaEditorOpen[editorKey];
   let editor = null;
   let livePreview = null;
@@ -25358,7 +25538,8 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
     const current = String(getVal() || '');
     const next = replaceFirstCivilopediaLinkTarget(current, target, actual);
     if (next === current) return;
-    rememberUndoSnapshot();
+    if (editorUndoKey) rememberUndoSnapshotForKey(editorUndoKey);
+    else rememberUndoSnapshot();
     setVal(next);
     if (editor) editor.value = next;
     setDirty(true);
@@ -25371,7 +25552,7 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   };
   const beginEditSession = () => {
     state.civilopediaEditSessionByKey[editorKey] = {
-      snapshot: snapshotTabs(),
+      snapshot: editorUndoKey ? getUndoSnapshotForKey(editorUndoKey) : snapshotTabs(),
       initialValue: String(getVal() || '')
     };
   };
@@ -25896,6 +26077,7 @@ function makeImprovementBuildingArtSlot(entry, slot, referenceEditable, onChange
 function renderImprovementBuildingArtEditor(entry, referenceEditable, onChanged) {
   const wrap = document.createElement('div');
   wrap.className = 'improvement-building-art-editor';
+  const entryUndoKey = buildReferenceEntryUndoKey('improvements', entry);
   const kind = normalizeImprovementBuildingArtKind(entry);
   const rows = getImprovementBuildingArtRows(kind);
   const controls = document.createElement('div');
@@ -25907,7 +26089,7 @@ function renderImprovementBuildingArtEditor(entry, referenceEditable, onChanged)
   modeLabel.textContent = 'Display mode';
   modeCell.appendChild(modeLabel);
   modeCell.appendChild(makeSegmentedChoiceControl(['SINGLE', 'ERA', 'CULTURE'], kind, (next) => {
-    rememberUndoSnapshot();
+    rememberUndoSnapshotForKey(entryUndoKey);
     remapImprovementBuildingArtPathsForKind(entry, next);
     setDirty(true);
     if (onChanged) onChanged();
@@ -25926,7 +26108,7 @@ function renderImprovementBuildingArtEditor(entry, referenceEditable, onChanged)
   indexInput.value = String(entry && entry.buildingIconIndex || '');
   indexInput.disabled = !referenceEditable;
   indexInput.addEventListener('change', () => {
-    rememberUndoSnapshot();
+    rememberUndoSnapshotForKey(entryUndoKey);
     entry.buildingIconIndex = String(indexInput.value || '').trim();
     setDirty(true);
   });
@@ -26256,6 +26438,7 @@ function renderSimpleIconArtEditor({ tabKey, entry, referenceEditable, onChanged
 }
 
 function renderResourceArtEditor(entry, referenceEditable, onChanged) {
+  const entryUndoKey = buildReferenceEntryUndoKey('resources', entry);
   const wrap = renderSimpleIconArtEditor({
     tabKey: 'resources',
     entry,
@@ -26275,7 +26458,7 @@ function renderResourceArtEditor(entry, referenceEditable, onChanged) {
     label.textContent = 'Resources.pcx Map Icon Index';
     indexCard.appendChild(label);
     const picker = createResourceIconIndexPicker(iconField.value, (value) => {
-      rememberUndoSnapshot();
+      rememberUndoSnapshotForKey(entryUndoKey);
       iconField.value = String(value);
       setDirty(true);
       if (onChanged) onChanged();
@@ -26837,7 +27020,7 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
       if (!nextFileName || nextFileName === currentFileName) return;
       const parent = getParentPath(slot.path);
       const nextPath = normalizeRelativePath(parent ? `${parent}/${nextFileName}` : nextFileName);
-      rememberUndoSnapshot();
+      rememberUndoSnapshotForKey(entryUndoKey);
       setReferenceArtSlotDestinationPath(entry, slot, nextPath);
       setDirty(true);
       if (onChanged) onChanged();
@@ -26891,7 +27074,7 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
   const entryUndoKey = buildReferenceEntryUndoKey(tabKey, entry);
 
   const setPathAndRefresh = async (absolutePathOrRelative) => {
-    rememberUndoSnapshot();
+    rememberUndoSnapshotForKey(entryUndoKey);
     setReferenceArtSlotPath(entry, slot, absolutePathOrRelative, tabKey);
     clearPendingReferenceArtConversion(entry, slot);
     if (isAbsoluteAssetPath(absolutePathOrRelative) && isConvertibleArtPath(absolutePathOrRelative)) {
@@ -30027,6 +30210,7 @@ function renderReferenceTab(tab, tabKey) {
         nameInput.value = String(entry.name || '');
         wireGroupedUndoSession(nameInput, {
           key: `REF_NAME:${tabKey}:${selectedBaseIndex}`,
+          undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
           getValue: () => nameInput.value
         });
         nameInput.addEventListener('input', () => {
@@ -30234,6 +30418,7 @@ function renderReferenceTab(tab, tabKey) {
       }
     }
     if (tabKey !== 'units' && tabKey !== 'technologies' && referenceEditable && techCtx.editable && techCtx.fields.length > 0) {
+      const identityEntryUndoKey = buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex);
       const techEditRow = document.createElement('div');
       techEditRow.className = 'rule-control';
       const values = techCtx.fields.map((field) => resolveTechIndexFromValue(field.value));
@@ -30250,7 +30435,7 @@ function renderReferenceTab(tab, tabKey) {
           )}`;
           setDirty(true);
           renderActiveTab({ preserveTabScroll: true });
-        });
+        }, identityEntryUndoKey);
         techEditRow.appendChild(picker);
       });
       identityGrid.appendChild(techEditRow);
@@ -30292,6 +30477,7 @@ function renderReferenceTab(tab, tabKey) {
         buildBody: () => {
           const editorBlock = createCivilopediaEditorBlock({
             entry,
+            undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
             fieldKey: 'civilopedia',
             titleText: 'Civilopedia',
             sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
@@ -30347,6 +30533,7 @@ function renderReferenceTab(tab, tabKey) {
         buildBody: () => {
           const editorBlock = createCivilopediaEditorBlock({
             entry,
+            undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
             fieldKey: 'civilopedia',
             titleText: 'Civilopedia',
             sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
@@ -30389,6 +30576,7 @@ function renderReferenceTab(tab, tabKey) {
         buildBody: () => {
           const editorBlock = createCivilopediaEditorBlock({
             entry,
+            undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
             fieldKey: 'civilopedia',
             titleText: 'Civilopedia',
             sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
@@ -30431,6 +30619,7 @@ function renderReferenceTab(tab, tabKey) {
         buildBody: () => {
           const editorBlock = createCivilopediaEditorBlock({
             entry,
+            undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
             fieldKey: 'civilopedia',
             titleText: 'Civilopedia',
             sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
@@ -30473,6 +30662,7 @@ function renderReferenceTab(tab, tabKey) {
         buildBody: () => {
           const editorBlock = createCivilopediaEditorBlock({
             entry,
+            undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
             fieldKey: 'civilopedia',
             titleText: 'Civilopedia',
             sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
@@ -30515,6 +30705,7 @@ function renderReferenceTab(tab, tabKey) {
         buildBody: () => {
           const editorBlock = createCivilopediaEditorBlock({
             entry,
+            undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
             fieldKey: 'civilopedia',
             titleText: 'Civilopedia',
             sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
@@ -30681,7 +30872,7 @@ function renderReferenceTab(tab, tabKey) {
         }
       }
       if (tabKey === 'governments') {
-        const relCard = renderGovernmentRelationsCard(entry, referenceEditable);
+        const relCard = renderGovernmentRelationsCard(entry, referenceEditable, selectedBaseIndex);
         if (relCard) rulesGrid.appendChild(relCard);
       }
       if (rulesMeta) {
@@ -30705,6 +30896,7 @@ function renderReferenceTab(tab, tabKey) {
     } else if (tabKey !== 'units' && referenceEditable) {
       textCol.appendChild(createCivilopediaEditorBlock({
         entry,
+        undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
         fieldKey: 'civilopedia',
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
@@ -45034,12 +45226,22 @@ function renderButtonTileCompoundRow(section) {
   rowInput.min = '0';
   rowInput.style.width = '4.5em';
   rowInput.value = getFieldValue(section, 'btn_tile_sheet_row') || '0';
+  wireGroupedUndoSession(rowInput, {
+    key: buildSectionFieldEditSessionKey(section, 'btn_tile_sheet_row'),
+    undoKey: getSectionItemUndoKey(section),
+    getValue: () => String(rowInput.value || '').trim()
+  });
 
   const colInput = document.createElement('input');
   colInput.type = 'number';
   colInput.min = '0';
   colInput.style.width = '4.5em';
   colInput.value = getFieldValue(section, 'btn_tile_sheet_column') || '0';
+  wireGroupedUndoSession(colInput, {
+    key: buildSectionFieldEditSessionKey(section, 'btn_tile_sheet_column'),
+    undoKey: getSectionItemUndoKey(section),
+    getValue: () => String(colInput.value || '').trim()
+  });
 
   const canvas = document.createElement('canvas');
   canvas.width = 32;
@@ -45055,8 +45257,10 @@ function renderButtonTileCompoundRow(section) {
   controlWrap.appendChild(createDistrictButtonTilePicker(rowInput.value, colInput.value, (row, col) => {
     rowInput.value = String(row);
     colInput.value = String(col);
-    setSingleFieldValue(section, 'btn_tile_sheet_row', rowInput.value);
-    setSingleFieldValue(section, 'btn_tile_sheet_column', colInput.value);
+    setSectionFieldValues(section, {
+      btn_tile_sheet_row: rowInput.value,
+      btn_tile_sheet_column: colInput.value
+    });
     refreshCanvas();
     setDirty(true);
   }));
@@ -45081,13 +45285,13 @@ function renderButtonTileCompoundRow(section) {
   };
 
   rowInput.addEventListener('input', () => {
-    setSingleFieldValue(section, 'btn_tile_sheet_row', rowInput.value);
+    setSingleFieldValue(section, 'btn_tile_sheet_row', rowInput.value, { captureUndo: false });
     refreshCanvas();
     setDirty(true);
   });
 
   colInput.addEventListener('input', () => {
-    setSingleFieldValue(section, 'btn_tile_sheet_column', colInput.value);
+    setSingleFieldValue(section, 'btn_tile_sheet_column', colInput.value, { captureUndo: false });
     refreshCanvas();
     setDirty(true);
   });
@@ -46301,6 +46505,14 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
   wrap.className = 'natural-animation-spec-list';
   const rawSpecs = getFieldValuesRaw(section, 'animation');
   const specs = rawSpecs.map((raw) => parseNaturalWonderAnimationSpec(raw));
+  const animationUndoKey = getSectionItemUndoKey(section);
+  const wireAnimationGroupedUndo = (input, keySuffix, getValue = null) => {
+    wireGroupedUndoSession(input, {
+      key: `${buildSectionFieldEditSessionKey(section, 'animation')}:${String(keySuffix || '').trim()}`,
+      undoKey: animationUndoKey,
+      getValue: typeof getValue === 'function' ? getValue : (() => String(input && input.value || ''))
+    });
+  };
   const adjacencyDirection = String(getFieldValue(section, 'adjacency_dir') || '').trim();
   if (adjacencyDirection) {
     specs.forEach((entry) => {
@@ -46319,7 +46531,9 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
       .map((entry) => serializeNaturalWonderAnimationSpec(entry))
       .map((entry) => String(entry || '').trim())
       .filter(Boolean);
-    setMultiFieldValues(section, 'animation', serialized);
+    setMultiFieldValues(section, 'animation', serialized, {
+      captureUndo: !(config && config.captureUndo === false)
+    });
     if (shouldNotify && onValueChange) onValueChange('animation', serialized.join('\n'));
   };
 
@@ -46333,17 +46547,19 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     keyInput.type = 'text';
     keyInput.placeholder = 'key';
     keyInput.value = '';
+    wireAnimationGroupedUndo(keyInput, `new-extra-key:${entry.extras.length}`);
     keyInput.addEventListener('input', () => {
       extra.key = keyInput.value;
-      valueChangeHook();
+      valueChangeHook({ captureUndo: false });
     });
     const valueInput = document.createElement('input');
     valueInput.type = 'text';
     valueInput.placeholder = 'value';
     valueInput.value = '';
+    wireAnimationGroupedUndo(valueInput, `new-extra-value:${entry.extras.length}`);
     valueInput.addEventListener('input', () => {
       extra.value = valueInput.value;
-      valueChangeHook();
+      valueChangeHook({ captureUndo: false });
     });
     const del = document.createElement('button');
     del.type = 'button';
@@ -46382,9 +46598,10 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     iniInput.type = 'text';
     iniInput.placeholder = 'Art\\Animations\\...\\*.ini';
     iniInput.value = entry.ini || '';
+    wireAnimationGroupedUndo(iniInput, `ini:${idx}`);
     iniInput.addEventListener('input', () => {
       entry.ini = iniInput.value;
-      commit();
+      commit({ captureUndo: false });
     });
     const iniBrowse = document.createElement('button');
     iniBrowse.type = 'button';
@@ -46445,9 +46662,10 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     const xInput = document.createElement('input');
     xInput.type = 'number';
     xInput.value = entry.x_offset || '';
+    wireAnimationGroupedUndo(xInput, `x:${idx}`);
     xInput.addEventListener('input', () => {
       entry.x_offset = xInput.value;
-      commit();
+      commit({ captureUndo: false });
     });
     xWrap.appendChild(xInput);
     grid.appendChild(xWrap);
@@ -46458,9 +46676,10 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     const yInput = document.createElement('input');
     yInput.type = 'number';
     yInput.value = entry.y_offset || '';
+    wireAnimationGroupedUndo(yInput, `y:${idx}`);
     yInput.addEventListener('input', () => {
       entry.y_offset = yInput.value;
-      commit();
+      commit({ captureUndo: false });
     });
     yWrap.appendChild(yInput);
     grid.appendChild(yWrap);
@@ -46555,8 +46774,8 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     extrasBlock.appendChild(extrasTitle);
     const extrasRows = document.createElement('div');
     extrasRows.className = 'kv-grid';
-    const refreshExtras = () => {
-      commit();
+    const refreshExtras = (config = null) => {
+      commit(config);
     };
     (Array.isArray(entry.extras) ? entry.extras : []).forEach((extra) => {
       const row = document.createElement('div');
@@ -46565,17 +46784,19 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
       keyInput.type = 'text';
       keyInput.placeholder = 'key';
       keyInput.value = String(extra && extra.key || '');
+      wireAnimationGroupedUndo(keyInput, `extra-key:${idx}:${String(extra && extra.key || '')}`);
       keyInput.addEventListener('input', () => {
         extra.key = keyInput.value;
-        refreshExtras();
+        refreshExtras({ captureUndo: false });
       });
       const valueInput = document.createElement('input');
       valueInput.type = 'text';
       valueInput.placeholder = 'value';
       valueInput.value = String(extra && extra.value || '');
+      wireAnimationGroupedUndo(valueInput, `extra-value:${idx}:${String(extra && extra.key || '')}`);
       valueInput.addEventListener('input', () => {
         extra.value = valueInput.value;
-        refreshExtras();
+        refreshExtras({ captureUndo: false });
       });
       const del = document.createElement('button');
       del.type = 'button';
@@ -47164,7 +47385,7 @@ function createSectionFromTemplate(tabKey) {
 }
 
 function addSection(tab, tabKey) {
-  rememberUndoSnapshot();
+  rememberUndoSnapshotForKey(`SECTION_TAB:${String(tabKey || '').trim()}`);
   tab.model.sections.unshift(createSectionFromTemplate(tabKey));
   state.sectionSelection[tabKey] = 0;
   setDirty(true);
@@ -47174,7 +47395,7 @@ function addSection(tab, tabKey) {
 function deleteSelectedSection(tab, tabKey) {
   if (!tab || !tab.model || !Array.isArray(tab.model.sections) || tab.model.sections.length <= 0) return;
   const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, tab.model.sections.length - 1));
-  rememberUndoSnapshot();
+  rememberUndoSnapshotForKey(`SECTION_TAB:${String(tabKey || '').trim()}`);
   tab.model.sections.splice(selectedIndex, 1);
   state.sectionSelection[tabKey] = Math.max(0, selectedIndex - 1);
   setDirty(true);
@@ -47759,7 +47980,7 @@ function renderSectionTab(tab, tabKey) {
           const expectedCount = getExpectedDistrictImagePathCount(section, existing);
           const next = existing.slice(0, expectedCount);
           while (next.length < expectedCount) next.push('');
-          setSingleFieldValue(section, 'img_paths', next.join(', '));
+          setSingleFieldValue(section, 'img_paths', next.join(', '), { captureUndo: false });
           renderActiveTab({ preserveTabScroll: true });
           return;
         }
@@ -47768,7 +47989,7 @@ function renderSectionTab(tab, tabKey) {
           const expectedCount = getExpectedDistrictImagePathCount(section, existing);
           const next = existing.slice(0, expectedCount);
           while (next.length < expectedCount) next.push('');
-          setSingleFieldValue(section, 'img_paths', next.join(', '));
+          setSingleFieldValue(section, 'img_paths', next.join(', '), { captureUndo: false });
           renderActiveTab({ preserveTabScroll: true });
           return;
         }
@@ -47792,7 +48013,7 @@ function renderSectionTab(tab, tabKey) {
           return;
         }
         if (tabKey === 'naturalWonders' && key === 'adjacency_dir') {
-          syncNaturalWonderAnimationDirections(section);
+          syncNaturalWonderAnimationDirections(section, { captureUndo: false });
           refreshPreviews();
           renderActiveTab({ preserveTabScroll: true });
           return;
@@ -49687,6 +49908,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && typeof targetSnapshot === 'object'
     && targetSnapshot.kind === 'serialized-section-item'
   );
+  const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot(targetSnapshot);
   const restoredSearchFolder = Object.prototype.hasOwnProperty.call(restoredEditableTabs, 'scenarioSettings')
     ? getScenarioSearchFolderValueFromTabs(restoredEditableTabs)
     : getScenarioSearchFolderValueFromTabs(state.bundle && state.bundle.tabs ? state.bundle.tabs : {});
@@ -49694,6 +49916,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     !isScopedBaseSnapshot &&
     !isSerializedReferenceEntrySnapshot
     && !isSerializedSectionSnapshot
+    && !isScopedSectionTabSnapshot
     && state.settings
     && state.settings.mode === 'scenario'
     && state.settings.scenarioPath
@@ -49761,6 +49984,7 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
     && targetSnapshot.kind === 'serialized-section-item'
   );
   const isScopedBaseSnapshot = isScopedBaseUndoSnapshot(targetSnapshot);
+  const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot(targetSnapshot);
   const restoredEditableTabs = isSerializedReferenceEntrySnapshot ? {} : extractUndoSnapshotTabs(targetSnapshot);
   const isMapRecordDiffSnapshot = !!(
     targetSnapshot
@@ -49806,7 +50030,10 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   const appliedFastBaseDirtyState = !appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && isScopedBaseSnapshot
     ? recomputeDirtyStateForScopedBaseSnapshot(targetSnapshot)
     : false;
-  if (!appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState) {
+  const appliedFastSectionTabDirtyState = !appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState && isScopedSectionTabSnapshot
+    ? recomputeDirtyStateForScopedSectionTabSnapshot(targetSnapshot)
+    : false;
+  if (!appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState && !appliedFastSectionTabDirtyState) {
     recomputeDirtyStateFromBundle();
   }
   markFilesReadEntriesDirty();

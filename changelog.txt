@@ -1,8 +1,22 @@
 * RELEASE 27.11.1.0
+- Changed Districts, Wonder Districts, and Natural Wonders structural actions and atlas-copy staging to use section-scoped Undo snapshots, and grouped Natural Wonder animation text edits into normal edit-session Undo steps.
+- Tightened C3X/base structured-list Undo capture so add/remove actions keep one scoped base snapshot per click and grouped base inputs explicitly use their field-level Undo key.
+- Fixed the Availability by Civ header Save button to sync its disabled state immediately on modal open, matching the main app Save button when there are no unsaved changes.
+- Added a duplicate Save button to the Availability by Civ modal header, sharing the main Save button's label, dirty styling, disabled state, validation title, and save handler.
+- Moved Availability by Civ Undo and Undo All into the modal header beside Close, matching the Unit Table and Tech Tree modal action layout.
+- Changed Governments relation-table edits, Improvements custom compact/top/art controls, and Resources map-icon edits to use entry-scoped Undo snapshots instead of full-tab or full-bundle restore snapshots.
+- Changed Techs top-board edits and Civs starting-tech, custom name-list, build-priority, and diplomacy editors to use entry-scoped Undo snapshots instead of full-tab or full-bundle restore snapshots.
+- Changed the Availability by Civ modal to keep its unit rows mounted, debounce search filtering, cache per-civ availability during refreshes, and lazy-hydrate visible thumbnails, so civ switches and availability toggles no longer rebuild the whole grid on every interaction.
+- Fixed Availability by Civ search row filtering to hide non-matching mounted cards instead of only updating the shown-count summary, so searches now visibly narrow the grid again after the mounted-row optimization.
+- Changed Availability by Civ Undo and Undo All to refresh the mounted modal in place against the live Units tab instead of reopening the whole modal after each undo, so undoing availability edits no longer tears down and rebuilds the dialog DOM.
+- Changed Units and other reference-tab Civilopedia edits to capture entry-scoped Undo snapshots, so undoing a completed Civilopedia text edit no longer needs the full scenario restore path.
+- Changed reference art slot edits, including Unit Civilopedia icon replacement and pending filename renames, to use entry-scoped Undo snapshots instead of the full restore path.
+- Changed reference-tab top `Name` edits to use the same entry-scoped Undo snapshot as Units rule fields, so undoing a unit rename restores in memory without showing the full restore modal.
 - Fixed the Unit Table `Undo` button state to activate on the first pending grouped edit instead of waiting for a later committed snapshot, so the modal header now reflects the first typed change immediately.
 - Added a duplicate Save button to the Unit Table header beside Undo, sharing the main Save button's label, dirty styling, disabled state, validation title, and save handler.
 - Changed Unit Table reference columns to reuse one cached option list per column and lazy-mount real dropdown pickers only when a cell is activated, so opening the modal no longer instantiates full picker menus for every reference cell up front.
 - Fixed Civs -> Leader Animations era labels to use the loaded BIQ ERAS names, matching Techs era dropdown behavior instead of hardcoding the stock era names.
+- Changed Unit Table numeric cells to use constrained integer inputs and sanitize edits before writing to the Units model, matching the main editor's numeric-field behavior more closely.
 - Added a continuous outline treatment to the focused Unit Table row, including sticky thumbnail/name columns, so the active edit target has a visible whole-row border without drawing dividers between cells.
 - Cached repeated BIQ section-index and enum option lookups within a single `RULE`/`GAME` render, so tabs like Rules -> General no longer recompute the same PRTO/RACE/TECH option lists for every reference field while opening.
 - Changed BIQ `RULE`/`GAME` record-group rendering to mount heavy group cards incrementally across animation frames, so opening one-record tabs like Rules -> General paints the shell immediately instead of blocking on every field editor at once.

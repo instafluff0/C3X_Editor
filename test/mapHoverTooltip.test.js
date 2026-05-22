@@ -597,8 +597,8 @@ test('Unit Table header Save mirrors the main save button wiring', () => {
 
   assert.match(
     rendererText,
-    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, unitTableModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
-    'Unit Table Save should share the main Save label, dirty class, disabled state, and validation title'
+    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
+    'modal Save buttons should share the main Save label, dirty class, disabled state, and validation title'
   );
   assert.match(
     rendererText,
@@ -609,6 +609,37 @@ test('Unit Table header Save mirrors the main save button wiring', () => {
     stylesText,
     /\.unit-table-modal-actions \.unit-table-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary:hover:not\(:disabled\),[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary\.dirty \{[\s\S]*?box-shadow: none;/,
     'Unit Table Save should use the same no-shadow action styling as the main app Save button'
+  );
+});
+
+test('Availability by Civ keeps Undo actions in the modal header', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /function ensureUnitAvailabilityModalNode\(\) \{[\s\S]*?<div class="unit-availability-modal-actions">[\s\S]*?<button type="button" class="secondary unit-availability-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?<button type="button" class="ghost unit-availability-undo-btn" data-act="undo"><span class="btn-icon">↶<\/span>Undo<\/button>[\s\S]*?<button type="button" class="ghost unit-availability-undo-all-btn" data-act="undo-all"><span class="btn-icon">↺<\/span>Undo All<\/button>[\s\S]*?<button type="button" class="ghost" data-act="close">Close<\/button>[\s\S]*?unitAvailabilityModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?unitAvailabilityModal\.undoBtn = overlay\.querySelector\('\[data-act="undo"\]'\);[\s\S]*?unitAvailabilityModal\.undoAllBtn = overlay\.querySelector\('\[data-act="undo-all"\]'\);/,
+    'Availability by Civ should place Save, Undo, and Undo All in the modal header next to Close'
+  );
+  assert.match(
+    rendererText,
+    /const refreshUndoButtons = \(\) => \{[\s\S]*?unitAvailabilityModal\.undoBtn\.disabled = !referenceEditable \|\| !getLatestUndoSnapshot\(\);[\s\S]*?unitAvailabilityModal\.undoAllBtn\.disabled = !referenceEditable \|\| !state\.isDirty;[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoBtn\.onclick = async \(\) => \{[\s\S]*?await undoOneStep\(\);[\s\S]*?render\(\);[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoAllBtn\.onclick = async \(\) => \{[\s\S]*?await undoAllChanges\(\);[\s\S]*?render\(\);[\s\S]*?\};/,
+    'Availability by Civ header Undo buttons should keep their disabled-state wiring while refreshing the mounted modal in place after undo'
+  );
+  assert.match(
+    stylesText,
+    /\.unit-availability-modal-actions \{[\s\S]*?display: flex;[\s\S]*?align-items: center;[\s\S]*?justify-content: flex-end;[\s\S]*?gap: 8px;/,
+    'Availability by Civ header actions should lay out consistently with the other modal header action groups'
+  );
+  assert.match(
+    rendererText,
+    /if \(unitAvailabilityModal\.saveBtn && !unitAvailabilityModal\.saveBtn\.dataset\.bound\) \{[\s\S]*?unitAvailabilityModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);[\s\S]*?\}[\s\S]*?overlay\.classList\.remove\('hidden'\);[\s\S]*?overlay\.setAttribute\('aria-hidden', 'false'\);[\s\S]*?refreshDirtyUi\(\);/,
+    'Availability by Civ Save should route clicks through saveCurrentBundle and sync disabled state when opened'
+  );
+  assert.match(
+    stylesText,
+    /\.unit-availability-modal-actions \.unit-availability-save-btn\.secondary,[\s\S]*?\.unit-availability-modal-actions \.unit-availability-save-btn\.secondary:hover:not\(:disabled\),[\s\S]*?\.unit-availability-modal-actions \.unit-availability-save-btn\.secondary\.dirty,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary/s,
+    'Availability by Civ Save should use the same no-shadow action styling as the main app and Unit Table Save buttons'
   );
 });
 

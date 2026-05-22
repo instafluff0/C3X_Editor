@@ -682,6 +682,9 @@ button:disabled {
 .actions #save-btn.secondary,
 .actions #save-btn.secondary:hover:not(:disabled),
 .actions #save-btn.secondary.dirty,
+.unit-availability-modal-actions .unit-availability-save-btn.secondary,
+.unit-availability-modal-actions .unit-availability-save-btn.secondary:hover:not(:disabled),
+.unit-availability-modal-actions .unit-availability-save-btn.secondary.dirty,
 .unit-table-modal-actions .unit-table-save-btn.secondary,
 .unit-table-modal-actions .unit-table-save-btn.secondary:hover:not(:disabled),
 .unit-table-modal-actions .unit-table-save-btn.secondary.dirty {
@@ -7189,6 +7192,14 @@ details > summary:focus-visible {
   padding: 10px 12px;
   border-bottom: 1px solid rgba(72, 84, 121, 0.18);
   background: linear-gradient(145deg, rgba(250, 252, 255, 0.97), rgba(240, 246, 255, 0.97));
+}
+
+.unit-availability-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .unit-availability-modal-body {
