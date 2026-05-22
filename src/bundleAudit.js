@@ -920,6 +920,7 @@ function resolveReferenceArtFile(bundle, entry, assetPath) {
 }
 
 function auditReferenceArt(bundle, result) {
+  const resolvedPathCache = new Map();
   REFERENCE_ART_TABS.forEach((tabKey) => {
     const tab = (((bundle || {}).tabs || {})[tabKey]) || null;
     const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
@@ -930,7 +931,21 @@ function auditReferenceArt(bundle, result) {
         const dedupeKey = String(asset && asset.path || '').trim().toLowerCase();
         if (!dedupeKey || seenPaths.has(dedupeKey)) return;
         seenPaths.add(dedupeKey);
-        if (resolveReferenceArtFile(bundle, entry, asset.path)) return;
+        const cacheKey = JSON.stringify({
+          civ3Path: bundle && bundle.civ3Path,
+          scenarioPath: String(entry && entry._importScenarioPath || bundle && bundle.scenarioPath || bundle && bundle.scenarioInputPath || ''),
+          scenarioPaths: Array.isArray(entry && entry._importScenarioPaths) && entry._importScenarioPaths.length > 0
+            ? entry._importScenarioPaths
+            : (Array.isArray(bundle && bundle.scenarioSearchPaths) ? bundle.scenarioSearchPaths : []),
+          civilopediaKey: String(entry && entry.civilopediaKey || ''),
+          assetPath: String(asset && asset.path || '')
+        });
+        let resolved = resolvedPathCache.get(cacheKey);
+        if (typeof resolved === 'undefined') {
+          resolved = resolveReferenceArtFile(bundle, entry, asset.path);
+          resolvedPathCache.set(cacheKey, resolved || null);
+        }
+        if (resolved) return;
         addSectionIssue(
           result,
           tabKey,
@@ -1071,7 +1086,7 @@ function auditCivilopediaLinkCase(bundle, result) {
   });
 }
 
-function auditLoadedBundle(bundle) {
+function auditLoadedBundle(bundle, options = {}) {
   const result = createAuditAccumulator();
   if (!bundle || !bundle.tabs) return result;
   lintBaseConfig(bundle, result);
@@ -1092,7 +1107,10 @@ function auditBundle(payload) {
   const bundle = payload && payload.bundleSnapshot && typeof payload.bundleSnapshot === 'object'
     ? payload.bundleSnapshot
     : loadBundle(payload || {});
-  return auditLoadedBundle(bundle);
+  const options = payload && payload.auditOptions && typeof payload.auditOptions === 'object'
+    ? payload.auditOptions
+    : {};
+  return auditLoadedBundle(bundle, options);
 }
 
 module.exports = {

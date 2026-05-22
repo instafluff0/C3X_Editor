@@ -147,6 +147,7 @@ const state = {
   biqMapColoredUnitIconCache: new Map(),
   biqMapColoredStartLocCache: new Map(),
   previewCache: new Map(),
+  pendingPreviewRequests: new Map(),
   previewContextVersion: 0,
   mapGenerationRuleBundleCache: null,
   mapGenerationRuleBundleCacheKey: '',
@@ -432,6 +433,39 @@ function setPreviewCache(key, value) {
     if (first && !first.done) state.previewCache.delete(first.value);
     else break;
   }
+}
+
+function clearPreviewCaches() {
+  state.previewCache.clear();
+  state.pendingPreviewRequests.clear();
+}
+
+function getOrStartPreviewRequest(cacheKey, loader, options = {}) {
+  const normalizedKey = String(cacheKey || '');
+  if (normalizedKey && state.previewCache.has(normalizedKey)) {
+    return Promise.resolve(state.previewCache.get(normalizedKey));
+  }
+  if (normalizedKey && state.pendingPreviewRequests.has(normalizedKey)) {
+    return state.pendingPreviewRequests.get(normalizedKey);
+  }
+  const shouldCacheResult = options.cacheResult !== false;
+  const shouldCacheFailure = options.cacheFailure === true;
+  const request = Promise.resolve()
+    .then(() => loader())
+    .then((result) => {
+      if (normalizedKey) state.pendingPreviewRequests.delete(normalizedKey);
+      const isOk = !!(result && result.ok);
+      if (normalizedKey && shouldCacheResult && (isOk || shouldCacheFailure)) {
+        setPreviewCache(normalizedKey, result);
+      }
+      return result;
+    })
+    .catch((err) => {
+      if (normalizedKey) state.pendingPreviewRequests.delete(normalizedKey);
+      throw err;
+    });
+  if (normalizedKey) state.pendingPreviewRequests.set(normalizedKey, request);
+  return request;
 }
 
 function setMapDistrictFallbackCanvas(key, canvas) {
@@ -4379,7 +4413,7 @@ function applyPerformanceModeRuntime(mode, options = {}) {
     state.settings.performanceMode = nextMode;
   }
   if (options.clearCaches !== false) {
-    state.previewCache.clear();
+    clearPreviewCaches();
   }
   document.body.classList.toggle('perf-safe', nextMode === 'safe');
   document.body.classList.toggle('perf-high', nextMode === 'high');
@@ -10096,7 +10130,7 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
       rgbaBase64: pendingThumbConversion.rgbaBase64,
       sourcePath: String(pendingThumbConversion.sourcePath || '')
     });
-    return;
+    return Promise.resolve(true);
   }
   const pendingThumbSource = getPendingReferenceArtSource(entry, pendingThumbSlot);
 
@@ -10113,17 +10147,17 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
           btn.appendChild(badge);
         }
         holder.innerHTML = '';
-        return;
+        return Promise.resolve(false);
       }
       const previewDescriptor = getUnitIconPreviewDescriptor(entry);
       const iconIndex = Number(previewDescriptor && previewDescriptor.iconIndex);
       if (Number.isFinite(iconIndex) && iconIndex >= 0) {
-        getUnits32AtlasPreview({
+        return getUnits32AtlasPreview({
           scenarioPath: previewDescriptor && previewDescriptor.scenarioPath,
           scenarioPaths: previewDescriptor && previewDescriptor.scenarioPaths
         })
           .then((preview) => {
-            if (!preview || !holder.isConnected) return;
+            if (!preview || !holder.isConnected) return false;
             ensureCurrentUnits32AtlasMetrics().then((metrics) => {
               if (metrics) refreshPendingImportedUnitIconAssignments();
               refreshTabDirtyBadges();
@@ -10142,24 +10176,33 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
                 badge.title = 'Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime.';
                 btn.appendChild(badge);
               }
-              return;
+              return false;
             }
             holder.innerHTML = '';
             holder.appendChild(canvas);
+            return true;
           })
-          .catch(() => {});
-        return;
+          .catch(() => false);
       }
       if (entry.name) {
-        window.c3xManager.getPreview({
+        const cacheKey = JSON.stringify({
+          kind: 'unit-flc-first-frame',
+          civ3Path: state.settings.civ3Path,
+          scenarioPath: resolvedScenarioPath,
+          scenarioPaths: resolvedScenarioPaths.join('|'),
+          prtoName: String(entry.name || ''),
+          civilopediaKey: String(entry.civilopediaKey || '')
+        });
+        return getOrStartPreviewRequest(cacheKey, () => window.c3xManager.getPreview({
           kind: 'unitFlcFirstFrame',
           civ3Path: state.settings.civ3Path,
           scenarioPath: resolvedScenarioPath,
           scenarioPaths: resolvedScenarioPaths,
-          prtoName: String(entry.name || '')
-        })
+          prtoName: String(entry.name || ''),
+          civilopediaKey: String(entry.civilopediaKey || '')
+        }))
           .then((res) => {
-            if (!res || !res.ok || !holder.isConnected) return;
+            if (!res || !res.ok || !holder.isConnected) return false;
             const canvas = document.createElement('canvas');
             canvas.width = 28;
             canvas.height = 28;
@@ -10167,14 +10210,14 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
             drawPreviewFrameToCanvas(res, canvas);
             holder.innerHTML = '';
             holder.appendChild(canvas);
+            return true;
           })
-          .catch(() => {});
-        return;
+          .catch(() => false);
       }
-      return;
+      return Promise.resolve(false);
     }
     if (tabKey !== 'civilizations') {
-      return;
+      return Promise.resolve(false);
     }
   }
   const candidatePaths = [];
@@ -10217,36 +10260,29 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
       scenarioPaths: resolvedScenarioPaths.join('|')
     });
 
-    if (state.previewCache.has(key)) {
-      paint(state.previewCache.get(key));
-      return;
-    }
-
-    window.c3xManager.getPreview({
+    return getOrStartPreviewRequest(key, () => window.c3xManager.getPreview({
       kind: 'civilopediaIcon',
       civ3Path: state.settings.civ3Path,
       scenarioPath: resolvedScenarioPath,
       scenarioPaths: resolvedScenarioPaths,
       assetPath: candidatePath,
       civilopediaKey: tabKey === 'civilizations' ? String(entry.civilopediaKey || '') : ''
-    })
+    }))
       .then((res) => {
-
         if (!res || !res.ok) {
-          tryCandidate(index + 1);
-          return;
+          return tryCandidate(index + 1);
         }
-        setPreviewCache(key, res);
         if (holder.isConnected) paint(res);
+        return true;
       })
       .catch((err) => {
         if (entry && entry._importScenarioPath) {
         }
-        tryCandidate(index + 1);
+        return tryCandidate(index + 1);
       });
   };
 
-  tryCandidate(0);
+  return tryCandidate(0) || Promise.resolve(false);
 }
 
 function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
@@ -11375,7 +11411,7 @@ function invalidateUnits32AtlasMetricsCache() {
 }
 
 function invalidatePreviewStateForReload() {
-  state.previewCache.clear();
+  clearPreviewCaches();
   state.districtRepresentativePreviewPending.clear();
   state.previewContextVersion += 1;
   invalidateUnits32AtlasMetricsCache();
@@ -17579,7 +17615,7 @@ async function stageLeaderAnimationReplacement(entry, field, filePath, undoKey =
     throw new Error('Choose an FLC, PNG, JPEG, or PCX file for leader animation replacement.');
   }
   setDirty(true);
-  state.previewCache.clear();
+  clearPreviewCaches();
   setStatus(`Staged ${getPathBaseName(targetPath)} for scenario Art\\Flics. Use Save to write it.`);
 }
 
@@ -19671,14 +19707,9 @@ function createReferencePicker(config) {
       });
     }
     if (showOptionThumbs && !customThumbPainted && rowThumbEntry && targetTabKey) {
-      const eagerThumbLoadLimit = 16;
-      if (pendingThumbNodes.length < eagerThumbLoadLimit) {
-        loadReferenceListThumbnail(targetTabKey, rowThumbEntry, thumb);
-      } else {
-        thumb.dataset.thumbPending = '1';
-        thumb.__thumbEntry = rowThumbEntry;
-        pendingThumbNodes.push(thumb);
-      }
+      thumb.dataset.thumbPending = '1';
+      thumb.__thumbEntry = rowThumbEntry;
+      pendingThumbNodes.push(thumb);
     }
     selectBtn.appendChild(thumb);
     const textWrap = document.createElement('span');
@@ -20001,19 +20032,14 @@ async function getUnits32AtlasPreview({ scenarioPath, scenarioPaths } = {}) {
     scenarioPath: resolvedScenarioPath,
     scenarioPaths: resolvedScenarioPaths.join('|')
   });
-  if (state.previewCache.has(cacheKey)) return state.previewCache.get(cacheKey);
-  const res = await window.c3xManager.getPreview({
+  const res = await getOrStartPreviewRequest(cacheKey, () => window.c3xManager.getPreview({
     kind: 'civilopediaIcon',
     civ3Path: state.settings.civ3Path,
     scenarioPath: resolvedScenarioPath,
     scenarioPaths: resolvedScenarioPaths,
     assetPath: 'Art/Units/units_32.pcx'
-  });
-  if (res && res.ok) {
-    setPreviewCache(cacheKey, res);
-    return res;
-  }
-  return null;
+  }));
+  return res && res.ok ? res : null;
 }
 
 async function getResourcesAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
@@ -28996,6 +29022,7 @@ function renderReferenceTab(tab, tabKey) {
   wrap.className = 'section-editor';
   const allEntries = tab.entries || [];
   const referenceEditable = isScenarioMode();
+  const getSelectedEntry = () => allEntries[Math.max(0, Number(state.referenceSelection[tabKey] || 0))] || null;
 
   const controls = document.createElement('div');
   controls.className = 'reference-filter-row';
@@ -29018,6 +29045,8 @@ function renderReferenceTab(tab, tabKey) {
   let kindFilter = null;
   let eraFilterSelect = null;
   let techTreeBtn = null;
+  let copyBtn = null;
+  let deleteBtn = null;
   const nextWarningBtn = createNextWarningButton();
   controlsRight.appendChild(nextWarningBtn);
   if (tabKey === 'technologies' || tabKey === 'units') {
@@ -29112,7 +29141,7 @@ function renderReferenceTab(tab, tabKey) {
     addBtn.type = 'button';
     addBtn.className = 'ghost action-add';
     addBtn.textContent = '＋ Add';
-    const copyBtn = document.createElement('button');
+    copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'ghost action-copy';
     copyBtn.textContent = '⧉ Copy';
@@ -29120,15 +29149,16 @@ function renderReferenceTab(tab, tabKey) {
     importBtn.type = 'button';
     importBtn.className = 'ghost action-import';
     importBtn.textContent = '⇪ Import';
-    const deleteBtn = document.createElement('button');
+    deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'ghost action-delete';
     deleteBtn.textContent = '🗑 Delete';
-    const selectedEntry = allEntries[Math.max(0, Number(state.referenceSelection[tabKey] || 0))] || null;
+    const selectedEntry = getSelectedEntry();
     copyBtn.disabled = !selectedEntry;
     deleteBtn.disabled = !selectedEntry;
 
     addBtn.addEventListener('click', () => {
+      const selectedEntry = getSelectedEntry();
       const singular = String(tab.title || 'Entry').replace(/s$/, '') || 'Entry';
       const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, `NEW_${tab.title.slice(0, 3)}_${Date.now()}`);
       const newEntry = buildNewReferenceEntryFromTemplate({
@@ -29153,6 +29183,7 @@ function renderReferenceTab(tab, tabKey) {
     });
 
     copyBtn.addEventListener('click', () => {
+      const selectedEntry = getSelectedEntry();
       if (!selectedEntry) return;
       const copyName = `${selectedEntry.name || inferReferenceNameFromKey(selectedEntry.civilopediaKey, tabKey)} Copy`;
       const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, copyName);
@@ -29179,6 +29210,7 @@ function renderReferenceTab(tab, tabKey) {
     });
 
     importBtn.addEventListener('click', async () => {
+      const selectedEntry = getSelectedEntry();
       try {
         appendDebugLog('reference-import:click', {
           tabKey,
@@ -29330,6 +29362,7 @@ function renderReferenceTab(tab, tabKey) {
     });
 
     deleteBtn.addEventListener('click', async () => {
+      const selectedEntry = getSelectedEntry();
       if (!selectedEntry) return;
       const confirmed = await promptReferenceDeleteAction({ tab, selectedEntry });
       if (!confirmed) return;
@@ -29371,6 +29404,116 @@ function renderReferenceTab(tab, tabKey) {
 
   const bodyHost = document.createElement('div');
   wrap.appendChild(bodyHost);
+  const auditGeneralHost = document.createElement('div');
+  bodyHost.appendChild(auditGeneralHost);
+  const layout = document.createElement('div');
+  layout.className = 'entry-layout';
+  const listPane = document.createElement('div');
+  listPane.className = 'entry-list-pane';
+  const detailPane = document.createElement('div');
+  detailPane.className = 'entry-detail-pane';
+  layout.appendChild(listPane);
+  layout.appendChild(detailPane);
+  bodyHost.appendChild(layout);
+  let pendingListThumbs = [];
+  let currentRenderedSelectionIdentity = '';
+  let listThumbHydrationRaf = 0;
+  const listThumbsInFlight = new Set();
+
+  const updateSelectionActionButtons = () => {
+    const selectedEntry = getSelectedEntry();
+    if (copyBtn) copyBtn.disabled = !selectedEntry;
+    if (deleteBtn) deleteBtn.disabled = !selectedEntry;
+  };
+
+  const scheduleHydrateVisibleReferenceListThumbs = (limit = 24) => {
+    if (listThumbHydrationRaf) return;
+    listThumbHydrationRaf = requestAnimationFrame(() => {
+      listThumbHydrationRaf = 0;
+      hydrateVisibleReferenceListThumbs(limit);
+    });
+  };
+
+  const hydrateVisibleReferenceListThumbs = (limit = 24) => {
+    const maxToLoad = Math.max(1, Number(limit) || 24);
+    if (maxToLoad <= 0 || !listPane.isConnected) return;
+    const paneRect = listPane.getBoundingClientRect();
+    const maxConcurrentLoads = 8;
+    const availableSlots = Math.max(0, maxConcurrentLoads - listThumbsInFlight.size);
+    let remaining = Math.min(maxToLoad, availableSlots);
+    let visiblePending = 0;
+    const visibleItems = [];
+    for (let i = 0; i < pendingListThumbs.length; i += 1) {
+      const item = pendingListThumbs[i];
+      if (!item || !item.thumb || item.thumb.dataset.thumbPending !== '1') continue;
+      if (!item.thumb.isConnected) {
+        item.thumb.dataset.thumbPending = '0';
+        continue;
+      }
+      const row = item.thumb.closest('.entry-list-item');
+      if (!row) {
+        item.thumb.dataset.thumbPending = '0';
+        continue;
+      }
+      const rowRect = row.getBoundingClientRect();
+      if (rowRect.bottom < (paneRect.top - 48) || rowRect.top > (paneRect.bottom + 48)) continue;
+      visiblePending += 1;
+      visibleItems.push({
+        item,
+        distance: Math.abs((rowRect.top + rowRect.bottom) / 2 - (paneRect.top + paneRect.bottom) / 2)
+      });
+    }
+    visibleItems.sort((a, b) => a.distance - b.distance);
+    for (let i = 0; i < visibleItems.length && remaining > 0; i += 1) {
+      const target = visibleItems[i] && visibleItems[i].item;
+      if (!target || !target.thumb || target.thumb.dataset.thumbPending !== '1') continue;
+      if (listThumbsInFlight.has(target.thumb)) continue;
+      target.thumb.dataset.thumbPending = '0';
+      target.thumb.dataset.thumbLoading = '1';
+      listThumbsInFlight.add(target.thumb);
+      Promise.resolve(loadReferenceListThumbnail(tabKey, target.entry, target.thumb))
+        .catch(() => false)
+        .finally(() => {
+          listThumbsInFlight.delete(target.thumb);
+          if (target.thumb && target.thumb.isConnected) delete target.thumb.dataset.thumbLoading;
+          scheduleHydrateVisibleReferenceListThumbs(limit);
+        });
+      remaining -= 1;
+    }
+    if (visiblePending > 0 && (visiblePending > maxToLoad || listThumbsInFlight.size > 0)) {
+      scheduleHydrateVisibleReferenceListThumbs(limit);
+    }
+  };
+
+  listPane.addEventListener('scroll', () => {
+    state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+    const hasFilterText = !!String(state.referenceFilter[tabKey] || '').trim();
+    scheduleHydrateVisibleReferenceListThumbs(hasFilterText ? 40 : 24);
+  });
+  detailPane.addEventListener('scroll', () => {
+    state.referenceDetailScrollTop[tabKey] = detailPane.scrollTop;
+  });
+
+  function selectReferenceEntry(baseIndex, options = {}) {
+    if (!Number.isFinite(baseIndex) || baseIndex < 0) return;
+    syncCurrentNavigationSnapshot();
+    const before = captureViewSnapshot();
+    state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+    state.referenceSelection[tabKey] = baseIndex;
+    if (options.resetDetailScroll) state.referenceDetailScrollTop[tabKey] = 0;
+    state.tabContentScrollTop = el.tabContent.scrollTop;
+    const after = captureViewSnapshot();
+    renderReferenceBody({
+      skipListRebuild: true,
+      resetDetailScroll: !!options.resetDetailScroll
+    });
+    if (!state.isApplyingHistory && before && after && snapshotKey(before) !== snapshotKey(after)) {
+      pushNavigationSnapshot(after);
+    } else {
+      updateNavButtons();
+      persistCurrentViewSnapshot();
+    }
+  }
 
   if (tabKey === 'units' && (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey())) {
     ensureCurrentUnits32AtlasMetrics().then((metrics) => {
@@ -29380,14 +29523,17 @@ function renderReferenceTab(tab, tabKey) {
     }).catch(() => {});
   }
 
-  function renderReferenceBody() {
+  function renderReferenceBody(options = {}) {
+    const skipListRebuild = options.skipListRebuild === true;
+    const preserveDetailIfSameSelection = options.preserveDetailIfSameSelection === true;
+    const resetDetailScroll = options.resetDetailScroll === true;
     if (state.referenceSectionNavCleanup) {
       try { state.referenceSectionNavCleanup(); } catch (_err) {}
       state.referenceSectionNavCleanup = null;
     }
-    bodyHost.innerHTML = '';
+    auditGeneralHost.innerHTML = '';
     const auditGeneralBox = createWarningBox(getLoadAuditGeneralMessages(tabKey), 'Quality Checks', { collapsible: true });
-    if (auditGeneralBox) bodyHost.appendChild(auditGeneralBox);
+    if (auditGeneralBox) auditGeneralHost.appendChild(auditGeneralBox);
 
   const filteredEntries = allEntries
     .map((entry, baseIndex) => ({ entry, baseIndex }))
@@ -29433,39 +29579,8 @@ function renderReferenceTab(tab, tabKey) {
     state.referenceSelection[tabKey] = filteredEntries[selectedFilteredIndex].baseIndex;
   }
 
-  const layout = document.createElement('div');
-  layout.className = 'entry-layout';
-
-  const listPane = document.createElement('div');
-  listPane.className = 'entry-list-pane';
-  const pendingListThumbs = [];
-  const hydrateVisibleReferenceListThumbs = (limit = 24) => {
-    let remaining = Math.max(1, Number(limit) || 24);
-    if (remaining <= 0) return;
-    const paneRect = listPane.getBoundingClientRect();
-    for (let i = 0; i < pendingListThumbs.length && remaining > 0; i += 1) {
-      const item = pendingListThumbs[i];
-      if (!item || !item.thumb || item.thumb.dataset.thumbPending !== '1') continue;
-      if (!item.thumb.isConnected) {
-        item.thumb.dataset.thumbPending = '0';
-        continue;
-      }
-      const row = item.thumb.closest('.entry-list-item');
-      if (!row) {
-        item.thumb.dataset.thumbPending = '0';
-        continue;
-      }
-      const rowRect = row.getBoundingClientRect();
-      if (rowRect.bottom < (paneRect.top - 48) || rowRect.top > (paneRect.bottom + 48)) continue;
-      item.thumb.dataset.thumbPending = '0';
-      loadReferenceListThumbnail(tabKey, item.entry, item.thumb);
-      remaining -= 1;
-    }
-  };
-  listPane.addEventListener('scroll', () => {
-    state.referenceListScrollTop[tabKey] = listPane.scrollTop;
-    hydrateVisibleReferenceListThumbs(hasFilterText ? 40 : 24);
-  });
+  pendingListThumbs = [];
+  updateSelectionActionButtons();
 
   const activeBaseIndex = filteredEntries[selectedFilteredIndex]
     ? filteredEntries[selectedFilteredIndex].baseIndex
@@ -29482,10 +29597,8 @@ function renderReferenceTab(tab, tabKey) {
     if (warningEntries.length <= 0) return;
     const next = warningEntries.find((item) => item.filteredIndex > selectedFilteredIndex) || warningEntries[0];
     if (!next) return;
-    state.referenceSelection[tabKey] = next.baseIndex;
     state.referenceListScrollTop[tabKey] = 0;
-    state.referenceDetailScrollTop[tabKey] = 0;
-    renderReferenceBody();
+    selectReferenceEntry(next.baseIndex, { resetDetailScroll: true });
   };
   const isUnitEraVariantEntry = (entry) => {
     const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
@@ -29551,25 +29664,44 @@ function renderReferenceTab(tab, tabKey) {
       state.referenceListScrollTop[tabKey] = listPane.scrollTop;
     });
     itemBtn.addEventListener('click', () => {
-      navigateWithHistory(() => {
-        state.referenceListScrollTop[tabKey] = listPane.scrollTop;
-        state.referenceSelection[tabKey] = baseIndex;
-        state.tabContentScrollTop = el.tabContent.scrollTop;
-      }, { preserveTabScroll: true });
+      selectReferenceEntry(baseIndex);
     });
-    listPane.appendChild(itemBtn);
+    if (!skipListRebuild) listPane.appendChild(itemBtn);
   };
 
-  filteredEntries.forEach(({ entry, baseIndex }) => addListButton({ entry, baseIndex }));
-  layout.appendChild(listPane);
-  requestAnimationFrame(() => hydrateVisibleReferenceListThumbs(hasFilterText ? 56 : 32));
+  if (!skipListRebuild) {
+    listPane.innerHTML = '';
+    filteredEntries.forEach(({ entry, baseIndex }) => addListButton({ entry, baseIndex }));
+    scheduleHydrateVisibleReferenceListThumbs(hasFilterText ? 56 : 32);
+  } else {
+    const activeIdentity = filteredEntries[selectedFilteredIndex]
+      ? getReferenceEntryIdentity(tabKey, filteredEntries[selectedFilteredIndex].entry, filteredEntries[selectedFilteredIndex].baseIndex)
+      : '';
+    Array.from(listPane.querySelectorAll('.entry-list-item')).forEach((itemBtn) => {
+      const isActive = String(itemBtn.getAttribute('data-entry-id') || '') === activeIdentity;
+      itemBtn.classList.toggle('active', isActive);
+      if (!isActive) return;
+      const thumb = itemBtn.querySelector('.entry-thumb');
+      if (!thumb || thumb.dataset.thumbPending !== '1') return;
+      const match = filteredEntries[selectedFilteredIndex];
+      if (!match) return;
+      thumb.dataset.thumbPending = '0';
+      loadReferenceListThumbnail(tabKey, match.entry, thumb);
+    });
+    scheduleHydrateVisibleReferenceListThumbs(hasFilterText ? 40 : 24);
+  }
 
-  const detailPane = document.createElement('div');
-  detailPane.className = 'entry-detail-pane';
-  detailPane.addEventListener('scroll', () => {
-    state.referenceDetailScrollTop[tabKey] = detailPane.scrollTop;
-  });
+  const nextSelectedIdentity = filteredEntries[selectedFilteredIndex]
+    ? getReferenceEntryIdentity(tabKey, filteredEntries[selectedFilteredIndex].entry, filteredEntries[selectedFilteredIndex].baseIndex)
+    : '';
+  const shouldRenderDetail = (
+    !preserveDetailIfSameSelection
+    || currentRenderedSelectionIdentity !== nextSelectedIdentity
+    || filteredEntries.length === 0
+    || !detailPane.hasChildNodes()
+  );
 
+  if (shouldRenderDetail) detailPane.innerHTML = '';
   if (filteredEntries.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'section-card';
@@ -29580,8 +29712,9 @@ function renderReferenceTab(tab, tabKey) {
     empty.innerHTML = hasFilter
       ? '<p class="hint">No entries match the current filters.</p>'
       : '<p class="hint">No entries found. Verify your Civilization 3 path and reload.</p>';
-    detailPane.appendChild(empty);
-  } else {
+    if (shouldRenderDetail) detailPane.appendChild(empty);
+    currentRenderedSelectionIdentity = '';
+  } else if (shouldRenderDetail) {
     const entry = filteredEntries[selectedFilteredIndex].entry;
     const selectedBaseIndex = filteredEntries[selectedFilteredIndex].baseIndex;
     const openCurrentTechTree = () => {
@@ -29655,7 +29788,7 @@ function renderReferenceTab(tab, tabKey) {
     }
 
     if (tabKey === 'technologies' && techTreeBtn) {
-      techTreeBtn.addEventListener('click', openCurrentTechTree);
+      techTreeBtn.onclick = openCurrentTechTree;
     }
 
     const identityMeta = document.createElement('div');
@@ -30478,17 +30611,15 @@ function renderReferenceTab(tab, tabKey) {
     }
 
     detailPane.appendChild(card);
+    currentRenderedSelectionIdentity = nextSelectedIdentity;
   }
-
-  layout.appendChild(detailPane);
-  bodyHost.appendChild(layout);
   const savedListTop = state.referenceListScrollTop[tabKey] || 0;
   const savedDetailTop = state.referenceDetailScrollTop[tabKey] || 0;
   window.requestAnimationFrame(() => {
-    listPane.scrollTop = savedListTop;
-    detailPane.scrollTop = savedDetailTop;
+    if (!skipListRebuild) listPane.scrollTop = savedListTop;
+    if (shouldRenderDetail) detailPane.scrollTop = resetDetailScroll ? 0 : savedDetailTop;
     updateInlineHistoryNavVisibility();
-    window.requestAnimationFrame(() => {
+    if (!skipListRebuild) window.requestAnimationFrame(() => {
       if (!listPane.isConnected) return;
       const activeBtn = listPane.querySelector('.entry-list-item.active');
       if (activeBtn) {
@@ -30500,7 +30631,7 @@ function renderReferenceTab(tab, tabKey) {
         }
       }
     });
-    if (state.referenceSearchFocusedTab === tabKey) {
+    if (!skipListRebuild && state.referenceSearchFocusedTab === tabKey) {
       const caret = state.referenceSearchCaret[tabKey];
       search.focus({ preventScroll: true });
       if (caret && Number.isFinite(caret.start) && Number.isFinite(caret.end)) {
@@ -30519,7 +30650,9 @@ function renderReferenceTab(tab, tabKey) {
       start: search.selectionStart ?? search.value.length,
       end: search.selectionEnd ?? search.value.length
     };
-    scheduleTabSearchRender(tabKey, renderReferenceBody, {
+    scheduleTabSearchRender(tabKey, () => renderReferenceBody({
+      preserveDetailIfSameSelection: true
+    }), {
       delayMs: TAB_SEARCH_RENDER_DELAY_MS
     });
   });
@@ -30527,21 +30660,21 @@ function renderReferenceTab(tab, tabKey) {
     kindFilter.addEventListener('change', () => {
       state.referenceImprovementKind[tabKey] = kindFilter.value;
       state.referenceListScrollTop[tabKey] = 0;
-      renderReferenceBody();
+      renderReferenceBody({ preserveDetailIfSameSelection: true });
     });
   }
   if (eraFilterSelect) {
     eraFilterSelect.addEventListener('change', () => {
       state.referenceEraFilter[tabKey] = eraFilterSelect.value || 'all';
       state.referenceListScrollTop[tabKey] = 0;
-      renderReferenceBody();
+      renderReferenceBody({ preserveDetailIfSameSelection: true });
     });
   }
   if (unitSortSelect) {
     unitSortSelect.addEventListener('change', () => {
       state.referenceUnitSort[tabKey] = unitSortSelect.value;
       state.referenceListScrollTop[tabKey] = 0;
-      renderReferenceBody();
+      renderReferenceBody({ preserveDetailIfSameSelection: true });
     });
   }
   if (unitAvailabilityBtn) {
@@ -48086,9 +48219,15 @@ function buildLoadBundlePayload(overrides = {}) {
 }
 
 function buildAuditPayloadFromState(overrides = {}) {
+  const overrideAuditOptions = overrides && overrides.auditOptions && typeof overrides.auditOptions === 'object'
+    ? overrides.auditOptions
+    : {};
   return {
     ...buildLoadBundlePayload(overrides),
-    bundleSnapshot: state.bundle ? deepCloneUiValue(state.bundle) : null
+    bundleSnapshot: state.bundle ? deepCloneUiValue(state.bundle) : null,
+    auditOptions: {
+      ...overrideAuditOptions
+    }
   };
 }
 
@@ -49272,7 +49411,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && state.settings.mode === 'scenario'
     && state.settings.scenarioPath
   ) {
-    state.previewCache.clear();
+    clearPreviewCaches();
     await loadBundleAndRender({
       loadingText: options.loadingText || 'Restoring changes...',
       scenarioSearchFolderOverride: restoredSearchFolder,
