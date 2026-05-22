@@ -1,3 +1,24 @@
+* RELEASE 27.11.1
+- Fixed clipped Map modal edit redraws so long river and overlay pixels are repainted from farther source tiles when a nearby tile edit clears their area, preventing partial river cutoffs a few tiles away from district edits.
+- Added focused `biq-ref` performance logs for reference-edit undo capture, dirty comparison, and dirty-refresh work so normal rules-editor lag can be profiled alongside the existing map instrumentation.
+- Added grouped Map modal terrain-sprite miss logging so fallback-color terrain redraws can be traced to missing atlases, invalid image indexes, or related atlas lookup failures from a single debug log.
+- Fixed a Map modal regression where hover-only district preview rerenders could suppress the pending full terrain-art refresh, leaving the map stuck on flat fallback colors and glyphs even after terrain atlases finished loading.
+- Stopped district hover-preview art cache misses from forcing full Map modal canvas and minimap rerenders; newly loaded district preview variants now refresh the hover layer in place.
+- Reduced Rules editor input lag by scoping many unit/civilization/technology/improvement undo snapshots to the active entry, caching clean reference dirty signatures, and stopping several non-map editors from accidentally snapshotting the whole map tab on each change.
+- Reverted an overly aggressive Map modal partial-redraw candidate optimization that could clear large edit regions without repainting every affected tile, leaving visible blank map holes around edited terrain.
+- Fixed Map modal single-step Undo for diff-based map edits so map-only undo snapshots patch the live map tab instead of falling through the generic empty-snapshot tab reset path, which left Undo appearing to do nothing.
+- Removed the remaining whole-map dirty comparisons from the hot Map modal mouse-up path when map edits are already known dirty, so Save-button refresh and hover/selection overlay updates no longer stall on another full map diff after painting.
+- Cleared the Map modal hover/paint preview overlay immediately when a paint stroke ends so stale brush outlines do not linger after the edited terrain has already redrawn.
+- Switched hot Map modal paint and selected-tile edits to a fast known-dirty path so Save-button enablement and hover/selection overlay cleanup no longer wait on a whole-bundle dirty snapshot the first time the map becomes unsaved.
+- Kept the Map modal hover/brush preview hidden after paint mouse-up until the pointer actually moves again, preventing post-stroke hover redraws from making the selection/preview overlay appear stuck.
+- Added map hover-layer clear and dirty-UI refresh timing logs so lingering post-paint overlays can be compared directly against Save-button enablement and other deferred map UI work.
+- Added deeper Map modal timing logs for tile hit-testing, brush resolution, undo snapshot capture, terrain edit application, redraw, minimap refresh, and tile-info rendering so slow map edits can be profiled from one debug-log trace.
+- Reduced Map modal edit latency by skipping redundant re-stringification for serialized map undo snapshots and deferring map undo dirty-UI refresh out of the immediate click path.
+- Improved Map modal paint responsiveness by deferring minimap refresh until after the main map redraw and added explicit `...-settled` timing logs for edit completion.
+- Reduced Map modal terrain/resource/fog edit latency further by using record-diff undo entries on the hot paint/select paths instead of full-map undo serialization.
+- Fixed Units `Unit Table` reference-jump buttons such as `Upgrade To` so they close the modal before navigating to the selected unit instead of leaving the modal overlay in place.
+- Fixed Units `Unit Table` history so jumping from the modal to a unit detail view lets `Back` reopen the Unit Table with its prior filters.
+
 * RELEASE 27.11
 - Fixed the Map modal `Save` button state so it follows the main app rules and stays disabled unless there are unsaved changes and save is currently valid.
 - Fixed BIQ auto-encoding detection to read BIQ/map strings from the BIQ itself instead of inferring from Civilopedia/PediaIcons text layers, which corrects mixed-language cases such as accented city names rendering as the wrong characters on the Map tab.

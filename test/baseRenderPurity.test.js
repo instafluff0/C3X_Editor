@@ -313,6 +313,12 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
     /const restoredSearchFolder = Object\.prototype\.hasOwnProperty\.call\(restoredEditableTabs, 'scenarioSettings'\)[\s\S]*?getScenarioSearchFolderValueFromTabs\(state\.bundle && state\.bundle\.tabs \? state\.bundle\.tabs : \{\}\);/,
     'Partial undo restores should preserve the current scenario search folder when that tab was not part of the snapshot'
   );
+
+  assert.match(
+    text,
+    /const isSerializedReferenceEntrySnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-reference-entry'[\s\S]*?\);[\s\S]*?if \(\s*!isSerializedReferenceEntrySnapshot[\s\S]*?await loadBundleAndRender\(\{/m,
+    'Entry-scoped reference undo should skip the scenario reload path so unrelated in-memory edits are not discarded before the snapshot is applied'
+  );
 });
 
 test('long-list C3X base editors avoid full local rerenders on add/remove', () => {

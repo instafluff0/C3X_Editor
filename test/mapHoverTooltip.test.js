@@ -31,7 +31,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const label = `x=\$\{geom\.xPos\}, y=\$\{geom\.yPos\}`;[\s\S]*?hoverTooltip\.textContent = label;/,
+    /const renderHoverTooltipForState = \(hit, clientX, clientY, reason = ''\) => \{[\s\S]*?hoverTooltip\.textContent = `x=\$\{geom\.xPos\}, y=\$\{geom\.yPos\}`;/,
     'hover tooltip should display the hovered tile grid coordinates'
   );
   assert.match(
@@ -51,7 +51,17 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const drawPaintPreview = \(hit\) => \{[\s\S]*?const previewIndexes = getBrushTileIndexes\(hit\.index\);[\s\S]*?previewIndexes\.forEach\(\(tileIdx\) => \{[\s\S]*?hoverCtx\.globalAlpha = 0\.84;[\s\S]*?if \(mode === 'terrain'\) \{[\s\S]*?const previewVariantState = getMapToolTerrainVariantState\(effectiveTerrainCode\);[\s\S]*?drawTileDiamondPath\(hoverCtx, Math\.round\(logical\.cx\), Math\.round\(logical\.cy\), Math\.max\(2, Math\.round\(tilePx \/ 8\)\)\);[\s\S]*?hoverCtx\.fillStyle = terrainPreviewFillStyle\(baseTerrainForPaint\(effectiveTerrainCode\)\);[\s\S]*?drawSimpleTerrainPreviewOverlay\(hoverCtx, effectiveTerrainCode, sx, sy, logical, previewVariantState\);[\s\S]*?if \(mode === 'resource'\) \{[\s\S]*?hoverCtx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, dx, dy, Math\.round\(cellW \* scale\), Math\.round\(cellH \* scale\)\)[\s\S]*?if \(mode === 'district'\) \{[\s\S]*?drawDistrictOverlay\(hoverCtx, previewRecord, geom, sx, sy, 'all'\);/,
+    /const tileDrawRect = \(sx, sy\) => \(\{[\s\S]*?\}\);[\s\S]*?const tileClipInfluenceRect = \(sx, sy\) => \(\{[\s\S]*?x: sx - Math\.round\(tileW \* 1\.08\),[\s\S]*?w: Math\.round\(tileW \* 3\.18\),[\s\S]*?h: Math\.round\(tileH \* 4\.05\)[\s\S]*?\}\);[\s\S]*?if \(clips && !clips\.some\(\(rect\) => rectIntersects\(tileClipInfluenceRect\(sx, sy\), rect\)\)\) continue;/,
+    'clipped map redraws should use an expanded source-tile influence rect so long river and overlay pixels repaint when nearby edits clear their area'
+  );
+  assert.match(
+    rendererText,
+    /const diagnoseTerrainAtlasSpriteMiss = \(fileIdx, imageIdx, useLandmarkAtlas = false\) => \{[\s\S]*?reason: 'missing-atlas'[\s\S]*?reason: 'invalid-image-index'[\s\S]*?reason: 'image-row-out-of-range'[\s\S]*?\};[\s\S]*?const terrainSpriteMissStats = \{[\s\S]*?total: 0,[\s\S]*?samples: \[\][\s\S]*?\};[\s\S]*?appendDebugLog\('biq-map:terrain-sprite-miss', \{[\s\S]*?total: terrainSpriteMissStats\.total,[\s\S]*?samples: terrainSpriteMissStats\.samples[\s\S]*?\}\);/,
+    'map redraws should summarize terrain sprite fallback misses so atlas-key and image-index failures can be diagnosed from one trace'
+  );
+  assert.match(
+    rendererText,
+    /const drawPaintPreview = \(hit\) => \{[\s\S]*?const previewIndexes = getBrushTileIndexes\(hit\.index\);[\s\S]*?previewIndexes\.forEach\(\(tileIdx\) => \{[\s\S]*?hoverCtx\.globalAlpha = 0\.84;[\s\S]*?if \(mode === 'terrain'\) \{[\s\S]*?const previewVariantState = getMapToolTerrainVariantState\(effectiveTerrainCode\);[\s\S]*?drawTileDiamondPath\(hoverCtx, Math\.round\(logical\.cx\), Math\.round\(logical\.cy\), Math\.max\(2, Math\.round\(tilePx \/ 8\)\)\);[\s\S]*?hoverCtx\.fillStyle = terrainPreviewFillStyle\(baseTerrainForPaint\(effectiveTerrainCode\)\);[\s\S]*?drawSimpleTerrainPreviewOverlay\(hoverCtx, effectiveTerrainCode, sx, sy, logical, previewVariantState\);[\s\S]*?if \(mode === 'resource'\) \{[\s\S]*?hoverCtx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, dx, dy, Math\.round\(cellW \* scale\), Math\.round\(cellH \* scale\)\)[\s\S]*?if \(mode === 'district'\) \{[\s\S]*?drawDistrictOverlay\(hoverCtx, previewRecord, geom, sx, sy, 'all', \{ assetRefreshMode: 'hover-only' \}\);/,
     'paint preview should render semi-transparent previews across the whole brush footprint for terrain, resources, and district art'
   );
   assert.match(
@@ -251,8 +261,68 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const onPaintEnd = \(ev\) => \{[\s\S]*?const didEdit = !!paintStroke\.didEdit;[\s\S]*?paintStroke = null;[\s\S]*?hideHoverTooltip\(didEdit \? 'paint-end' : 'paint-end-noop'\);[\s\S]*?if \(didEdit\) setDirty\(true, \{ knownDirtyTab: 'map', reason: 'paint-stroke' \}\);[\s\S]*?if \(ev && typeof ev\.pointerId === 'number'\)/,
+    'finishing a paint stroke should clear the hover preview layer before the map dirty-state work and use the fast known-dirty map path instead of a full snapshot comparison'
+  );
+  assert.match(
+    rendererText,
+    /function applyEditableSnapshotToCurrentBundle\(targetSnapshot, options = \{\}\) \{[\s\S]*?const isMapRecordDiffSnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'map-record-diff'[\s\S]*?\);[\s\S]*?if \(isMapRecordDiffSnapshot\) \{[\s\S]*?mergedTabs\.map = applyMapRecordDiffToTab\(mergedTabs\.map, targetSnapshot\);[\s\S]*?\}[\s\S]*?if \(restoredKeys\.length === 0\) \{[\s\S]*?if \(isMapRecordDiffSnapshot\) \{[\s\S]*?state\.bundle\.tabs = mergedTabs;[\s\S]*?\} else \{[\s\S]*?EDITABLE_TAB_KEYS\.forEach\(\(key\) => \{[\s\S]*?delete mergedTabs\[key\];[\s\S]*?\}\);[\s\S]*?state\.bundle\.tabs = mergedTabs;[\s\S]*?\}[\s\S]*?\}/,
+    'map-record-diff undo should keep the current editable tabs intact and only patch the map tab instead of falling through the empty-snapshot tab wipe path'
+  );
+  assert.match(
+    rendererText,
+    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?\};[\s\S]*?const redrawMapCanvasInPlace = \(clipRects = null\) => \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-candidates'[\s\S]*?candidateCount: maxIdx \+ 1[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?if \(state\.biqMapLayer === 'terrain' && tilePx >= 4 && state\.biqMapShowOverlays\) \{[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{/,
+    'partial map redraws should clip output to edit regions but still repaint the full tile iteration set so cleared redraw rects do not leave blank map holes'
+  );
+  assert.match(
+    rendererText,
+    /const shouldSuppressHoverTooltipForEvent = \(ev\) => \{[\s\S]*?const movement = Math\.max\(Math\.abs\(dx\), Math\.abs\(dy\)\);[\s\S]*?if \(movement <= 2\) \{[\s\S]*?return true;[\s\S]*?\}[\s\S]*?clearMapHoverResumeGate\('pointer-moved'\);[\s\S]*?return false;[\s\S]*?\};[\s\S]*?const updateHoverTooltip = \(ev\) => \{[\s\S]*?if \(shouldSuppressHoverTooltipForEvent\(ev\)\) \{[\s\S]*?hideHoverTooltip\(\);[\s\S]*?return;[\s\S]*?\}/,
+    'hover preview should stay hidden after a paint stroke until the pointer actually moves again, preventing post-mouseup hover redraws from making the brush preview appear stuck'
+  );
+  assert.match(
+    rendererText,
+    /const hideHoverTooltip = \(reason = ''\) => \{[\s\S]*?hoverTooltip\.classList\.add\('hidden'\);[\s\S]*?hoverCtx\.clearRect\(0, 0, hoverCanvas\.width, hoverCanvas\.height\);[\s\S]*?appendDebugLog\('biq-map:hover-layer'/,
+    'hover-layer clears should emit explicit debug logs so paint-end overlay stalls can be compared against dirty-UI and minimap timings'
+  );
+  assert.match(
+    rendererText,
+    /function flushDirtyUiRefresh\(\) \{[\s\S]*?const startedAt = mapPerfNowMs\(\);[\s\S]*?appendDebugLog\('biq-map:dirty-ui-refresh'/,
+    'dirty-UI refresh should log map-scoped timing so Save-button enablement can be correlated with any lingering post-paint overlay delay'
+  );
+  assert.match(
+    rendererText,
+    /function flushDirtyUiRefresh\(\) \{[\s\S]*?updateActiveDirtyCachesMs[\s\S]*?snapshotCompareMs[\s\S]*?appendDebugLog\('biq-map:dirty-ui-refresh-phase'/,
+    'dirty-UI refresh logging should break out dirty-cache and snapshot-compare time so long post-paint stalls can be attributed to a specific sub-step'
+  );
+  assert.match(
+    rendererText,
+    /const applySelectedTileEdit = \(editFn, options = \{\}\) => \{[\s\S]*?setDirty\(true, \{ knownDirtyTab: 'map', reason: 'selected-tile-edit' \}\);/,
+    'selected-tile map edits should also use the fast known-dirty map path so save-button enablement does not wait on a whole-bundle dirty snapshot'
+  );
+  assert.match(
+    rendererText,
+    /function setDirty\(next, options = \{\}\) \{[\s\S]*?const knownDirtyTab = next[\s\S]*?if \(knownDirtyTab\) \{[\s\S]*?state\.isDirty = true;[\s\S]*?setTabDirtyCount\(knownDirtyTab, Math\.max\(1, previousCount\)\);[\s\S]*?scheduleDirtyUiRefresh\(\);[\s\S]*?return;[\s\S]*?\}/,
+    'setDirty should support a known-dirty-tab fast path so map edits can skip the first-dirty full snapshot comparison'
+  );
+  assert.match(
+    rendererText,
     /drawHoverBorder\(hit\);[\s\S]*?drawPaintPreview\(hit\);/,
     'paint mode should draw the selected paint preview into the hovered tile as the pointer moves'
+  );
+  assert.match(
+    rendererText,
+    /refreshMapHoverPreviewFromState = \(reason = ''\) => \{[\s\S]*?renderHoverTooltipForState\(\{ index: hitIndex, metric: 0 \}, hoverState\.clientX, hoverState\.clientY, reason \|\| 'hover-refresh'\);[\s\S]*?appendDebugLog\('biq-map:hover-refresh'/,
+    'hover-triggered district art loads should repaint the existing hover layer in place instead of waiting for another pointermove'
+  );
+  assert.match(
+    rendererText,
+    /function biqMapArtRerender\(meta = null\) \{[\s\S]*?const requestedReason = String\(meta && meta\.reason \|\| 'asset-load'\);[\s\S]*?if \(requestedReason !== 'hover-preview-asset-load'\) \{[\s\S]*?state\.biqMapRerenderNeedsFullRefresh = true;[\s\S]*?\}[\s\S]*?const needsFullRefresh = !!state\.biqMapRerenderNeedsFullRefresh;[\s\S]*?const reason = needsFullRefresh \? 'asset-load' : requestedReason;[\s\S]*?if \(!needsFullRefresh && reason === 'hover-preview-asset-load'\)[\s\S]*?if \(assetDrivenRefresh && loadingCount > 0\) \{[\s\S]*?biqMapArtRerender\(\{ reason, assetKey \}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?state\.biqMapRerenderNeedsFullRefresh = false;/,
+    'hover-only district preview refreshes should not cancel or starve a pending full terrain-art rerender once base map assets finish loading'
+  );
+  assert.match(
+    rendererText,
+    /drawDistrictOverlay\(hoverCtx, previewRecord, geom, sx, sy, 'all', \{ assetRefreshMode: 'hover-only' \}\)/,
+    'district hover previews should tag their art requests as hover-only so cache misses do not force a full map rerender'
   );
   assert.match(
     stylesText,
@@ -438,8 +508,8 @@ test('map art loads repaint an open map modal in place instead of rebuilding the
   );
   assert.match(
     rendererText,
-    /function biqMapArtRerender\(meta = null\) \{[\s\S]*?if \(mapModal\.tab && mapModal\.tileSection && !mapOverlay\.classList\.contains\('hidden'\)\) \{[\s\S]*?if \(typeof mapModal\.refreshVisuals === 'function'\) \{[\s\S]*?const loadingCount = Object\.keys\(state\.biqMapArtLoading \|\| \{\}\)\.length;[\s\S]*?const reason = String\(meta && meta\.reason \|\| 'asset-load'\);[\s\S]*?if \(assetDrivenRefresh && loadingCount > 0\) \{[\s\S]*?mode: 'deferred-until-idle'[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'light-refresh'[\s\S]*?mapModal\.refreshVisuals\(\{[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'full-modal-rerender'[\s\S]*?renderMapModalBody\(\);/,
-    'asset-driven map rerenders should defer map repaints until the art queue drains, then use the lightweight in-place refresh path while keeping the old full rerender as a fallback'
+    /function biqMapArtRerender\(meta = null\) \{[\s\S]*?const requestedReason = String\(meta && meta\.reason \|\| 'asset-load'\);[\s\S]*?if \(requestedReason !== 'hover-preview-asset-load'\) \{[\s\S]*?state\.biqMapRerenderNeedsFullRefresh = true;[\s\S]*?\}[\s\S]*?if \(mapModal\.tab && mapModal\.tileSection && !mapOverlay\.classList\.contains\('hidden'\)\) \{[\s\S]*?if \(typeof mapModal\.refreshVisuals === 'function'\) \{[\s\S]*?const loadingCount = Object\.keys\(state\.biqMapArtLoading \|\| \{\}\)\.length;[\s\S]*?const needsFullRefresh = !!state\.biqMapRerenderNeedsFullRefresh;[\s\S]*?const reason = needsFullRefresh \? 'asset-load' : requestedReason;[\s\S]*?if \(!needsFullRefresh && reason === 'hover-preview-asset-load'\)[\s\S]*?if \(assetDrivenRefresh && loadingCount > 0\) \{[\s\S]*?mode: 'deferred-until-idle'[\s\S]*?biqMapArtRerender\(\{ reason, assetKey \}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'light-refresh'[\s\S]*?state\.biqMapRerenderNeedsFullRefresh = false;[\s\S]*?mapModal\.refreshVisuals\(\{[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?mode: 'full-modal-rerender'[\s\S]*?renderMapModalBody\(\);/,
+    'asset-driven map rerenders should keep a pending full refresh alive until the terrain-art queue drains, while still letting hover-only district preview loads repaint just the hover layer'
   );
   assert.match(
     rendererText,
@@ -483,17 +553,27 @@ test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered c
 
   assert.match(
     rendererText,
-    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?const redrawRects = expandedIndexes\.flatMap\(\(idx\) => tileEditRedrawRects\(idx\) \|\| \[\]\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?minimapBaseDirty = true;[\s\S]*?renderMiniMap\(\);/,
-    'map edits should still use partial redraw rects and refresh the cached minimap base'
+    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?const redrawRects = expandedIndexes\.flatMap\(\(idx\) => tileEditRedrawRects\(idx\) \|\| \[\]\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?scheduleDeferredMiniMapRefresh\(\{[\s\S]*?settleEvent: 'biq-map:paint-settled'/,
+    'map edits should use partial redraw rects, defer minimap refresh, and emit a settled timing event after the visual work completes'
   );
   assert.match(
     rendererText,
-    /const redrawMapCanvasInPlace = \(clipRects = null\) => \{[\s\S]*?const clips = Array\.isArray\(clipRects\) && clipRects\.length > 0 \? clipRects : null;[\s\S]*?if \(clips\) \{[\s\S]*?ctx\.clip\(\);[\s\S]*?clips\.forEach\(\(rect\) => ctx\.clearRect\(rect\.x, rect\.y, rect\.w, rect\.h\)\);[\s\S]*?\} else \{[\s\S]*?ctx\.clearRect\(0, 0, canvas\.width, canvas\.height\);[\s\S]*?\}[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{/,
-    'default redraws should repaint the whole map canvas, while edit-driven redraws may still clip to dirty rects'
+    /const redrawMapCanvasInPlace = \(clipRects = null\) => \{/,
+    'canvas redraw should continue to support clipped edit refreshes without a separate candidate-index parameter'
   );
   assert.match(
     rendererText,
-    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?const rebuildMiniMapBase = \(\) => \{[\s\S]*?const drewSprite = drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, miniTileW, miniTileH\);[\s\S]*?minimapBaseDirty = false;[\s\S]*?\};[\s\S]*?renderMiniMap = \(\) => \{[\s\S]*?if \(minimapBaseDirty\) rebuildMiniMapBase\(\);[\s\S]*?mmCtx\.drawImage\(minimapBaseCanvas, 0, 0, minimapCanvas\.width, minimapCanvas\.height\);/,
+    /appendDebugLog\('biq-map:canvas-redraw-candidates', \{[\s\S]*?candidateCount: maxIdx \+ 1/,
+    'canvas redraw candidate logging should continue to report the full tile iteration set for correctness-sensitive clipped repaints'
+  );
+  assert.match(
+    rendererText,
+    /for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-progress'/,
+    'clipped redraws should still iterate the full tile set so every cleared tile in the redraw region gets repainted'
+  );
+  assert.match(
+    rendererText,
+    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?const rebuildMiniMapBase = \(\) => \{[\s\S]*?const drewSprite = drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, miniTileW, miniTileH\);[\s\S]*?minimapBaseDirty = false;[\s\S]*?\};[\s\S]*?renderMiniMap = \(\) => \{[\s\S]*?const rebuiltBase = !!minimapBaseDirty;[\s\S]*?if \(rebuiltBase\) rebuildMiniMapBase\(\);[\s\S]*?mmCtx\.drawImage\(minimapBaseCanvas, 0, 0, minimapCanvas\.width, minimapCanvas\.height\);[\s\S]*?const scheduleDeferredMiniMapRefresh = \(meta = \{\}\) => \{[\s\S]*?minimapBaseDirty = true;[\s\S]*?minimapRefreshRaf = window\.requestAnimationFrame\(\(\) => \{/,
     'minimap redraws should use a cached minimap base canvas instead of sampling the main canvas'
   );
   assert.match(
