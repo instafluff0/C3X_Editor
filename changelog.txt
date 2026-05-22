@@ -1,4 +1,5 @@
 * RELEASE 27.11.1.0
+- Changed the sectioned Districts/Wonders/Natural Wonders shell to keep its left list mounted across selection changes and use the newer viewport-prioritized thumbnail hydration queue, so clicking between long district-style entries no longer rebuilds every list row and fast scrolling is less likely to leave section art blank.
 - Unified Civs, Resources, and Governments with the shared deferred reference-tab utility-section renderer, so their Civilopedia and art panels now lazy-mount like Units, Techs, and Improvements instead of eagerly building closed editors.
 - Fixed Improvements -> Required Districts dropdown thumbnails by wiring that picker through the shared district preview renderer, so district options now show their representative art instead of empty placeholder squares.
 - Fixed shared reference-list thumbnail hydration to retry a couple of likely transient blank visible slots instead of permanently giving up after one missed load attempt, so fast scrolling is less likely to leave icons unrendered.

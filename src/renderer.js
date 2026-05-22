@@ -41553,7 +41553,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!tile) return false;
     return !isWaterTerrain(terrainInfo(tile).realTerrain);
   };
-  const tileIsLandAtWithOwner = (ownerId, xPos, yPos, mustBeSameOwner) => {
+  function tileIsLandAtWithOwner(ownerId, xPos, yPos, mustBeSameOwner) {
     if (mustBeSameOwner && parseIntLoose(ownerId, -1) <= 0) return false;
     const coord = normalizeWrappedCoord(xPos, yPos);
     if (!coord) return false;
@@ -41562,7 +41562,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!mustBeSameOwner) return true;
     const ownerInfo = resolveTileTerritoryInfo(tile, coord);
     return !!ownerInfo && parseIntLoose(ownerInfo.ownerId, -1) === parseIntLoose(ownerId, -1);
-  };
+  }
   function wrappedDelta(from, to, span, allowWrap) {
     let delta = to - from;
     if (!allowWrap || !Number.isFinite(span) || span <= 0) return delta;
@@ -45222,32 +45222,33 @@ async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 
 }
 
 function loadDistrictRepresentativePreview(section, holder, canvasSize = 28, onLoaded = null) {
-  if (!holder) return;
+  if (!holder) return Promise.resolve(false);
   holder.innerHTML = '';
   const canvas = document.createElement('canvas');
   canvas.width = canvasSize;
   canvas.height = canvasSize;
   canvas.className = 'entry-thumb-canvas';
   holder.appendChild(canvas);
-  fetchDistrictRepresentativePreview(section)
+  return fetchDistrictRepresentativePreview(section)
     .then((preview) => {
-      if (!preview || !holder.isConnected) return;
+      if (!preview || !holder.isConnected) return false;
       drawPreviewFrameToCanvas(preview, canvas);
       holder.classList.remove('art-pending');
       if (typeof onLoaded === 'function') onLoaded(preview);
+      return true;
     })
-    .catch(() => {});
+    .catch(() => false);
 }
 
 function loadWonderCompletedThumbnail(section, holder, canvasSize = 35) {
-  if (!holder) return;
+  if (!holder) return Promise.resolve(false);
   holder.innerHTML = '';
   const canvas = document.createElement('canvas');
   canvas.width = canvasSize;
   canvas.height = canvasSize;
   canvas.className = 'entry-thumb-canvas';
   holder.appendChild(canvas);
-  if (!state.settings || !state.settings.c3xPath) return;
+  if (!state.settings || !state.settings.c3xPath) return Promise.resolve(false);
   const fileName = normalizeConfigToken(getFieldValue(section, 'img_path') || 'Wonders.pcx');
   const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
   const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
@@ -45263,14 +45264,14 @@ function loadWonderCompletedThumbnail(section, holder, canvasSize = 35) {
     h: crop.h
   });
   const paint = (preview) => {
-    if (!preview) return;
+    if (!preview) return false;
     drawPreviewFrameToCanvas(preview, canvas);
+    return true;
   };
   if (state.previewCache.has(cacheKey)) {
-    paint(state.previewCache.get(cacheKey));
-    return;
+    return Promise.resolve(paint(state.previewCache.get(cacheKey)));
   }
-  window.c3xManager.getPreview({
+  return window.c3xManager.getPreview({
     kind: 'wonder',
     c3xPath: state.settings.c3xPath,
     fileName,
@@ -45278,23 +45279,23 @@ function loadWonderCompletedThumbnail(section, holder, canvasSize = 35) {
     scenarioPath: state.settings.scenarioPath,
     scenarioPaths: getScenarioPreviewPaths()
   }).then((res) => {
-    if (!res || !res.ok) return;
+    if (!res || !res.ok) return false;
     setPreviewCache(cacheKey, res);
-    paint(res);
-  }).catch(() => {});
+    return paint(res);
+  }).catch(() => false);
 }
 
 function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
-  if (!holder) return;
+  if (!holder) return Promise.resolve(false);
   holder.innerHTML = '';
   const canvas = document.createElement('canvas');
   canvas.width = canvasSize;
   canvas.height = canvasSize;
   canvas.className = 'entry-thumb-canvas';
   holder.appendChild(canvas);
-  if (!state.settings || !state.settings.c3xPath) return;
+  if (!state.settings || !state.settings.c3xPath) return Promise.resolve(false);
   const fileName = normalizeConfigToken(getFieldValue(section, 'img_path') || '');
-  if (!fileName) return;
+  if (!fileName) return Promise.resolve(false);
   const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
   const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
   const crop = getCropDimensions(section, { w: 128, h: 88 });
@@ -45309,14 +45310,14 @@ function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
     h: crop.h
   });
   const paint = (preview) => {
-    if (!preview) return;
+    if (!preview) return false;
     drawPreviewFrameToCanvas(preview, canvas);
+    return true;
   };
   if (state.previewCache.has(cacheKey)) {
-    paint(state.previewCache.get(cacheKey));
-    return;
+    return Promise.resolve(paint(state.previewCache.get(cacheKey)));
   }
-  window.c3xManager.getPreview({
+  return window.c3xManager.getPreview({
     kind: 'naturalWonder',
     c3xPath: state.settings.c3xPath,
     fileName,
@@ -45324,10 +45325,10 @@ function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
     scenarioPath: state.settings.scenarioPath,
     scenarioPaths: getScenarioPreviewPaths()
   }).then((res) => {
-    if (!res || !res.ok) return;
+    if (!res || !res.ok) return false;
     setPreviewCache(cacheKey, res);
-    paint(res);
-  }).catch(() => {});
+    return paint(res);
+  }).catch(() => false);
 }
 
 function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForFocus = 'District Art') {
@@ -47095,25 +47096,38 @@ function renderSectionTab(tab, tabKey) {
   wrap.appendChild(listFilterRow);
 
   const bodyHost = document.createElement('div');
-  wrap.appendChild(bodyHost);
-
-  function renderSectionBody() {
-    bodyHost.innerHTML = '';
-
-  const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, Math.max(0, tab.model.sections.length - 1)));
-  state.sectionSelection[tabKey] = selectedIndex;
-
   const layout = document.createElement('div');
   layout.className = 'entry-layout';
-
   const listPane = document.createElement('div');
   listPane.className = 'entry-list-pane';
-  const pendingSectionThumbs = [];
+  const detailPane = document.createElement('div');
+  detailPane.className = 'entry-detail-pane';
+  layout.appendChild(listPane);
+  layout.appendChild(detailPane);
+  bodyHost.appendChild(layout);
+  wrap.appendChild(bodyHost);
+  let pendingSectionThumbs = [];
+  let sectionThumbHydrationRaf = 0;
+  const sectionThumbsInFlight = new Set();
+
+  const scheduleHydrateVisibleSectionThumbs = (limit = 20) => {
+    if (sectionThumbHydrationRaf) return;
+    sectionThumbHydrationRaf = requestAnimationFrame(() => {
+      sectionThumbHydrationRaf = 0;
+      hydrateVisibleSectionThumbs(limit);
+    });
+  };
+
   const hydrateVisibleSectionThumbs = (limit = 20) => {
-    let remaining = Math.max(1, Number(limit) || 20);
-    if (remaining <= 0) return;
+    const maxToLoad = Math.max(1, Number(limit) || 20);
+    if (maxToLoad <= 0 || !listPane.isConnected) return;
     const paneRect = listPane.getBoundingClientRect();
-    for (let i = 0; i < pendingSectionThumbs.length && remaining > 0; i += 1) {
+    const maxConcurrentLoads = 8;
+    const availableSlots = Math.max(0, maxConcurrentLoads - sectionThumbsInFlight.size);
+    let remaining = Math.min(maxToLoad, availableSlots);
+    let visiblePending = 0;
+    const visibleItems = [];
+    for (let i = 0; i < pendingSectionThumbs.length; i += 1) {
       const item = pendingSectionThumbs[i];
       if (!item || !item.thumb || item.thumb.dataset.thumbPending !== '1') continue;
       if (!item.thumb.isConnected) {
@@ -47127,16 +47141,94 @@ function renderSectionTab(tab, tabKey) {
       }
       const rowRect = row.getBoundingClientRect();
       if (rowRect.bottom < (paneRect.top - 48) || rowRect.top > (paneRect.bottom + 48)) continue;
-      item.thumb.dataset.thumbPending = '0';
-      item.load();
+      visiblePending += 1;
+      visibleItems.push({
+        item,
+        distance: Math.abs((rowRect.top + rowRect.bottom) / 2 - (paneRect.top + paneRect.bottom) / 2)
+      });
+    }
+    visibleItems.sort((a, b) => a.distance - b.distance);
+    for (let i = 0; i < visibleItems.length && remaining > 0; i += 1) {
+      const target = visibleItems[i] && visibleItems[i].item;
+      if (!target || !target.thumb || target.thumb.dataset.thumbPending !== '1') continue;
+      if (sectionThumbsInFlight.has(target.thumb)) continue;
+      target.thumb.dataset.thumbPending = '0';
+      target.thumb.dataset.thumbLoading = '1';
+      sectionThumbsInFlight.add(target.thumb);
+      Promise.resolve(target.load())
+        .then((loaded) => {
+          if (loaded === true) {
+            if (target.thumb && target.thumb.isConnected) delete target.thumb.dataset.thumbRetryCount;
+            return true;
+          }
+          if (!target.thumb || !target.thumb.isConnected) return false;
+          const itemBtn = target.thumb.closest('.entry-list-item');
+          const hasIssueBadge = !!(itemBtn && itemBtn.classList.contains('entry-item-has-issue'));
+          const alreadyPainted = target.thumb.childElementCount > 0;
+          const retryCount = Number(target.thumb.dataset.thumbRetryCount || 0);
+          if (!hasIssueBadge && !alreadyPainted && retryCount < 2) {
+            target.thumb.dataset.thumbPending = '1';
+            target.thumb.dataset.thumbRetryCount = String(retryCount + 1);
+          }
+          return false;
+        })
+        .catch(() => {
+          if (!target.thumb || !target.thumb.isConnected) return false;
+          const retryCount = Number(target.thumb.dataset.thumbRetryCount || 0);
+          if (retryCount < 2) {
+            target.thumb.dataset.thumbPending = '1';
+            target.thumb.dataset.thumbRetryCount = String(retryCount + 1);
+          }
+          return false;
+        })
+        .finally(() => {
+          sectionThumbsInFlight.delete(target.thumb);
+          if (target.thumb && target.thumb.isConnected) delete target.thumb.dataset.thumbLoading;
+          scheduleHydrateVisibleSectionThumbs(limit);
+        });
       remaining -= 1;
     }
+    if (visiblePending > 0 && (visiblePending > maxToLoad || sectionThumbsInFlight.size > 0)) {
+      scheduleHydrateVisibleSectionThumbs(limit);
+    }
   };
-  const savedListTop = state.sectionListScrollTop[tabKey] || 0;
+
   listPane.addEventListener('scroll', () => {
     state.sectionListScrollTop[tabKey] = listPane.scrollTop;
-    hydrateVisibleSectionThumbs(20);
+    scheduleHydrateVisibleSectionThumbs(20);
   });
+  detailPane.addEventListener('scroll', () => {
+    state.sectionDetailScrollTop[tabKey] = detailPane.scrollTop;
+  });
+
+  const selectSection = (sectionIndex, options = {}) => {
+    if (!Number.isFinite(sectionIndex) || sectionIndex < 0) return;
+    syncCurrentNavigationSnapshot();
+    const before = captureViewSnapshot();
+    state.sectionListScrollTop[tabKey] = listPane.scrollTop;
+    state.sectionSelection[tabKey] = sectionIndex;
+    if (options.resetDetailScroll) state.sectionDetailScrollTop[tabKey] = 0;
+    state.tabContentScrollTop = el.tabContent.scrollTop;
+    const after = captureViewSnapshot();
+    renderSectionBody({
+      skipListRebuild: true,
+      resetDetailScroll: !!options.resetDetailScroll
+    });
+    if (!state.isApplyingHistory && before && after && snapshotKey(before) !== snapshotKey(after)) {
+      pushNavigationSnapshot(after);
+    } else {
+      updateNavButtons();
+      persistCurrentViewSnapshot();
+    }
+  };
+
+  function renderSectionBody(options = {}) {
+  const skipListRebuild = options.skipListRebuild === true;
+  const resetDetailScroll = options.resetDetailScroll === true;
+
+  const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, Math.max(0, tab.model.sections.length - 1)));
+  state.sectionSelection[tabKey] = selectedIndex;
+  const savedListTop = state.sectionListScrollTop[tabKey] || 0;
   const sectionNeedle = String(state.sectionFilter[tabKey] || '').trim().toLowerCase();
   const sectionEntries = tab.model.sections
     .map((section, sectionIndex) => {
@@ -47180,12 +47272,10 @@ function renderSectionTab(tab, tabKey) {
     if (warningSections.length <= 0) return;
     const next = warningSections.find((item) => item.filteredIndex > selectedFilteredIndex) || warningSections[0];
     if (!next) return;
-    state.sectionSelection[tabKey] = next.sectionIndex;
-    state.sectionListScrollTop[tabKey] = 0;
-    state.sectionDetailScrollTop[tabKey] = 0;
-    renderSectionBody();
+    selectSection(next.sectionIndex, { resetDetailScroll: true });
   };
-  sectionEntries.forEach(({ section, sectionIndex, sectionTitle, districtDisplay }) => {
+  pendingSectionThumbs = [];
+  const addSectionListButton = ({ section, sectionIndex, sectionTitle, districtDisplay }) => {
     const itemBtn = document.createElement('button');
     const showSectionThumb = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders';
     itemBtn.className = showSectionThumb ? 'entry-list-item district-entry-item' : 'entry-list-item no-thumb';
@@ -47260,25 +47350,37 @@ function renderSectionTab(tab, tabKey) {
       state.tabContentScrollTop = el.tabContent.scrollTop;
     });
     itemBtn.addEventListener('click', () => {
-      listPane.querySelectorAll('.entry-list-item.active').forEach((elNode) => elNode.classList.remove('active'));
-      itemBtn.classList.add('active');
-      navigateWithHistory(() => {
-        state.tabContentScrollTop = el.tabContent.scrollTop;
-        state.sectionListScrollTop[tabKey] = listPane.scrollTop;
-        state.sectionSelection[tabKey] = sectionIndex;
-      }, { preserveTabScroll: true });
+      selectSection(sectionIndex);
     });
-    listPane.appendChild(itemBtn);
-  });
-  layout.appendChild(listPane);
-  requestAnimationFrame(() => hydrateVisibleSectionThumbs(28));
+    if (!skipListRebuild) listPane.appendChild(itemBtn);
+  };
+  if (!skipListRebuild) {
+    listPane.innerHTML = '';
+    sectionEntries.forEach((entry) => addSectionListButton(entry));
+    scheduleHydrateVisibleSectionThumbs(28);
+  } else {
+    Array.from(listPane.querySelectorAll('.entry-list-item')).forEach((itemBtn) => {
+      const isActive = String(itemBtn.dataset.index || '') === String(selectedIndex);
+      itemBtn.classList.toggle('active', isActive);
+      if (!isActive) return;
+      const thumb = itemBtn.querySelector('.entry-thumb');
+      if (!thumb || thumb.dataset.thumbPending !== '1') return;
+      const match = sectionEntries.find((entry) => entry.sectionIndex === selectedIndex);
+      if (!match) return;
+      thumb.dataset.thumbPending = '0';
+      if (tabKey === 'districts') {
+        loadDistrictRepresentativePreview(match.section, thumb, 35);
+      } else if (tabKey === 'wonders') {
+        loadWonderCompletedThumbnail(match.section, thumb, 44);
+      } else if (tabKey === 'naturalWonders') {
+        loadNaturalWonderThumbnail(match.section, thumb, 44);
+      }
+    });
+    scheduleHydrateVisibleSectionThumbs(20);
+  }
 
-  const detailPane = document.createElement('div');
-  detailPane.className = 'entry-detail-pane';
   const savedDetailTop = state.sectionDetailScrollTop[tabKey] || 0;
-  detailPane.addEventListener('scroll', () => {
-    state.sectionDetailScrollTop[tabKey] = detailPane.scrollTop;
-  });
+  detailPane.innerHTML = '';
 
   if (tab.model.sections.length === 0) {
     const empty = document.createElement('div');
@@ -47520,11 +47622,9 @@ function renderSectionTab(tab, tabKey) {
     detailPane.appendChild(card);
   }
 
-  layout.appendChild(detailPane);
-  bodyHost.appendChild(layout);
   window.requestAnimationFrame(() => {
-    listPane.scrollTop = savedListTop;
-    detailPane.scrollTop = savedDetailTop;
+    if (!skipListRebuild) listPane.scrollTop = savedListTop;
+    detailPane.scrollTop = resetDetailScroll ? 0 : savedDetailTop;
     window.requestAnimationFrame(() => {
       if (!listPane.isConnected) return;
       const activeBtn = listPane.querySelector('.entry-list-item.active');
