@@ -1,4 +1,11 @@
 * RELEASE 27.11.1.0
+- Fixed the Unit Table `Undo` button state to activate on the first pending grouped edit instead of waiting for a later committed snapshot, so the modal header now reflects the first typed change immediately.
+- Added a duplicate Save button to the Unit Table header beside Undo, sharing the main Save button's label, dirty styling, disabled state, validation title, and save handler.
+- Changed Unit Table reference columns to reuse one cached option list per column and lazy-mount real dropdown pickers only when a cell is activated, so opening the modal no longer instantiates full picker menus for every reference cell up front.
+- Fixed Civs -> Leader Animations era labels to use the loaded BIQ ERAS names, matching Techs era dropdown behavior instead of hardcoding the stock era names.
+- Added a continuous outline treatment to the focused Unit Table row, including sticky thumbnail/name columns, so the active edit target has a visible whole-row border without drawing dividers between cells.
+- Cached repeated BIQ section-index and enum option lookups within a single `RULE`/`GAME` render, so tabs like Rules -> General no longer recompute the same PRTO/RACE/TECH option lists for every reference field while opening.
+- Changed BIQ `RULE`/`GAME` record-group rendering to mount heavy group cards incrementally across animation frames, so opening one-record tabs like Rules -> General paints the shell immediately instead of blocking on every field editor at once.
 - Changed the sectioned Districts/Wonders/Natural Wonders shell to keep its left list mounted across selection changes and use the newer viewport-prioritized thumbnail hydration queue, so clicking between long district-style entries no longer rebuilds every list row and fast scrolling is less likely to leave section art blank.
 - Unified Civs, Resources, and Governments with the shared deferred reference-tab utility-section renderer, so their Civilopedia and art panels now lazy-mount like Units, Techs, and Improvements instead of eagerly building closed editors.
 - Fixed Improvements -> Required Districts dropdown thumbnails by wiring that picker through the shared district preview renderer, so district options now show their representative art instead of empty placeholder squares.

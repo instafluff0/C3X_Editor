@@ -1065,18 +1065,19 @@ function enrichBridgeSections(sections) {
             const flavorName = flavIndex[idx];
             field.label = flavorName ? `Flavor ${flavorName}` : `Flavor ${flavorMatch[1]}`;
           }
-        } else if (code === 'RACE') {
-          const fwdEraMatch = k.match(/^forwardfilename_for_era_(\d+)$/);
-          if (fwdEraMatch) {
-            const idx = Number.parseInt(fwdEraMatch[1], 10);
-            const eraName = eraIndex[idx];
-            field.label = eraName ? `Forward Filename For ${eraName}` : `Forward Filename For Era ${idx + 1}`;
-          }
-          const revEraMatch = k.match(/^reversefilename_for_era_(\d+)$/);
-          if (revEraMatch) {
-            const idx = Number.parseInt(revEraMatch[1], 10);
-            const eraName = eraIndex[idx];
-            field.label = eraName ? `Reverse Filename For ${eraName}` : `Reverse Filename For Era ${idx + 1}`;
+          if (code === 'RACE') {
+            const fwdEraMatch = k.match(/^forwardfilename_for_era_(\d+)$/);
+            if (fwdEraMatch) {
+              const idx = Number.parseInt(fwdEraMatch[1], 10);
+              const eraName = eraIndex[idx];
+              field.label = eraName ? `Forward Filename For ${eraName}` : `Forward Filename For Era ${idx + 1}`;
+            }
+            const revEraMatch = k.match(/^reversefilename_for_era_(\d+)$/);
+            if (revEraMatch) {
+              const idx = Number.parseInt(revEraMatch[1], 10);
+              const eraName = eraIndex[idx];
+              field.label = eraName ? `Reverse Filename For ${eraName}` : `Reverse Filename For Era ${idx + 1}`;
+            }
           }
         } else if (code === 'GAME') {
           const timeTurnsMatch = k.match(/^turns_in_time_section_(\d+)$/);

@@ -48,7 +48,10 @@ function loadPreviewOptionHelpers(bundle) {
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
   const functionNames = [
     'getFallbackBiqSectionForOptions',
-    'makeBiqSectionIndexOptions'
+    'makeBiqSectionIndexOptions',
+    'getBiqFieldByBaseKey',
+    'getBiqEraLabelByIndex',
+    'getCivilizationAnimationRows'
   ];
   const sandbox = {
     state: { bundle },
@@ -146,4 +149,45 @@ test('makeBiqSectionIndexOptions can build non-reference section options from pr
     { value: '0', label: 'Ancient Times' },
     { value: '1', label: 'Middle Ages' }
   ]);
+});
+
+test('getCivilizationAnimationRows uses loaded scenario era names', () => {
+  const bundle = {
+    biq: {
+      sections: []
+    },
+    tabs: {
+      rules: {
+        sections: [{
+          code: 'ERAS',
+          records: [
+            { index: 0, name: 'Pre-War', fields: [] },
+            { index: 1, name: 'Early War', fields: [] },
+            { index: 2, name: 'Late War', fields: [] },
+            { index: 3, name: 'Cold War', fields: [] }
+          ]
+        }]
+      }
+    }
+  };
+  const { getCivilizationAnimationRows } = loadPreviewOptionHelpers(bundle);
+  const entry = {
+    biqFields: [
+      makeField('forwardfilename_for_era_0', 'Art\\Flics\\china_T.flc'),
+      makeField('reversefilename_for_era_0', 'Art\\Flics\\china_T.flc'),
+      makeField('forwardfilename_for_era_1', 'Art\\Flics\\china_M.flc'),
+      makeField('reversefilename_for_era_1', 'Art\\Flics\\china_M.flc'),
+      makeField('forwardfilename_for_era_2', 'Art\\Flics\\china_I.flc'),
+      makeField('reversefilename_for_era_2', 'Art\\Flics\\china_I.flc'),
+      makeField('forwardfilename_for_era_3', 'Art\\Flics\\china_A.flc'),
+      makeField('reversefilename_for_era_3', 'Art\\Flics\\china_A.flc')
+    ]
+  };
+
+  const rows = getCivilizationAnimationRows(entry);
+
+  assert.equal(
+    JSON.stringify(rows.map((row) => row.era)),
+    JSON.stringify(['Pre-War', 'Early War', 'Late War', 'Cold War'])
+  );
 });

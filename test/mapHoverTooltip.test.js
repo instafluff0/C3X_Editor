@@ -591,6 +591,27 @@ test('map art loads repaint an open map modal in place instead of rebuilding the
   );
 });
 
+test('Unit Table header Save mirrors the main save button wiring', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, unitTableModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
+    'Unit Table Save should share the main Save label, dirty class, disabled state, and validation title'
+  );
+  assert.match(
+    rendererText,
+    /function ensureUnitTableModalNode\(\) \{[\s\S]*?<button type="button" class="secondary unit-table-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?unitTableModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(unitTableModal\.saveBtn && !unitTableModal\.saveBtn\.dataset\.bound\) \{[\s\S]*?unitTableModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);/,
+    'Unit Table should expose a secondary Save button beside Undo and route clicks through saveCurrentBundle'
+  );
+  assert.match(
+    stylesText,
+    /\.unit-table-modal-actions \.unit-table-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary:hover:not\(:disabled\),[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary\.dirty \{[\s\S]*?box-shadow: none;/,
+    'Unit Table Save should use the same no-shadow action styling as the main app Save button'
+  );
+});
+
 test('modal map zoom previews on the existing canvas stack and defers the expensive rerender until input settles', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 

@@ -326,6 +326,7 @@ const unitTableModal = {
   node: null,
   body: null,
   title: null,
+  saveBtn: null,
   undoBtn: null,
   undoAllBtn: null,
   needsActiveTabRefresh: false,
@@ -2137,11 +2138,16 @@ function openFilesReadModal() {
   void refreshFilesReadAccess();
 }
 
+function getSaveButtons() {
+  return [el.saveBtn, unitTableModal.saveBtn].filter((btn) => btn && btn.isConnected);
+}
+
 function updateSaveButtonLabel() {
-  if (!el.saveBtn) return;
-  el.saveBtn.innerHTML = state.isSaving
-    ? '<span class="btn-icon">⏳</span>Saving...'
-    : '<span class="btn-icon">💾</span>Save';
+  getSaveButtons().forEach((btn) => {
+    btn.innerHTML = state.isSaving
+      ? '<span class="btn-icon">⏳</span>Saving...'
+      : '<span class="btn-icon">💾</span>Save';
+  });
 }
 
 function updateSaveAsButtonState() {
@@ -2237,8 +2243,9 @@ function refreshDirtyUi() {
   const validationStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   state.sectionValidationError = getSectionValidationError();
   const validationMs = shouldLogReferencePerf ? Number((debugNowMs() - validationStartedAt).toFixed(2)) : 0;
+  const saveButtons = getSaveButtons();
   const saveBtnDirtyBefore = !!(el.saveBtn && el.saveBtn.classList.contains('dirty'));
-  if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
+  saveButtons.forEach((btn) => btn.classList.toggle('dirty', state.isDirty));
   const saveBtnDirtyChanged = !!(el.saveBtn && saveBtnDirtyBefore !== el.saveBtn.classList.contains('dirty'));
   const saveButtonLabelStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   updateSaveButtonLabel();
@@ -2257,9 +2264,13 @@ function refreshDirtyUi() {
   let undoAllBtnDisabledChanged = false;
   const saveBtnDisabledBefore = !!(el.saveBtn && el.saveBtn.disabled);
   const saveBtnTitleBefore = el.saveBtn ? String(el.saveBtn.title || '') : '';
-  if (el.saveBtn) {
-    el.saveBtn.disabled = !state.isDirty || state.isLoading || state.isSaving || !!state.sectionValidationError;
-    el.saveBtn.title = state.sectionValidationError || '';
+  if (saveButtons.length > 0) {
+    const saveDisabled = !state.isDirty || state.isLoading || state.isSaving || !!state.sectionValidationError;
+    const saveTitle = state.sectionValidationError || '';
+    saveButtons.forEach((btn) => {
+      btn.disabled = saveDisabled;
+      btn.title = saveTitle;
+    });
     saveBtnDisabledChanged = saveBtnDisabledBefore !== el.saveBtn.disabled;
     saveBtnTitleChanged = saveBtnTitleBefore !== String(el.saveBtn.title || '');
   }
@@ -13784,6 +13795,13 @@ function getBiqFlavorNames() {
 
 function getRuleFieldDisplayLabel(tabKey, field, spec) {
   const fallback = String((spec && spec.label) || field.label || field.key || '');
+  if (tabKey === 'civilizations') {
+    const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
+    const forwardMatch = base.match(/^forwardfilenameforera(\d+)$/);
+    if (forwardMatch) return `${getBiqEraLabelByIndex(Number.parseInt(forwardMatch[1], 10))} Fwd`;
+    const reverseMatch = base.match(/^reversefilenameforera(\d+)$/);
+    if (reverseMatch) return `${getBiqEraLabelByIndex(Number.parseInt(reverseMatch[1], 10))} Reverse`;
+  }
   if (tabKey === 'units') {
     const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
     const unitLabel = UNIT_RULE_FRIENDLY_LABELS[base];
@@ -17469,13 +17487,38 @@ function renderCivilizationBooleanMatrixCard(groupName, fields, entry, tabKey, r
   return groupCard;
 }
 
+function getBiqEraLabelByIndex(index) {
+  const idx = Number(index);
+  if (!Number.isFinite(idx) || idx < 0) return 'Era';
+  const eraOptions = makeBiqSectionIndexOptions('ERAS', false);
+  const match = Array.isArray(eraOptions)
+    ? eraOptions.find((opt) => Number.parseInt(String(opt && opt.value), 10) === idx)
+    : null;
+  const label = String(match && (match.displayLabel || match.label) || '').trim();
+  if (label) return label;
+  const fallback = ['Ancient Times', 'Middle Ages', 'Industrial Age', 'Modern Times'];
+  return fallback[idx] || `Era ${idx + 1}`;
+}
+
 function getCivilizationAnimationRows(entry) {
-  return [
-    { era: 'Ancient', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_0'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_0') },
-    { era: 'Middle Ages', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_1'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_1') },
-    { era: 'Industrial', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_2'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_2') },
-    { era: 'Modern', forward: getBiqFieldByBaseKey(entry, 'forwardfilename_for_era_3'), reverse: getBiqFieldByBaseKey(entry, 'reversefilename_for_era_3') }
-  ].filter((row) => row.forward || row.reverse);
+  const eraIndexes = new Set();
+  (Array.isArray(entry && entry.biqFields) ? entry.biqFields : []).forEach((field) => {
+    const key = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    const match = key.match(/^(?:forward|reverse)filename_for_era_(\d+)$/);
+    if (match) eraIndexes.add(Number.parseInt(match[1], 10));
+  });
+  if (eraIndexes.size === 0) {
+    [0, 1, 2, 3].forEach((idx) => eraIndexes.add(idx));
+  }
+  return Array.from(eraIndexes)
+    .filter((idx) => Number.isFinite(idx) && idx >= 0)
+    .sort((a, b) => a - b)
+    .map((idx) => ({
+      era: getBiqEraLabelByIndex(idx),
+      forward: getBiqFieldByBaseKey(entry, `forwardfilename_for_era_${idx}`),
+      reverse: getBiqFieldByBaseKey(entry, `reversefilename_for_era_${idx}`)
+    }))
+    .filter((row) => row.forward || row.reverse);
 }
 
 function pumpCivilizationAnimationPreviewQueue() {
@@ -22402,6 +22445,7 @@ function ensureUnitTableModalNode() {
           <strong id="unit-table-modal-title">Unit Table</strong>
         </div>
         <div class="unit-table-modal-actions">
+          <button type="button" class="secondary unit-table-save-btn" data-act="save"><span class="btn-icon">💾</span>Save</button>
           <button type="button" class="ghost unit-table-undo-btn" data-act="undo"><span class="btn-icon">↶</span>Undo</button>
           <button type="button" class="ghost unit-table-undo-all-btn" data-act="undo-all"><span class="btn-icon">↺</span>Undo All</button>
           <button type="button" class="ghost" data-act="close">Close</button>
@@ -22414,6 +22458,7 @@ function ensureUnitTableModalNode() {
   unitTableModal.node = overlay;
   unitTableModal.body = overlay.querySelector('#unit-table-modal-body');
   unitTableModal.title = overlay.querySelector('#unit-table-modal-title');
+  unitTableModal.saveBtn = overlay.querySelector('[data-act="save"]');
   unitTableModal.undoBtn = overlay.querySelector('[data-act="undo"]');
   unitTableModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
   const closeBtn = overlay.querySelector('[data-act="close"]');
@@ -22515,14 +22560,18 @@ function getUnitTableRows(tab) {
   });
 }
 
-function createUnitTableReferencePicker(column, currentValue, onSelect) {
+function createUnitTableReferencePicker(column, currentValue, onSelect, config = {}) {
   const field = getUnitTableFieldStub(column);
-  const options = column.type === 'enum'
-    ? getEnumOptionsForField('units', field)
-    : getReferenceOptionsForField('units', field);
-  const targetTabKey = column.type === 'reference'
-    ? ((BIQ_FIELD_REFS.units || {})[normalizeRuleLookupKey(column.key)] || '')
-    : '';
+  const options = Array.isArray(config.options)
+    ? config.options
+    : (column.type === 'enum'
+      ? getEnumOptionsForField('units', field)
+      : getReferenceOptionsForField('units', field));
+  const targetTabKey = Object.prototype.hasOwnProperty.call(config, 'targetTabKey')
+    ? String(config.targetTabKey || '')
+    : (column.type === 'reference'
+      ? ((BIQ_FIELD_REFS.units || {})[normalizeRuleLookupKey(column.key)] || '')
+      : '');
   return createReferencePicker({
     options,
     targetTabKey,
@@ -22562,6 +22611,7 @@ function sortUnitTableRows(rows, sortMode) {
 function createUnitTablePanel({ tab, referenceEditable }) {
   const rows = getUnitTableRows(tab);
   const sortOptions = getUnitReferenceSortOptions();
+  const unitTableColumnMetaCache = new Map();
   const persistedView = sanitizeUnitTableView(state.unitTableView);
   const filters = {
     query: persistedView.query,
@@ -22650,6 +22700,22 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   toolbar.appendChild(filterRow);
   toolbar.appendChild(actionRow);
 
+  const getUnitTableColumnMeta = (column) => {
+    const key = String(column && column.key || '').trim();
+    if (!key) return { fieldStub: getUnitTableFieldStub(column), options: [], targetTabKey: '' };
+    if (!unitTableColumnMetaCache.has(key)) {
+      const fieldStub = getUnitTableFieldStub(column);
+      const targetTabKey = column.type === 'reference'
+        ? ((BIQ_FIELD_REFS.units || {})[normalizeRuleLookupKey(column.key)] || '')
+        : '';
+      const options = column.type === 'enum'
+        ? getEnumOptionsForField('units', fieldStub)
+        : (column.type === 'reference' ? getReferenceOptionsForField('units', fieldStub) : []);
+      unitTableColumnMetaCache.set(key, { fieldStub, options, targetTabKey });
+    }
+    return unitTableColumnMetaCache.get(key);
+  };
+
   const syncUnitTableView = () => {
     state.unitTableView = {
       isOpen: true,
@@ -22676,7 +22742,9 @@ function createUnitTablePanel({ tab, referenceEditable }) {
 
   const updateToolbar = () => {
     summary.textContent = `${visibleRows.length} shown · ${rows.length} total`;
-    if (unitTableModal.undoBtn) unitTableModal.undoBtn.disabled = !referenceEditable || !getLatestUndoSnapshot();
+    refreshDirtyUi();
+    const hasImmediateUndo = !!getLatestUndoSnapshot() || hasPendingTrackedEditSessions();
+    if (unitTableModal.undoBtn) unitTableModal.undoBtn.disabled = !referenceEditable || !hasImmediateUndo;
     if (unitTableModal.undoAllBtn) unitTableModal.undoAllBtn.disabled = !referenceEditable || !state.isDirty;
   };
 
@@ -22943,7 +23011,8 @@ function createUnitTablePanel({ tab, referenceEditable }) {
         } else if (column.type === 'enum' && column.key === 'unitclass') {
           const select = document.createElement('select');
           select.className = 'unit-table-plain-select';
-          getEnumOptionsForField('units', getUnitTableFieldStub(column)).forEach((opt) => {
+          const columnMeta = getUnitTableColumnMeta(column);
+          columnMeta.options.forEach((opt) => {
             const option = document.createElement('option');
             option.value = String(opt.value);
             option.textContent = String(opt.label || opt.value);
@@ -22960,15 +23029,72 @@ function createUnitTablePanel({ tab, referenceEditable }) {
           td.appendChild(select);
           attachGridNav(select, row, column);
         } else {
-          const picker = createUnitTableReferencePicker(column, row.values[column.key], (value) => {
-            rememberCellEdit(pickerButton || picker);
-            setUnitTableLiveValue(row, column, value);
-            render();
-          });
-          picker.classList.add('unit-table-picker');
-          const pickerButton = picker.querySelector('.tech-picker-btn');
-          td.appendChild(picker);
-          if (pickerButton) attachGridNav(pickerButton, row, column);
+          const columnMeta = getUnitTableColumnMeta(column);
+          const pickerHost = document.createElement('div');
+          pickerHost.className = 'unit-table-picker unit-table-picker-lazy';
+          const displayButton = document.createElement('button');
+          displayButton.type = 'button';
+          displayButton.className = 'tech-picker-btn unit-table-picker-activator';
+          displayButton.disabled = !referenceEditable;
+          const displayThumb = document.createElement('span');
+          displayThumb.className = 'entry-thumb';
+          const displayText = document.createElement('span');
+          displayText.className = 'tech-picker-btn-label';
+          const syncReferenceDisplay = () => {
+            const currentValue = normalizeUnitTableCellValue(row.values[column.key], column);
+            const selectedOption = findOptionByValue(columnMeta.options, currentValue);
+            displayText.textContent = selectedOption
+              ? String(selectedOption.displayLabel || selectedOption.label || '(none)')
+              : '(none)';
+            displayText.title = displayText.textContent;
+            displayThumb.innerHTML = '';
+            if (columnMeta.targetTabKey) {
+              const jumpTarget = resolveReferenceEntryForPicker(columnMeta.targetTabKey, currentValue, columnMeta.options);
+              if (jumpTarget) loadReferenceListThumbnail(columnMeta.targetTabKey, jumpTarget, displayThumb);
+            }
+          };
+          displayButton.appendChild(displayThumb);
+          displayButton.appendChild(displayText);
+          syncReferenceDisplay();
+          pickerHost.appendChild(displayButton);
+          td.appendChild(pickerHost);
+          attachGridNav(displayButton, row, column);
+          if (referenceEditable) {
+            displayButton.addEventListener('click', (ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              if (pickerHost.dataset.pickerMounted === '1') {
+                const existingBtn = pickerHost.querySelector('.tech-picker-btn');
+                if (existingBtn instanceof HTMLElement) {
+                  existingBtn.focus({ preventScroll: true });
+                  existingBtn.click();
+                }
+                return;
+              }
+              pickerHost.dataset.pickerMounted = '1';
+              let pickerButton = null;
+              const picker = createUnitTableReferencePicker(column, row.values[column.key], (value) => {
+                rememberCellEdit(pickerButton || picker);
+                setUnitTableLiveValue(row, column, value);
+                updateUnitTableRowDirtyBadge(row);
+                updateToolbar();
+              }, {
+                options: columnMeta.options,
+                targetTabKey: columnMeta.targetTabKey
+              });
+              picker.classList.add('unit-table-picker');
+              pickerHost.innerHTML = '';
+              pickerHost.appendChild(picker);
+              pickerButton = picker.querySelector('.tech-picker-btn');
+              if (pickerButton) {
+                attachGridNav(pickerButton, row, column);
+                window.requestAnimationFrame(() => {
+                  pickerButton.focus({ preventScroll: true });
+                  pickerButton.click();
+                });
+              }
+            });
+          }
         }
 
         tr.appendChild(td);
@@ -23047,6 +23173,10 @@ function openUnitTableModal({ tab, referenceEditable, syncHistory = true } = {})
   if (unitTableModal.body) {
     unitTableModal.body.innerHTML = '';
     unitTableModal.body.appendChild(createUnitTablePanel({ tab, referenceEditable }));
+  }
+  if (unitTableModal.saveBtn && !unitTableModal.saveBtn.dataset.bound) {
+    unitTableModal.saveBtn.dataset.bound = '1';
+    unitTableModal.saveBtn.addEventListener('click', saveCurrentBundle);
   }
   if (unitTableModal.undoBtn && !unitTableModal.undoBtn.dataset.bound) {
     unitTableModal.undoBtn.dataset.bound = '1';
@@ -30996,6 +31126,23 @@ function renderBiqTab(tab) {
   );
   state.biqRecordSelection[selected.id] = selectedRecordIndex;
   const selectedRecord = records[selectedRecordIndex] || null;
+  const biqSectionIndexOptionsCache = new Map();
+  const biqEnumOptionsCache = new Map();
+  const getCachedBiqSectionIndexOptions = (sectionCode, oneBased = false) => {
+    const cacheKey = `${String(sectionCode || '').toUpperCase()}:${oneBased ? '1' : '0'}`;
+    if (!biqSectionIndexOptionsCache.has(cacheKey)) {
+      biqSectionIndexOptionsCache.set(cacheKey, makeBiqSectionIndexOptions(sectionCode, oneBased));
+    }
+    return biqSectionIndexOptionsCache.get(cacheKey) || [];
+  };
+  const getCachedBiqEnumOptions = (enumCategoryKey, field) => {
+    const fieldKey = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    const cacheKey = `${String(enumCategoryKey || '').trim().toLowerCase()}:${fieldKey}`;
+    if (!biqEnumOptionsCache.has(cacheKey)) {
+      biqEnumOptionsCache.set(cacheKey, getEnumOptionsForBiqStructureTab(enumCategoryKey, field));
+    }
+    return biqEnumOptionsCache.get(cacheKey) || [];
+  };
 
   const structureMutable = !tab.readOnly && (selected.code === 'TFRM' || (selected.code === 'LEAD' && selectionKey === 'players'));
   if (structureMutable) {
@@ -31432,7 +31579,7 @@ function renderBiqTab(tab) {
           const target = `alliance${idx}`;
           return (Array.isArray(record.fields) ? record.fields : []).find((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === target) || null;
         };
-        const civOptionsAll = makeBiqSectionIndexOptions('RACE', false);
+        const civOptionsAll = getCachedBiqSectionIndexOptions('RACE', false);
         const civOptions = playableCivIdSet.size > 0
           ? civOptionsAll.filter((opt) => {
             const idx = Number.parseInt(String(opt && opt.value || ''), 10);
@@ -31659,7 +31806,7 @@ function renderBiqTab(tab) {
         }
         rows.appendChild(boardCard);
       }
-      for (const [groupName, groupFields] of groupedEntries) {
+      const appendBiqGroupCard = ([groupName, groupFields]) => {
         const groupCard = document.createElement('div');
         groupCard.className = 'rule-group-card';
         const groupTitle = document.createElement('div');
@@ -31716,7 +31863,7 @@ function renderBiqTab(tab) {
           if (countField) consumedSpecialFields.add(countField);
           playableFields.forEach((field) => consumedSpecialFields.add(field));
 
-          const options = makeBiqSectionIndexOptions('RACE', false);
+          const options = getCachedBiqSectionIndexOptions('RACE', false);
           const selectedIds = new Set(playableFields
             .map((field) => parseIntFromDisplayValue(field.value))
             .filter((value) => Number.isFinite(value) && value >= 0));
@@ -31868,7 +32015,7 @@ function renderBiqTab(tab) {
           if (countField) consumedSpecialFields.add(countField);
           techFields.forEach((f) => consumedSpecialFields.add(f));
 
-          const techOptions = makeBiqSectionIndexOptions('TECH', false);
+          const techOptions = getCachedBiqSectionIndexOptions('TECH', false);
           const techRefTabKey = BIQ_SECTION_TO_REFERENCE_TAB['TECH'] || '';
 
           const syncTechCount = () => {
@@ -32155,7 +32302,7 @@ function renderBiqTab(tab) {
             return;
           }
           const refSpec = getBiqStructureRefSpec(selected.code, baseKey);
-          let refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
+          let refOptions = refSpec ? getCachedBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
           if (selected.code === 'LEAD' && baseKey === 'civ') {
             refOptions = [
               { value: '-3', label: 'Any' },
@@ -32194,7 +32341,7 @@ function renderBiqTab(tab) {
           const desiredControl = spec.control || '';
           const BIQ_SECTION_ENUM_CATEGORY = { LEAD: 'players', GAME: 'scenarioSettings', GOVT: 'governments', RACE: 'civilizations', GOOD: 'resources', PRTO: 'units', RULE: 'rules' };
           const enumCategoryKey = (selected && BIQ_SECTION_ENUM_CATEGORY[String(selected.code || '').toUpperCase()]) || activeTabKey;
-          const enumOptions = getEnumOptionsForBiqStructureTab(enumCategoryKey, field);
+          const enumOptions = getCachedBiqEnumOptions(enumCategoryKey, field);
           const useColorSlotPicker = selected.code === 'LEAD' && baseKey === 'color';
 
           if (editable) {
@@ -32428,14 +32575,61 @@ function renderBiqTab(tab) {
           groupCard.appendChild(row);
         });
         rows.appendChild(groupCard);
+      };
+      const finalizeBiqRows = () => {
+        textCol.appendChild(rows);
+        buildBiqRecordSectionNav({
+          tabKey: tab.key || state.activeTab || 'biq',
+          sectionCode: selected.code,
+          rowsRoot: rows,
+          navHost: navCol
+        });
+      };
+      const useIncrementalGroupMount = hideRecordList && groupedEntries.length > 2;
+      if (!useIncrementalGroupMount) {
+        groupedEntries.forEach(appendBiqGroupCard);
+        finalizeBiqRows();
+      } else {
+        const eagerGroupCount = 2;
+        const chunkSize = 2;
+        const pendingEntries = groupedEntries.slice();
+        pendingEntries.splice(0, eagerGroupCount).forEach(appendBiqGroupCard);
+        textCol.appendChild(rows);
+        const loadingNote = document.createElement('p');
+        loadingNote.className = 'hint';
+        loadingNote.textContent = 'Loading additional sections...';
+        textCol.appendChild(loadingNote);
+        const scheduleChunk = typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame.bind(window)
+          : (cb) => window.setTimeout(cb, 16);
+        const mountChunk = () => {
+          if (!rows.isConnected) return;
+          const nextBatch = pendingEntries.splice(0, chunkSize);
+          nextBatch.forEach(appendBiqGroupCard);
+          if (pendingEntries.length > 0) {
+            scheduleChunk(mountChunk);
+            return;
+          }
+          if (loadingNote.isConnected) loadingNote.remove();
+          buildBiqRecordSectionNav({
+            tabKey: tab.key || state.activeTab || 'biq',
+            sectionCode: selected.code,
+            rowsRoot: rows,
+            navHost: navCol
+          });
+        };
+        if (pendingEntries.length === 0) {
+          if (loadingNote.isConnected) loadingNote.remove();
+          buildBiqRecordSectionNav({
+            tabKey: tab.key || state.activeTab || 'biq',
+            sectionCode: selected.code,
+            rowsRoot: rows,
+            navHost: navCol
+          });
+        } else {
+          scheduleChunk(mountChunk);
+        }
       }
-      textCol.appendChild(rows);
-      buildBiqRecordSectionNav({
-        tabKey: tab.key || state.activeTab || 'biq',
-        sectionCode: selected.code,
-        rowsRoot: rows,
-        navHost: navCol
-      });
     }
     detailPane.appendChild(card);
   }
@@ -48990,9 +49184,7 @@ async function saveCurrentBundle() {
 
   syncSettingsFromInputs();
   state.isSaving = true;
-  if (el.saveBtn) {
-    el.saveBtn.disabled = true;
-  }
+  getSaveButtons().forEach((btn) => { btn.disabled = true; });
   updateSaveButtonLabel();
   updateSaveAsButtonState();
   updateDeleteScenarioButtonState();
