@@ -1,4 +1,4 @@
-* RELEASE 27.11.1
+* RELEASE 27.12
 - Fixed reference and sectioned tab item selection so changing the selected Civ, Tech, Resource, District, or similar entry preserves the current detail scroll position instead of jumping back to the top.
 - Added a Techs Unlocks board for editing the Units, Improvements, Resources, Governments, and obsolete Improvements tied to the selected tech through their real BIQ reference fields.
 - Added Districts to the Techs Unlocks board, editing C3X `advance_prereqs` by tech name while preserving unrelated district prerequisites and precise Districts dirty counts.
@@ -90,7 +90,7 @@
 - Changed Map modal canal district rendering to follow C3X's neighbor-aware directional canal logic, so canal overlays now choose and extend the same directional sprites the in-game renderer would use instead of relying on the generic district-cell preview crop path.
 - Fixed Civs `Favorite Govt` and `Shunned Govt` picker dropdown thumbnails so the BIQ field editor actually enables government option thumbnails in the menu, matching the already-thumbnail-enabled selected-value chip path.
 
-* RELEASE 27.11.1
+* RELEASE 27.12
 - Changed C3X/base Undo to use scoped base snapshots and in-memory restore, so base-field undos no longer reload the whole scenario before recomputing the base tab dirty state.
 - Further aligned Unit Table editing with the main Units tab by making its text and number cells use the same grouped entry-scoped undo sessions and shared Units dirty-key set, reducing modal-specific undo and dirty-state divergence.
 - Unified Unit Table text and number cell undo sessions with the main Units editor by routing them through grouped entry-scoped undo keys, and changed Unit Table dirty badges to read the shared Units dirty set instead of maintaining a separate modal-only dirty source of truth.
