@@ -1,4 +1,6 @@
 * RELEASE 27.11.1
+- Added a C3X base-tab `Next` warning control that jumps to the next warned setting row and marks warned rows inline.
+- Added async C3X base quality checks for unmatched building, unit, resource, technology, and government names inside structured C3X settings such as generated resources, prereqs, perfume lists, and unit limits.
 - Added a BIQ field inventory guard that fails when an editable or synthetic BIQ UI field is not represented in generated save/reload mutation coverage.
 - Fixed Scenario Title and Description saves so those editor fields write to the BIQ header and persist after reload.
 - Fixed no-reload Map saves so successful terrain, overlay, resize, and scenario district edits clear the Map dirty badge and Save button state instead of keeping stale BIQ/map originals dirty.

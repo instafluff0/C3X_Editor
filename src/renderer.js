@@ -4126,6 +4126,33 @@ function getLoadAuditGeneralMessages(tabKey) {
     : [];
 }
 
+function getLoadAuditGeneralEntries(tabKey) {
+  const tabState = getLoadAuditTabState(tabKey);
+  return Array.isArray(tabState && tabState.general)
+    ? tabState.general.filter((entry) => entry && typeof entry === 'object')
+    : [];
+}
+
+function getBaseKeyFromAuditEntry(entry) {
+  const explicitKey = String(entry && entry.baseKey || '').trim();
+  if (explicitKey) return explicitKey;
+  const message = String(entry && entry.message || '').trim();
+  const keyMatch = message.match(/C3X key "([^"]+)"/);
+  return keyMatch ? String(keyMatch[1] || '').trim() : '';
+}
+
+function getBaseAuditMessagesByKey() {
+  const out = new Map();
+  getLoadAuditGeneralEntries('base').forEach((entry) => {
+    const key = getBaseKeyFromAuditEntry(entry).toLowerCase();
+    const message = String(entry && entry.message || '').trim();
+    if (!key || !message) return;
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push(message);
+  });
+  return out;
+}
+
 function getLoadAuditSectionMessages(tabKey, sectionIndex) {
   const tabState = getLoadAuditTabState(tabKey);
   const entries = tabState && tabState.sections ? tabState.sections[String(sectionIndex)] : null;
@@ -8949,6 +8976,8 @@ function renderBaseTab(tab) {
 
   const baseAuditBox = createWarningBox(getLoadAuditGeneralMessages('base'), 'Quality Checks', { collapsible: true });
   if (baseAuditBox) wrap.appendChild(baseAuditBox);
+  const baseAuditMessagesByKey = getBaseAuditMessagesByKey();
+  const baseWarningKeys = new Set(baseAuditMessagesByKey.keys());
 
   const filterRow = document.createElement('div');
   filterRow.className = 'filter-row';
@@ -8958,6 +8987,11 @@ function renderBaseTab(tab) {
   filterInput.placeholder = 'Filter settings...';
   filterInput.value = state.baseFilter;
   filterRow.appendChild(filterInput);
+  const filterActions = document.createElement('div');
+  filterActions.className = 'reference-filter-right base-filter-right';
+  const nextWarningBtn = createNextWarningButton();
+  filterActions.appendChild(nextWarningBtn);
+  filterRow.appendChild(filterActions);
   wrap.appendChild(filterRow);
 
   const table = document.createElement('div');
@@ -9030,6 +9064,8 @@ function renderBaseTab(tab) {
   };
   for (const row of tab.rows) {
     if (!isBaseRowVersionAllowed(row.key)) continue;
+    const rawKey = String(row && row.key || '').trim();
+    const rowKeyLower = rawKey.toLowerCase();
     const sectionName = (tab.sectionByKey && tab.sectionByKey[row.key]) || 'General';
     if (!groups.has(sectionName)) {
       const group = document.createElement('div');
@@ -9047,6 +9083,8 @@ function renderBaseTab(tab) {
 
     const r = document.createElement('div');
     r.className = 'base-row';
+    const rowAuditMessages = baseAuditMessagesByKey.get(rowKeyLower) || [];
+    r.classList.toggle('base-row-has-issue', rowAuditMessages.length > 0);
 
     const keyWrap = document.createElement('div');
     keyWrap.className = 'base-key-wrap';
@@ -9071,6 +9109,13 @@ function renderBaseTab(tab) {
     releaseBadge.title = `${releaseInfo.note}\nField: ${row.key}`;
     releaseBadge.classList.toggle('hidden', releaseInfo.label === 'R1');
     keyHead.appendChild(releaseBadge);
+    if (rowAuditMessages.length > 0) {
+      const warningBadge = document.createElement('span');
+      warningBadge.className = 'base-row-warning-badge';
+      warningBadge.textContent = '⚠';
+      warningBadge.title = rowAuditMessages.join('\n');
+      keyHead.appendChild(warningBadge);
+    }
     const sourceBadge = document.createElement('span');
     const overrideBadge = document.createElement('span');
     const refreshSourceBadge = () => {
@@ -9148,13 +9193,12 @@ function renderBaseTab(tab) {
     const groupInfo = groups.get(sectionName);
     groupInfo.rowsWrap.appendChild(r);
     groupInfo.rowCount += 1;
-    const rawKey = String(row && row.key || '').trim();
-    state.baseRowElementsByKey.set(rawKey.toLowerCase(), r);
+    state.baseRowElementsByKey.set(rowKeyLower, r);
     const friendlyName = toFriendlyKey(rawKey);
     const docs = getBaseFieldDescription(rawKey, tab.fieldDocs);
     const releaseSearch = getC3xReleaseSearchTerms(rawKey);
     const searchText = `${rawKey} ${friendlyName} ${docs} ${releaseSearch}`.toLowerCase();
-    rowElements.push({ key: rawKey.toLowerCase(), searchText, el: r, group: groupInfo.group });
+    rowElements.push({ key: rowKeyLower, searchText, el: r, group: groupInfo.group });
 
     if (!baseRowLazyObserver || rowElements.length <= 18) {
       ensureInputMounted();
@@ -9162,6 +9206,27 @@ function renderBaseTab(tab) {
       baseRowLazyObserver.observe(r);
     }
   }
+
+  const updateBaseNextWarningButton = () => {
+    const warningRows = rowElements.filter((entry) => baseWarningKeys.has(entry.key) && entry.el.style.display !== 'none');
+    nextWarningBtn.classList.toggle('hidden', warningRows.length <= 0);
+    nextWarningBtn.disabled = warningRows.length <= 0;
+    nextWarningBtn.title = warningRows.length > 0
+      ? 'Jump to the next C3X setting with a warning'
+      : 'No C3X setting warnings match the current filter';
+    nextWarningBtn.onclick = () => {
+      if (warningRows.length <= 0) return;
+      const scroller = el.tabContent;
+      const scrollerRect = scroller ? scroller.getBoundingClientRect() : null;
+      const thresholdTop = scrollerRect ? scrollerRect.top + 16 : 0;
+      const next = warningRows.find((entry) => {
+        const rect = entry.el.getBoundingClientRect();
+        return rect.top > thresholdTop;
+      }) || warningRows[0];
+      if (!next) return;
+      focusBaseRowByKey(next.key);
+    };
+  };
 
   const applyFilter = () => {
     const needle = filterInput.value.trim().toLowerCase();
@@ -9174,6 +9239,7 @@ function renderBaseTab(tab) {
       const hasVisible = Array.from(g.rowsWrap.children).some((child) => child.style.display !== 'none');
       g.group.style.display = hasVisible ? '' : 'none';
     });
+    updateBaseNextWarningButton();
   };
   filterInput.addEventListener('input', () => {
     scheduleTabSearchRender('base', applyFilter, { delayMs: 90 });

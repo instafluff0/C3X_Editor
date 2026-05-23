@@ -855,6 +855,68 @@ test('auditLoadedBundle reports base unknown keys and invalid base values', () =
   assert.ok(result.tabs.base.general.some((entry) => /Unknown C3X key "mystery_setting"/.test(entry.message)));
 });
 
+test('auditLoadedBundle reports C3X base references that do not match loaded rule names', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeBundle(c3xRoot, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' },
+          { key: 'buildings_generating_resources', value: '["Hollywood": local yields "Films"]' },
+          { key: 'building_prereqs_for_units', value: '["Barracks": "Warrior" "Ghost Unit"]' },
+          { key: 'production_perfume', value: '["Temple": 20, "Archer": -50%, "Missing Producer": 10]' },
+          { key: 'technology_perfume', value: '["Electricity": 12, "Missing Tech": 5]' },
+          { key: 'resource_perfume', value: '["Films": 20, "Missing Resource": 1]' },
+          { key: 'government_perfume', value: '["Democracy": 1, "Missing Government": 2]' },
+          { key: 'work_area_improvements', value: '["Aqueduct": 3, "Missing Building": 2]' },
+          { key: 'unit_limits', value: '["Settler": 1 per-city, "Missing Unit": 1]' },
+          { key: 'can_bombard_only_sea_tiles', value: '["Battleship" "Missing Boat"]' },
+          { key: 'great_wall_auto_build_wonder_name', value: '"Hollywood"' }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [{ name: 'Electricity' }] },
+      resources: { entries: [{ name: 'Films' }] },
+      governments: { entries: [{ name: 'Democracy' }] },
+      improvements: {
+        entries: [
+          { name: 'Hollywoodzz', improvementKind: 'wonder' },
+          { name: 'Barracks', improvementKind: 'normal' },
+          { name: 'Temple', improvementKind: 'normal' },
+          { name: 'Aqueduct', improvementKind: 'normal' },
+          { name: 'Great Wall', improvementKind: 'wonder' }
+        ]
+      },
+      units: {
+        entries: [
+          { name: 'Warrior' },
+          { name: 'Archer' },
+          { name: 'Settler' },
+          { name: 'Battleship' }
+        ]
+      },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const messages = ((result.tabs.base || {}).general || []).map((entry) => String(entry.message || ''));
+  assert.ok(messages.some((msg) => /buildings_generating_resources.+Hollywood/.test(msg)));
+  assert.ok(messages.some((msg) => /building_prereqs_for_units.+Ghost Unit/.test(msg)));
+  assert.ok(messages.some((msg) => /production_perfume.+Missing Producer/.test(msg)));
+  assert.ok(messages.some((msg) => /technology_perfume.+Missing Tech/.test(msg)));
+  assert.ok(messages.some((msg) => /resource_perfume.+Missing Resource/.test(msg)));
+  assert.ok(messages.some((msg) => /government_perfume.+Missing Government/.test(msg)));
+  assert.ok(messages.some((msg) => /work_area_improvements.+Missing Building/.test(msg)));
+  assert.ok(messages.some((msg) => /unit_limits.+Missing Unit/.test(msg)));
+  assert.ok(messages.some((msg) => /can_bombard_only_sea_tiles.+Missing Boat/.test(msg)));
+  assert.ok(messages.some((msg) => /great_wall_auto_build_wonder_name.+Hollywood/.test(msg)));
+  assert.equal(messages.some((msg) => /buildings_generating_resources.+Films/.test(msg)), false);
+});
+
 test('auditLoadedBundle recognizes shipped exclude_passengers_from_stealth_attack key', () => {
   const c3xRoot = mkTmpDir();
   const bundle = makeBundle(c3xRoot, {

@@ -458,6 +458,29 @@ test('reference warning badges include Game Concepts', () => {
   );
 });
 
+test('C3X base warning rows expose Next warning navigation', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function getBaseAuditMessagesByKey\(\) \{[\s\S]*?getLoadAuditGeneralEntries\('base'\)[\s\S]*?getBaseKeyFromAuditEntry/,
+    'Base tab should map general C3X audit warnings back to row keys'
+  );
+
+  assert.match(
+    text,
+    /const nextWarningBtn = createNextWarningButton\(\);[\s\S]*?filterActions\.appendChild\(nextWarningBtn\);[\s\S]*?const updateBaseNextWarningButton = \(\) =>/,
+    'Base tab should render a Next warning control beside the setting filter'
+  );
+
+  assert.match(
+    text,
+    /const warningRows = rowElements\.filter\(\(entry\) => baseWarningKeys\.has\(entry\.key\) && entry\.el\.style\.display !== 'none'\);[\s\S]*?focusBaseRowByKey\(next\.key\);/,
+    'Base Next warning should jump to the next visible warned setting row'
+  );
+});
+
 test('improvements required districts picker wires district dropdown thumbnails', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

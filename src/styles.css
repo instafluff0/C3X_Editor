@@ -4015,6 +4015,11 @@ button.danger:hover {
   background: rgba(238, 244, 255, 0.9);
 }
 
+.base-row-has-issue {
+  background: linear-gradient(135deg, rgba(255, 249, 220, 0.9), rgba(255, 245, 196, 0.84));
+  border: 1px solid rgba(190, 139, 35, 0.34);
+}
+
 .base-key-wrap {
   display: grid;
   gap: 2px;
@@ -4030,6 +4035,21 @@ button.danger:hover {
   align-items: center;
   gap: 7px;
   flex-wrap: wrap;
+}
+
+.base-row-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: #7a4308;
+  background: rgba(255, 248, 222, 0.95);
+  border: 1px solid rgba(168, 117, 31, 0.42);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .base-dirty-badge {
@@ -9720,6 +9740,10 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .filter-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 10px;
   position: sticky;
   top: var(--sticky-search-top);

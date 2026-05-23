@@ -131,6 +131,8 @@ const DISTRICT_BUILDABLE_SQUARE_TOKENS = [
   'lake'
 ];
 
+const BUILDING_RESOURCE_FLAGS = ['local', 'no-tech-req', 'yields', 'show-bonus', 'hide-non-bonus'];
+
 const NATURAL_WONDER_TERRAIN_TOKENS = [
   ...DISTRICT_BUILDABLE_SQUARE_TOKENS.filter((token) => token !== 'lake'),
   'forest', 'forests',
@@ -368,6 +370,10 @@ function isDisabledConfigToken(value) {
 
 function isIntegerToken(value) {
   return /^-?\d+$/.test(String(value == null ? '' : value).trim());
+}
+
+function normalizeReferenceLookup(value) {
+  return normalizeConfigToken(value).toLowerCase();
 }
 
 function hasBalancedQuotes(value) {
@@ -714,6 +720,58 @@ function stripOptionalBracketList(value) {
   return trimmed.replace(/^\[\s*/, '').replace(/\s*\]$/, '');
 }
 
+function parseDelimitedStructuredEntries(value) {
+  const inner = stripOptionalBracketList(value);
+  if (!inner) return [];
+  return tokenizeListPreservingQuotes(inner);
+}
+
+function parseBracketedOptionTokens(value) {
+  const inner = stripOptionalBracketList(value);
+  if (!inner) return [];
+  const tokens = /[,\r\n]/.test(inner)
+    ? tokenizeListPreservingQuotes(inner)
+    : tokenizeWhitespaceListPreservingQuotes(inner);
+  return tokens.map((token) => normalizeConfigToken(token)).filter(Boolean);
+}
+
+function parseNameAmountItems(value) {
+  return parseDelimitedStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { name: normalizeConfigToken(item), amount: '' };
+    return {
+      name: normalizeConfigToken(item.slice(0, i)),
+      amount: item.slice(i + 1).trim()
+    };
+  });
+}
+
+function parseBuildingPrereqItems(value) {
+  return parseDelimitedStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { building: normalizeConfigToken(item), units: [] };
+    return {
+      building: normalizeConfigToken(item.slice(0, i)),
+      units: parseBracketedOptionTokens(item.slice(i + 1))
+    };
+  });
+}
+
+function parseBuildingResourceItems(value) {
+  return parseDelimitedStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { building: normalizeConfigToken(item), resource: '', flags: [] };
+    const rhs = tokenizeWhitespaceListPreservingQuotes(item.slice(i + 1))
+      .map((token) => normalizeConfigToken(token))
+      .filter(Boolean);
+    return {
+      building: normalizeConfigToken(item.slice(0, i)),
+      resource: rhs.length > 0 ? rhs[rhs.length - 1] : '',
+      flags: rhs.filter((token) => BUILDING_RESOURCE_FLAGS.includes(token))
+    };
+  });
+}
+
 function isValidLimitRailroadMovementValue(value) {
   return isIntegerToken(value) || isDisabledConfigToken(value);
 }
@@ -777,6 +835,155 @@ function lintBaseConfig(bundle, result) {
       }
       if (value && !meta.options.includes(value)) {
         addGeneralIssue(result, 'base', `C3X key "${key}" has unknown value "${value}". Expected one of: ${meta.options.join(', ')}.`, 'base-invalid-option');
+      }
+    }
+  });
+}
+
+function buildBaseReferenceContext(bundle) {
+  const improvementWonders = getReferenceSetFromBundle(bundle, 'improvements', (entry) => {
+    const kind = String(entry && entry.improvementKind || '').trim().toLowerCase();
+    return kind === 'wonder' || kind === 'small_wonder';
+  });
+  return {
+    civilizations: getReferenceSetFromBundle(bundle, 'civilizations'),
+    technologies: getReferenceSetFromBundle(bundle, 'technologies'),
+    resources: getReferenceSetFromBundle(bundle, 'resources'),
+    governments: getReferenceSetFromBundle(bundle, 'governments'),
+    improvements: getReferenceSetFromBundle(bundle, 'improvements'),
+    improvementWonders,
+    units: getReferenceSetFromBundle(bundle, 'units')
+  };
+}
+
+function collectInvalidReferences(values, set) {
+  if (!(set instanceof Set) || set.size <= 0) return [];
+  const seen = new Set();
+  const invalid = [];
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const display = normalizeConfigToken(value);
+    const lookup = normalizeReferenceLookup(display);
+    if (!display || !lookup || set.has(lookup) || seen.has(lookup)) return;
+    seen.add(lookup);
+    invalid.push(display);
+  });
+  return invalid;
+}
+
+function collectUniqueValues(values) {
+  const seen = new Set();
+  const out = [];
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const display = normalizeConfigToken(value);
+    const lookup = normalizeReferenceLookup(display);
+    if (!display || !lookup || seen.has(lookup)) return;
+    seen.add(lookup);
+    out.push(display);
+  });
+  return out;
+}
+
+function referenceKnownInAny(value, sets) {
+  const activeSets = (Array.isArray(sets) ? sets : [])
+    .filter((set) => set instanceof Set && set.size > 0);
+  if (activeSets.length <= 0) return true;
+  const lookup = normalizeReferenceLookup(value);
+  return !lookup || activeSets.some((set) => set.has(lookup));
+}
+
+function addBaseReferenceIssue(result, key, targetLabel, invalidValues) {
+  const values = (Array.isArray(invalidValues) ? invalidValues : [])
+    .map((value) => normalizeConfigToken(value))
+    .filter(Boolean);
+  if (values.length <= 0) return;
+  addGeneralIssue(
+    result,
+    'base',
+    `C3X key "${key}" references unknown ${targetLabel}${values.length === 1 ? '' : 's'}: ${values.join(', ')}. Civ3/C3X can error when loading unmatched names.`,
+    'base-reference-missing'
+  );
+}
+
+function auditBaseReferenceCompatibility(bundle, result) {
+  const rows = (((bundle || {}).tabs || {}).base || {}).rows;
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length <= 0) return;
+  const context = buildBaseReferenceContext(bundle);
+
+  list.forEach((row) => {
+    const key = String(row && row.key || '').trim();
+    if (!key) return;
+    const value = String(row && row.value || '').trim();
+    if (!value || value === '[]') return;
+
+    if (key === 'buildings_generating_resources') {
+      const items = parseBuildingResourceItems(value);
+      addBaseReferenceIssue(result, key, 'improvement/building name', collectInvalidReferences(items.map((item) => item.building), context.improvements));
+      addBaseReferenceIssue(result, key, 'resource name', collectInvalidReferences(items.map((item) => item.resource), context.resources));
+      return;
+    }
+
+    if (key === 'building_prereqs_for_units') {
+      const items = parseBuildingPrereqItems(value);
+      addBaseReferenceIssue(result, key, 'improvement/building name', collectInvalidReferences(items.map((item) => item.building), context.improvements));
+      addBaseReferenceIssue(result, key, 'unit name', collectInvalidReferences(items.flatMap((item) => item.units || []), context.units));
+      return;
+    }
+
+    if (key === 'production_perfume' || key === 'perfume_specs') {
+      const names = parseNameAmountItems(value).map((item) => item.name);
+      const invalid = names.filter((name) => !referenceKnownInAny(name, [context.improvements, context.units]));
+      addBaseReferenceIssue(result, key, 'unit or improvement name', collectUniqueValues(invalid));
+      return;
+    }
+
+    if (key === 'technology_perfume') {
+      addBaseReferenceIssue(result, key, 'technology name', collectInvalidReferences(parseNameAmountItems(value).map((item) => item.name), context.technologies));
+      return;
+    }
+
+    if (key === 'resource_perfume') {
+      addBaseReferenceIssue(result, key, 'resource name', collectInvalidReferences(parseNameAmountItems(value).map((item) => item.name), context.resources));
+      return;
+    }
+
+    if (key === 'government_perfume') {
+      addBaseReferenceIssue(result, key, 'government name', collectInvalidReferences(parseNameAmountItems(value).map((item) => item.name), context.governments));
+      return;
+    }
+
+    if (key === 'work_area_improvements') {
+      addBaseReferenceIssue(result, key, 'improvement/building name', collectInvalidReferences(parseNameAmountItems(value).map((item) => item.name), context.improvements));
+      return;
+    }
+
+    if (key === 'unit_limits') {
+      addBaseReferenceIssue(result, key, 'unit name', collectInvalidReferences(parseNameAmountItems(value).map((item) => item.name), context.units));
+      return;
+    }
+
+    const meta = getBaseLintMeta(key);
+    if (meta && meta.family === 'quoted_reference_list' && meta.referenceTab) {
+      const labelByTab = {
+        civilizations: 'civilization name',
+        technologies: 'technology name',
+        resources: 'resource name',
+        governments: 'government name',
+        improvements: 'improvement/building name',
+        units: 'unit name'
+      };
+      addBaseReferenceIssue(result, key, labelByTab[meta.referenceTab] || 'reference name', collectInvalidReferences(parseBracketedOptionTokens(value), context[meta.referenceTab]));
+      return;
+    }
+
+    if (key === 'great_wall_auto_build_wonder_name') {
+      const wonderName = normalizeConfigToken(value);
+      if (!wonderName) return;
+      const regularLookup = normalizeReferenceLookup(wonderName);
+      const withoutArticle = regularLookup.replace(/^the\s+/, '').trim();
+      const knownWonders = context.improvementWonders;
+      if (knownWonders instanceof Set && knownWonders.size > 0 && !knownWonders.has(regularLookup) && !knownWonders.has(withoutArticle)) {
+        addBaseReferenceIssue(result, key, 'wonder name', [wonderName]);
       }
     }
   });
@@ -1090,6 +1297,7 @@ function auditLoadedBundle(bundle, options = {}) {
   const result = createAuditAccumulator();
   if (!bundle || !bundle.tabs) return result;
   lintBaseConfig(bundle, result);
+  auditBaseReferenceCompatibility(bundle, result);
   lintSectionedTab(bundle, result, 'districts');
   lintSectionedTab(bundle, result, 'wonders');
   lintSectionedTab(bundle, result, 'naturalWonders');
