@@ -528,7 +528,11 @@ test('no-reload save reconciliation assigns new reference indexes and reload ord
     }
   };
   const { reconcileReferenceTabsAfterNoReloadSave, state } = loadRendererNoReloadSaveHelpers(bundle);
-  assert.equal(reconcileReferenceTabsAfterNoReloadSave(), true);
+  const savedOps = JSON.parse(JSON.stringify(bundle.tabs.technologies.recordOps));
+  bundle.tabs.technologies.recordOps = [];
+  assert.equal(reconcileReferenceTabsAfterNoReloadSave({
+    referenceOpsByTab: { technologies: savedOps }
+  }), true);
   assert.deepEqual(
     bundle.tabs.technologies.entries.map((entry) => `${entry.civilopediaKey}:${entry.biqIndex}`),
     ['TECH_ALPHA:0', 'TECH_BETA:1', 'TECH_NEW_A:2', 'TECH_NEW_B:3']

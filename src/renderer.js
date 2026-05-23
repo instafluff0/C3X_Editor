@@ -48982,6 +48982,18 @@ function getTabsForSavePayload() {
   return tabsToSave;
 }
 
+function snapshotReferenceRecordOpsForNoReloadSave(tabs) {
+  const out = {};
+  const source = tabs || {};
+  Object.keys(REFERENCE_SECTION_BY_TAB).forEach((tabKey) => {
+    const ops = Array.isArray(source[tabKey] && source[tabKey].recordOps)
+      ? source[tabKey].recordOps
+      : [];
+    if (ops.length > 0) out[tabKey] = deepCloneUiValue(ops);
+  });
+  return out;
+}
+
 function getPendingBiqOperationDirtyTabs(tabs) {
   const out = [];
   const source = tabs || {};
@@ -49742,14 +49754,21 @@ function getReferenceRecordIndexFromOriginalBiq(sectionCode, recordRef) {
   return Number.isFinite(idx) ? idx : NaN;
 }
 
-function reconcileReferenceTabsAfterNoReloadSave() {
+function reconcileReferenceTabsAfterNoReloadSave(options = {}) {
   if (!state.bundle || !state.bundle.tabs) return false;
   let changed = false;
+  let totalOps = 0;
   Object.entries(REFERENCE_SECTION_BY_TAB).forEach(([tabKey, sectionCode]) => {
     const tab = state.bundle.tabs[tabKey];
     const entries = Array.isArray(tab && tab.entries) ? tab.entries : null;
-    const ops = Array.isArray(tab && tab.recordOps) ? tab.recordOps : [];
+    const savedOps = options
+      && options.referenceOpsByTab
+      && Array.isArray(options.referenceOpsByTab[tabKey])
+      ? options.referenceOpsByTab[tabKey]
+      : null;
+    const ops = savedOps || (Array.isArray(tab && tab.recordOps) ? tab.recordOps : []);
     if (!entries || ops.length === 0) return;
+    totalOps += ops.length;
 
     const selectedEntry = entries[Number(state.referenceSelection[tabKey] || 0)] || null;
     const section = getBiqSectionByCode(sectionCode);
@@ -49827,11 +49846,16 @@ function reconcileReferenceTabsAfterNoReloadSave() {
       changed = true;
     }
   });
+  if (totalOps > 0 && typeof _dbgLog === 'function') {
+    _dbgLog('INF', 'saveBundle', `No-reload reference reconciliation: ops=${totalOps}, changed=${changed ? 'yes' : 'no'}`);
+  }
   return changed;
 }
 
-function markCurrentBundleCleanAfterSave() {
-  const referenceOrderChanged = reconcileReferenceTabsAfterNoReloadSave();
+function markCurrentBundleCleanAfterSave(options = {}) {
+  const referenceOrderChanged = reconcileReferenceTabsAfterNoReloadSave({
+    referenceOpsByTab: options.referenceOpsByTab
+  });
   markReferenceTabsAsSaved();
   markScenarioDistrictsAsSaved();
   state.cleanSnapshot = snapshotTabs();
@@ -50080,6 +50104,7 @@ async function saveCurrentBundle() {
   try {
     await window.c3xManager.setSettings(state.settings);
     const tabsToSave = getTabsForSavePayload();
+    const referenceOpsForNoReloadSave = snapshotReferenceRecordOpsForNoReloadSave(tabsToSave);
     const dirtyTabSet = new Set(Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0));
     getPendingBiqOperationDirtyTabs(tabsToSave).forEach((key) => dirtyTabSet.add(key));
     const dirtyTabs = Array.from(dirtyTabSet);
@@ -50139,7 +50164,7 @@ async function saveCurrentBundle() {
         setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
         return true;
       }
-      markCurrentBundleCleanAfterSave();
+      markCurrentBundleCleanAfterSave({ referenceOpsByTab: referenceOpsForNoReloadSave });
       _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload because Reload After Save is off');
       rerunQualityChecksAfterNoReloadSave();
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);

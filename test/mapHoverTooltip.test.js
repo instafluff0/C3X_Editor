@@ -305,7 +305,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?markCurrentBundleCleanAfterSave\(\);[\s\S]*?Skipped post-save bundle reload because Reload After Save is off/,
+    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?markCurrentBundleCleanAfterSave\([\s\S]*?\);[\s\S]*?Skipped post-save bundle reload because Reload After Save is off/,
     'Save should keep the current bundle open and mark it clean when Reload After Save is disabled'
   );
   assert.match(
