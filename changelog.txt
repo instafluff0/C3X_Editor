@@ -1,4 +1,12 @@
 * RELEASE 27.11.1
+- Fixed reference and sectioned tab item selection so changing the selected Civ, Tech, Resource, District, or similar entry preserves the current detail scroll position instead of jumping back to the top.
+- Added a Techs Unlocks board for editing the Units, Improvements, Resources, Governments, and obsolete Improvements tied to the selected tech through their real BIQ reference fields.
+- Added Districts to the Techs Unlocks board, editing C3X `advance_prereqs` by tech name while preserving unrelated district prerequisites and precise Districts dirty counts.
+- Added downstream Technologies to the Techs Unlocks board, editing other techs' prerequisite slots so a selected tech can show and control what it leads to.
+- Improved Techs Unlocks rendering for techs with many unlocked entries by reusing each group's option list and deferring offscreen selected-entry dropdown mounting and thumbnail work until near the viewport.
+- Changed Techs Unlocks undo capture to use scoped tab and section snapshots so Undo restores unlock edits in memory instead of triggering the full "Restoring previous change" reload modal.
+- Changed Techs Unlocks add/remove/dropdown edits to refresh only the Unlocks board in place instead of rebuilding the whole Techs tab and resetting already-mounted list/detail art.
+- Fixed Techs Unlocks edits so already-matching unlock references are not rewritten or marked dirty, and affected reference-tab dirty counts are rebuilt precisely after cross-tab edits.
 - Added BIQ writer and no-reload clean-state guard tests so editable BIQ UI fields must emit save edits and successful no-reload saves must clear representative BIQ tab dirty state.
 - Changed the derived BIQ Improvement category display field to read-only, leaving the persisted Wonder and Small Wonder bits as the editable category controls.
 - Added automatic Scenario resource imports that append the source `resources.pcx` map icon into a scenario-local `Art\resources.pcx`, grow the atlas with a magenta row when needed, rewrite only the imported resource's icon index, and expose a default-on File -> Settings -> Resources toggle for disabling it.

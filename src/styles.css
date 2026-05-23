@@ -5974,6 +5974,54 @@ details > summary:focus-visible {
   width: 100%;
 }
 
+.technology-unlocks-board {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(73, 69, 98, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 20px rgba(38, 28, 72, 0.05);
+}
+
+.technology-unlocks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.technology-unlock-cell {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(73, 69, 98, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.technology-unlock-cell-label {
+  margin: 0;
+}
+
+.technology-unlock-picker-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.technology-unlock-picker,
+.technology-unlock-picker .tech-picker-head,
+.technology-unlock-picker .tech-picker-btn,
+.technology-unlock-add-picker,
+.technology-unlock-add-picker .tech-picker-head,
+.technology-unlock-add-picker .tech-picker-btn {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
 .technology-tree-coords {
   display: grid;
   grid-template-columns: repeat(2, minmax(88px, 108px));

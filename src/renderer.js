@@ -2567,6 +2567,13 @@ function getUndoSnapshotForKey(key = '') {
   if (normalizedKey.startsWith('TECH_TOP:')) {
     return snapshotSelectedEditableTabs(['technologies']);
   }
+  if (normalizedKey.startsWith('TECH_UNLOCK_TAB:')) {
+    const parts = normalizedKey.split(':');
+    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
+      return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `tab:${tabKey}` });
+    }
+  }
   if (normalizedKey.startsWith('REFERENCE_TAB:')) {
     const parts = normalizedKey.split(':');
     const tabKey = String(parts[1] || '').trim().toLowerCase();
@@ -17790,6 +17797,594 @@ function renderTechnologyBooleanMatrixCard(groupName, fields, entry, tabKey, ref
   return groupCard;
 }
 
+const TECHNOLOGY_UNLOCK_GROUPS = [
+  {
+    key: 'technologies',
+    title: 'Technologies',
+    tabKey: 'technologies',
+    kind: 'technologyPrerequisite',
+    fieldKeys: ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'],
+    sectionCode: 'TECH'
+  },
+  {
+    key: 'units',
+    title: 'Units',
+    tabKey: 'units',
+    fieldKey: 'requiredtech',
+    sectionCode: 'PRTO'
+  },
+  {
+    key: 'improvements',
+    title: 'Improvements',
+    tabKey: 'improvements',
+    fieldKey: 'reqadvance',
+    sectionCode: 'BLDG'
+  },
+  {
+    key: 'resources',
+    title: 'Resources',
+    tabKey: 'resources',
+    fieldKey: 'prerequisite',
+    sectionCode: 'GOOD'
+  },
+  {
+    key: 'districts',
+    title: 'Districts',
+    tabKey: 'districts',
+    fieldKey: 'advance_prereqs',
+    kind: 'section'
+  },
+  {
+    key: 'governments',
+    title: 'Governments',
+    tabKey: 'governments',
+    fieldKey: 'prerequisitetechnology',
+    sectionCode: 'GOVT'
+  },
+  {
+    key: 'obsoleteImprovements',
+    title: 'Obsoletes',
+    tabKey: 'improvements',
+    fieldKey: 'obsoleteby',
+    sectionCode: 'BLDG'
+  }
+];
+const TECHNOLOGY_UNLOCK_EAGER_SELECTED_PICKERS = 8;
+
+function getTechnologyUnlockTechIndex(entry, selectedBaseIndex) {
+  const idx = getReferenceEntryIndexForOption('technologies', entry, selectedBaseIndex, { allowFallback: true });
+  return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
+function getTechnologyUnlockTechName(entry) {
+  return normalizeConfigToken(getReferenceEntryDisplayName('technologies', entry) || (entry && entry.name) || '');
+}
+
+function getReferenceEntriesForUnlockGroup(spec) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[spec.tabKey];
+  return tab && Array.isArray(tab.entries) ? tab.entries : [];
+}
+
+function getDistrictSectionsForUnlockGroup(spec) {
+  if (!spec || spec.kind !== 'section') return [];
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[spec.tabKey];
+  return tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+}
+
+function getTechnologyUnlockItemCount(spec) {
+  return spec && spec.kind === 'section'
+    ? getDistrictSectionsForUnlockGroup(spec).length
+    : getReferenceEntriesForUnlockGroup(spec).length;
+}
+
+function getTechnologyUnlockEntryIndex(tabKey, entry, fallbackIndex) {
+  const idx = getReferenceEntryIndexForOption(tabKey, entry, fallbackIndex, { allowFallback: true });
+  return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
+function isTechnologyPrerequisiteUnlockGroup(spec) {
+  return !!(spec && spec.kind === 'technologyPrerequisite');
+}
+
+function getTechnologyPrerequisiteFieldKeys(spec = null) {
+  return Array.isArray(spec && spec.fieldKeys) && spec.fieldKeys.length > 0
+    ? spec.fieldKeys.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'];
+}
+
+function getTechnologyPrerequisiteFieldsForUnlockGroup(entry, spec = null) {
+  const keys = getTechnologyPrerequisiteFieldKeys(spec);
+  return keys.map((key) => getBiqFieldByBaseKey(entry, key)).filter(Boolean);
+}
+
+function technologyEntryHasUnlockPrerequisite(entry, spec, techIndex) {
+  if (!Number.isFinite(techIndex) || techIndex < 0) return false;
+  return getTechnologyPrerequisiteFieldsForUnlockGroup(entry, spec)
+    .some((field) => resolveTechIndexFromValue(field && field.value) === techIndex);
+}
+
+function getTechnologyUnlockPrerequisiteOpenField(entry, spec) {
+  const keys = getTechnologyPrerequisiteFieldKeys(spec);
+  for (const key of keys) {
+    const field = getBiqFieldByBaseKey(entry, key);
+    if (!field) return ensureBiqFieldByBaseKey(entry, key, key, '-1');
+    const raw = String(field.value == null ? '' : field.value).trim();
+    const resolved = resolveTechIndexFromValue(field.value);
+    if (!raw || /^none$/i.test(raw) || resolved === -1) return field;
+  }
+  return null;
+}
+
+function canTechnologyAcceptUnlockPrerequisite(entry, spec, techIndex) {
+  if (technologyEntryHasUnlockPrerequisite(entry, spec, techIndex)) return true;
+  const keys = getTechnologyPrerequisiteFieldKeys(spec);
+  return keys.some((key) => {
+    const field = getBiqFieldByBaseKey(entry, key);
+    if (!field) return true;
+    const raw = String(field.value == null ? '' : field.value).trim();
+    const resolved = resolveTechIndexFromValue(field.value);
+    return !raw || /^none$/i.test(raw) || resolved === -1;
+  });
+}
+
+function getTechnologyUnlockOptions(spec, techIndex = null) {
+  if (spec && spec.kind === 'section') {
+    const sections = getDistrictSectionsForUnlockGroup(spec);
+    const raw = sections.map((section, idx) => {
+      const display = getDistrictSectionDisplay(section, idx);
+      const label = display.primary || `District ${idx + 1}`;
+      return {
+        value: String(idx),
+        label,
+        displayLabel: label,
+        section,
+        recIndex: idx,
+        jumpTarget: { districtIndex: idx, section }
+      };
+    });
+    const labelCounts = new Map();
+    raw.forEach((opt) => {
+      const key = String(opt.label || '').trim().toLowerCase();
+      if (!key) return;
+      labelCounts.set(key, Number(labelCounts.get(key) || 0) + 1);
+    });
+    return raw.map((opt) => {
+      const key = String(opt.label || '').trim().toLowerCase();
+      if (key && Number(labelCounts.get(key) || 0) > 1) {
+        return { ...opt, label: `${opt.label} [ID ${opt.recIndex + 1}]`, displayLabel: opt.label };
+      }
+      return opt;
+    }).sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+  }
+  const entries = getReferenceEntriesForUnlockGroup(spec);
+  const raw = entries.map((entry, fallbackIdx) => {
+    const idx = getTechnologyUnlockEntryIndex(spec.tabKey, entry, fallbackIdx);
+    if (idx == null) return null;
+    if (isTechnologyPrerequisiteUnlockGroup(spec)) {
+      if (Number.isFinite(techIndex) && idx === techIndex) return null;
+      if (!canTechnologyAcceptUnlockPrerequisite(entry, spec, techIndex)) return null;
+    }
+    const name = getReferenceEntryDisplayName(spec.tabKey, entry) || String(entry && entry.name || '').trim();
+    return {
+      value: String(idx),
+      label: name || `${spec.sectionCode} ${idx + 1}`,
+      displayLabel: name || `${spec.sectionCode} ${idx + 1}`,
+      entry,
+      recIndex: idx
+    };
+  }).filter(Boolean);
+  const labelCounts = new Map();
+  raw.forEach((opt) => {
+    const key = String(opt.label || '').trim().toLowerCase();
+    if (!key) return;
+    labelCounts.set(key, Number(labelCounts.get(key) || 0) + 1);
+  });
+  return raw.map((opt) => {
+    const key = String(opt.label || '').trim().toLowerCase();
+    if (key && Number(labelCounts.get(key) || 0) > 1) {
+      return { ...opt, label: `${opt.label} [ID ${opt.recIndex}]`, displayLabel: opt.label };
+    }
+    return opt;
+  }).sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+}
+
+function getDistrictAdvancePrereqTokens(section, fieldKey = 'advance_prereqs') {
+  return tokenizeListPreservingQuotes(getFieldValue(section, fieldKey) || '')
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+}
+
+function setDistrictAdvancePrereqTokens(section, fieldKey, tokens) {
+  if (!section || !Array.isArray(section.fields)) return false;
+  const nextValue = (Array.isArray(tokens) ? tokens : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+  const currentValue = String(getFieldValue(section, fieldKey) || '').trim();
+  if (currentValue === nextValue) return false;
+  section.fields = section.fields.filter((field) => String(field && field.key || '') !== fieldKey);
+  if (nextValue) section.fields.push({ key: fieldKey, value: nextValue });
+  return true;
+}
+
+function getTechnologyUnlockSelectedEntries(spec, techIndex, techEntry = null) {
+  if (spec && spec.kind === 'section') {
+    const techName = getTechnologyUnlockTechName(techEntry);
+    const techKey = techName.toLowerCase();
+    if (!techKey) return [];
+    return getDistrictSectionsForUnlockGroup(spec).map((section, sectionIndex) => {
+      const tokens = getDistrictAdvancePrereqTokens(section, spec.fieldKey);
+      const hasTech = tokens.some((token) => normalizeConfigToken(token).toLowerCase() === techKey);
+      if (!hasTech) return null;
+      return { section, entryIndex: sectionIndex, tokens };
+    }).filter(Boolean);
+  }
+  if (!Number.isFinite(techIndex) || techIndex < 0) return [];
+  if (isTechnologyPrerequisiteUnlockGroup(spec)) {
+    return getReferenceEntriesForUnlockGroup(spec).map((entry, fallbackIdx) => {
+      const entryIndex = getTechnologyUnlockEntryIndex(spec.tabKey, entry, fallbackIdx);
+      if (entryIndex == null || entryIndex === techIndex) return null;
+      if (!technologyEntryHasUnlockPrerequisite(entry, spec, techIndex)) return null;
+      return { entry, entryIndex };
+    }).filter(Boolean);
+  }
+  return getReferenceEntriesForUnlockGroup(spec).map((entry, fallbackIdx) => {
+    const entryIndex = getTechnologyUnlockEntryIndex(spec.tabKey, entry, fallbackIdx);
+    const field = getBiqFieldByBaseKey(entry, spec.fieldKey);
+    const fieldTechIndex = resolveTechIndexFromValue(field && field.value);
+    if (entryIndex == null || fieldTechIndex !== techIndex) return null;
+    return { entry, entryIndex, field };
+  }).filter(Boolean);
+}
+
+function setTechnologyUnlockMembership(spec, techIndex, selectedEntryIndices, techEntry = null) {
+  if (spec && spec.kind === 'section') {
+    const techName = getTechnologyUnlockTechName(techEntry);
+    const techKey = techName.toLowerCase();
+    if (!techKey) return;
+    const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+      .map((value) => Number.parseInt(String(value), 10))
+      .filter((value) => Number.isFinite(value) && value >= 0));
+    let didChange = false;
+    getDistrictSectionsForUnlockGroup(spec).forEach((section, sectionIndex) => {
+      const tokens = getDistrictAdvancePrereqTokens(section, spec.fieldKey);
+      const hasTech = tokens.some((token) => normalizeConfigToken(token).toLowerCase() === techKey);
+      const shouldUseTech = selected.has(sectionIndex);
+      if (shouldUseTech && !hasTech) {
+        didChange = setDistrictAdvancePrereqTokens(section, spec.fieldKey, tokens.concat(techName)) || didChange;
+      } else if (!shouldUseTech && hasTech) {
+        didChange = setDistrictAdvancePrereqTokens(
+          section,
+          spec.fieldKey,
+          tokens.filter((token) => normalizeConfigToken(token).toLowerCase() !== techKey)
+        ) || didChange;
+      }
+    });
+    if (!didChange) return;
+    setDirty(true);
+    recomputeDirtyCountForTab(spec.tabKey);
+    state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    return;
+  }
+  if (!Number.isFinite(techIndex) || techIndex < 0) return;
+  const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0));
+  const entries = getReferenceEntriesForUnlockGroup(spec);
+  let didChange = false;
+  if (isTechnologyPrerequisiteUnlockGroup(spec)) {
+    entries.forEach((entry, fallbackIdx) => {
+      const entryIndex = getTechnologyUnlockEntryIndex(spec.tabKey, entry, fallbackIdx);
+      if (entryIndex == null || entryIndex === techIndex) return;
+      const shouldUseTech = selected.has(entryIndex);
+      const fields = getTechnologyPrerequisiteFieldsForUnlockGroup(entry, spec);
+      const hasTech = fields.some((field) => resolveTechIndexFromValue(field && field.value) === techIndex);
+      if (shouldUseTech && !hasTech) {
+        const openField = getTechnologyUnlockPrerequisiteOpenField(entry, spec);
+        if (openField) {
+          openField.value = String(techIndex);
+          didChange = true;
+        }
+      } else if (!shouldUseTech && hasTech) {
+        fields.forEach((field) => {
+          if (resolveTechIndexFromValue(field && field.value) !== techIndex) return;
+          if (String(field.value || '').trim() === '-1') return;
+          field.value = '-1';
+          didChange = true;
+        });
+      }
+    });
+    if (!didChange) return;
+    setDirty(true);
+    rebuildReferenceDirtyCacheForTab(spec.tabKey);
+    state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    return;
+  }
+  entries.forEach((entry, fallbackIdx) => {
+    const entryIndex = getTechnologyUnlockEntryIndex(spec.tabKey, entry, fallbackIdx);
+    if (entryIndex == null) return;
+    let field = getBiqFieldByBaseKey(entry, spec.fieldKey);
+    const currentTechIndex = resolveTechIndexFromValue(field && field.value);
+    const shouldUseTech = selected.has(entryIndex);
+    if (!field && shouldUseTech) {
+      field = ensureBiqFieldByBaseKey(entry, spec.fieldKey, spec.title, '-1');
+    }
+    if (!field) return;
+    if (shouldUseTech) {
+      if (currentTechIndex !== techIndex) {
+        field.value = String(techIndex);
+        didChange = true;
+      }
+    } else if (currentTechIndex === techIndex) {
+      if (String(field.value || '').trim() !== '-1') {
+        field.value = '-1';
+        didChange = true;
+      }
+    }
+  });
+  if (!didChange) return;
+  setDirty(true);
+  rebuildReferenceDirtyCacheForTab(spec.tabKey);
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+}
+
+function rememberTechnologyUnlockUndoSnapshot(spec) {
+  const tabKey = String(spec && spec.tabKey || '').trim().toLowerCase();
+  if (!tabKey) {
+    rememberUndoSnapshot();
+    return;
+  }
+  if (spec && spec.kind === 'section') {
+    rememberUndoSnapshotForKey(`SECTION_TAB:${tabKey}`);
+    return;
+  }
+  rememberUndoSnapshotForKey(`TECH_UNLOCK_TAB:${tabKey}`);
+}
+
+function replaceTechnologyUnlockSelection(selectedIndices, oldIndex, nextIndex) {
+  const out = [];
+  (Array.isArray(selectedIndices) ? selectedIndices : []).forEach((idx) => {
+    const value = Number(idx);
+    if (!Number.isFinite(value) || value < 0) return;
+    if (value === oldIndex) return;
+    if (!out.includes(value)) out.push(value);
+  });
+  if (Number.isFinite(nextIndex) && nextIndex >= 0 && !out.includes(nextIndex)) out.push(nextIndex);
+  return out;
+}
+
+function refreshTechnologyUnlocksBoardInPlace(anchor, techEntry, referenceEditable) {
+  const currentBoard = anchor && typeof anchor.closest === 'function'
+    ? anchor.closest('.technology-unlocks-board')
+    : null;
+  if (!currentBoard || !currentBoard.isConnected) return false;
+  const selectedBaseIndex = Math.max(0, Number(state.referenceSelection.technologies || 0));
+  const selectedEntry = techEntry
+    || (state.bundle && state.bundle.tabs && state.bundle.tabs.technologies && Array.isArray(state.bundle.tabs.technologies.entries)
+      ? state.bundle.tabs.technologies.entries[selectedBaseIndex]
+      : null);
+  if (!selectedEntry) return false;
+  const nextBoard = renderTechnologyUnlocksBoard({
+    entry: selectedEntry,
+    selectedBaseIndex,
+    referenceEditable
+  });
+  if (nextBoard) currentBoard.replaceWith(nextBoard);
+  else currentBoard.remove();
+  updateSaveButtonLabel();
+  updateInlineHistoryNavVisibility();
+  return true;
+}
+
+function renderTechnologyUnlockPicker({
+  spec,
+  techIndex,
+  techEntry,
+  selectedIndices,
+  currentValue,
+  referenceEditable,
+  mode,
+  allOptions = null
+}) {
+  const sourceOptions = Array.isArray(allOptions) ? allOptions : getTechnologyUnlockOptions(spec, techIndex);
+  const options = mode === 'add'
+    ? sourceOptions.filter((opt) => !selectedIndices.includes(Number.parseInt(String(opt.value), 10)))
+    : sourceOptions;
+  if (mode === 'add' && options.length === 0) return null;
+  const isSectionGroup = spec && spec.kind === 'section';
+  const picker = createReferencePicker({
+    options,
+    targetTabKey: isSectionGroup ? '' : spec.tabKey,
+    currentValue: mode === 'add' ? '-1' : String(currentValue),
+    searchPlaceholder: mode === 'add' ? `Add ${spec.title.toLowerCase()}...` : `Search ${spec.title.toLowerCase()}...`,
+    noneLabel: mode === 'add' ? 'Add...' : '(none)',
+    includeNone: true,
+    resetAfterSelect: mode === 'add',
+    showOptionThumbs: true,
+    resolveJumpTarget: isSectionGroup ? ((option) => option && option.jumpTarget) : null,
+    onJump: isSectionGroup ? ((target) => {
+      if (target && Number.isFinite(Number(target.districtIndex))) navigateToDistrict(Number(target.districtIndex));
+    }) : null,
+    renderOptionThumb: isSectionGroup ? (({ holder, option }) => {
+      const section = option && option.section;
+      if (!holder || !section) return false;
+      loadDistrictRepresentativePreview(section, holder, 28);
+      return true;
+    }) : null,
+    readOnly: !referenceEditable,
+    onSelect: referenceEditable ? (value) => {
+      const nextIndex = Number.parseInt(String(value), 10);
+      if (mode === 'add') {
+        if (!Number.isFinite(nextIndex) || nextIndex < 0) return;
+        rememberTechnologyUnlockUndoSnapshot(spec);
+        setTechnologyUnlockMembership(spec, techIndex, selectedIndices.concat(nextIndex), techEntry);
+        if (!refreshTechnologyUnlocksBoardInPlace(picker, techEntry, referenceEditable)) {
+          renderActiveTab({ preserveTabScroll: true });
+        }
+        return;
+      }
+      const currentIndex = Number.parseInt(String(currentValue), 10);
+      rememberTechnologyUnlockUndoSnapshot(spec);
+      setTechnologyUnlockMembership(
+        spec,
+        techIndex,
+        replaceTechnologyUnlockSelection(selectedIndices, currentIndex, nextIndex),
+        techEntry
+      );
+      if (!refreshTechnologyUnlocksBoardInPlace(picker, techEntry, referenceEditable)) {
+        renderActiveTab({ preserveTabScroll: true });
+      }
+    } : null
+  });
+  picker.classList.add('technology-unlock-picker');
+  if (mode === 'add') picker.classList.add('technology-unlock-add-picker');
+  return picker;
+}
+
+function makeTechnologyUnlockDeferredPicker({
+  spec,
+  techIndex,
+  techEntry,
+  selectedIndices,
+  currentValue,
+  referenceEditable,
+  mode,
+  allOptions
+}) {
+  const currentKey = String(currentValue);
+  const selected = (Array.isArray(allOptions) ? allOptions : [])
+    .find((opt) => String(opt && opt.value) === currentKey) || null;
+  const labelText = String((selected && (selected.displayLabel || selected.label)) || spec.title || '').trim() || '(none)';
+  const host = document.createElement('div');
+  host.className = 'tech-picker technology-unlock-picker technology-unlock-picker-deferred';
+  const head = document.createElement('div');
+  head.className = 'tech-picker-head';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tech-picker-btn';
+  button.tabIndex = -1;
+  button.setAttribute('aria-label', labelText);
+  const thumb = document.createElement('span');
+  thumb.className = 'entry-thumb';
+  const label = document.createElement('span');
+  label.className = 'tech-picker-btn-label';
+  label.textContent = labelText;
+  label.title = labelText;
+  button.appendChild(thumb);
+  button.appendChild(label);
+  head.appendChild(button);
+  host.appendChild(head);
+
+  let mounted = false;
+  let observer = null;
+  const mount = () => {
+    if (mounted) return;
+    mounted = true;
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    const picker = renderTechnologyUnlockPicker({
+      spec,
+      techIndex,
+      techEntry,
+      selectedIndices,
+      currentValue,
+      referenceEditable,
+      mode,
+      allOptions
+    });
+    if (picker && host.parentElement) host.replaceWith(picker);
+  };
+
+  host.addEventListener('pointerenter', mount, { once: true });
+  host.addEventListener('focusin', mount, { once: true });
+  if (typeof window !== 'undefined' && typeof window.IntersectionObserver === 'function') {
+    observer = new window.IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry && entry.isIntersecting)) mount();
+    }, { root: null, rootMargin: '220px 0px', threshold: 0.01 });
+    observer.observe(host);
+  } else if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(mount);
+  } else {
+    mount();
+  }
+  return host;
+}
+
+function renderTechnologyUnlockGroup(spec, techIndex, techEntry, referenceEditable) {
+  const cell = document.createElement('div');
+  cell.className = 'technology-unlock-cell';
+  cell.dataset.sectionLabel = spec.title;
+  const label = document.createElement('label');
+  label.className = 'field-meta technology-unlock-cell-label';
+  const strong = document.createElement('strong');
+  strong.textContent = spec.title;
+  label.appendChild(strong);
+  cell.appendChild(label);
+
+  const selectedItems = getTechnologyUnlockSelectedEntries(spec, techIndex, techEntry);
+  const selectedIndices = selectedItems.map((item) => item.entryIndex);
+  const allOptions = getTechnologyUnlockOptions(spec, techIndex);
+  const pickerList = document.createElement('div');
+  pickerList.className = 'technology-unlock-picker-list';
+  selectedItems.forEach((item, idx) => {
+    const pickerConfig = {
+      spec,
+      techIndex,
+      techEntry,
+      selectedIndices,
+      currentValue: item.entryIndex,
+      referenceEditable,
+      mode: 'selected',
+      allOptions
+    };
+    const picker = idx < TECHNOLOGY_UNLOCK_EAGER_SELECTED_PICKERS
+      ? renderTechnologyUnlockPicker(pickerConfig)
+      : makeTechnologyUnlockDeferredPicker(pickerConfig);
+    if (picker) pickerList.appendChild(picker);
+  });
+  cell.appendChild(pickerList);
+
+  if (referenceEditable) {
+    const addPicker = renderTechnologyUnlockPicker({
+      spec,
+      techIndex,
+      techEntry,
+      selectedIndices,
+      currentValue: -1,
+      referenceEditable,
+      mode: 'add',
+      allOptions
+    });
+    if (addPicker) cell.appendChild(addPicker);
+  }
+
+  return cell;
+}
+
+function renderTechnologyUnlocksBoard({ entry, selectedBaseIndex, referenceEditable }) {
+  const techIndex = getTechnologyUnlockTechIndex(entry, selectedBaseIndex);
+  if (techIndex == null) return null;
+  const board = document.createElement('div');
+  board.className = 'technology-unlocks-board';
+  const title = document.createElement('label');
+  title.className = 'field-meta technology-top-cell-label';
+  const strong = document.createElement('strong');
+  strong.textContent = 'Unlocks';
+  title.appendChild(strong);
+  board.appendChild(title);
+  const grid = document.createElement('div');
+  grid.className = 'technology-unlocks-grid';
+  TECHNOLOGY_UNLOCK_GROUPS.forEach((spec) => {
+    if (getTechnologyUnlockItemCount(spec) === 0) return;
+    grid.appendChild(renderTechnologyUnlockGroup(spec, techIndex, entry, referenceEditable));
+  });
+  if (grid.childElementCount === 0) return null;
+  board.appendChild(grid);
+  return board;
+}
+
 const TECHNOLOGY_TOP_FIELD_KEYS = new Set([
   'civilopediaentry',
   'era',
@@ -18691,6 +19286,8 @@ function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, re
 
   if (secondaryRow.childElementCount > 0) mainBoard.appendChild(secondaryRow);
   if (mainBoard.childElementCount > 0) wrapper.appendChild(mainBoard);
+  const unlocksBoard = renderTechnologyUnlocksBoard({ entry, selectedBaseIndex, referenceEditable });
+  if (unlocksBoard) wrapper.appendChild(unlocksBoard);
 
   const board = document.createElement('div');
   board.className = 'technology-dashboard-grid';
@@ -30783,6 +31380,7 @@ function renderReferenceTab(tab, tabKey) {
   }
 
   function renderReferenceBody(options = {}) {
+    const savedTabContentTop = Number(state.tabContentScrollTop || 0);
     if (options.fromScheduledSelectionRender !== true) {
       cancelScheduledReferenceSelectionRender();
     }
@@ -31809,6 +32407,13 @@ function renderReferenceTab(tab, tabKey) {
   const savedListTop = state.referenceListScrollTop[tabKey] || 0;
   const savedDetailTop = state.referenceDetailScrollTop[tabKey] || 0;
   window.requestAnimationFrame(() => {
+    if (skipListRebuild && el.tabContent) {
+      const targetTop = resetDetailScroll ? 0 : savedTabContentTop;
+      el.tabContent.scrollTop = targetTop;
+      state.tabContentScrollTop = el.tabContent.scrollTop;
+      updateScrollTopFab();
+      updateStickySearchRowShadow();
+    }
     if (!skipListRebuild) listPane.scrollTop = savedListTop;
     if (shouldRenderDetail) detailPane.scrollTop = resetDetailScroll ? 0 : savedDetailTop;
     updateInlineHistoryNavVisibility();
@@ -48690,6 +49295,7 @@ function renderSectionTab(tab, tabKey) {
   };
 
   function renderSectionBody(options = {}) {
+  const savedTabContentTop = Number(state.tabContentScrollTop || 0);
   if (options.fromScheduledSelectionRender !== true) {
     cancelScheduledSectionSelectionRender();
   }
@@ -49091,6 +49697,13 @@ function renderSectionTab(tab, tabKey) {
   }
 
   window.requestAnimationFrame(() => {
+    if (skipListRebuild && el.tabContent) {
+      const targetTop = resetDetailScroll ? 0 : savedTabContentTop;
+      el.tabContent.scrollTop = targetTop;
+      state.tabContentScrollTop = el.tabContent.scrollTop;
+      updateScrollTopFab();
+      updateStickySearchRowShadow();
+    }
     if (!skipListRebuild) listPane.scrollTop = savedListTop;
     detailPane.scrollTop = resetDetailScroll ? 0 : savedDetailTop;
     window.requestAnimationFrame(() => {
