@@ -293,6 +293,38 @@ function loadRendererIndexHelpers(targetBundle) {
   return sandbox.__helpers;
 }
 
+function loadRendererNoReloadSaveHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = [
+    'getFieldByBaseKey',
+    'getBiqSectionByCode',
+    'getReferenceRecordIndexFromOriginalBiq',
+    'reconcileReferenceTabsAfterNoReloadSave'
+  ];
+  const sandbox = {
+    state: {
+      bundle: targetBundle,
+      referenceSelection: { technologies: 0 }
+    },
+    REFERENCE_SECTION_BY_TAB: {
+      civilizations: 'RACE',
+      technologies: 'TECH',
+      resources: 'GOOD',
+      improvements: 'BLDG',
+      governments: 'GOVT',
+      units: 'PRTO'
+    }
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ', state };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-no-reload-save.vm' });
+  return sandbox.__helpers;
+}
+
 function loadRendererTopNameHelpers() {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
@@ -392,6 +424,117 @@ test('pending added references predict appended BIQ index instead of using list 
       `existing ${prefix}ALPHA should keep raw BIQ index 0`
     );
   });
+});
+
+test('copying from an unsaved edited tech preserves inherited prereqs after save', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const sourceEntry = before.tabs.technologies.entries.find((entry) => Number.isFinite(Number(entry && entry.biqIndex)))
+    || before.tabs.technologies.entries[0];
+  if (!sourceEntry) return t.skip('No source tech found');
+
+  const baseCount = countSection(before, 'TECH');
+  const prereqTarget = before.tabs.technologies.entries.find((entry) => {
+    const idx = Number(entry && entry.biqIndex);
+    return Number.isFinite(idx) && idx >= 0 && idx !== Number(sourceEntry.biqIndex);
+  });
+  if (!prereqTarget) return t.skip('No target prerequisite tech found');
+  const prereqTargetIndex = Number(prereqTarget.biqIndex);
+
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers(before);
+  const firstKey = makeShortTestRef('TECH_', 'CHAINA');
+  const secondKey = makeShortTestRef('TECH_', 'CHAINB');
+  const first = buildNewReferenceEntryFromTemplate({
+    tabKey: 'technologies',
+    sourceEntry,
+    civilopediaKey: firstKey,
+    mode: 'copy',
+    displayName: 'Unsaved Chain A'
+  });
+  const setField = (entry, key, value) => {
+    const field = entry.biqFields.find((item) => String(item && (item.baseKey || item.key) || '').toLowerCase() === key);
+    assert.ok(field, `expected ${key} field`);
+    field.value = String(value);
+  };
+  setField(first, 'prerequisite1', String(prereqTargetIndex));
+  setField(first, 'prerequisite2', '-1');
+  setField(first, 'prerequisite3', '-1');
+  setField(first, 'prerequisite4', '-1');
+
+  const second = buildNewReferenceEntryFromTemplate({
+    tabKey: 'technologies',
+    sourceEntry: first,
+    civilopediaKey: secondKey,
+    mode: 'copy',
+    displayName: 'Unsaved Chain B'
+  });
+  setField(second, 'prerequisite2', String(baseCount));
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      technologies: {
+        entries: [second, first],
+        recordOps: [
+          { op: 'copy', sourceRef: String(sourceEntry.civilopediaKey || '').toUpperCase(), newRecordRef: firstKey },
+          { op: 'copy', sourceRef: firstKey, newRecordRef: secondKey }
+        ]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const reloadedFirst = getEntry(after, 'technologies', firstKey);
+  const reloadedSecond = getEntry(after, 'technologies', secondKey);
+  assert.ok(reloadedFirst, 'expected first copied tech after reload');
+  assert.ok(reloadedSecond, 'expected second copied tech after reload');
+  assert.equal(getRawRecordInt({ fields: reloadedFirst.biqFields }, 'prerequisite1'), prereqTargetIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedSecond.biqFields }, 'prerequisite1'), prereqTargetIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedSecond.biqFields }, 'prerequisite2'), baseCount);
+});
+
+test('no-reload save reconciliation assigns new reference indexes and reload ordering', () => {
+  const bundle = {
+    biq: {
+      sections: [{
+        code: 'TECH',
+        count: 2,
+        records: [
+          { index: 0, fields: [{ baseKey: 'civilopediaentry', key: 'civilopediaentry', value: 'TECH_ALPHA' }] },
+          { index: 1, fields: [{ baseKey: 'civilopediaentry', key: 'civilopediaentry', value: 'TECH_BETA' }] }
+        ]
+      }]
+    },
+    tabs: {
+      technologies: {
+        type: 'reference',
+        entries: [
+          { civilopediaKey: 'TECH_NEW_B', name: 'New B', biqIndex: null, isNew: true },
+          { civilopediaKey: 'TECH_NEW_A', name: 'New A', biqIndex: null, isNew: true },
+          { civilopediaKey: 'TECH_ALPHA', name: 'Alpha', biqIndex: 0 },
+          { civilopediaKey: 'TECH_BETA', name: 'Beta', biqIndex: 1 }
+        ],
+        recordOps: [
+          { op: 'copy', sourceRef: 'TECH_ALPHA', newRecordRef: 'TECH_NEW_A' },
+          { op: 'copy', sourceRef: 'TECH_NEW_A', newRecordRef: 'TECH_NEW_B' }
+        ]
+      }
+    }
+  };
+  const { reconcileReferenceTabsAfterNoReloadSave, state } = loadRendererNoReloadSaveHelpers(bundle);
+  assert.equal(reconcileReferenceTabsAfterNoReloadSave(), true);
+  assert.deepEqual(
+    bundle.tabs.technologies.entries.map((entry) => `${entry.civilopediaKey}:${entry.biqIndex}`),
+    ['TECH_ALPHA:0', 'TECH_BETA:1', 'TECH_NEW_A:2', 'TECH_NEW_B:3']
+  );
+  assert.equal(bundle.biq.sections[0].count, 4);
+  assert.equal(state.referenceSelection.technologies, 3);
 });
 
 /**

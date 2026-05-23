@@ -1673,6 +1673,7 @@ test('BIQ delete cascade reindexes supported resource references end-to-end', (t
     c3xPath: c3x,
     civ3Path: civ3Root,
     scenarioPath: scenarioBiq,
+    dirtyTabs: ['districts'],
     tabs: afterAdd.tabs
   });
   assert.equal(setSave.ok, true, String(setSave.error || 'save setup refs failed'));
@@ -1842,6 +1843,7 @@ test('BIQ delete cascade reindexes supported building references end-to-end', (t
     c3xPath: c3x,
     civ3Path: civ3Root,
     scenarioPath: scenarioBiq,
+    dirtyTabs: ['districts'],
     tabs: {
       improvements: {
         recordOps: [{ op: 'delete', recordRef: deleteBldgRef }]

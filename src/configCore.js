@@ -6927,7 +6927,14 @@ function buildSavePlan(payload) {
     const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations']);
     const dirtyTabsAreOnlyNonBiq = dirtyTabs.size > 0
       && Array.from(dirtyTabs).every((tabKey) => nonBiqDirtyTabs.has(String(tabKey || '')));
-    const shouldCollectBiqEdits = !dirtyTabsAreOnlyNonBiq || !!scenarioContext.autoCreatedSearchValue;
+    const hasPendingBiqOperations = hasPendingBiqOperationPayload(payload.tabs || {});
+    const hasPendingBiqFieldEdits = dirtyTabsAreOnlyNonBiq && !hasPendingBiqOperations
+      ? hasPendingBiqFieldEditPayload(payload.tabs || {})
+      : false;
+    const shouldCollectBiqEdits = !dirtyTabsAreOnlyNonBiq
+      || hasPendingBiqOperations
+      || hasPendingBiqFieldEdits
+      || !!scenarioContext.autoCreatedSearchValue;
     if (!shouldCollectBiqEdits) {
       log.debug('BiqSave', `buildSavePlan: skipped BIQ edit collection for non-BIQ dirtyTabs=[${Array.from(dirtyTabs).join(', ')}]`);
     } else {
@@ -7854,6 +7861,32 @@ function mergeTabsForDeleteValidation(baseTabs, payloadTabs) {
     merged[tabKey] = payloadTab;
   });
   return merged;
+}
+
+function hasPendingBiqOperationPayload(tabs) {
+  const source = tabs || {};
+  if (String(source.scenarioSettings && source.scenarioSettings.customRulesMutation || '').trim()) return true;
+  if (String(source.players && source.players.customPlayerDataMutation || '').trim()) return true;
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const tab = source[spec.key];
+    if (tab && Array.isArray(tab.recordOps) && tab.recordOps.length > 0) return true;
+  }
+  for (const spec of BIQ_STRUCTURE_TAB_SPECS) {
+    const tab = source[spec.key];
+    if (tab && Array.isArray(tab.recordOps) && tab.recordOps.length > 0) return true;
+  }
+  const mapTab = source.map;
+  if (mapTab && Array.isArray(mapTab.recordOps) && mapTab.recordOps.length > 0) return true;
+  if (String(mapTab && mapTab.mapMutation || '').trim()) return true;
+  if (mapTab && mapTab.pendingMapResize && typeof mapTab.pendingMapResize === 'object') return true;
+  return false;
+}
+
+function hasPendingBiqFieldEditPayload(tabs) {
+  const source = tabs || {};
+  return collectBiqReferenceEdits(source).length > 0
+    || collectBiqStructureEdits(source).length > 0
+    || collectBiqMapEdits(source).length > 0;
 }
 
 function collectBiqReferenceEdits(tabs) {

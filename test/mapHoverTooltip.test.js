@@ -8,6 +8,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
   const mainText = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const preloadText = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const configCoreText = fs.readFileSync(path.join(__dirname, '..', 'src', 'configCore.js'), 'utf8');
 
   assert.match(
     rendererText,
@@ -308,6 +309,26 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     'Save should keep the current bundle open and mark it clean when Reload After Save is disabled'
   );
   assert.match(
+    rendererText,
+    /function rerunQualityChecksAfterNoReloadSave\(\) \{[\s\S]*?void runBundleAudit\(buildAuditPayloadFromState\(\)\);[\s\S]*?\}/,
+    'no-reload saves should rerun quality checks against the current in-memory bundle so stale warnings clear'
+  );
+  assert.match(
+    rendererText,
+    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?rerunQualityChecksAfterNoReloadSave\(\);[\s\S]*?setStatus\(`Saved \$\{res\.saveReport\.length\} file\(s\): \$\{paths\}`\);/,
+    'successful no-reload saves should refresh audit warnings before returning'
+  );
+  assert.match(
+    rendererText,
+    /function getPendingBiqOperationDirtyTabs\(tabs\) \{[\s\S]*?Array\.isArray\(tab\.recordOps\) && tab\.recordOps\.length > 0[\s\S]*?customRulesMutation[\s\S]*?customPlayerDataMutation[\s\S]*?mapMutation[\s\S]*?\}/,
+    'renderer save payloads should treat pending BIQ record and structure operations as dirty even if cached dirty counts are stale'
+  );
+  assert.match(
+    rendererText,
+    /const dirtyTabSet = new Set\(Object\.keys\(\(state\.bundle && state\.bundle\.tabs\) \|\| \{\}\)\.filter\(\(key\) => getTabDirtyCount\(key\) > 0\)\);[\s\S]*?getPendingBiqOperationDirtyTabs\(tabsToSave\)\.forEach\(\(key\) => dirtyTabSet\.add\(key\)\);[\s\S]*?const dirtyTabs = Array\.from\(dirtyTabSet\);/,
+    'saveCurrentBundle should include pending BIQ operation tabs in dirtyTabs before calling saveBundle'
+  );
+  assert.match(
     preloadText,
     /onReloadAfterSaveMenuSelect: \(handler\) => \{[\s\S]*?ipcRenderer\.on\('manager:reload-after-save-selected', listener\);/,
     'preload should expose Reload After Save menu updates to the renderer'
@@ -316,6 +337,21 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     mainText,
     /label: 'Reload After Save',[\s\S]*?checked: currentReloadAfterSave,[\s\S]*?sendReloadAfterSaveSelection\(item && item\.checked\)/,
     'File -> Settings should expose a default-off Reload After Save toggle'
+  );
+  assert.match(
+    configCoreText,
+    /function hasPendingBiqOperationPayload\(tabs\) \{[\s\S]*?REFERENCE_TAB_SPECS[\s\S]*?Array\.isArray\(tab\.recordOps\) && tab\.recordOps\.length > 0[\s\S]*?BIQ_STRUCTURE_TAB_SPECS[\s\S]*?mapMutation[\s\S]*?\}/,
+    'save planning should detect pending BIQ operations independently of renderer dirtyTabs'
+  );
+  assert.match(
+    configCoreText,
+    /function hasPendingBiqFieldEditPayload\(tabs\) \{[\s\S]*?collectBiqReferenceEdits\(source\)\.length > 0[\s\S]*?collectBiqStructureEdits\(source\)\.length > 0[\s\S]*?collectBiqMapEdits\(source\)\.length > 0;/,
+    'save planning should defensively detect BIQ field edits before trusting non-BIQ dirtyTabs'
+  );
+  assert.match(
+    configCoreText,
+    /const hasPendingBiqOperations = hasPendingBiqOperationPayload\(payload\.tabs \|\| \{\}\);[\s\S]*?const hasPendingBiqFieldEdits = dirtyTabsAreOnlyNonBiq && !hasPendingBiqOperations[\s\S]*?hasPendingBiqFieldEditPayload\(payload\.tabs \|\| \{\}\)[\s\S]*?const shouldCollectBiqEdits = !dirtyTabsAreOnlyNonBiq[\s\S]*?\|\| hasPendingBiqOperations[\s\S]*?\|\| hasPendingBiqFieldEdits[\s\S]*?\|\| !!scenarioContext\.autoCreatedSearchValue;/,
+    'save planning should not skip BIQ collection when the payload contains pending record operations or field edits'
   );
   assert.doesNotMatch(
     rendererText,

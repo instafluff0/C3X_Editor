@@ -4137,6 +4137,33 @@ function dismissLoadAuditSectionEntry(tabKey, sectionIndex, predicate) {
   }
 }
 
+function removeLoadAuditSectionIndex(tabKey, removedIndex) {
+  const tabState = getLoadAuditTabState(tabKey);
+  const sections = tabState && tabState.sections;
+  const targetIndex = Number(removedIndex);
+  if (!sections || !Number.isFinite(targetIndex) || targetIndex < 0) return;
+  const nextSections = {};
+  let removedCount = 0;
+  Object.keys(sections).forEach((sectionKey) => {
+    const sectionIndex = Number(sectionKey);
+    const entries = Array.isArray(sections[sectionKey]) ? sections[sectionKey] : [];
+    if (!Number.isFinite(sectionIndex) || entries.length <= 0) return;
+    if (sectionIndex === targetIndex) {
+      removedCount += entries.length;
+      return;
+    }
+    const nextIndex = sectionIndex > targetIndex ? sectionIndex - 1 : sectionIndex;
+    nextSections[String(nextIndex)] = entries;
+  });
+  tabState.sections = nextSections;
+  if (removedCount > 0) {
+    tabState.count = Math.max(0, Number(tabState.count || 0) - removedCount);
+    if (state.loadAudit) {
+      state.loadAudit.totalWarnings = Math.max(0, Number(state.loadAudit.totalWarnings || 0) - removedCount);
+    }
+  }
+}
+
 function getLoadAuditAllMessages(tabKey) {
   const lines = [...getLoadAuditGeneralMessages(tabKey)];
   const tabState = getLoadAuditTabState(tabKey);
@@ -5140,6 +5167,84 @@ function resetScenarioNewActionControl() {
   resizeScenarioNewActionControl();
 }
 
+function getDefaultScenarioParentDirForCreate() {
+  const civ3Root = normalizeSlashes(state.settings && state.settings.civ3Path || '').trim().replace(/\/+$/, '');
+  if (!civ3Root) return '';
+  return `${civ3Root}/Conquests/Scenarios`;
+}
+
+function buildCreateScenarioFolderPath(folderName) {
+  const parentDir = getDefaultScenarioParentDirForCreate();
+  const safeName = String(folderName || '').trim();
+  if (!parentDir || !safeName) return '';
+  return `${parentDir}/${safeName}`;
+}
+
+function createScenarioFolderValidationMessage() {
+  const msg = document.createElement('p');
+  msg.className = 'entity-modal-validation';
+  msg.setAttribute('role', 'status');
+  return msg;
+}
+
+function attachCreateScenarioFolderExistsValidation({
+  nameInput,
+  searchFolderInput,
+  messageEl,
+  folderNameForCheck,
+  existsMessage
+}) {
+  if (!messageEl) return () => {};
+  let validationSeq = 0;
+  let timer = null;
+  const setBlocked = (blocked, message = '') => {
+    if (!messageEl.isConnected) return;
+    if (el.entityModalConfirm) el.entityModalConfirm.disabled = !!blocked;
+    messageEl.textContent = message;
+    messageEl.classList.toggle('is-empty', !message);
+    messageEl.classList.toggle('is-error', !!blocked && !!message);
+  };
+  const validate = () => {
+    validationSeq += 1;
+    const seq = validationSeq;
+    const folderName = String(folderNameForCheck() || '').trim();
+    if (!folderName) {
+      setBlocked(false, '');
+      return;
+    }
+    const folderPath = buildCreateScenarioFolderPath(folderName);
+    if (!folderPath || !window.c3xManager || typeof window.c3xManager.pathExists !== 'function') {
+      setBlocked(false, '');
+      return;
+    }
+    setBlocked(true, '');
+    window.c3xManager.pathExists(folderPath)
+      .then((exists) => {
+        if (seq !== validationSeq || !messageEl.isConnected) return;
+        if (exists) {
+          setBlocked(true, existsMessage(folderPath));
+        } else {
+          setBlocked(false, '');
+        }
+      })
+      .catch(() => {
+        if (seq !== validationSeq || !messageEl.isConnected) return;
+        setBlocked(false, '');
+      });
+  };
+  const schedule = () => {
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = null;
+      validate();
+    }, 120);
+  };
+  if (nameInput) nameInput.addEventListener('input', schedule);
+  if (searchFolderInput) searchFolderInput.addEventListener('input', schedule);
+  schedule();
+  return validate;
+}
+
 async function refreshScenarioSelectOptions() {
   if (!el.modeScenarioSelect || !state.settings) return;
   const manualValue = '__manual__';
@@ -5242,6 +5347,7 @@ async function promptCreateScenarioFromBaseAction() {
   const grid = document.createElement('div');
   grid.className = 'entity-form-grid';
   form.appendChild(grid);
+  const validationMessage = createScenarioFolderValidationMessage();
 
   const nameField = document.createElement('div');
   nameField.className = 'entity-field';
@@ -5264,6 +5370,7 @@ async function promptCreateScenarioFromBaseAction() {
   searchFolderField.appendChild(searchFolderLabel);
   searchFolderField.appendChild(searchFolderInput);
   grid.appendChild(searchFolderField);
+  form.appendChild(validationMessage);
 
   el.entityModalContent.appendChild(form);
   state.entityModal.open = true;
@@ -5280,10 +5387,18 @@ async function promptCreateScenarioFromBaseAction() {
   searchFolderInput.addEventListener('input', () => {
     searchFolderEdited = String(searchFolderInput.value || '').trim().length > 0;
   });
+  attachCreateScenarioFolderExistsValidation({
+    nameInput,
+    searchFolderInput,
+    messageEl: validationMessage,
+    folderNameForCheck: () => String(searchFolderInput.value || nameInput.value || '').trim(),
+    existsMessage: (folderPath) => `Search folder already exists: ${compactPathFromCiv3Root(folderPath)}`
+  });
 
   return new Promise((resolve) => {
     state.entityModal.resolve = resolve;
     const onConfirm = () => {
+      if (el.entityModalConfirm && el.entityModalConfirm.disabled) return;
       const scenarioName = String(nameInput.value || '').trim();
       const scenarioSearchFolderName = String(searchFolderInput.value || '').trim() || scenarioName;
       if (!scenarioName) {
@@ -5329,6 +5444,7 @@ async function promptCopyScenarioAction(options = {}) {
   const grid = document.createElement('div');
   grid.className = 'entity-form-grid';
   form.appendChild(grid);
+  const validationMessage = createScenarioFolderValidationMessage();
 
   const sourceField = document.createElement('div');
   sourceField.className = 'entity-field';
@@ -5362,6 +5478,7 @@ async function promptCopyScenarioAction(options = {}) {
   searchFolderField.appendChild(searchFolderLabel);
   searchFolderField.appendChild(searchFolderInput);
   grid.appendChild(searchFolderField);
+  form.appendChild(validationMessage);
 
   el.entityModalContent.appendChild(form);
   state.entityModal.open = true;
@@ -5371,6 +5488,7 @@ async function promptCopyScenarioAction(options = {}) {
   let selectedSourcePath = preferredSourcePath;
   let nameEdited = false;
   let searchFolderEdited = false;
+  let validateDestinationFolder = () => {};
   const syncDefaultNameFromSource = () => {
     if (nameEdited) return;
     const base = stripBiqExtension(getPathTail(selectedSourcePath));
@@ -5408,10 +5526,12 @@ async function promptCopyScenarioAction(options = {}) {
         sourceSelect.value = filePath;
       }
       syncDefaultNameFromSource();
+      validateDestinationFolder();
       return;
     }
     selectedSourcePath = value;
     syncDefaultNameFromSource();
+    validateDestinationFolder();
   });
 
   nameInput.addEventListener('input', () => {
@@ -5421,14 +5541,23 @@ async function promptCopyScenarioAction(options = {}) {
   searchFolderInput.addEventListener('input', () => {
     searchFolderEdited = String(searchFolderInput.value || '').trim().length > 0;
   });
+  validateDestinationFolder = attachCreateScenarioFolderExistsValidation({
+    nameInput,
+    searchFolderInput,
+    messageEl: validationMessage,
+    folderNameForCheck: () => String(nameInput.value || '').trim(),
+    existsMessage: (folderPath) => `Scenario folder already exists: ${compactPathFromCiv3Root(folderPath)}`
+  });
   if (selectedSourcePath) {
     syncDefaultNameFromSource();
+    validateDestinationFolder();
   }
   window.setTimeout(() => sourceSelect.focus({ preventScroll: true }), 0);
 
   return new Promise((resolve) => {
     state.entityModal.resolve = resolve;
     const onConfirm = () => {
+      if (el.entityModalConfirm && el.entityModalConfirm.disabled) return;
       const scenarioName = String(nameInput.value || '').trim();
       const scenarioSearchFolderName = String(searchFolderInput.value || '').trim() || scenarioName;
       if (!selectedSourcePath) {
@@ -28243,6 +28372,11 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
       const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
       if (iconField) iconField.value = '0';
     }
+  } else if (mode === 'copy') {
+    entry.biqFields = entry.biqFields.map((field) => ({
+      ...field,
+      originalValue: String(field && field.originalValue != null ? field.originalValue : (field && field.value) || '')
+    }));
   } else {
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
@@ -29821,13 +29955,15 @@ function renderReferenceTab(tab, tabKey) {
       if (!selectedEntry) return;
       const confirmed = await promptReferenceDeleteAction({ tab, selectedEntry });
       if (!confirmed) return;
+      const selectedIndex = Number(state.referenceSelection[tabKey] || 0);
       const targetKey = String(selectedEntry.civilopediaKey || '').toUpperCase();
-      const targetIdentity = getReferenceEntryIdentity(tabKey, selectedEntry, Number(state.referenceSelection[tabKey] || 0));
-      const targetRecordRef = getReferenceRecordRefForOps(tabKey, selectedEntry, Number(state.referenceSelection[tabKey] || 0));
+      const targetIdentity = getReferenceEntryIdentity(tabKey, selectedEntry, selectedIndex);
+      const targetRecordRef = getReferenceRecordRefForOps(tabKey, selectedEntry, selectedIndex);
       const ops = ensureReferenceRecordOps(tab);
+      const hadCreateOp = ops.some((op) => String(op && op.newRecordRef || '').toUpperCase() === targetKey);
       rememberUndoSnapshot();
       tab.entries = (tab.entries || []).filter((entry, idx) => getReferenceEntryIdentity(tabKey, entry, idx) !== targetIdentity);
-      const hadCreateOp = ops.some((op) => String(op && op.newRecordRef || '').toUpperCase() === targetKey);
+      if (!hadCreateOp) removeLoadAuditSectionIndex(tabKey, selectedIndex);
       tab.recordOps = ops.filter((op) => {
         const newRef = String(op && op.newRecordRef || '').toUpperCase();
         const srcRef = String(op && op.sourceRef || '').toUpperCase();
@@ -48846,6 +48982,30 @@ function getTabsForSavePayload() {
   return tabsToSave;
 }
 
+function getPendingBiqOperationDirtyTabs(tabs) {
+  const out = [];
+  const source = tabs || {};
+  Object.entries(source).forEach(([tabKey, tab]) => {
+    if (!tab) return;
+    if (Array.isArray(tab.recordOps) && tab.recordOps.length > 0) {
+      out.push(tabKey);
+      return;
+    }
+    if (tabKey === 'scenarioSettings' && String(tab.customRulesMutation || '').trim()) {
+      out.push(tabKey);
+      return;
+    }
+    if (tabKey === 'players' && String(tab.customPlayerDataMutation || '').trim()) {
+      out.push(tabKey);
+      return;
+    }
+    if (tabKey === 'map' && (String(tab.mapMutation || '').trim() || (tab.pendingMapResize && typeof tab.pendingMapResize === 'object'))) {
+      out.push(tabKey);
+    }
+  });
+  return out;
+}
+
 function buildQuickUnifiedDiffText(oldText, newText) {
   const a = String(oldText || '').replace(/\r\n/g, '\n').split('\n');
   const b = String(newText || '').replace(/\r\n/g, '\n').split('\n');
@@ -49561,7 +49721,117 @@ function markScenarioDistrictsAsSaved() {
   meta.originalNamedTiles = deepCloneUiValue(Array.isArray(meta.namedTiles) ? meta.namedTiles : []);
 }
 
+function getReferenceRecordIndexFromOriginalBiq(sectionCode, recordRef) {
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return NaN;
+  if (ref.startsWith('@INDEX:')) {
+    const parsed = Number.parseInt(ref.slice(7), 10);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+  const section = getBiqSectionByCode(sectionCode);
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  const hit = records.find((record) => {
+    const rawKey = String(
+      (getFieldByBaseKey(record, 'civilopediaentry') && getFieldByBaseKey(record, 'civilopediaentry').value)
+      || record.civilopediaEntry
+      || ''
+    ).trim().toUpperCase();
+    return rawKey === ref;
+  });
+  const idx = Number(hit && hit.index);
+  return Number.isFinite(idx) ? idx : NaN;
+}
+
+function reconcileReferenceTabsAfterNoReloadSave() {
+  if (!state.bundle || !state.bundle.tabs) return false;
+  let changed = false;
+  Object.entries(REFERENCE_SECTION_BY_TAB).forEach(([tabKey, sectionCode]) => {
+    const tab = state.bundle.tabs[tabKey];
+    const entries = Array.isArray(tab && tab.entries) ? tab.entries : null;
+    const ops = Array.isArray(tab && tab.recordOps) ? tab.recordOps : [];
+    if (!entries || ops.length === 0) return;
+
+    const selectedEntry = entries[Number(state.referenceSelection[tabKey] || 0)] || null;
+    const section = getBiqSectionByCode(sectionCode);
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    let currentCount = Number(section && section.count);
+    if (!Number.isFinite(currentCount) || currentCount < 0) currentCount = records.length;
+    if (!Number.isFinite(currentCount) || currentCount < 0) {
+      currentCount = entries.reduce((max, entry) => {
+        const idx = Number(entry && entry.biqIndex);
+        return Number.isFinite(idx) && idx >= 0 ? Math.max(max, idx + 1) : max;
+      }, 0);
+    }
+    const deletedOriginalIndexes = [];
+    const remapOriginalIndex = (idx) => {
+      if (!Number.isFinite(idx) || idx < 0) return NaN;
+      const priorDeletes = deletedOriginalIndexes.filter((deletedIdx) => deletedIdx < idx).length;
+      return idx - priorDeletes;
+    };
+    const findEntryByKey = (key) => {
+      const lookup = String(key || '').trim().toUpperCase();
+      if (!lookup) return null;
+      return entries.find((entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase() === lookup) || null;
+    };
+
+    ops.forEach((op) => {
+      const kind = String(op && op.op || '').trim().toLowerCase();
+      if (kind === 'add' || kind === 'copy') {
+        const entry = findEntryByKey(op && op.newRecordRef);
+        if (entry) {
+          const nextIndex = currentCount;
+          if (Number(entry.biqIndex) !== nextIndex) {
+            entry.biqIndex = nextIndex;
+            entry.id = `biq-${String(sectionCode || '').toLowerCase()}-${nextIndex}`;
+            changed = true;
+          }
+        }
+        currentCount += 1;
+        return;
+      }
+      if (kind === 'delete') {
+        const originalIdx = getReferenceRecordIndexFromOriginalBiq(sectionCode, op && op.recordRef);
+        const idx = remapOriginalIndex(originalIdx);
+        if (!Number.isFinite(idx) || idx < 0) return;
+        entries.forEach((entry) => {
+          const entryIdx = Number(entry && entry.biqIndex);
+          if (Number.isFinite(entryIdx) && entryIdx > idx) {
+            entry.biqIndex = entryIdx - 1;
+            entry.id = `biq-${String(sectionCode || '').toLowerCase()}-${entryIdx - 1}`;
+            changed = true;
+          }
+        });
+        deletedOriginalIndexes.push(originalIdx);
+        currentCount = Math.max(0, currentCount - 1);
+      }
+    });
+
+    const beforeOrder = entries.map((entry) => String(entry && entry.civilopediaKey || '')).join('\n');
+    entries.sort((a, b) => {
+      const ai = Number(a && a.biqIndex);
+      const bi = Number(b && b.biqIndex);
+      const aFinite = Number.isFinite(ai) && ai >= 0;
+      const bFinite = Number.isFinite(bi) && bi >= 0;
+      if (aFinite && bFinite && ai !== bi) return ai - bi;
+      if (aFinite !== bFinite) return aFinite ? -1 : 1;
+      return String(a && a.name || '').localeCompare(String(b && b.name || ''), 'en', { sensitivity: 'base' });
+    });
+    const afterOrder = entries.map((entry) => String(entry && entry.civilopediaKey || '')).join('\n');
+    if (beforeOrder !== afterOrder) changed = true;
+    if (selectedEntry) {
+      const nextSelectedIndex = entries.indexOf(selectedEntry);
+      if (nextSelectedIndex >= 0) state.referenceSelection[tabKey] = nextSelectedIndex;
+    }
+    if (section && Number(section.count) !== currentCount) {
+      section.count = currentCount;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 function markCurrentBundleCleanAfterSave() {
+  const referenceOrderChanged = reconcileReferenceTabsAfterNoReloadSave();
   markReferenceTabsAsSaved();
   markScenarioDistrictsAsSaved();
   state.cleanSnapshot = snapshotTabs();
@@ -49575,10 +49845,23 @@ function markCurrentBundleCleanAfterSave() {
   refreshTabDirtyBadges();
   refreshActiveReferenceListDirtyBadges();
   refreshActiveBiqRecordListDirtyBadges();
+  if (referenceOrderChanged) {
+    renderTabs();
+    renderActiveTab({ preserveTabScroll: true });
+  }
   if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
     renderFilesReadModal();
     void refreshFilesReadAccess();
   }
+}
+
+function rerunQualityChecksAfterNoReloadSave() {
+  if (!state.bundle) return;
+  if (!shouldRunQualityChecks()) {
+    clearLoadAuditState({ rerender: true });
+    return;
+  }
+  void runBundleAudit(buildAuditPayloadFromState());
 }
 
 function getOperationDetailsTitle(operation) {
@@ -49797,7 +50080,9 @@ async function saveCurrentBundle() {
   try {
     await window.c3xManager.setSettings(state.settings);
     const tabsToSave = getTabsForSavePayload();
-    const dirtyTabs = Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0);
+    const dirtyTabSet = new Set(Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0));
+    getPendingBiqOperationDirtyTabs(tabsToSave).forEach((key) => dirtyTabSet.add(key));
+    const dirtyTabs = Array.from(dirtyTabSet);
     _dbgLog('INF', 'saveBundle', `Saving — mode=${state.settings && state.settings.mode}, dirtyTabs=[${dirtyTabs.join(', ')}]`);
     const scenarioSearchFolderChanged = didScenarioSearchFolderChangeInTabs(tabsToSave);
     const shouldReloadForAutoScenarioSearchFolder = state.settings.mode === 'scenario'
@@ -49850,11 +50135,13 @@ async function saveCurrentBundle() {
         const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
         const suffix = warningText ? ` ${warningText}` : '';
         _dbgWarn('saveBundle', 'Skipped post-save bundle reload, but kept BIQ changes dirty because the BIQ save reported skipped edits or warnings');
+        rerunQualityChecksAfterNoReloadSave();
         setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
         return true;
       }
       markCurrentBundleCleanAfterSave();
       _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload because Reload After Save is off');
+      rerunQualityChecksAfterNoReloadSave();
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
       return true;
     }

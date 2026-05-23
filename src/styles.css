@@ -1968,6 +1968,22 @@ button.danger:hover {
   border: 1px solid rgba(194, 140, 34, 0.3);
 }
 
+.entity-modal-validation {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: rgba(255, 241, 235, 0.96);
+  color: #8a2e12 !important;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  min-height: calc(1em * 1.35 + 18px);
+  box-sizing: border-box;
+}
+
+.entity-modal-validation.is-empty {
+  visibility: hidden;
+}
+
 .save-progress-rollback {
   border-radius: 9px;
   border: 1px solid rgba(41, 120, 77, 0.32);
@@ -6061,7 +6077,7 @@ details > summary:focus-visible {
 }
 
 .civilization-top-cell-inline .civilization-top-field-wrap .rule-row {
-  grid-template-columns: minmax(150px, max-content) minmax(220px, 1fr);
+  grid-template-columns: minmax(130px, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
 }

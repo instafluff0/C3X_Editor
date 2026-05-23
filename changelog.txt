@@ -1,5 +1,12 @@
-* RELEASE 27.11.1.0
+* RELEASE 27.11.1
+- Fixed Civs Colors / Diplomacy rows so the Diplomacy Text input shrinks inside the card in two-column layout instead of overflowing into the neighboring panel.
+- Fixed no-reload saves so newly added or copied BIQ reference entries receive their saved BIQ indexes and move into reload-equivalent index order immediately after Save.
+- Fixed copied BIQ reference entries so fields inherited from an unsaved edited source are saved onto the copied record too, preserving chained new Tech prerequisites and similar references after reload.
+- Fixed BIQ saves so reference/structure record operations and field edits force BIQ save planning even if cached renderer dirty-tab counts only report non-BIQ config changes, preventing add/import/edit/delete changes such as removed Improvements from reappearing after restart.
+- Fixed reference-entry deletes so quality-check warnings attached to the deleted item are removed and later warning indices shift with the surviving entries, preventing an Improvement warning from appearing on the next Improvement after delete.
+- Added inline Create/Copy Scenario modal validation that disables the action button and shows a destination-folder warning when the target scenario/search folder already exists.
 - Added File -> Settings -> Reload After Save as a persisted, default-off option; when disabled, successful saves now keep the current bundle open, clear one-shot save metadata, and mark the in-memory data clean instead of reloading the app state, while leaving BIQ changes visibly dirty if the BIQ save reports skipped edits or warnings.
+- Fixed no-reload saves so quality checks rerun against the current in-memory bundle after Save, clearing stale warning panels and badges without restoring the full post-save reload.
 - Fixed repeated Map terrain painting after Undo by restoring diff-undo TILE records in place, keeping the open map editor's coordinate lookup aligned with the restored terrain before recalculating transition file/image values.
 - Fixed history Back from Map editor reference links so returning from linked entries, such as city building improvements, reopens the Map editor instead of landing on the plain Map tab or another reference view.
 - Skipped the full post-save bundle reload for successful saves limited to C3X base and sectioned config files, marking the current in-memory bundle clean instead while keeping the existing reload path for BIQ, scenario search-folder, text/reference/art, Unit INI, and scenario district sidecar saves.
