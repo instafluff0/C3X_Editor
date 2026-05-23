@@ -1,4 +1,12 @@
 * RELEASE 27.11.1.0
+- Fixed repeated Map terrain painting after Undo by restoring diff-undo TILE records in place, keeping the open map editor's coordinate lookup aligned with the restored terrain before recalculating transition file/image values.
+- Fixed history Back from Map editor reference links so returning from linked entries, such as city building improvements, reopens the Map editor instead of landing on the plain Map tab or another reference view.
+- Skipped the full post-save bundle reload for successful saves limited to C3X base and sectioned config files, marking the current in-memory bundle clean instead while keeping the existing reload path for BIQ, scenario search-folder, text/reference/art, Unit INI, and scenario district sidecar saves.
+- Skipped scenario BIQ edit collection during Save when the dirty tab set is limited to non-BIQ config files, while retaining the existing BIQ path guard and automatically re-enabling collection whenever BIQ-affecting tabs or auto-created scenario search folders are involved.
+- Changed scenario BIQ Save planning to pass the edited BIQ buffer directly into the existing atomic save transaction, avoiding an extra temporary BIQ write/read cycle while preserving rollback behavior and in-place BIQ rewrites used by scenario creation.
+- Skipped the full save-time bundle reload used for unsafe BIQ reference-delete validation when a save has no reference delete operations, preserving the existing validation for deletes while reducing ordinary scenario Save work.
+- Fixed Map modal city creation so new cities no longer inherit cloned building lists, walls, or palace flags from the first existing city record.
+- Fixed the Files modal to track pending `scenario.districts.txt` writes from Map modal district and named-tile edits, including View Changes diffs before save.
 - Fixed Map modal reopen after Select-mode district edits by resyncing scenario district sidecar entries back onto live TILE display fields before each map render.
 - Changed Map city name and population edits to use clipped map redraws instead of full canvas refreshes, while leaving territory-affecting city edits on the existing full refresh path.
 - Reused already-parsed BIQ map record fields when materializing the deferred Map tab, avoiding duplicate English-field parsing while preserving the existing BIQ load and save pipeline.

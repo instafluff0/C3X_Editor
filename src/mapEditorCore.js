@@ -461,8 +461,31 @@
     return template;
   }
 
+  function clearCityBuildings(record) {
+    if (!record) return;
+    if (Array.isArray(record.fields)) {
+      record.fields = record.fields.filter(function (field) {
+        var canon = canonicalKey(field && (field.baseKey || field.key));
+        if (canon === 'building' || canon === 'buildings' || /^building\d+$/.test(canon)) return false;
+        return true;
+      });
+      ['numbuildings', 'haswalls', 'haspalace'].forEach(function (key) {
+        var field = getField(record, key);
+        if (!field) return;
+        field.value = '0';
+        field.originalValue = '';
+        field.mapEditorValueEdited = true;
+      });
+    }
+    record.buildings = [];
+    record.numBuildings = 0;
+    record.hasWalls = 0;
+    record.hasPalace = 0;
+  }
+
   function addCity(section, tileRecord, x, y, owner, ownerType, name, newRecordRef) {
     var city = makeRecordFromTemplate(section, newRecordRef);
+    clearCityBuildings(city);
     setField(city, 'name', name || 'New City', 'Name');
     setField(city, 'x', String(x), 'X');
     setField(city, 'y', String(y), 'Y');

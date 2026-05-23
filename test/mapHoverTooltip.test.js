@@ -349,6 +349,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /function restoreMapRecordContentsInPlace\(targetRecord, restoredRecord, sectionCode\) \{[\s\S]*?Object\.keys\(targetRecord\)\.forEach\(\(key\) => \{[\s\S]*?delete targetRecord\[key\];[\s\S]*?\}\);[\s\S]*?Object\.assign\(targetRecord, restored\);[\s\S]*?tagMapRecordSectionCode\(targetRecord, sectionCode\);[\s\S]*?return targetRecord;[\s\S]*?\}[\s\S]*?function applyMapRecordDiffToTab\(mapTab, snapshot\) \{[\s\S]*?section\.records\[idx\] = restoreMapRecordContentsInPlace\(section\.records\[idx\], before, sectionCode\);/,
+    'map-record-diff undo should restore TILE record contents in place so the open map modal coordinate cache does not keep stale pre-undo terrain neighbors'
+  );
+  assert.match(
+    rendererText,
     /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?\};[\s\S]*?const redrawMapCanvasInPlace = \(clipRects = null\) => \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-candidates'[\s\S]*?candidateCount: maxIdx \+ 1[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?if \(state\.biqMapLayer === 'terrain' && tilePx >= 4 && state\.biqMapShowOverlays\) \{[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{/,
     'partial map redraws should clip output to edit regions but still repaint the full tile iteration set so cleared redraw rects do not leave blank map holes'
   );
@@ -613,6 +618,21 @@ test('map modal reapplies scenario district metadata before redraws', () => {
     rendererText,
     /function renderBiqMapSection\(tab, tileSection, options = \{\}\) \{[\s\S]*?appendDebugLog\('biq-map:open'[\s\S]*?syncScenarioDistrictDisplayFieldsForMapTab\(tab, tileSection\);[\s\S]*?const rerenderMapView = \(\) => \{/,
     'map modal rendering should sync scenario district metadata before computing tile visuals'
+  );
+});
+
+test('Files modal tracks scenario district sidecar writes from map edits', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const hasScenarioDistrictsEdit = \(mapTab\) => \{[\s\S]*?const meta = mapTab && mapTab\.scenarioDistricts;[\s\S]*?return JSON\.stringify\(\{ entries, namedTiles \}\) !== JSON\.stringify\(\{ entries: originalEntries, namedTiles: originalNamedTiles \}\);[\s\S]*?\};[\s\S]*?if \(getTabDirtyCount\('map'\) > 0 && hasScenarioDistrictsEdit\(tabs\.map\)\) \{[\s\S]*?addPath\(meta && meta\.targetPath\);[\s\S]*?\}/,
+    'Files modal pending-path fallback should include scenario.districts.txt when map sidecar entries or named tiles changed'
+  );
+  assert.match(
+    rendererText,
+    /const scenarioDistrictsTargetPath = String\(\(scenarioDistrictsMeta && scenarioDistrictsMeta\.targetPath\) \|\| ''\)\.trim\(\);[\s\S]*?const scenarioDistrictsDirty = getTabDirtyCount\('map'\) > 0[\s\S]*?JSON\.stringify\(\{ entries, namedTiles \}\) !== JSON\.stringify\(\{ entries: originalEntries, namedTiles: originalNamedTiles \}\);[\s\S]*?note: 'Scenario Districts save target'[\s\S]*?entry\.potentialWrite = !!scenarioDistrictsDirty;/,
+    'Files modal should keep scenario.districts.txt as a first-class write target and mark it changed only for sidecar edits'
   );
 });
 

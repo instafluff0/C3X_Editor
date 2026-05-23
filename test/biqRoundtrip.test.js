@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
-const { loadBundle, saveBundle } = require('../src/configCore');
+const { loadBundle, previewFileDiff, previewSavePlan, saveBundle } = require('../src/configCore');
 const mapCore = require('../src/mapEditorCore');
 const {
   applyEdits,
@@ -2646,6 +2646,55 @@ test('scenario save writes and reloads scenario.districts.txt entries and named 
   assert.equal(Array.isArray(scenarioDistricts.namedTiles), true);
   assert.ok(scenarioDistricts.entries.some((entry) => Number(entry && entry.x) === 126 && Number(entry && entry.y) === 2 && String(entry && entry.district || '') === 'Neighborhood'));
   assert.ok(scenarioDistricts.namedTiles.some((entry) => Number(entry && entry.x) === 126 && Number(entry && entry.y) === 2 && String(entry && entry.name || '') === 'Test Named Tile'));
+});
+
+test('scenario districts map edits appear in save plan and file diff preview', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  assert.ok(mapTab && mapTab.scenarioDistricts, 'expected scenario map metadata');
+
+  mapTab.scenarioDistricts.entries = [
+    { x: 126, y: 2, district: 'Neighborhood', wonderName: '', wonderCity: '' }
+  ];
+  mapTab.scenarioDistricts.namedTiles = [
+    { x: 126, y: 2, name: 'Preview Named Tile' }
+  ];
+
+  const sidecarPath = path.join(scenarioDir, 'scenario.districts.txt');
+  const payload = {
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs,
+    dirtyTabs: ['map']
+  };
+  const plan = previewSavePlan(payload);
+  assert.equal(plan.ok, true, String(plan.error || 'preview save plan failed'));
+  assert.ok(
+    (plan.writes || []).some((entry) => path.resolve(String(entry && entry.path || '')) === path.resolve(sidecarPath) && String(entry && entry.kind || '') === 'scenarioDistricts'),
+    'expected scenario.districts.txt in pending save plan'
+  );
+
+  const diff = previewFileDiff({ ...payload, targetPath: sidecarPath });
+  assert.equal(diff.ok, true, String(diff.error || 'preview diff failed'));
+  assert.equal(diff.found, true, 'expected pending diff for scenario.districts.txt');
+  assert.match(String(diff.newText || ''), /#District/);
+  assert.match(String(diff.newText || ''), /district\s*=\s*Neighborhood/);
+  assert.match(String(diff.newText || ''), /#NamedTile/);
+  assert.match(String(diff.newText || ''), /name\s*=\s*Preview Named Tile/);
 });
 
 test('normalizeDeletedReferenceSections remaps TILE city and colony references after map deletes', () => {

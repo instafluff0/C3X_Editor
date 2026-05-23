@@ -6924,110 +6924,111 @@ function buildSavePlan(payload) {
     const protectErr = failIfProtected(scenarioPath, 'scenario BIQ target');
     if (protectErr) return { ok: false, error: protectErr };
 
-    // Imported units always start at icon index 0; units_32.pcx edits stay manual.
-    spliceImportedUnitIconsIntoAtlas({
-      tabs: payload.tabs || {}
-    });
-
-    const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
-      tabs: payload.tabs || {},
-      civ3Path,
-      textEncoding: inferredBiqTextEncoding
-    });
-    const biqCustomPlayerDataOps = collectBiqCustomPlayerDataMutationOps({
-      tabs: payload.tabs || {}
-    });
-    const biqRecordOps = resolveExternalImportedPrtoRecordOps(
-      collectBiqReferenceRecordOps(payload.tabs || {}),
-      civ3Path
-    );
-    const biqStructureRecordOps = collectBiqStructureRecordOps(payload.tabs || {});
-    const biqMapStructureOps = collectBiqMapStructureOps(payload.tabs || {});
-    const biqMapRecordOps = collectBiqMapRecordOps(payload.tabs || {});
-    const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
-    const structureEdits = collectBiqStructureEdits(payload.tabs || {});
-    const mapEdits = collectBiqMapEdits(payload.tabs || {});
-    const autoSearchField = !pendingSearchFolderOverride || pendingSearchFolderOverride.length === 0
-      ? getScenarioSearchFieldMeta(biqTab)
-      : null;
-    if (scenarioContext.autoCreatedSearchValue && !autoSearchField) {
-      return { ok: false, error: 'This BIQ does not expose a writable Scenario Search Folder field.' };
-    }
-    const autoSearchEdits = (scenarioContext.autoCreatedSearchValue && autoSearchField && autoSearchField.fieldKey)
-      ? [{
-        sectionCode: 'GAME',
-        recordRef: '@INDEX:0',
-        fieldKey: autoSearchField.fieldKey,
-        value: scenarioContext.autoCreatedSearchValue
-      }]
-      : [];
-    const allBiqEdits = biqCustomRulesOps
-      .concat(biqCustomPlayerDataOps)
-      .concat(biqRecordOps)
-      .concat(biqStructureRecordOps)
-      .concat(biqMapStructureOps)
-      .concat(biqMapRecordOps)
-      .concat(biqEdits)
-      .concat(structureEdits)
-      .concat(mapEdits)
-      .concat(autoSearchEdits);
-    log.info('BiqSave', `buildSavePlan: BIQ edit summary for ${log.rel(scenarioPath)}`
-      + ` — customRulesOps=${biqCustomRulesOps.length}`
-      + ` — customPlayerDataOps=${biqCustomPlayerDataOps.length}`
-      + ` — referenceRecordOps=${biqRecordOps.length}`
-      + ` structureRecordOps=${biqStructureRecordOps.length}`
-      + ` mapStructureOps=${biqMapStructureOps.length}`
-      + ` mapRecordOps=${biqMapRecordOps.length}`
-      + ` referenceEdits=${biqEdits.length}`
-      + ` structureEdits=${structureEdits.length}`
-      + ` mapEdits=${mapEdits.length}`
-      + ` autoSearchEdits=${autoSearchEdits.length}`
-      + ` total=${allBiqEdits.length}`);
-    const currentBundle = loadBundle({ mode, c3xPath, civ3Path, scenarioPath, textFileEncoding });
-    const validationTabs = mergeTabsForDeleteValidation((currentBundle && currentBundle.tabs) || {}, payload.tabs || {});
-    const unsafeDeleteIssues = collectUnsafeReferenceDeleteIssues({ tabs: validationTabs, biqTab });
-    if (unsafeDeleteIssues.length > 0) {
-      log.warn('BiqSave', `buildSavePlan: unsafe delete check failed — ${unsafeDeleteIssues.length} issue(s): ${unsafeDeleteIssues.map((i) => String(i && i.message || i)).slice(0, 3).join('; ')}`);
-      return { ok: false, error: formatUnsafeReferenceDeleteError(unsafeDeleteIssues) };
-    }
-    if (allBiqEdits.length > 0) {
-      log.debug('BiqSave', `buildSavePlan: unsafe delete check passed — proceeding to apply ${allBiqEdits.length} BIQ edit(s)`);
-      const biqSave = applyBiqReferenceEdits({
-        biqPath: scenarioPath,
-        edits: allBiqEdits,
-        civ3Path,
-        textEncoding: inferredBiqTextEncoding,
-        outputPath: path.join(
-          os.tmpdir(),
-          `c3x-biq-save-stage-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.biq`
-        )
+    const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations']);
+    const dirtyTabsAreOnlyNonBiq = dirtyTabs.size > 0
+      && Array.from(dirtyTabs).every((tabKey) => nonBiqDirtyTabs.has(String(tabKey || '')));
+    const shouldCollectBiqEdits = !dirtyTabsAreOnlyNonBiq || !!scenarioContext.autoCreatedSearchValue;
+    if (!shouldCollectBiqEdits) {
+      log.debug('BiqSave', `buildSavePlan: skipped BIQ edit collection for non-BIQ dirtyTabs=[${Array.from(dirtyTabs).join(', ')}]`);
+    } else {
+      // Imported units always start at icon index 0; units_32.pcx edits stay manual.
+      spliceImportedUnitIconsIntoAtlas({
+        tabs: payload.tabs || {}
       });
-      if (!biqSave.ok) {
-        return { ok: false, error: biqSave.error || 'Failed to save BIQ edits.' };
+
+      const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
+        tabs: payload.tabs || {},
+        civ3Path,
+        textEncoding: inferredBiqTextEncoding
+      });
+      const biqCustomPlayerDataOps = collectBiqCustomPlayerDataMutationOps({
+        tabs: payload.tabs || {}
+      });
+      const biqRecordOps = resolveExternalImportedPrtoRecordOps(
+        collectBiqReferenceRecordOps(payload.tabs || {}),
+        civ3Path
+      );
+      const biqStructureRecordOps = collectBiqStructureRecordOps(payload.tabs || {});
+      const biqMapStructureOps = collectBiqMapStructureOps(payload.tabs || {});
+      const biqMapRecordOps = collectBiqMapRecordOps(payload.tabs || {});
+      const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
+      const structureEdits = collectBiqStructureEdits(payload.tabs || {});
+      const mapEdits = collectBiqMapEdits(payload.tabs || {});
+      const autoSearchField = !pendingSearchFolderOverride || pendingSearchFolderOverride.length === 0
+        ? getScenarioSearchFieldMeta(biqTab)
+        : null;
+      if (scenarioContext.autoCreatedSearchValue && !autoSearchField) {
+        return { ok: false, error: 'This BIQ does not expose a writable Scenario Search Folder field.' };
       }
-      if (biqSave.outputPath && fs.existsSync(biqSave.outputPath)) {
-        try {
-          const biqBytes = fs.readFileSync(biqSave.outputPath);
+      const autoSearchEdits = (scenarioContext.autoCreatedSearchValue && autoSearchField && autoSearchField.fieldKey)
+        ? [{
+          sectionCode: 'GAME',
+          recordRef: '@INDEX:0',
+          fieldKey: autoSearchField.fieldKey,
+          value: scenarioContext.autoCreatedSearchValue
+        }]
+        : [];
+      const allBiqEdits = biqCustomRulesOps
+        .concat(biqCustomPlayerDataOps)
+        .concat(biqRecordOps)
+        .concat(biqStructureRecordOps)
+        .concat(biqMapStructureOps)
+        .concat(biqMapRecordOps)
+        .concat(biqEdits)
+        .concat(structureEdits)
+        .concat(mapEdits)
+        .concat(autoSearchEdits);
+      log.info('BiqSave', `buildSavePlan: BIQ edit summary for ${log.rel(scenarioPath)}`
+        + ` — customRulesOps=${biqCustomRulesOps.length}`
+        + ` — customPlayerDataOps=${biqCustomPlayerDataOps.length}`
+        + ` — referenceRecordOps=${biqRecordOps.length}`
+        + ` structureRecordOps=${biqStructureRecordOps.length}`
+        + ` mapStructureOps=${biqMapStructureOps.length}`
+        + ` mapRecordOps=${biqMapRecordOps.length}`
+        + ` referenceEdits=${biqEdits.length}`
+        + ` structureEdits=${structureEdits.length}`
+        + ` mapEdits=${mapEdits.length}`
+        + ` autoSearchEdits=${autoSearchEdits.length}`
+        + ` total=${allBiqEdits.length}`);
+      const hasReferenceDeleteOp = biqRecordOps.some((op) => String(op && op.op || '').trim().toLowerCase() === 'delete');
+      if (hasReferenceDeleteOp) {
+        const currentBundle = loadBundle({ mode, c3xPath, civ3Path, scenarioPath, textFileEncoding });
+        const validationTabs = mergeTabsForDeleteValidation((currentBundle && currentBundle.tabs) || {}, payload.tabs || {});
+        const unsafeDeleteIssues = collectUnsafeReferenceDeleteIssues({ tabs: validationTabs, biqTab });
+        if (unsafeDeleteIssues.length > 0) {
+          log.warn('BiqSave', `buildSavePlan: unsafe delete check failed — ${unsafeDeleteIssues.length} issue(s): ${unsafeDeleteIssues.map((i) => String(i && i.message || i)).slice(0, 3).join('; ')}`);
+          return { ok: false, error: formatUnsafeReferenceDeleteError(unsafeDeleteIssues) };
+        }
+      } else {
+        log.debug('BiqSave', 'buildSavePlan: skipped unsafe delete reload — no reference delete ops');
+      }
+      if (allBiqEdits.length > 0) {
+        log.debug('BiqSave', `buildSavePlan: unsafe delete check passed — proceeding to apply ${allBiqEdits.length} BIQ edit(s)`);
+        const biqSave = applyBiqReferenceEdits({
+          biqPath: scenarioPath,
+          edits: allBiqEdits,
+          civ3Path,
+          textEncoding: inferredBiqTextEncoding,
+          returnBuffer: true
+        });
+        if (!biqSave.ok) {
+          return { ok: false, error: biqSave.error || 'Failed to save BIQ edits.' };
+        }
+        if (Buffer.isBuffer(biqSave.buffer)) {
           plannedWrites.push({
             kind: 'biq',
             path: scenarioPath,
-            data: biqBytes
+            data: biqSave.buffer
           });
-        } finally {
-          try {
-            fs.unlinkSync(biqSave.outputPath);
-          } catch (_err) {
-            // best effort cleanup
-          }
         }
+        saveReport.push({
+          kind: 'biq',
+          path: scenarioPath,
+          applied: biqSave.applied || 0,
+          skipped: biqSave.skipped || 0,
+          warning: biqSave.warning || ''
+        });
       }
-      saveReport.push({
-        kind: 'biq',
-        path: scenarioPath,
-        applied: biqSave.applied || 0,
-        skipped: biqSave.skipped || 0,
-        warning: biqSave.warning || ''
-      });
     }
   }
 
@@ -9521,7 +9522,7 @@ function buildScenarioUnitIniEditResult({ targetPath, sourcePath, actions, origi
   }
 }
 
-function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath, textEncoding = 'windows-1252' }) {
+function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath, textEncoding = 'windows-1252', returnBuffer = false }) {
   if (!biqPath || !Array.isArray(edits) || edits.length === 0) {
     return { ok: true, applied: 0, skipped: 0, warning: '', outputPath: '' };
   }
@@ -9558,6 +9559,18 @@ function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath, textEnco
       log.warn('BiqSave', `applyBiqReferenceEdits: ${jsResult.skipped} edit(s) were skipped — check warnings above`);
     }
 
+    if (returnBuffer) {
+      log.debug('BiqSave', `applyBiqReferenceEdits: returning staged buffer (${jsResult.buffer ? jsResult.buffer.length : 0} bytes)`);
+      return {
+        ok: true,
+        applied: jsResult.applied,
+        skipped: jsResult.skipped,
+        warning: jsResult.warning || '',
+        outputPath: '',
+        buffer: jsResult.buffer
+      };
+    }
+
     fs.mkdirSync(path.dirname(finalOutputPath), { recursive: true });
     fs.writeFileSync(finalOutputPath, jsResult.buffer);
     log.debug('BiqSave', `applyBiqReferenceEdits: staged output written to ${log.rel(finalOutputPath)} (${jsResult.buffer ? jsResult.buffer.length : 0} bytes)`);
@@ -9566,7 +9579,8 @@ function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath, textEnco
       applied: jsResult.applied,
       skipped: jsResult.skipped,
       warning: jsResult.warning || '',
-      outputPath: finalOutputPath
+      outputPath: finalOutputPath,
+      buffer: null
     };
   } catch (err) {
     log.error('BiqSave', `applyBiqReferenceEdits: exception — ${err.message}`);

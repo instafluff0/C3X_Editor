@@ -274,6 +274,39 @@ test('addCity appends CITY record and links tile city index', () => {
   assert.equal(mapCore.getField(tile, 'city').value, String(city.index));
 });
 
+test('addCity clears cloned CITY building state', () => {
+  const citySection = {
+    records: [{
+      index: 0,
+      fields: [
+        { key: 'name', baseKey: 'name', value: 'Alpha', originalValue: 'Alpha' },
+        { key: 'hasWalls', baseKey: 'hasWalls', value: '1', originalValue: '1' },
+        { key: 'hasPalace', baseKey: 'hasPalace', value: '1', originalValue: '1' },
+        { key: 'numBuildings', baseKey: 'numBuildings', value: '3', originalValue: '3' },
+        { key: 'building', baseKey: 'building', value: '4', originalValue: '4' },
+        { key: 'building_2', baseKey: 'building_2', value: '7', originalValue: '7' },
+        { key: 'building_3', baseKey: 'building_3', value: '9', originalValue: '9' }
+      ],
+      buildings: [4, 7, 9],
+      numBuildings: 3,
+      hasWalls: 1,
+      hasPalace: 1
+    }]
+  };
+  const tile = makeTile(5, 8);
+  const city = mapCore.addCity(citySection, tile, 4, 6, 2, 1, 'New City', 'CITY_NEW_1');
+
+  assert.equal(mapCore.getField(city, 'hasWalls').value, '0');
+  assert.equal(mapCore.getField(city, 'hasPalace').value, '0');
+  assert.equal(mapCore.getField(city, 'numBuildings').value, '0');
+  assert.equal(mapCore.getField(city, 'building'), null);
+  assert.equal(mapCore.getField(city, 'building_2'), null);
+  assert.deepEqual(city.buildings, []);
+  assert.equal(city.numBuildings, 0);
+  assert.equal(city.hasWalls, 0);
+  assert.equal(city.hasPalace, 0);
+});
+
 test('addUnit appends UNIT record and links tile unit slot', () => {
   const unitSection = { records: [{ index: 0, fields: [{ key: 'name', baseKey: 'name', value: 'Warrior', originalValue: 'Warrior' }] }] };
   const tile = makeTile(7, 8);

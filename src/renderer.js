@@ -1411,11 +1411,24 @@ function collectPendingWritePathsFromDirtyTabs() {
     const p = String(rawPath || '').trim();
     if (p) pending.add(p);
   };
+  const hasScenarioDistrictsEdit = (mapTab) => {
+    const meta = mapTab && mapTab.scenarioDistricts;
+    if (!meta) return false;
+    const entries = Array.isArray(meta.entries) ? meta.entries : [];
+    const namedTiles = Array.isArray(meta.namedTiles) ? meta.namedTiles : [];
+    const originalEntries = Array.isArray(meta.originalEntries) ? meta.originalEntries : [];
+    const originalNamedTiles = Array.isArray(meta.originalNamedTiles) ? meta.originalNamedTiles : [];
+    return JSON.stringify({ entries, namedTiles }) !== JSON.stringify({ entries: originalEntries, namedTiles: originalNamedTiles });
+  };
   ['base', 'districts', 'wonders', 'naturalWonders', 'animations'].forEach((tabKey) => {
     if (getTabDirtyCount(tabKey) <= 0) return;
     const tab = tabs[tabKey];
     addPath(tab && tab.targetPath);
   });
+  if (getTabDirtyCount('map') > 0 && hasScenarioDistrictsEdit(tabs.map)) {
+    const meta = tabs.map && tabs.map.scenarioDistricts;
+    addPath(meta && meta.targetPath);
+  }
 
   const normalizeRefList = (value) => (Array.isArray(value) ? value.map((v) => String(v || '')) : []);
   const normalizeBiqFields = (fields) => (Array.isArray(fields) ? fields.map((field) => ({
@@ -1697,6 +1710,33 @@ function collectFilesModalEntries() {
     if (!tabExisting) {
       out.push(tabEntry);
       byPath.set(tabTargetPath, tabEntry);
+    }
+  }
+
+  const mapTab = state.bundle && state.bundle.tabs && state.bundle.tabs.map;
+  const scenarioDistrictsMeta = mapTab && mapTab.scenarioDistricts;
+  const scenarioDistrictsTargetPath = String((scenarioDistrictsMeta && scenarioDistrictsMeta.targetPath) || '').trim();
+  if (scenarioDistrictsTargetPath) {
+    const entries = Array.isArray(scenarioDistrictsMeta.entries) ? scenarioDistrictsMeta.entries : [];
+    const namedTiles = Array.isArray(scenarioDistrictsMeta.namedTiles) ? scenarioDistrictsMeta.namedTiles : [];
+    const originalEntries = Array.isArray(scenarioDistrictsMeta.originalEntries) ? scenarioDistrictsMeta.originalEntries : [];
+    const originalNamedTiles = Array.isArray(scenarioDistrictsMeta.originalNamedTiles) ? scenarioDistrictsMeta.originalNamedTiles : [];
+    const scenarioDistrictsDirty = getTabDirtyCount('map') > 0
+      && JSON.stringify({ entries, namedTiles }) !== JSON.stringify({ entries: originalEntries, namedTiles: originalNamedTiles });
+    const existing = byPath.get(scenarioDistrictsTargetPath);
+    const entry = existing || {
+      path: scenarioDistrictsTargetPath,
+      kind: 'write',
+      note: 'Scenario Districts save target',
+      potentialWrite: true
+    };
+    entry.kind = 'write';
+    entry.note = entry.note || 'Scenario Districts save target';
+    entry.potentialWrite = !!scenarioDistrictsDirty;
+    entry.changeCategory = entry.changeCategory || '';
+    if (!existing) {
+      out.push(entry);
+      byPath.set(scenarioDistrictsTargetPath, entry);
     }
   }
 
@@ -3303,6 +3343,22 @@ function replaceMapTabInSnapshot(snapshot, mapTab) {
   return cloneUndoSnapshotEntry(snapshot);
 }
 
+function restoreMapRecordContentsInPlace(targetRecord, restoredRecord, sectionCode) {
+  if (!targetRecord || typeof targetRecord !== 'object') {
+    tagMapRecordSectionCode(restoredRecord, sectionCode);
+    return restoredRecord;
+  }
+  const restored = restoredRecord && typeof restoredRecord === 'object'
+    ? JSON.parse(JSON.stringify(restoredRecord))
+    : {};
+  Object.keys(targetRecord).forEach((key) => {
+    delete targetRecord[key];
+  });
+  Object.assign(targetRecord, restored);
+  tagMapRecordSectionCode(targetRecord, sectionCode);
+  return targetRecord;
+}
+
 function applyMapRecordDiffToTab(mapTab, snapshot) {
   if (!mapTab || !snapshot || snapshot.kind !== 'map-record-diff') return mapTab || null;
   const sections = Array.isArray(mapTab.sections) ? mapTab.sections : [];
@@ -3321,8 +3377,7 @@ function applyMapRecordDiffToTab(mapTab, snapshot) {
     if (!section || !Array.isArray(section.records)) return;
     const idx = section.records.findIndex((record) => Number(record && record.index) === recordIndex);
     if (idx < 0) return;
-    tagMapRecordSectionCode(before, sectionCode);
-    section.records[idx] = before;
+    section.records[idx] = restoreMapRecordContentsInPlace(section.records[idx], before, sectionCode);
   });
   return mapTab;
 }
@@ -6164,12 +6219,19 @@ function applyViewSnapshot(snapshot) {
   state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, sanitizePersistedMapEditorTool(snapshot.mapEditorTool));
   state.tabContentScrollTop = Number.isFinite(snapshot.tabContentScrollTop) ? snapshot.tabContentScrollTop : 0;
   if (!snapshot.mapModalOpen || state.activeTab !== 'map') {
-    closeMapModal();
+    closeMapModal({ skipHistorySync: true });
   }
   renderTabs();
   renderActiveTab({ preserveTabScroll: true });
   if (snapshot.mapModalOpen && state.activeTab === 'map') {
-    void ensureMapTabLoaded({ rerender: true, openModal: true });
+    const mapTab = state.bundle.tabs.map;
+    if (mapTab && !mapTab.deferred) {
+      window.requestAnimationFrame(() => {
+        if (state.activeTab === 'map') reopenMapModalForTab(state.bundle.tabs.map);
+      });
+    } else {
+      void ensureMapTabLoaded({ rerender: true, openModal: true });
+    }
   }
   if (state.unitTableView.isOpen && state.activeTab === 'units') {
     openUnitTableModal({
@@ -6208,7 +6270,7 @@ function navigateWithHistory(mutateState, renderOptions = { preserveTabScroll: t
   const before = captureViewSnapshot();
   mutateState();
   if (mapModal.node && mapModal.node.isConnected && !mapModal.node.classList.contains('hidden') && state.activeTab !== 'map') {
-    closeMapModal();
+    closeMapModal({ skipHistorySync: true });
   }
   const after = captureViewSnapshot();
   if (!before || !after || before.activeTab !== after.activeTab) {
@@ -23499,7 +23561,7 @@ function renderMapModalBody() {
   }
 }
 
-function closeMapModal() {
+function closeMapModal(options = {}) {
   if (state.biqMapZoomCommitTimer) {
     window.clearTimeout(state.biqMapZoomCommitTimer);
     state.biqMapZoomCommitTimer = 0;
@@ -23518,7 +23580,7 @@ function closeMapModal() {
   mapModal.refreshVisuals = null;
   refreshMapHoverPreviewFromState = () => false;
   refreshMapModalUndoButtons();
-  syncCurrentNavigationSnapshot();
+  if (!options.skipHistorySync) syncCurrentNavigationSnapshot();
 }
 
 function openMapModal(config) {
@@ -49463,6 +49525,33 @@ function buildSaveOutcome(preparedItems, res, fallbackError = '') {
   };
 }
 
+function canSkipPostSaveReload({ res, scenarioSearchFolderChanged, shouldReloadForAutoScenarioSearchFolder }) {
+  if (!res || !res.ok) return false;
+  if (scenarioSearchFolderChanged || shouldReloadForAutoScenarioSearchFolder) return false;
+  const simpleKinds = new Set(['base', 'districts', 'wonders', 'naturalwonders', 'animations']);
+  const report = Array.isArray(res.saveReport) ? res.saveReport : [];
+  if (report.length === 0) return false;
+  return report.every((entry) => simpleKinds.has(String(entry && entry.kind || '').trim().toLowerCase()));
+}
+
+function markCurrentBundleCleanAfterSimpleSave() {
+  state.cleanSnapshot = snapshotTabs();
+  state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
+  clearCleanReferenceDirtySignatureCache();
+  state.undoHistory = [];
+  state.isDirty = false;
+  clearDirtyTabCounts();
+  markFilesReadEntriesDirty();
+  recomputeFilesReadIssueCount();
+  refreshTabDirtyBadges();
+  refreshActiveReferenceListDirtyBadges();
+  refreshActiveBiqRecordListDirtyBadges();
+  if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
+    renderFilesReadModal();
+    void refreshFilesReadAccess();
+  }
+}
+
 function getOperationDetailsTitle(operation) {
   const op = String(operation || 'save').trim().toLowerCase();
   if (op === 'deletescenario') return 'Delete Details';
@@ -49726,6 +49815,13 @@ async function saveCurrentBundle() {
 
     const paths = res.saveReport.map((r) => _dbgRelPath(r.path)).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
+    if (canSkipPostSaveReload({ res, scenarioSearchFolderChanged, shouldReloadForAutoScenarioSearchFolder })) {
+      markCurrentBundleCleanAfterSimpleSave();
+      _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload for simple config save');
+      setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
+      return true;
+    }
+
     const currentViewSnapshot = captureViewSnapshot();
     const referenceSelectionKeys = {};
     if (state.bundle && state.bundle.tabs) {
