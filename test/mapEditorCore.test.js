@@ -2,6 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const mapCore = require('../src/mapEditorCore');
 
+test('parseIntLoose treats exact BIQ boolean strings as numeric flags', () => {
+  assert.equal(mapCore.parseIntLoose('false', 1), 0);
+  assert.equal(mapCore.parseIntLoose('true', 0), 1);
+});
+
+test('parseIntLoose prefers trailing BIQ reference ids over numbers in display labels', () => {
+  assert.equal(mapCore.parseIntLoose('CONT 1 (0)', -1), 0);
+  assert.equal(mapCore.parseIntLoose('Civilization 12 (7)', -1), 7);
+  assert.equal(mapCore.parseIntLoose('Fish (15)', -1), 15);
+});
+
 function makeTile(index, width) {
   const half = Math.floor(width / 2);
   const row = Math.floor(index / half);

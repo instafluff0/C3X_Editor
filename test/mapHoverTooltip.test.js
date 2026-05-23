@@ -253,6 +253,14 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     /if \(mode === 'visibility' \|\| mode === 'fog'\) \{[\s\S]*?getMapFieldStoredValue\(tile, 'fogofwar', addFog \? '1' : '0'\)[\s\S]*?setMapFieldValue\(tile, 'fogofwar', nextValue, 'Fog Of War'\);/,
     'fog paint should compare against the stored/raw fog value and write through setMapFieldValue so the map overlay updates immediately'
   );
+  assert.ok(
+    rendererText.includes("function parseIntLoose(value, fallback = 0)")
+      && rendererText.includes("if (lower === 'false') return 0;")
+      && rendererText.includes("if (lower === 'true') return 1;")
+      && rendererText.includes("const referenceMatch = s.match(/\\((-?\\d+)\\)\\s*$/);")
+      && rendererText.includes("if (referenceMatch) return Number.parseInt(referenceMatch[1], 10);"),
+    'map numeric parsing should treat BIQ boolean strings as 0/1 and prefer trailing reference ids over label numbers'
+  );
   assert.match(
     rendererText,
     /categorySelect\.addEventListener\('change', \(\) => \{[\s\S]*?const previousToolState = \{[\s\S]*?const nextToolState = \{[\s\S]*?const fogOverlayChanged = getShouldShowVisibilityFogOverlayForState\(previousToolState\) !== getShouldShowVisibilityFogOverlayForState\(nextToolState\);[\s\S]*?refreshMapViewForToolChange\(\{ redrawCanvas: fogOverlayChanged \}\);[\s\S]*?\}\);/,

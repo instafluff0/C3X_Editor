@@ -33805,6 +33805,11 @@ function removeMapFromTab(tab) {
 
 function parseIntLoose(value, fallback = 0) {
   const s = String(value == null ? '' : value).trim();
+  const lower = s.toLowerCase();
+  if (lower === 'false') return 0;
+  if (lower === 'true') return 1;
+  const referenceMatch = s.match(/\((-?\d+)\)\s*$/);
+  if (referenceMatch) return Number.parseInt(referenceMatch[1], 10);
   const m = s.match(/-?\d+/);
   if (!m) return fallback;
   return Number.parseInt(m[0], 10);

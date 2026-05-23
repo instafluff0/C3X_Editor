@@ -11,6 +11,11 @@
 
   function parseIntLoose(value, fallback) {
     var s = String(value == null ? '' : value).trim();
+    var lower = s.toLowerCase();
+    if (lower === 'false') return 0;
+    if (lower === 'true') return 1;
+    var referenceMatch = s.match(/\((-?\d+)\)\s*$/);
+    if (referenceMatch) return Number.parseInt(referenceMatch[1], 10);
     var m = s.match(/-?\d+/);
     if (!m) return Number.isFinite(fallback) ? fallback : 0;
     return Number.parseInt(m[0], 10);

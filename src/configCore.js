@@ -218,6 +218,11 @@ function cleanDisplayText(value) {
 
 function parseIntLoose(value, fallback = NaN) {
   const text = String(value == null ? '' : value).trim();
+  const lower = text.toLowerCase();
+  if (lower === 'false') return 0;
+  if (lower === 'true') return 1;
+  const referenceMatch = text.match(/\((-?\d+)\)\s*$/);
+  if (referenceMatch) return Number.parseInt(referenceMatch[1], 10);
   const match = text.match(/-?\d+/);
   if (!match) return fallback;
   const parsed = Number.parseInt(match[0], 10);
