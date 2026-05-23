@@ -1055,9 +1055,11 @@ button:disabled {
 }
 
 .map-resize-status {
-  min-height: calc(1.45em * 2);
+  height: calc(1.45em * 2);
+  line-height: 1.45;
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
+  overflow: hidden;
 }
 
 .entity-path-row {
@@ -3933,7 +3935,7 @@ button.danger:hover {
 .map-resize-preview-frame {
   width: min(100%, 280px);
   height: 220px;
-  margin-top: 8px;
+  margin-top: 0;
   padding: 10px;
   border-radius: 18px;
   border: 1px solid rgba(46, 61, 92, 0.12);

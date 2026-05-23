@@ -226,7 +226,7 @@ test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips WMA
       hasMapData: true,
       originalHasMap: true,
       mapMutation: null,
-      pendingMapResize: { width: 140, height: 120, fillTerrain: 1 },
+      pendingMapResize: { width: 140, height: 120, fillTerrain: 1, horizontalAnchor: 'west', verticalAnchor: 'north' },
       sections: [
         {
           code: 'WMAP',
@@ -243,7 +243,14 @@ test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips WMA
     }
   };
 
-  assert.deepEqual(collectBiqMapStructureOps(tabs), [{ op: 'resizemap', width: 140, height: 120, fillTerrain: 1 }]);
+  assert.deepEqual(collectBiqMapStructureOps(tabs), [{
+    op: 'resizemap',
+    width: 140,
+    height: 120,
+    fillTerrain: 1,
+    horizontalAnchor: 'west',
+    verticalAnchor: 'north'
+  }]);
   assert.deepEqual(collectBiqMapEdits(tabs), [
     {
       sectionCode: 'WMAP',

@@ -17,7 +17,8 @@ const path = require('node:path');
 const os = require('node:os');
 const vm = require('node:vm');
 
-const { loadBundle, saveBundle } = require('../src/configCore');
+const { loadBundle, saveBundle, findNextResourceAtlasSlot, findNextUnitAtlasSlot } = require('../src/configCore');
+const { decodePcx } = require('../src/artPreview');
 const { getReferenceEntryIdentity } = require('../src/referenceIdentity');
 
 // ---------------------------------------------------------------------------
@@ -343,6 +344,60 @@ function loadRendererMapSaveHelpers(targetBundle) {
   return sandbox.__helpers;
 }
 
+function loadRendererNoReloadCleanHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = [
+    'markScenarioDistrictsAsSaved',
+    'markMapTabAsSaved',
+    'markReferenceTabEntryOriginals',
+    'markReferenceTabsAsSaved',
+    'markCurrentBundleCleanAfterSave'
+  ];
+  const sandbox = {
+    state: {
+      bundle: targetBundle,
+      cleanSnapshot: '',
+      cleanTabsCache: null,
+      dirtyTabCounts: {
+        technologies: 1,
+        scenarioSettings: 1,
+        rules: 1,
+        terrain: 1,
+        world: 1,
+        map: 1
+      },
+      isDirty: true,
+      undoHistory: [{ label: 'before save' }]
+    },
+    el: {},
+    deepCloneUiValue: (value) => JSON.parse(JSON.stringify(value)),
+    snapshotTabs: () => JSON.stringify(sandbox.state.bundle.tabs),
+    parseSnapshotTabs: (snapshot) => JSON.parse(snapshot),
+    clearCleanReferenceDirtySignatureCache: () => {},
+    clearDirtyTabCounts: () => {
+      sandbox.state.dirtyTabCounts = {};
+    },
+    markFilesReadEntriesDirty: () => {},
+    recomputeFilesReadIssueCount: () => {},
+    refreshTabDirtyBadges: () => {},
+    refreshActiveReferenceListDirtyBadges: () => {},
+    refreshActiveBiqRecordListDirtyBadges: () => {},
+    renderTabs: () => {},
+    renderActiveTab: () => {},
+    renderFilesReadModal: () => {},
+    refreshFilesReadAccess: () => {},
+    reconcileReferenceTabsAfterNoReloadSave: () => false
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ', state };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-no-reload-clean.vm' });
+  return sandbox.__helpers;
+}
+
 function loadRendererReferenceDirtyHelpers(targetBundle) {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
@@ -493,7 +548,7 @@ test('pending added references predict appended BIQ index instead of using list 
 test('copying from an unsaved edited tech preserves inherited prereqs after save', (t) => {
   const ctx = setupScenario();
   if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
-  const { c3xDir, biqPath } = ctx;
+  const { tmpDir, c3xDir, biqPath } = ctx;
   const before = reload(c3xDir, biqPath);
   const sourceEntry = before.tabs.technologies.entries.find((entry) => Number.isFinite(Number(entry && entry.biqIndex)))
     || before.tabs.technologies.entries[0];
@@ -649,6 +704,144 @@ test('no-reload save marks map edits clean for future dirty checks', () => {
   assert.equal(fields.find((field) => field.baseKey === 'fogofwar').originalValue, 'false');
   assert.equal(fields.find((field) => field.baseKey === 'ruin').originalValue, '1');
   assert.equal(fields.some((field) => field.mapEditorValueEdited), false);
+});
+
+test('no-reload save clean-state matrix covers BIQ reference, structure, and map tabs', () => {
+  const bundle = {
+    tabs: {
+      technologies: {
+        type: 'reference',
+        entries: [{
+          civilopediaKey: 'TECH_ALPHA',
+          biqIndex: 0,
+          isNew: true,
+          biqFields: [
+            { baseKey: 'name', value: 'Alpha Saved', originalValue: 'Alpha Dirty', editable: true }
+          ],
+          civilopediaSection1: 'Saved body',
+          originalCivilopediaSection1: 'Dirty body'
+        }],
+        recordOps: [{ op: 'copy', sourceRef: 'TECH_OLD', newRecordRef: 'TECH_ALPHA' }]
+      },
+      scenarioSettings: {
+        type: 'biq',
+        key: 'scenarioSettings',
+        customRulesMutation: 'set',
+        sections: [{
+          code: 'GAME',
+          records: [{
+            index: 0,
+            newRecordRef: 'GAME_NEW',
+            fields: [
+              { baseKey: 'title', value: 'Saved Scenario Title', originalValue: 'Dirty Scenario Title', editable: true }
+            ]
+          }]
+        }]
+      },
+      rules: {
+        type: 'biq',
+        key: 'rules',
+        recordOps: [{ op: 'add', sectionCode: 'RULE', newRecordRef: 'RULE_NEW' }],
+        sections: [{
+          code: 'RULE',
+          records: [{
+            index: 0,
+            newRecordRef: 'RULE_NEW',
+            fields: [
+              { baseKey: 'battlecreatedunit', value: '2', originalValue: '1', editable: true }
+            ]
+          }]
+        }]
+      },
+      terrain: {
+        type: 'biq',
+        key: 'terrain',
+        sections: [{
+          code: 'TERR',
+          records: [{
+            index: 0,
+            fields: [
+              { baseKey: 'name', value: 'Saved Terrain', originalValue: 'Dirty Terrain', editable: true }
+            ]
+          }]
+        }]
+      },
+      world: {
+        type: 'biq',
+        key: 'world',
+        sections: [{
+          code: 'WSIZ',
+          records: [{
+            index: 0,
+            fields: [
+              { baseKey: 'name', value: 'Saved World', originalValue: 'Dirty World', editable: true }
+            ]
+          }]
+        }]
+      },
+      map: {
+        type: 'map',
+        hasMapData: true,
+        originalHasMap: false,
+        mapMutation: 'set',
+        mapMutationSource: 'custom',
+        pendingMapResize: { width: 80, height: 80 },
+        recordOps: [{ op: 'add', sectionCode: 'UNIT', newRecordRef: 'UNIT_NEW' }],
+        scenarioDistricts: {
+          entries: [{ x: 1, y: 2, district: 'Neighborhood' }],
+          originalEntries: [],
+          namedTiles: [{ x: 1, y: 2, name: 'Saved Tile' }],
+          originalNamedTiles: []
+        },
+        sections: [{
+          code: 'TILE',
+          records: [{
+            index: 0,
+            newRecordRef: 'TILE_NEW',
+            fields: [
+              { baseKey: 'terrain', value: '3', originalValue: '2', editable: true, mapEditorValueEdited: true }
+            ]
+          }]
+        }]
+      }
+    }
+  };
+
+  const { markCurrentBundleCleanAfterSave, state } = loadRendererNoReloadCleanHelpers(bundle);
+  markCurrentBundleCleanAfterSave();
+
+  assert.deepEqual(state.dirtyTabCounts, {});
+  assert.equal(state.isDirty, false);
+  assert.equal(Array.isArray(state.undoHistory), true);
+  assert.equal(state.undoHistory.length, 0);
+  assert.ok(state.cleanSnapshot && state.cleanTabsCache, 'expected clean snapshot/cache to be rebuilt');
+
+  assert.equal(bundle.tabs.technologies.recordOps.length, 0);
+  assert.equal(bundle.tabs.technologies.entries[0].isNew, false);
+  assert.equal(bundle.tabs.technologies.entries[0].biqFields[0].originalValue, 'Alpha Saved');
+  assert.equal(bundle.tabs.technologies.entries[0].originalCivilopediaSection1, 'Saved body');
+
+  assert.equal(bundle.tabs.scenarioSettings.customRulesMutation, null);
+  assert.equal(bundle.tabs.scenarioSettings.recordOps.length, 0);
+  assert.equal(Object.prototype.hasOwnProperty.call(bundle.tabs.scenarioSettings.sections[0].records[0], 'newRecordRef'), false);
+  assert.equal(bundle.tabs.scenarioSettings.sections[0].records[0].fields[0].originalValue, 'Saved Scenario Title');
+
+  assert.equal(bundle.tabs.rules.recordOps.length, 0);
+  assert.equal(Object.prototype.hasOwnProperty.call(bundle.tabs.rules.sections[0].records[0], 'newRecordRef'), false);
+  assert.equal(bundle.tabs.rules.sections[0].records[0].fields[0].originalValue, '2');
+  assert.equal(bundle.tabs.terrain.sections[0].records[0].fields[0].originalValue, 'Saved Terrain');
+  assert.equal(bundle.tabs.world.sections[0].records[0].fields[0].originalValue, 'Saved World');
+
+  assert.equal(bundle.tabs.map.recordOps.length, 0);
+  assert.equal(bundle.tabs.map.originalHasMap, true);
+  assert.equal(bundle.tabs.map.mapMutation, null);
+  assert.equal(bundle.tabs.map.mapMutationSource, null);
+  assert.equal(bundle.tabs.map.pendingMapResize, null);
+  assert.equal(Object.prototype.hasOwnProperty.call(bundle.tabs.map.sections[0].records[0], 'newRecordRef'), false);
+  assert.equal(bundle.tabs.map.sections[0].records[0].fields[0].originalValue, '3');
+  assert.equal(bundle.tabs.map.sections[0].records[0].fields.some((field) => field.mapEditorValueEdited), false);
+  assert.deepEqual(bundle.tabs.map.scenarioDistricts.originalEntries, bundle.tabs.map.scenarioDistricts.entries);
+  assert.deepEqual(bundle.tabs.map.scenarioDistricts.originalNamedTiles, bundle.tabs.map.scenarioDistricts.namedTiles);
 });
 
 test('reference dirty cache rebuild removes stale identities after new entry key changes', () => {
@@ -816,6 +1009,94 @@ function pickEntry(bundle, tabKey, pred) {
   return entries.find(pred) || entries[0];
 }
 
+function resolveTestResourcesPcx(rootPath, scenarioRoots = []) {
+  const rel = path.join('Art', 'resources.pcx');
+  const candidates = [
+    ...(Array.isArray(scenarioRoots) ? scenarioRoots : []).map((root) => path.join(root, rel)),
+    path.join(rootPath, 'Conquests', rel),
+    path.join(rootPath, 'civ3PTW', rel),
+    path.join(rootPath, rel)
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || '';
+}
+
+function getResourceIconFieldValue(entry) {
+  const field = entry && Array.isArray(entry.biqFields)
+    ? entry.biqFields.find((item) => String(item && (item.baseKey || item.key) || '').toLowerCase() === 'icon')
+    : null;
+  return field ? String(field.value || '') : '';
+}
+
+function resourcePcxCellHasNonMagenta(pcxBuffer, slot) {
+  const decoded = decodePcx(pcxBuffer, { returnIndexed: true, transparentIndexes: [] });
+  const palette = decoded.palette;
+  const magentaIndexes = new Set();
+  for (let idx = 0; idx < 256; idx += 1) {
+    if (palette[idx * 3] === 255 && palette[idx * 3 + 1] === 0 && palette[idx * 3 + 2] === 255) {
+      magentaIndexes.add(idx);
+    }
+  }
+  const cell = 50;
+  const cols = 6;
+  const col = slot % cols;
+  const row = Math.floor(slot / cols);
+  const startX = col * cell;
+  const startY = row * cell;
+  if (startX + cell > decoded.width || startY + cell > decoded.height) return false;
+  for (let y = 0; y < cell; y += 1) {
+    const rowOff = (startY + y) * decoded.width + startX;
+    for (let x = 0; x < cell; x += 1) {
+      if (!magentaIndexes.has(decoded.indices[rowOff + x])) return true;
+    }
+  }
+  return false;
+}
+
+function resolveTestUnits32Pcx(rootPath, scenarioRoots = []) {
+  const rel = path.join('Art', 'Units', 'units_32.pcx');
+  const candidates = [
+    ...(Array.isArray(scenarioRoots) ? scenarioRoots : []).map((root) => path.join(root, rel)),
+    path.join(rootPath, 'Conquests', rel),
+    path.join(rootPath, 'civ3PTW', rel),
+    path.join(rootPath, rel)
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || '';
+}
+
+function getUnitIconFieldValue(entry) {
+  const field = entry && Array.isArray(entry.biqFields)
+    ? entry.biqFields.find((item) => String(item && (item.baseKey || item.key) || '').toLowerCase() === 'iconindex')
+    : null;
+  return field ? String(field.value || '') : '';
+}
+
+function units32CellHasNonMagenta(pcxBuffer, slot) {
+  const decoded = decodePcx(pcxBuffer, { returnIndexed: true, transparentIndexes: [] });
+  const palette = decoded.palette;
+  const magentaIndexes = new Set();
+  for (let idx = 0; idx < 256; idx += 1) {
+    if (palette[idx * 3] === 255 && palette[idx * 3 + 1] === 0 && palette[idx * 3 + 2] === 255) {
+      magentaIndexes.add(idx);
+    }
+  }
+  const sprite = 32;
+  const gutter = 1;
+  const stride = sprite + gutter;
+  const cols = Math.floor((decoded.width - gutter) / stride);
+  const col = slot % cols;
+  const row = Math.floor(slot / cols);
+  const startX = col * stride + gutter;
+  const startY = row * stride + gutter;
+  if (startX + sprite > decoded.width || startY + sprite > decoded.height) return false;
+  for (let y = 0; y < sprite; y += 1) {
+    const rowOff = (startY + y) * decoded.width + startX;
+    for (let x = 0; x < sprite; x += 1) {
+      if (!magentaIndexes.has(decoded.indices[rowOff + x])) return true;
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // ADD tests — one per entity type
 // ---------------------------------------------------------------------------
@@ -880,7 +1161,7 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
 test('Add blank PRTO uses Quint-style new-unit defaults for serialized fields', (t) => {
   const ctx = setupScenario(BASE_BIQ);
   if (!ctx) return t.skip(`Source BIQ not found: ${BASE_BIQ}`);
-  const { c3xDir, biqPath } = ctx;
+  const { tmpDir, c3xDir, biqPath } = ctx;
 
   const newKey = `PRTO_ADD_DFLT_${Date.now()}`.toUpperCase();
   const saveResult = saveBundle({
@@ -1063,7 +1344,7 @@ function runTidesImport(t, tabKey, sectionCode, prefix, srcPicker, targetBiqPath
   const ctx = setupScenario(targetBiqPath);
   if (!ctx) { t.skip(`Target BIQ not found: ${targetBiqPath}`); return null; }
   if (!TIDES_BIQ_EXISTS) { t.skip(`Tides of Crimson BIQ not found: ${TIDES_BIQ}`); return null; }
-  const { c3xDir, biqPath } = ctx;
+  const { tmpDir, c3xDir, biqPath } = ctx;
 
   const tidesBundle = loadBundle({
     mode: 'scenario',
@@ -1092,7 +1373,7 @@ function runTidesImport(t, tabKey, sectionCode, prefix, srcPicker, targetBiqPath
   );
   const after = reload(c3xDir, biqPath);
 
-  return { c3xDir, biqPath, before, after, saveResult, newKey, importedEntry, srcEntry };
+  return { tmpDir, c3xDir, biqPath, before, after, saveResult, newKey, importedEntry, srcEntry };
 }
 
 // --- Civ import ---
@@ -1516,20 +1797,77 @@ test('Import Unit from Tides: no baggage — no extra sections added', (t) => {
   }
 });
 
-test('Import Unit from Tides: icon index resets to 0 and does not rewrite units_32.pcx', (t) => {
+test('Import Unit from Tides: appends icon to scenario units_32.pcx and rewrites only the imported icon index', (t) => {
   const r = runTidesImport(t, 'units', 'PRTO', 'PRTO_', null);
   if (!r) return;
   assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
 
   const reloaded = getEntry(r.after, 'units', r.newKey);
   assert.ok(reloaded, 'expected reloaded unit entry');
-  assert.equal(fieldVal(reloaded, 'iconindex'), '0');
 
   const units32Writes = (r.saveResult.saveReport || []).filter((item) =>
-    String(item && item.kind || '') === 'art' &&
+    String(item && item.kind || '') === 'atlas' &&
     /art[\\/]+units[\\/]+units_32\.pcx$/i.test(String(item && item.path || ''))
   );
-  assert.equal(units32Writes.length, 0, 'unit import should not rewrite units_32.pcx');
+  assert.equal(units32Writes.length, 1, 'unit import should write scenario-local units_32.pcx');
+  const targetUnits32 = String(units32Writes[0].sourcePath || '') || resolveTestUnits32Pcx(CIV3_ROOT, []);
+  if (!targetUnits32) {
+    return t.skip('units_32.pcx was not available for target scenario');
+  }
+  const expectedSlot = findNextUnitAtlasSlot(fs.readFileSync(targetUnits32)).index;
+  assert.equal(fieldVal(reloaded, 'iconindex'), String(expectedSlot));
+  const scenarioUnits32 = path.join(r.tmpDir, 'Art', 'Units', 'units_32.pcx');
+  assert.equal(fs.existsSync(scenarioUnits32), true, 'scenario-local units_32.pcx should be created');
+  assert.equal(units32CellHasNonMagenta(fs.readFileSync(scenarioUnits32), expectedSlot), true, 'appended units_32 slot should contain icon pixels');
+
+  const beforeIconValues = new Map((r.before.tabs.units.entries || []).map((entry) => [
+    String(entry && entry.civilopediaKey || '').toUpperCase(),
+    getUnitIconFieldValue(entry)
+  ]));
+  (r.after.tabs.units.entries || []).forEach((entry) => {
+    const key = String(entry && entry.civilopediaKey || '').toUpperCase();
+    if (key === r.newKey) return;
+    if (!beforeIconValues.has(key)) return;
+    assert.equal(getUnitIconFieldValue(entry), beforeIconValues.get(key), `existing unit icon index changed for ${key}`);
+  });
+});
+
+test('Import Unit from Tides: disabled auto units_32 setting leaves units_32.pcx untouched', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Target BIQ not found: ${BASE_BIQ}`);
+  if (!TIDES_BIQ_EXISTS) return t.skip(`Tides of Crimson BIQ not found: ${TIDES_BIQ}`);
+
+  const targetBefore = reload(ctx.c3xDir, ctx.biqPath);
+  const tidesBundle = loadBundle({ mode: 'scenario', civ3Path: CIV3_ROOT, scenarioPath: TIDES_BIQ });
+  const srcUnit = pickEntry(tidesBundle, 'units', () => true);
+  if (!srcUnit) return t.skip('No unit entry in Tides');
+
+  const newKey = `PRTO_C3X_UID_${Date.now()}`.toUpperCase();
+  const importedEntry = simulateRendererImport(targetBefore, tidesBundle, 'units', srcUnit, newKey);
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: ctx.c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: ctx.biqPath,
+    autoAddImportedUnitIcons: false,
+    tabs: {
+      units: {
+        entries: [importedEntry],
+        recordOps: [{
+          op: 'add',
+          newRecordRef: newKey,
+          sourceRef: String(srcUnit.civilopediaKey || '').trim().toUpperCase(),
+          importArtFrom: TIDES_BIQ
+        }]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'disabled unit icon save failed'));
+  const after = reload(ctx.c3xDir, ctx.biqPath);
+  const reloaded = getEntry(after, 'units', newKey);
+  assert.ok(reloaded, 'expected disabled-setting imported unit entry');
+  assert.equal(fieldVal(reloaded, 'iconindex'), '0');
+  assert.equal(fs.existsSync(path.join(ctx.tmpDir, 'Art', 'Units', 'units_32.pcx')), false, 'disabled setting should not create scenario-local units_32.pcx');
 });
 
 test('Import Unit into Tides: only the imported unit is dirty before save', (t) => {
@@ -1790,6 +2128,91 @@ test('Import Resource from Tides: icon PCX files are copied to scenario content 
   } else {
     t.skip('Source icon PCX files were not present in this Civ3 installation; skipping art-copy assertion');
   }
+});
+
+test('Import Resource from Tides: appends map icon to scenario resources.pcx and rewrites only the imported icon index', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  if (!TIDES_BIQ_EXISTS) return t.skip(`Tides BIQ not found: ${TIDES_BIQ}`);
+  const { tmpDir, c3xDir, biqPath } = ctx;
+
+  const targetResourcesPcx = resolveTestResourcesPcx(CIV3_ROOT);
+  const sourceBundle = loadBundle({ mode: 'scenario', civ3Path: CIV3_ROOT, scenarioPath: TIDES_BIQ });
+  const sourceRoots = [
+    path.dirname(TIDES_BIQ),
+    ...((sourceBundle && Array.isArray(sourceBundle.scenarioSearchPaths)) ? sourceBundle.scenarioSearchPaths : [])
+  ];
+  const sourceResourcesPcx = resolveTestResourcesPcx(CIV3_ROOT, sourceRoots);
+  if (!targetResourcesPcx || !sourceResourcesPcx) {
+    return t.skip('resources.pcx was not available for target or source scenario');
+  }
+
+  const expectedSlot = findNextResourceAtlasSlot(fs.readFileSync(targetResourcesPcx)).index;
+  const srcRes = sourceBundle.tabs.resources.entries.find((entry) => {
+    const icon = Number.parseInt(getResourceIconFieldValue(entry), 10);
+    return Number.isFinite(icon) && icon >= 0;
+  }) || sourceBundle.tabs.resources.entries[0];
+  if (!srcRes) return t.skip('No resource entry in Tides');
+
+  const targetBefore = reload(c3xDir, biqPath);
+  const existingIconValues = new Map((targetBefore.tabs.resources.entries || []).map((entry) => [
+    String(entry.civilopediaKey || '').toUpperCase(),
+    getResourceIconFieldValue(entry)
+  ]));
+  const newKey = `GOOD_C3X_MAPICON_${Date.now()}`.toUpperCase();
+  const importedEntry = simulateImportEntry(srcRes, newKey);
+  const saveResult = saveImport(c3xDir, biqPath, 'resources', newKey, importedEntry, TIDES_BIQ);
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'resource map-icon import save failed'));
+
+  const scenarioResourcesPcx = path.join(tmpDir, 'Art', 'resources.pcx');
+  assert.equal(fs.existsSync(scenarioResourcesPcx), true, 'scenario-local resources.pcx should be created');
+  const written = fs.readFileSync(scenarioResourcesPcx);
+  assert.equal(resourcePcxCellHasNonMagenta(written, expectedSlot), true, `slot ${expectedSlot} should contain the imported icon`);
+
+  const after = reload(c3xDir, biqPath);
+  const reloaded = getEntry(after, 'resources', newKey);
+  assert.ok(reloaded, 'expected imported resource to reload');
+  assert.equal(getResourceIconFieldValue(reloaded), String(expectedSlot), 'imported resource icon index should point at appended slot');
+  for (const [key, iconValue] of existingIconValues) {
+    const entry = getEntry(after, 'resources', key);
+    if (entry) assert.equal(getResourceIconFieldValue(entry), iconValue, `existing resource ${key} icon index should be unchanged`);
+  }
+});
+
+test('Import Resource from Tides: disabled auto map-icon setting leaves resources.pcx untouched', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  if (!TIDES_BIQ_EXISTS) return t.skip(`Tides BIQ not found: ${TIDES_BIQ}`);
+  const { tmpDir, c3xDir, biqPath } = ctx;
+
+  const sourceBundle = loadBundle({ mode: 'scenario', civ3Path: CIV3_ROOT, scenarioPath: TIDES_BIQ });
+  const srcRes = sourceBundle.tabs.resources.entries.find((entry) => {
+    const icon = Number.parseInt(getResourceIconFieldValue(entry), 10);
+    return Number.isFinite(icon) && icon >= 0;
+  }) || sourceBundle.tabs.resources.entries[0];
+  if (!srcRes) return t.skip('No resource entry in Tides');
+
+  const newKey = `GOOD_C3X_MAPICON_OFF_${Date.now()}`.toUpperCase();
+  const importedEntry = simulateImportEntry(srcRes, newKey);
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    autoAddImportedResourceIcons: false,
+    tabs: {
+      resources: {
+        entries: [importedEntry],
+        recordOps: [{
+          op: 'add',
+          newRecordRef: newKey,
+          importArtFrom: TIDES_BIQ
+        }]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'resource import save failed'));
+  assert.equal(fs.existsSync(path.join(tmpDir, 'Art', 'resources.pcx')), false, 'disabled setting should not create scenario-local resources.pcx');
 });
 
 test('Import Unit from Tides: animation folder files are copied to scenario content root', (t) => {

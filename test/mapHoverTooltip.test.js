@@ -155,6 +155,46 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /function isResourcePreviewCellEmpty\(preview, slotIndex\) \{[\s\S]*?const indices = getResourceAtlasIndices\(preview\);[\s\S]*?const palette = getResourceAtlasPalette\(preview\);[\s\S]*?if \(indices && palette\) \{[\s\S]*?!isResourceAtlasPaletteMagenta\(palette, indices\[rowOff \+ x\]\)[\s\S]*?return true;[\s\S]*?\}[\s\S]*?function findNextResourcePreviewSlot\(preview\) \{[\s\S]*?if \(!isResourcePreviewCellEmpty\(preview, idx\)\) lastOccupied = idx;/,
+    'resource imports should scan indexed PCX palette data to predict the target resources.pcx slot before Save'
+  );
+  assert.match(
+    rendererText,
+    /async function refreshPendingImportedResourceIconAssignments\(tab = null\) \{[\s\S]*?const firstSlot = findNextResourcePreviewSlot\(preview\);[\s\S]*?const targetIconIndex = firstSlot \+ offset;[\s\S]*?entry\._pendingImportedResourceIcon = \{[\s\S]*?sourceIconIndex,[\s\S]*?targetIconIndex,[\s\S]*?\};[\s\S]*?iconField\.value = String\(targetIconIndex\);/,
+    'resource imports should assign the predicted target slot to the imported entry before Save'
+  );
+  assert.match(
+    rendererText,
+    /function createResourceIconIndexPicker\(currentValue, onSelect, entry = null\) \{[\s\S]*?const pending = getPendingImportedResourceIcon\(entry\);[\s\S]*?pending && pending\.targetIconIndex === idx[\s\S]*?drawPendingImportedResourceIconToCanvas\(entry, canvas\)[\s\S]*?totalIcons = \(Math\.floor\(pending\.targetIconIndex \/ cols\) \+ 1\) \* cols;/,
+    'resource icon picker should render pending imported icons in predicted target slots even before resources.pcx is saved'
+  );
+  assert.match(
+    rendererText,
+    /getResourcesAtlasPreview\(\)\.then\(\(preview\) => \{[\s\S]*?if \(!iconWarnEl\.isConnected \|\| !preview\) return;[\s\S]*?if \(getPendingImportedResourceIcon\(entry\)\) return;[\s\S]*?if \(Math\.floor\(idx \/ metrics\.cols\) >= metrics\.rows\) \{/,
+    'resource icon range warning should ignore pending imported icons that will extend resources.pcx on Save'
+  );
+  assert.match(
+    rendererText,
+    /function isUnits32PreviewCellEmpty\(preview, slotIndex\) \{[\s\S]*?const indices = getUnits32AtlasIndices\(preview\);[\s\S]*?const palette = getUnits32AtlasPalette\(preview\);[\s\S]*?if \(indices && palette\) \{[\s\S]*?!isUnits32PaletteMagenta\(palette, indices\[rowOff \+ x\]\)[\s\S]*?return true;[\s\S]*?\}[\s\S]*?function findNextUnits32PreviewSlot\(preview\) \{[\s\S]*?if \(!isUnits32PreviewCellEmpty\(preview, idx\)\) lastOccupied = idx;/,
+    'unit imports should scan indexed PCX palette data to predict the target units_32.pcx slot before Save'
+  );
+  assert.match(
+    rendererText,
+    /async function refreshPendingImportedUnitIconAssignments\(tab\) \{[\s\S]*?const firstSlot = findNextUnits32PreviewSlot\(preview\);[\s\S]*?const targetIconIndex = firstSlot \+ offset;[\s\S]*?entry\._pendingImportedUnitIcon = \{[\s\S]*?sourceIconIndex,[\s\S]*?targetIconIndex,[\s\S]*?\};[\s\S]*?iconField\.value = String\(targetIconIndex\);/,
+    'unit imports should assign the predicted target slot to the imported entry before Save'
+  );
+  assert.match(
+    rendererText,
+    /function createUnitIconIndexPicker\(currentValue, onSelect, entry = null\) \{[\s\S]*?const pending = getPendingImportedUnitIcon\(entry\);[\s\S]*?pending && pending\.targetIconIndex === idx[\s\S]*?getUnits32AtlasPreview\(\{[\s\S]*?scenarioPath: pending\.importScenarioPath[\s\S]*?drawUnits32IconToCanvas\(sourcePreview, pending\.sourceIconIndex, canvas\)[\s\S]*?totalIcons = \(Math\.floor\(pending\.targetIconIndex \/ cols\) \+ 1\) \* cols;/,
+    'unit icon picker should render pending imported icons in predicted target slots even before units_32.pcx is saved'
+  );
+  assert.match(
+    rendererText,
+    /await refreshPendingImportedUnitIconAssignments\(\);[\s\S]*?if \(hasPendingImportedUnitIconWarning\(entry\)\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(getPendingImportedUnitIcon\(entry\)\) return;[\s\S]*?if \(Math\.floor\(idx \/ metrics\.cols\) >= metrics\.rows\) \{/,
+    'unit icon range warning should ignore pending imported icons that will extend units_32.pcx on Save'
+  );
+  assert.match(
+    rendererText,
     /const mapOwnerPickerValueForPlayer = \(playerId\) => `player:\$\{playerId\}`;[\s\S]*?const mapOwnerPickerValueForCivilization = \(civId\) => `civ:\$\{civId\}`;[\s\S]*?const getMapOwnerPickerOptions = \(\) => \{[\s\S]*?leadRecordsForOwner\.length > 0[\s\S]*?: civilizationEntriesForOwner[\s\S]*?ownerType:\s*2,[\s\S]*?const resolveMapOwnerSelection = \(value\) => \{[\s\S]*?const playerMatch = text\.match\(\/\^player:\(\\d\+\)\$\/\);[\s\S]*?const civMatch = text\.match\(\/\^civ:\(\\d\+\)\$\/\);[\s\S]*?return leadRecordsForOwner\.length > 0 \? \{ ownerType: 3, owner \} : \{ ownerType: 2, owner \};/,
     'city and unit owner pickers should fall back to civilization-owned options when no LEAD player records are available'
   );
@@ -300,6 +340,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     mainText,
     /label: 'Map',[\s\S]*?label: 'Auto-Dock Tile Info Left Near Right Edge',[\s\S]*?checked: currentMapAutoDockTileInfoLeft,[\s\S]*?sendMapAutoDockTileInfoLeftSelection\(item && item\.checked\)/,
     'File -> Settings should expose a default-on Map toggle for tile-info auto-docking'
+  );
+  assert.match(
+    mainText,
+    /label: 'Units',[\s\S]*?label: 'Automatically Add Imported Unit Icons to units_32\.pcx',[\s\S]*?checked: currentAutoAddImportedUnitIcons,[\s\S]*?sendAutoAddImportedUnitIconsSelection\(item && item\.checked\)/,
+    'File -> Settings should expose a default-on Units toggle for units_32 import updates'
   );
   assert.match(
     rendererText,
@@ -565,38 +610,53 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
 
   assert.match(
     rendererText,
-    /function collectMapResizeTrimSummary\(tab, targetWidth, targetHeight\) \{[\s\S]*?cityCount:[\s\S]*?unitCount:[\s\S]*?startingLocationCount:[\s\S]*?colonyCount:[\s\S]*?trimmedTileCount:/,
+    /function collectMapResizeTrimSummary\(tab, targetWidth, targetHeight, anchors = \{\}\) \{[\s\S]*?anchors\.horizontalAnchor,[\s\S]*?anchors\.verticalAnchor[\s\S]*?cityCount:[\s\S]*?unitCount:[\s\S]*?startingLocationCount:[\s\S]*?colonyCount:[\s\S]*?trimmedTileCount:/,
     'Edit Map should compute a concrete preview of out-of-bounds map content before the user confirms a shrink'
   );
   assert.match(
     rendererText,
-    /el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Resize Map';[\s\S]*?el\.entityModalBody\) \{[\s\S]*?Change the scenario map dimensions\. Resizing keeps the existing map centered\./,
+    /el\.entityModalTitle\) el\.entityModalTitle\.textContent = 'Resize Map';[\s\S]*?el\.entityModalBody\) \{[\s\S]*?Change the scenario map dimensions and choose which sides receive added space or lose trimmed space\./,
     'Resize Map should keep the in-modal resize explanation'
   );
   assert.match(
     rendererText,
-    /miniPreviewLabel\.textContent = 'Resize Preview';[\s\S]*?miniPreviewHint\.textContent = 'Terrain-only minimap preview\. Existing terrain stays centered; new space fills with the selected terrain\.';/,
-    'Resize Map should explain that the preview and resize fill use the selected terrain'
+    /const miniPreviewField = document\.createElement\('div'\);[\s\S]*?const statusLine = document\.createElement\('div'\);[\s\S]*?statusLine\.className = 'hint map-resize-status';[\s\S]*?statusLine\.textContent = '\\u00A0';[\s\S]*?miniPreviewField\.appendChild\(statusLine\);[\s\S]*?miniPreviewField\.appendChild\(miniPreviewFrame\);/,
+    'Resize Map should place the reserved status row directly above the minimap preview instead of above the whole preview section'
+  );
+  assert.doesNotMatch(
+    rendererText,
+    /miniPreviewLabel\.textContent = 'Resize Preview'|Terrain-only minimap preview\. Existing terrain follows the selected edge anchors/,
+    'Resize Map should not show extra preview label or explanatory copy above the minimap'
   );
   assert.match(
     rendererText,
-    /const statusLine = document\.createElement\('div'\);[\s\S]*?statusLine\.className = 'hint map-resize-status';[\s\S]*?statusLine\.textContent = '\\u00A0';[\s\S]*?statusLine\.className = 'warning map-resize-status';[\s\S]*?Shrinking to \$\{validation\.width\}x\$\{validation\.height\} will remove[\s\S]*?statusLine\.textContent = `Expansion keeps the existing map centered by adding \$\{fillTerrainLabel\.toLowerCase\(\)\} tiles evenly around it\.`;/,
-    'Resize Map should use one reserved status row for shrink warnings and expansion guidance instead of separate stacked text blocks'
+    /statusLine\.className = 'warning map-resize-status';[\s\S]*?Shrinking to \$\{validation\.width\}x\$\{validation\.height\} will remove[\s\S]*?statusLine\.textContent = `Expansion adds \$\{fillTerrainLabel\.toLowerCase\(\)\} tiles using east\/west: \$\{horizontalLabel\}; north\/south: \$\{verticalLabel\}\.`;/,
+    'Resize Map should keep one reserved status row for shrink warnings and expansion guidance instead of separate stacked text blocks'
   );
   assert.match(
     rendererText,
-    /let validation = getQuintCustomMapValidation\(widthInput\.value, heightInput\.value\);[\s\S]*?totalValue\.textContent = `\$\{validation\.tileCount\.toLocaleString\(\)\} \(\$\{validation\.width\}x\$\{validation\.height\}\)`;[\s\S]*?if \(validation\.width === currentWidth && validation\.height === currentHeight\) \{[\s\S]*?No size change yet\.[\s\S]*?else if \(validation\.width >= currentWidth && validation\.height >= currentHeight\) \{[\s\S]*?Expansion keeps the existing map centered by adding \$\{fillTerrainLabel\.toLowerCase\(\)\} tiles evenly around it\.[\s\S]*?widthInput\.addEventListener\('input', refreshValidation\);[\s\S]*?heightInput\.addEventListener\('input', refreshValidation\);[\s\S]*?const onConfirm = \(\) => \{[\s\S]*?refreshValidation\(\);/,
+    /let validation = getQuintCustomMapValidation\(widthInput\.value, heightInput\.value\);[\s\S]*?totalValue\.textContent = `\$\{validation\.tileCount\.toLocaleString\(\)\} \(\$\{validation\.width\}x\$\{validation\.height\}\)`;[\s\S]*?if \(validation\.width === currentWidth && validation\.height === currentHeight\) \{[\s\S]*?No size change yet\.[\s\S]*?else if \(validation\.width >= currentWidth && validation\.height >= currentHeight\) \{[\s\S]*?Expansion adds \$\{fillTerrainLabel\.toLowerCase\(\)\} tiles using east\/west: \$\{horizontalLabel\}; north\/south: \$\{verticalLabel\}\.[\s\S]*?widthInput\.addEventListener\('input', refreshValidation\);[\s\S]*?heightInput\.addEventListener\('input', refreshValidation\);[\s\S]*?const onConfirm = \(\) => \{[\s\S]*?refreshValidation\(\);/,
     'Resize Map should keep odd dimensions in the inputs while using the normalized even result without flashing a separate odd-dimension status message'
   );
   assert.match(
     rendererText,
-    /function computeMapResizePreviewOffsets\(sourceWidth, sourceHeight, targetWidth, targetHeight\) \{[\s\S]*?if \(filtered\.length <= 0\) return null;[\s\S]*?const candidates = \[0, 1\]\.map\(\(parity\) => \{[\s\S]*?const x = pickOffset\(widthDiff, parity\);[\s\S]*?const y = pickOffset\(heightDiff, parity\);[\s\S]*?if \(!Number\.isFinite\(x\) \|\| !Number\.isFinite\(y\)\) return null;[\s\S]*?return \{ parity, x, y \};[\s\S]*?\}\)\.filter\(Boolean\);[\s\S]*?candidates\.sort\(\(a, b\) => \{[\s\S]*?return a\.parity - b\.parity;[\s\S]*?\}\);[\s\S]*?return \{ x: candidates\[0\]\.x, y: candidates\[0\]\.y \};[\s\S]*?\}/,
-    'Resize Map should choose resize offsets as parity-matched x/y pairs so preview/source tile lookups stay on valid Civ3 coordinates'
+    /function computeMapResizePreviewOffsets\(sourceWidth, sourceHeight, targetWidth, targetHeight, horizontalAnchor = 'both', verticalAnchor = 'both'\) \{[\s\S]*?const horizontal = normalizeMapResizeHorizontalAnchor\(horizontalAnchor\);[\s\S]*?const vertical = normalizeMapResizeVerticalAnchor\(verticalAnchor\);[\s\S]*?if \(xCandidate\.parity !== yCandidate\.parity\) return;[\s\S]*?candidates\.sort\(\(a, b\) => \{[\s\S]*?if \(a\.cost !== b\.cost\) return a\.cost - b\.cost;[\s\S]*?return \{ x: candidates\[0\]\.x, y: candidates\[0\]\.y \};[\s\S]*?\}/,
+    'Resize Map should choose anchor-aware parity-matched x/y offsets so preview/source tile lookups stay on valid Civ3 coordinates'
   );
   assert.match(
     rendererText,
-    /const MAP_RESIZE_MINI_PREVIEW_MAX_TILES = 50000;[\s\S]*?function buildMapResizeTerrainPreview\(tab, targetWidth, targetHeight, fillTerrain = BIQ_TERRAIN\.SEA\) \{[\s\S]*?const fillCode = normalizeResizeFillTerrain\(fillTerrain, BIQ_TERRAIN\.SEA\);[\s\S]*?const packedFillTerrain = getPackedResizePreviewTerrainValue\(fillCode\);[\s\S]*?function drawMapResizeMiniPreview\(canvas, preview\) \{[\s\S]*?const scale = Math\.min\(stageWidth \/ Math\.max\(1, width\), stageHeight \/ Math\.max\(1, height\)\);[\s\S]*?const originX = Math\.floor\(\(stageWidth - previewWidth\) \/ 2\);[\s\S]*?const getTerrainCodeAt = \(x, y\) => \{[\s\S]*?return BIQ_TERRAIN\.SEA;[\s\S]*?\};[\s\S]*?for \(let y = 0; y < height; y \+= 1\) \{[\s\S]*?for \(let x = 0; x < width; x \+= 1\) \{[\s\S]*?getMapResizeMiniPreviewFillStyle\(getTerrainCodeAt\(x, y\)\)[\s\S]*?\}[\s\S]*?\}[\s\S]*?function drawMapResizeMiniPreviewPlaceholder\(canvas, message\) \{/,
+    /const MAP_RESIZE_MINI_PREVIEW_MAX_TILES = 50000;[\s\S]*?function buildMapResizeTerrainPreview\(tab, targetWidth, targetHeight, fillTerrain = BIQ_TERRAIN\.SEA, anchors = \{\}\) \{[\s\S]*?const fillCode = normalizeResizeFillTerrain\(fillTerrain, BIQ_TERRAIN\.SEA\);[\s\S]*?anchors\.horizontalAnchor,[\s\S]*?anchors\.verticalAnchor[\s\S]*?function drawMapResizeMiniPreview\(canvas, preview\) \{[\s\S]*?const scale = Math\.min\(stageWidth \/ Math\.max\(1, width\), stageHeight \/ Math\.max\(1, height\)\);[\s\S]*?const originX = Math\.floor\(\(stageWidth - previewWidth\) \/ 2\);[\s\S]*?const getTerrainCodeAt = \(x, y\) => \{[\s\S]*?return BIQ_TERRAIN\.SEA;[\s\S]*?\};[\s\S]*?for \(let y = 0; y < height; y \+= 1\) \{[\s\S]*?for \(let x = 0; x < width; x \+= 1\) \{[\s\S]*?getMapResizeMiniPreviewFillStyle\(getTerrainCodeAt\(x, y\)\)[\s\S]*?\}[\s\S]*?\}[\s\S]*?function drawMapResizeMiniPreviewPlaceholder\(canvas, message\) \{/,
     'Edit Map should build a terrain-only resize minimap preview, fill new resize space from the selected terrain, paint parity gaps from nearby terrain, and provide a cheap placeholder path for oversized previews'
+  );
+  assert.match(
+    rendererText,
+    /const MAP_RESIZE_HORIZONTAL_ANCHOR_OPTIONS = Object\.freeze\(\[[\s\S]*?Both equally[\s\S]*?East[\s\S]*?West[\s\S]*?\]\);[\s\S]*?const MAP_RESIZE_VERTICAL_ANCHOR_OPTIONS = Object\.freeze\(\[[\s\S]*?Both equally[\s\S]*?South[\s\S]*?North[\s\S]*?\]\);/,
+    'Resize Map should define explicit horizontal and vertical anchor dropdown choices'
+  );
+  assert.match(
+    rendererText,
+    /horizontalAnchorLabel\.textContent = 'East \/ West';[\s\S]*?MAP_RESIZE_HORIZONTAL_ANCHOR_OPTIONS\.forEach[\s\S]*?verticalAnchorLabel\.textContent = 'North \/ South';[\s\S]*?MAP_RESIZE_VERTICAL_ANCHOR_OPTIONS\.forEach[\s\S]*?horizontalAnchorSelect\.addEventListener\('change', refreshValidation\);[\s\S]*?verticalAnchorSelect\.addEventListener\('change', refreshValidation\);/,
+    'Resize Map should expose east/west and north/south anchor dropdowns and refresh validation plus preview when they change'
   );
   assert.match(
     rendererText,
@@ -615,7 +675,7 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{ fillTerrain: result\.fillTerrain \}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
     'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
   );
 });

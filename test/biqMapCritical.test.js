@@ -243,6 +243,43 @@ function buildGeneratedBlankMapSections(width = 16, height = 16) {
   ];
 }
 
+function buildSeededResizeMapBuffer(seedX = 4, seedY = 4) {
+  const raw = fs.readFileSync(getStableLeadNoMapFixturePath());
+  const sections = buildGeneratedBlankMapSections(16, 16);
+  const mapTab = { sections, recordOps: [] };
+  const tileSection = getSection(mapTab, 'TILE');
+  const citySection = getSection(mapTab, 'CITY');
+  const unitSection = getSection(mapTab, 'UNIT');
+  const slocSection = getSection(mapTab, 'SLOC');
+  const colonySection = getSection(mapTab, 'CLNY');
+  const seedTile = getTileAtCoords(tileSection, seedX, seedY);
+  assert.ok(seedTile, `expected seed tile ${seedX},${seedY}`);
+  mapCore.setField(seedTile, 'resource', '3', 'Resource');
+  mapCore.setField(seedTile, 'c3coverlays', '1234', 'C3C Overlays');
+  const seededCity = addSeedCity(mapTab, citySection, seedTile, 'Directional Resize City');
+  const seededUnit = addSeedUnit(mapTab, unitSection, seedTile, 0, 2, 0, 'directional_resize');
+  const seededSloc = addSeedStartingLocation(mapTab, slocSection, seedX, seedY, 0, 3, 'directional_resize');
+  const seededColony = addSeedColony(mapTab, colonySection, seedTile, 0, 2, 2, 'directional_resize');
+  assert.ok(seededSloc && seededSloc.created, 'expected seeded starting location');
+  const setMapResult = applyEdits(raw, [{
+    op: 'setmap',
+    sections,
+    allowSetmapGeneration: true
+  }], {
+    allowSetmapGeneration: true
+  });
+  assert.equal(setMapResult.ok, true, String(setMapResult.error || 'failed to seed directional resize map'));
+  return {
+    buffer: setMapResult.buffer,
+    seedX,
+    seedY,
+    seededCity,
+    seededUnit,
+    seededSloc,
+    seededColony
+  };
+}
+
 function addSeedColony(mapTab, colonySection, tile, owner = 0, ownerType = 2, improvementType = 2, suffix = 'seed') {
   if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
   if (!Array.isArray(colonySection.records)) colonySection.records = [];
@@ -514,6 +551,111 @@ test('critical BIQ map: centered expansion shifts existing entities and tiles to
   });
 
   assertMapReferenceIntegrityFromMapTab(reMap, 'expected resized map to keep valid entity/tile references');
+});
+
+test('critical BIQ map: directional resize anchors preserve placed content on the intended tile', () => {
+  const cases = [
+    {
+      label: 'east/south expansion keeps existing coordinates fixed',
+      width: 18,
+      height: 18,
+      horizontalAnchor: 'east',
+      verticalAnchor: 'south',
+      expectedDx: 0,
+      expectedDy: 0,
+      newTile: { x: 16, y: 4 }
+    },
+    {
+      label: 'west/north expansion shifts existing content away from the new edges',
+      width: 18,
+      height: 18,
+      horizontalAnchor: 'west',
+      verticalAnchor: 'north',
+      expectedDx: 2,
+      expectedDy: 2,
+      newTile: { x: 0, y: 0 }
+    },
+    {
+      label: 'east/south shrink trims far edges without moving surviving content',
+      width: 14,
+      height: 14,
+      horizontalAnchor: 'east',
+      verticalAnchor: 'south',
+      expectedDx: 0,
+      expectedDy: 0
+    },
+    {
+      label: 'west/north shrink moves surviving content after trimming near edges',
+      width: 14,
+      height: 14,
+      horizontalAnchor: 'west',
+      verticalAnchor: 'north',
+      expectedDx: -2,
+      expectedDy: -2
+    }
+  ];
+
+  cases.forEach((spec) => {
+    const seeded = buildSeededResizeMapBuffer(4, 4);
+    const resizeResult = applyEdits(seeded.buffer, [{
+      op: 'resizemap',
+      width: spec.width,
+      height: spec.height,
+      fillTerrain: 12,
+      horizontalAnchor: spec.horizontalAnchor,
+      verticalAnchor: spec.verticalAnchor
+    }]);
+    assert.equal(resizeResult.ok, true, `${spec.label}: ${String(resizeResult.error || 'resize failed')}`);
+
+    const parsed = parseAllSections(resizeResult.buffer);
+    assert.equal(parsed.ok, true, `${spec.label}: expected resized BIQ to parse`);
+    const wmapSection = getSection({ sections: parsed.sections }, 'WMAP');
+    const tileSection = getSection({ sections: parsed.sections }, 'TILE');
+    const citySection = getSection({ sections: parsed.sections }, 'CITY');
+    const unitSection = getSection({ sections: parsed.sections }, 'UNIT');
+    const slocSection = getSection({ sections: parsed.sections }, 'SLOC');
+    const colonySection = getSection({ sections: parsed.sections }, 'CLNY');
+    assert.equal(Number(wmapSection.records[0].width), spec.width, `${spec.label}: expected resized width`);
+    assert.equal(Number(wmapSection.records[0].height), spec.height, `${spec.label}: expected resized height`);
+
+    const expectedX = seeded.seedX + spec.expectedDx;
+    const expectedY = seeded.seedY + spec.expectedDy;
+    const shiftedTile = getParsedTileAtCoords(tileSection, expectedX, expectedY);
+    assert.ok(shiftedTile, `${spec.label}: expected seeded tile at ${expectedX},${expectedY}`);
+    assert.equal(Number(shiftedTile.resource), 3, `${spec.label}: expected resource to stay on the seeded tile`);
+    assert.equal(Number(shiftedTile.c3cOverlays) & 0x0fffffff, 1234, `${spec.label}: expected overlays to stay on the seeded tile`);
+
+    const city = (citySection.records || []).find((record) => String(record && record.name || '') === seeded.seededCity.name);
+    assert.ok(city, `${spec.label}: expected seeded city`);
+    assert.equal(Number(city.x), expectedX, `${spec.label}: expected city x to follow tile offset`);
+    assert.equal(Number(city.y), expectedY, `${spec.label}: expected city y to follow tile offset`);
+    assert.ok((unitSection.records || []).some((record) => (
+      Number(record && record.x) === expectedX
+      && Number(record && record.y) === expectedY
+    )), `${spec.label}: expected seeded unit to follow tile offset`);
+    assert.ok((slocSection.records || []).some((record) => (
+      Number(record && record.x) === expectedX
+      && Number(record && record.y) === expectedY
+    )), `${spec.label}: expected starting location to follow tile offset`);
+    assert.ok((colonySection.records || []).some((record) => (
+      Number(record && record.x) === expectedX
+      && Number(record && record.y) === expectedY
+      && Number(record && record.improvementType) === seeded.seededColony.improvementType
+    )), `${spec.label}: expected colony to follow tile offset`);
+    assert.equal(Number(shiftedTile.city), 0, `${spec.label}: expected tile city back-reference to be rebuilt`);
+    assert.equal(Number(shiftedTile.colony), 0, `${spec.label}: expected tile colony back-reference to be rebuilt`);
+
+    if (spec.newTile) {
+      const newTile = getParsedTileAtCoords(tileSection, spec.newTile.x, spec.newTile.y);
+      assert.ok(newTile, `${spec.label}: expected new edge tile`);
+      assert.equal(Number(newTile.c3cBaseRealTerrain) & 0x0f, 12, `${spec.label}: expected new edge tile to use selected fill terrain`);
+      assert.equal(Number(newTile.resource), -1, `${spec.label}: expected new edge tile to start without a resource`);
+      assert.equal(Number(newTile.city), -1, `${spec.label}: expected new edge tile to start without a city`);
+      assert.equal(Number(newTile.colony), -1, `${spec.label}: expected new edge tile to start without a colony`);
+    }
+
+    assertNoMapReferenceIssues(parsed, `${spec.label}: expected reference-safe resized map`);
+  });
 });
 
 test('critical BIQ map: resizing recomputes stored terrain sprite fields for shifted map edges', () => {

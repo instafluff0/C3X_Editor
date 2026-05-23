@@ -4489,6 +4489,16 @@ function normalizeResizeFillTerrain(value, fallback = BIQ_TERRAIN.SEA) {
   return fallback;
 }
 
+function normalizeResizeHorizontalAnchor(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'east' || normalized === 'west' || normalized === 'both' ? normalized : 'both';
+}
+
+function normalizeResizeVerticalAnchor(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'north' || normalized === 'south' || normalized === 'both' ? normalized : 'both';
+}
+
 function buildResizedTileTemplateCoord(xPos, yPos, width, height) {
   const maxX = Math.max(0, Number(width) - 1);
   const maxY = Math.max(0, Number(height) - 1);
@@ -4502,36 +4512,47 @@ function buildResizedTileTemplateCoord(xPos, yPos, width, height) {
   return { x, y };
 }
 
-function computeCenteredResizeOffsets(sourceWidth, sourceHeight, targetWidth, targetHeight) {
-  const pickOffset = (diff, parity) => {
-    const ideal = Number(diff) / 2;
-    const min = Math.min(0, Number(diff));
-    const max = Math.max(0, Number(diff));
-    const candidates = [];
-    for (let delta = 0; delta <= 4; delta += 1) {
-      candidates.push(Math.floor(ideal) - delta, Math.ceil(ideal) + delta);
-    }
-    candidates.push(min, max);
-    const filtered = candidates
-      .filter((value, index, arr) => Number.isFinite(value) && arr.indexOf(value) === index)
-      .filter((value) => value >= min && value <= max)
-      .filter((value) => (Math.abs(value) % 2) === parity);
-    if (filtered.length <= 0) return null;
-    filtered.sort((a, b) => {
-      const distance = Math.abs(a - ideal) - Math.abs(b - ideal);
-      if (distance !== 0) return distance;
-      return a - b;
-    });
-    return filtered[0];
-  };
+function computeResizeOffsets(sourceWidth, sourceHeight, targetWidth, targetHeight, horizontalAnchor = 'both', verticalAnchor = 'both') {
   const widthDiff = Number(targetWidth) - Number(sourceWidth);
   const heightDiff = Number(targetHeight) - Number(sourceHeight);
-  const candidates = [0, 1].map((parity) => {
-    const x = pickOffset(widthDiff, parity);
-    const y = pickOffset(heightDiff, parity);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    return { parity, x, y };
-  }).filter(Boolean);
+  const horizontal = normalizeResizeHorizontalAnchor(horizontalAnchor);
+  const vertical = normalizeResizeVerticalAnchor(verticalAnchor);
+  const getParity = (value) => ((Math.abs(Number(value) || 0) % 2) + 2) % 2;
+  const buildAxisCandidates = (diff, anchor, lowSide, highSide) => {
+    const min = Math.min(0, Number(diff));
+    const max = Math.max(0, Number(diff));
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+    const ideal = Number(diff) / 2;
+    const preferred = anchor === lowSide ? Number(diff) : anchor === highSide ? 0 : ideal;
+    const weight = anchor === 'both' ? 1 : 1000;
+    const out = [];
+    for (let value = min; value <= max; value += 1) {
+      out.push({
+        value,
+        parity: getParity(value),
+        cost: Math.abs(value - preferred) * weight,
+        centerCost: Math.abs(value - ideal),
+        anchorCost: Math.abs(value - preferred)
+      });
+    }
+    return out;
+  };
+  const xCandidates = buildAxisCandidates(widthDiff, horizontal, 'west', 'east');
+  const yCandidates = buildAxisCandidates(heightDiff, vertical, 'north', 'south');
+  const candidates = [];
+  xCandidates.forEach((xCandidate) => {
+    yCandidates.forEach((yCandidate) => {
+      if (xCandidate.parity !== yCandidate.parity) return;
+      candidates.push({
+        parity: xCandidate.parity,
+        x: xCandidate.value,
+        y: yCandidate.value,
+        cost: xCandidate.cost + yCandidate.cost,
+        anchorCost: xCandidate.anchorCost + yCandidate.anchorCost,
+        centerCost: xCandidate.centerCost + yCandidate.centerCost
+      });
+    });
+  });
   if (candidates.length <= 0) {
     return {
       x: Math.round(widthDiff / 2),
@@ -4539,9 +4560,9 @@ function computeCenteredResizeOffsets(sourceWidth, sourceHeight, targetWidth, ta
     };
   }
   candidates.sort((a, b) => {
-    const aCost = Math.abs(a.x - (widthDiff / 2)) + Math.abs(a.y - (heightDiff / 2));
-    const bCost = Math.abs(b.x - (widthDiff / 2)) + Math.abs(b.y - (heightDiff / 2));
-    if (aCost !== bCost) return aCost - bCost;
+    if (a.cost !== b.cost) return a.cost - b.cost;
+    if (a.anchorCost !== b.anchorCost) return a.anchorCost - b.anchorCost;
+    if (a.centerCost !== b.centerCost) return a.centerCost - b.centerCost;
     return a.parity - b.parity;
   });
   return { x: candidates[0].x, y: candidates[0].y };
@@ -4795,10 +4816,12 @@ function sanitizeResizedMapEntitySections(parsed, width, height, offsets = {}) {
   tileSection._modified = true;
 }
 
-function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight, fillTerrain) {
+function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight, fillTerrain, horizontalAnchor = 'both', verticalAnchor = 'both') {
   const width = normalizeResizeMapDimension(targetWidth, 'width');
   const height = normalizeResizeMapDimension(targetHeight, 'height');
   const fillTerrainCode = normalizeResizeFillTerrain(fillTerrain, BIQ_TERRAIN.SEA);
+  const normalizedHorizontalAnchor = normalizeResizeHorizontalAnchor(horizontalAnchor);
+  const normalizedVerticalAnchor = normalizeResizeVerticalAnchor(verticalAnchor);
   const allowImplicitEdgeTerrain = fillTerrain == null || String(fillTerrain).trim() === '';
   const tileCount = Math.floor((width * height) / 2);
   if (tileCount > 65536) {
@@ -4817,7 +4840,14 @@ function resizeMapSectionsOnParsed(parsed, targetWidth, targetHeight, fillTerrai
     throw new Error('Cannot resize a BIQ map with invalid source dimensions.');
   }
   if (sourceWidth === width && sourceHeight === height) return;
-  const resizeOffsets = computeCenteredResizeOffsets(sourceWidth, sourceHeight, width, height);
+  const resizeOffsets = computeResizeOffsets(
+    sourceWidth,
+    sourceHeight,
+    width,
+    height,
+    normalizedHorizontalAnchor,
+    normalizedVerticalAnchor
+  );
 
   const sourceTileByCoord = new Map();
   const firstTile = tileSection.records[0] || null;
@@ -4957,7 +4987,7 @@ function applyEdits(buf, edits, options = {}) {
     }
     if (op === 'resizemap') {
       try {
-        resizeMapSectionsOnParsed(parsed, edit.width, edit.height, edit.fillTerrain);
+        resizeMapSectionsOnParsed(parsed, edit.width, edit.height, edit.fillTerrain, edit.horizontalAnchor, edit.verticalAnchor);
       } catch (err) {
         const errorText = err && err.message ? err.message : 'Failed to resize BIQ map.';
         log.error('BiqApplyEdits', `op=resizemap rejected: ${errorText}`);

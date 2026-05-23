@@ -5,7 +5,16 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
-const { loadBundle, previewFileDiff, previewSavePlan, saveBundle } = require('../src/configCore');
+const {
+  collectBiqMapEdits,
+  collectBiqMapStructureOps,
+  collectBiqReferenceEdits,
+  collectBiqStructureEdits,
+  loadBundle,
+  previewFileDiff,
+  previewSavePlan,
+  saveBundle
+} = require('../src/configCore');
 const mapCore = require('../src/mapEditorCore');
 const {
   applyEdits,
@@ -536,6 +545,92 @@ function collectEditableBiqUiFieldInventory(bundle) {
   });
 
   return inventory;
+}
+
+function collectEditableBiqUiFieldSamples(bundle) {
+  const samples = new Map();
+  const tabs = bundle && bundle.tabs ? bundle.tabs : {};
+  const addSample = ({ tabKey, tab, sectionCode, holder, field, source, kind }) => {
+    const key = makeBiqInventoryKey(sectionCode, field && (field.baseKey || field.key));
+    if (!key || samples.has(key)) return;
+    if (!field || !field.editable) return;
+    samples.set(key, { tabKey, tab, sectionCode, holder, field, source, kind });
+  };
+
+  const referenceTabs = ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
+  referenceTabs.forEach((tabKey) => {
+    const tab = tabs[tabKey];
+    const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+    entries.forEach((entry) => {
+      getFieldCollection(entry).forEach((field) => addSample({
+        tabKey,
+        tab,
+        sectionCode: entry && entry.biqSectionCode,
+        holder: entry,
+        field,
+        source: `${tabKey} reference fields`,
+        kind: 'reference'
+      }));
+    });
+  });
+
+  const structuredTabs = ['scenarioSettings', 'players', 'terrain', 'world', 'rules'];
+  structuredTabs.forEach((tabKey) => {
+    const tab = tabs[tabKey];
+    const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+    sections.forEach((section) => {
+      const records = Array.isArray(section && section.records) ? section.records : [];
+      records.forEach((record) => {
+        getFieldCollection(record).forEach((field) => addSample({
+          tabKey,
+          tab,
+          sectionCode: section && section.code,
+          holder: record,
+          field,
+          source: `${tabKey} structured fields`,
+          kind: 'structure'
+        }));
+      });
+    });
+  });
+
+  const mapTab = tabs.map;
+  const mapSections = Array.isArray(mapTab && mapTab.sections) ? mapTab.sections : [];
+  const mapCodes = new Set(DEFAULT_MAP_SECTION_CODES.concat(['CONT']));
+  mapSections.forEach((section) => {
+    const sectionCode = String(section && section.code || '').trim().toUpperCase();
+    if (!mapCodes.has(sectionCode)) return;
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.forEach((record) => {
+      getFieldCollection(record).forEach((field) => addSample({
+        tabKey: 'map',
+        tab: mapTab,
+        sectionCode,
+        holder: record,
+        field,
+        source: 'map fields',
+        kind: 'map'
+      }));
+    });
+  });
+
+  ['title', 'description'].forEach((key) => {
+    const field = getScenarioSettingsField(bundle, key);
+    const sampleKey = makeBiqInventoryKey('GAME', key);
+    if (field && !samples.has(sampleKey)) {
+      samples.set(sampleKey, {
+        tabKey: 'scenarioSettings',
+        tab: tabs.scenarioSettings,
+        sectionCode: 'GAME',
+        holder: getScenarioSettingsRecord(bundle),
+        field,
+        source: 'scenario header synthetic fields',
+        kind: 'structure'
+      });
+    }
+  });
+
+  return samples;
 }
 
 function collectGeneratedBiqMutationCoverage(bundle) {
@@ -1458,6 +1553,115 @@ test('BIQ generated mutation inventory covers every editable BIQ UI field', () =
       })
     ].join('\n')
   );
+});
+
+test('BIQ editable field writer inventory emits save edits and accepted BIQ writes', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: sampleBiq });
+  const inventory = collectEditableBiqUiFieldInventory(bundle);
+  const samples = collectEditableBiqUiFieldSamples(bundle);
+  const derivedNoOpKeys = new Set([
+    'PRTO:numstealthtargets',
+    'PRTO:numlegalunittelepads',
+    'PRTO:numlegalbuildingtelepads',
+    'RACE:uniquecivcounter'
+  ].map((key) => {
+    const [sectionCode, fieldKey] = key.split(':');
+    return makeBiqInventoryKey(sectionCode, fieldKey);
+  }));
+  const mapResizeKeys = new Set(['WMAP:width', 'WMAP:height'].map((key) => {
+    const [sectionCode, fieldKey] = key.split(':');
+    return makeBiqInventoryKey(sectionCode, fieldKey);
+  }));
+  const nonMapEdits = [];
+  const missingSamples = [];
+  const missingCollectedEdits = [];
+
+  Array.from(inventory.keys()).sort().forEach((key) => {
+    if (derivedNoOpKeys.has(key) || mapResizeKeys.has(key)) return;
+    const sample = samples.get(key);
+    if (!sample) {
+      missingSamples.push(key);
+      return;
+    }
+    const field = sample.field;
+    const originalValue = field.value;
+    const originalOriginalValue = field.originalValue;
+    const originalMapEditorValueEdited = field.mapEditorValueEdited;
+    const mutation = computeGenericRoundtripMutation(field);
+    field.originalValue = String(originalValue == null ? '' : originalValue);
+    field.value = mutation.assigned;
+    if (sample.kind === 'map') field.mapEditorValueEdited = true;
+
+    let edits = [];
+    if (sample.kind === 'reference') {
+      edits = collectBiqReferenceEdits({ [sample.tabKey]: sample.tab });
+    } else if (sample.kind === 'structure') {
+      edits = collectBiqStructureEdits({ [sample.tabKey]: sample.tab });
+    } else if (sample.kind === 'map') {
+      edits = collectBiqMapEdits({ map: sample.tab });
+    }
+
+    field.value = originalValue;
+    field.originalValue = originalOriginalValue;
+    if (originalMapEditorValueEdited == null) delete field.mapEditorValueEdited;
+    else field.mapEditorValueEdited = originalMapEditorValueEdited;
+
+    if (!Array.isArray(edits) || edits.length === 0) {
+      missingCollectedEdits.push(`${key} from ${sample.source}`);
+      return;
+    }
+    if (sample.kind !== 'map') {
+      nonMapEdits.push(...edits.map((edit) => ({ ...edit, __inventoryKey: key })));
+    }
+  });
+
+  assert.deepEqual(missingSamples, [], `expected every editable BIQ field inventory key to have a representative sample:\n${missingSamples.join('\n')}`);
+  assert.deepEqual(
+    missingCollectedEdits,
+    [],
+    [
+      'Every editable BIQ UI field must be wired into a save edit collector unless it is an explicit derived/no-op field.',
+      ...missingCollectedEdits.map((key) => `- ${key}`)
+    ].join('\n')
+  );
+
+  const resizeBundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: sampleBiq });
+  const wmap = getSection(resizeBundle.tabs.map, 'WMAP');
+  const wmapRecord = wmap && Array.isArray(wmap.records) ? wmap.records[0] : null;
+  const widthField = getRecordField(wmapRecord, 'width');
+  const heightField = getRecordField(wmapRecord, 'height');
+  assert.ok(widthField && heightField, 'expected WMAP width/height fields for resize writer guard');
+  const nextWidth = Math.max(2, (parseDisplayedReferenceIndex(widthField.value, 0) || 100) + 2);
+  const nextHeight = Math.max(2, (parseDisplayedReferenceIndex(heightField.value, 0) || 100) + 2);
+  widthField.value = String(nextWidth);
+  heightField.value = String(nextHeight);
+  resizeBundle.tabs.map.pendingMapResize = { width: nextWidth, height: nextHeight, fillTerrain: 0 };
+  const resizeOps = collectBiqMapStructureOps({ map: resizeBundle.tabs.map });
+  assert.equal(resizeOps.some((op) => String(op && op.op || '').toLowerCase() === 'resizemap'), true, 'expected WMAP width/height edits to use the resizemap writer path');
+
+  const uniqueNonMapEdits = [];
+  const seenEditKeys = new Set();
+  nonMapEdits.forEach((edit) => {
+    const editKey = `${edit.sectionCode}:${edit.recordRef}:${canonicalBiqInventoryKey(edit.fieldKey)}:${String(edit.value || '')}`;
+    if (seenEditKeys.has(editKey)) return;
+    seenEditKeys.add(editKey);
+    const { __inventoryKey: _inventoryKey, ...cleanEdit } = edit;
+    uniqueNonMapEdits.push(cleanEdit);
+  });
+  assert.ok(uniqueNonMapEdits.length > 0, 'expected collected non-map BIQ writer edits');
+
+  const applyResult = applyEdits(fs.readFileSync(sampleBiq), uniqueNonMapEdits);
+  assert.equal(applyResult.ok, true, String(applyResult.error || 'applyEdits failed'));
+  assert.equal(Number(applyResult.skipped || 0), 0, String(applyResult.warning || 'expected no skipped BIQ writer edits'));
 });
 
 test('BIQ round-trip persists editable reference-tab fields across the other core BIQ tabs', () => {

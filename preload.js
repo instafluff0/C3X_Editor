@@ -81,6 +81,26 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:map-settings-selected', listener);
     };
   },
+  onResourceSettingsMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, settings) => handler(settings);
+    ipcRenderer.on('manager:resource-settings-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:resource-settings-selected', listener);
+    };
+  },
+  onUnitSettingsMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, settings) => handler(settings);
+    ipcRenderer.on('manager:unit-settings-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:unit-settings-selected', listener);
+    };
+  },
   onCustomRulesMenuSelect: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};

@@ -239,6 +239,7 @@ const state = {
   reloadAfterSaveMenuUnsubscribe: null,
   logSettingsMenuUnsubscribe: null,
   mapSettingsMenuUnsubscribe: null,
+  resourceSettingsMenuUnsubscribe: null,
   textFileEncodingMenuUnsubscribe: null,
   startupPerformanceMode: 'high',
   sectionValidationError: '',
@@ -11782,23 +11783,40 @@ function getPendingImportedUnitIconMeta(entry) {
     : null;
 }
 
+function getPendingImportedUnitIcon(entry) {
+  const pending = getPendingImportedUnitIconMeta(entry);
+  if (!pending || pending.requiresManualAssignment) return null;
+  const sourceIconIndex = Number.parseInt(String(pending.sourceIconIndex), 10);
+  const targetIconIndex = Number.parseInt(String(pending.targetIconIndex), 10);
+  if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) return null;
+  if (!Number.isFinite(targetIconIndex) || targetIconIndex < 0) return null;
+  return { ...pending, sourceIconIndex, targetIconIndex };
+}
+
 function hasPendingImportedUnitIconWarning(entry) {
   const pending = getPendingImportedUnitIconMeta(entry);
   return !!(pending && pending.requiresManualAssignment);
 }
 
 function getUnitIconValidationIndex(entry) {
-  const pending = getPendingImportedUnitIconMeta(entry);
-  if (pending && Number.isFinite(Number(pending.plannedIndex))) {
-    return Number(pending.plannedIndex);
+  const pending = getPendingImportedUnitIcon(entry);
+  if (pending) {
+    return pending.targetIconIndex;
   }
   const field = getBiqFieldByBaseKey(entry, 'iconindex');
   return parseIntLoose(field && field.value, NaN);
 }
 
 function getUnitIconPreviewDescriptor(entry) {
-  const pending = getPendingImportedUnitIconMeta(entry);
-  if (pending && pending.requiresManualAssignment) return null;
+  const pending = getPendingImportedUnitIcon(entry);
+  if (pending) {
+    return {
+      iconIndex: pending.sourceIconIndex,
+      scenarioPath: String(pending.importScenarioPath || entry && entry._importScenarioPath || ''),
+      scenarioPaths: Array.isArray(entry && entry._importScenarioPaths) ? entry._importScenarioPaths : []
+    };
+  }
+  if (hasPendingImportedUnitIconWarning(entry)) return null;
   return {
     iconIndex: getUnitIconValidationIndex(entry),
     scenarioPath: String(state.settings && state.settings.scenarioPath || ''),
@@ -11806,18 +11824,66 @@ function getUnitIconPreviewDescriptor(entry) {
   };
 }
 
-function refreshPendingImportedUnitIconAssignments(tab) {
+async function refreshPendingImportedUnitIconAssignments(tab) {
   const unitsTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.units);
-  if (!unitsTab || !Array.isArray(unitsTab.entries)) return;
-  unitsTab.entries.forEach((entry) => {
+  if (!unitsTab || !Array.isArray(unitsTab.entries)) return false;
+  if (state.settings && state.settings.autoAddImportedUnitIcons === false) {
+    let changed = false;
+    unitsTab.entries.forEach((entry) => {
+      const pending = getPendingImportedUnitIconMeta(entry);
+      if (!pending) return;
+      const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
+      if (!iconField) return;
+      pending.requiresManualAssignment = true;
+      pending.plannedIndex = 0;
+      pending.targetIconIndex = 0;
+      if (String(iconField.value) !== '0') {
+        iconField.value = '0';
+        changed = true;
+      }
+    });
+    return changed;
+  }
+  const ops = Array.isArray(unitsTab.recordOps)
+    ? unitsTab.recordOps.filter((op) =>
+      String(op && op.op || '').toLowerCase() === 'add' && String(op && op.importArtFrom || '').trim()
+    )
+    : [];
+  if (ops.length === 0) return false;
+  const preview = await getUnits32AtlasPreview();
+  const firstSlot = findNextUnits32PreviewSlot(preview);
+  if (!Number.isFinite(firstSlot) || firstSlot < 0) return false;
+  let changed = false;
+  let offset = 0;
+  for (const op of ops) {
+    const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+    if (!newRef) continue;
+    const entry = unitsTab.entries.find((candidate) =>
+      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
+    );
+    if (!entry) continue;
     const pending = getPendingImportedUnitIconMeta(entry);
-    if (!pending) return;
+    if (!pending) continue;
     const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
-    if (!iconField) return;
-    pending.requiresManualAssignment = true;
-    pending.plannedIndex = 0;
-    iconField.value = String(pending.plannedIndex);
-  });
+    if (!iconField) continue;
+    let sourceIconIndex = Number.parseInt(String(pending.sourceIconIndex), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      sourceIconIndex = Number.parseInt(String(iconField.value), 10);
+    }
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) continue;
+    const targetIconIndex = firstSlot + offset;
+    offset += 1;
+    entry._pendingImportedUnitIcon = {
+      sourceIconIndex,
+      targetIconIndex,
+      importScenarioPath: String(op.importArtFrom || '')
+    };
+    if (String(iconField.value) !== String(targetIconIndex)) {
+      iconField.value = String(targetIconIndex);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function collectUnitIconIssueKeys(tab) {
@@ -11828,6 +11894,7 @@ function collectUnitIconIssueKeys(tab) {
       out.add(String(entry && entry.civilopediaKey || ''));
       return;
     }
+    if (getPendingImportedUnitIcon(entry)) return;
     if (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey()) return;
     const idx = getUnitIconValidationIndex(entry);
     if (!Number.isFinite(idx) || idx < 0) return;
@@ -14602,14 +14669,15 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         const iconWarnEl = document.createElement('div');
         iconWarnEl.className = 'unit-icon-field-warning hidden';
         controlWrap.appendChild(iconWarnEl);
-        ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+        ensureCurrentUnits32AtlasMetrics().then(async (metrics) => {
           if (!iconWarnEl.isConnected) return;
-          refreshPendingImportedUnitIconAssignments();
+          await refreshPendingImportedUnitIconAssignments();
           if (hasPendingImportedUnitIconWarning(entry)) {
             iconWarnEl.textContent = 'Imported unit icon needs manual setup. Create or update this scenario\'s Art/Units/units_32.pcx, then choose the correct Icon Index.';
             iconWarnEl.classList.remove('hidden');
             return;
           }
+          if (getPendingImportedUnitIcon(entry)) return;
           if (!metrics) return;
           const idx = getUnitIconValidationIndex(entry);
           if (!Number.isFinite(idx) || idx < 0) return;
@@ -20394,6 +20462,68 @@ function getUnits32AtlasMetrics(preview, spriteSize = 32, gutter = 1) {
   return { atlas, cols, rows, stride, gutter, spriteSize };
 }
 
+function getUnits32AtlasIndices(preview) {
+  if (!preview || !preview.indicesBase64) return null;
+  if (!preview._cachedIndexBytes) preview._cachedIndexBytes = fromBase64ToUint8(preview.indicesBase64);
+  return preview._cachedIndexBytes;
+}
+
+function getUnits32AtlasPalette(preview) {
+  if (!preview || !preview.paletteBase64) return null;
+  if (!preview._cachedPaletteBytes) preview._cachedPaletteBytes = fromBase64ToUint8(preview.paletteBase64);
+  return preview._cachedPaletteBytes;
+}
+
+function isUnits32PaletteMagenta(palette, index) {
+  if (!palette || index < 0 || index > 255) return false;
+  const off = index * 3;
+  return palette[off] === 255 && palette[off + 1] === 0 && palette[off + 2] === 255;
+}
+
+function isUnits32PreviewCellEmpty(preview, slotIndex) {
+  const idx = Number.parseInt(String(slotIndex), 10);
+  if (!preview || !Number.isFinite(idx) || idx < 0) return false;
+  const metrics = getUnits32AtlasMetrics(preview, 32, 1);
+  if (!metrics) return false;
+  const { cols, rows, stride, gutter, spriteSize } = metrics;
+  const row = Math.floor(idx / cols);
+  const col = idx % cols;
+  if (row < 0 || row >= rows) return false;
+  const sx = col * stride + gutter;
+  const sy = row * stride + gutter;
+  const indices = getUnits32AtlasIndices(preview);
+  const palette = getUnits32AtlasPalette(preview);
+  if (indices && palette) {
+    for (let y = 0; y < spriteSize; y += 1) {
+      const rowOff = (sy + y) * preview.width + sx;
+      for (let x = 0; x < spriteSize; x += 1) {
+        if (!isUnits32PaletteMagenta(palette, indices[rowOff + x])) return false;
+      }
+    }
+    return true;
+  }
+  const rgba = getResourceAtlasRgba(preview);
+  if (!rgba) return false;
+  for (let y = 0; y < spriteSize; y += 1) {
+    for (let x = 0; x < spriteSize; x += 1) {
+      const off = ((sy + y) * preview.width + sx + x) * 4;
+      if (!(rgba[off] === 255 && rgba[off + 1] === 0 && rgba[off + 2] === 255)) return false;
+    }
+  }
+  return true;
+}
+
+function findNextUnits32PreviewSlot(preview) {
+  const metrics = getUnits32AtlasMetrics(preview, 32, 1);
+  if (!metrics) return null;
+  const total = metrics.cols * metrics.rows;
+  let lastOccupied = -1;
+  for (let idx = 0; idx < total; idx += 1) {
+    if (!isUnits32PreviewCellEmpty(preview, idx)) lastOccupied = idx;
+  }
+  return lastOccupied + 1;
+}
+
 function drawUnits32IconToCanvas(preview, spriteIndex, canvas, spriteSize = 32) {
   if (!preview || !canvas || !Number.isFinite(spriteIndex) || spriteIndex < 0) return false;
   const metrics = getUnits32AtlasMetrics(preview, spriteSize, 1);
@@ -20442,6 +20572,150 @@ function drawResourceIconToCanvas(preview, spriteIndex, canvas) {
   return true;
 }
 
+function drawMagentaResourceIconPlaceholder(canvas) {
+  const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = '#ff00ff';
+  const pad = Math.max(1, Math.round(canvas.width * 0.16));
+  ctx.fillRect(pad, pad, Math.max(1, canvas.width - pad * 2), Math.max(1, canvas.height - pad * 2));
+  return true;
+}
+
+function getResourceAtlasRgba(preview) {
+  if (!preview || !preview.rgbaBase64) return null;
+  if (!preview._cachedRgbaBytes) preview._cachedRgbaBytes = fromBase64ToUint8(preview.rgbaBase64);
+  return preview._cachedRgbaBytes;
+}
+
+function getResourceAtlasIndices(preview) {
+  if (!preview || !preview.indicesBase64) return null;
+  if (!preview._cachedIndexBytes) preview._cachedIndexBytes = fromBase64ToUint8(preview.indicesBase64);
+  return preview._cachedIndexBytes;
+}
+
+function getResourceAtlasPalette(preview) {
+  if (!preview || !preview.paletteBase64) return null;
+  if (!preview._cachedPaletteBytes) preview._cachedPaletteBytes = fromBase64ToUint8(preview.paletteBase64);
+  return preview._cachedPaletteBytes;
+}
+
+function isResourceAtlasPaletteMagenta(palette, index) {
+  if (!palette || index < 0 || index > 255) return false;
+  const off = index * 3;
+  return palette[off] === 255 && palette[off + 1] === 0 && palette[off + 2] === 255;
+}
+
+function isResourcePreviewCellEmpty(preview, slotIndex) {
+  const idx = Number.parseInt(String(slotIndex), 10);
+  if (!preview || !Number.isFinite(idx) || idx < 0) return false;
+  const metrics = getResourceAtlasMetrics(preview);
+  if (!metrics) return false;
+  const { cols, rows, cellW, cellH } = metrics;
+  const row = Math.floor(idx / cols);
+  const col = idx % cols;
+  if (row < 0 || row >= rows) return false;
+  const sx = col * cellW;
+  const sy = row * cellH;
+  const indices = getResourceAtlasIndices(preview);
+  const palette = getResourceAtlasPalette(preview);
+  if (indices && palette) {
+    for (let y = 0; y < cellH; y += 1) {
+      const rowOff = (sy + y) * preview.width + sx;
+      for (let x = 0; x < cellW; x += 1) {
+        if (!isResourceAtlasPaletteMagenta(palette, indices[rowOff + x])) return false;
+      }
+    }
+    return true;
+  }
+  const rgba = getResourceAtlasRgba(preview);
+  if (!rgba) return false;
+  for (let y = 0; y < cellH; y += 1) {
+    for (let x = 0; x < cellW; x += 1) {
+      const off = ((sy + y) * preview.width + sx + x) * 4;
+      if (!(rgba[off] === 255 && rgba[off + 1] === 0 && rgba[off + 2] === 255)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function findNextResourcePreviewSlot(preview) {
+  const metrics = getResourceAtlasMetrics(preview);
+  if (!metrics) return null;
+  const total = metrics.cols * metrics.rows;
+  let lastOccupied = -1;
+  for (let idx = 0; idx < total; idx += 1) {
+    if (!isResourcePreviewCellEmpty(preview, idx)) lastOccupied = idx;
+  }
+  return lastOccupied + 1;
+}
+
+function getPendingImportedResourceIcon(entry) {
+  const pending = entry && entry._pendingImportedResourceIcon && typeof entry._pendingImportedResourceIcon === 'object'
+    ? entry._pendingImportedResourceIcon
+    : null;
+  if (!pending) return null;
+  const sourceIconIndex = Number.parseInt(String(pending.sourceIconIndex), 10);
+  const targetIconIndex = Number.parseInt(String(pending.targetIconIndex), 10);
+  if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) return null;
+  if (!Number.isFinite(targetIconIndex) || targetIconIndex < 0) return null;
+  return { ...pending, sourceIconIndex, targetIconIndex };
+}
+
+async function drawPendingImportedResourceIconToCanvas(entry, canvas) {
+  const pending = getPendingImportedResourceIcon(entry);
+  if (!pending || !canvas) return false;
+  const sourcePreview = await getResourcesAtlasPreview({
+    scenarioPath: entry && entry._importScenarioPath,
+    scenarioPaths: entry && entry._importScenarioPaths
+  });
+  return drawResourceIconToCanvas(sourcePreview, pending.sourceIconIndex, canvas);
+}
+
+async function refreshPendingImportedResourceIconAssignments(tab = null) {
+  const resourceTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.resources);
+  if (!resourceTab || !Array.isArray(resourceTab.recordOps) || !Array.isArray(resourceTab.entries)) return false;
+  const ops = resourceTab.recordOps.filter((op) =>
+    String(op && op.op || '').toLowerCase() === 'add' && String(op && op.importArtFrom || '').trim()
+  );
+  if (ops.length === 0) return false;
+  const preview = await getResourcesAtlasPreview();
+  const firstSlot = findNextResourcePreviewSlot(preview);
+  if (!Number.isFinite(firstSlot) || firstSlot < 0) return false;
+  let changed = false;
+  let offset = 0;
+  for (const op of ops) {
+    const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+    if (!newRef) continue;
+    const entry = resourceTab.entries.find((candidate) =>
+      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
+    );
+    if (!entry) continue;
+    const iconField = getBiqFieldByBaseKey(entry, 'icon');
+    if (!iconField) continue;
+    let sourceIconIndex = Number.parseInt(String(entry._pendingImportedResourceIcon && entry._pendingImportedResourceIcon.sourceIconIndex), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      sourceIconIndex = Number.parseInt(String(iconField.value), 10);
+    }
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) continue;
+    const targetIconIndex = firstSlot + offset;
+    offset += 1;
+    entry._pendingImportedResourceIcon = {
+      sourceIconIndex,
+      targetIconIndex,
+      importScenarioPath: String(op.importArtFrom || '')
+    };
+    if (String(iconField.value) !== String(targetIconIndex)) {
+      iconField.value = String(targetIconIndex);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function getWonderAtlasMetrics(preview, crop) {
   const atlas = rgbaToCanvas(preview);
   const cellW = Math.max(1, Number(crop && crop.w) || 128);
@@ -20487,7 +20761,8 @@ async function getUnits32AtlasPreview({ scenarioPath, scenarioPaths } = {}) {
     civ3Path: state.settings.civ3Path,
     scenarioPath: resolvedScenarioPath,
     scenarioPaths: resolvedScenarioPaths,
-    assetPath: 'Art/Units/units_32.pcx'
+    assetPath: 'Art/Units/units_32.pcx',
+    options: { returnIndexed: true }
   }));
   return res && res.ok ? res : null;
 }
@@ -20509,7 +20784,8 @@ async function getResourcesAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
     civ3Path: state.settings.civ3Path,
     scenarioPath: resolvedScenarioPath,
     scenarioPaths: resolvedScenarioPaths,
-    assetPath: 'Art/resources.pcx'
+    assetPath: 'Art/resources.pcx',
+    options: { returnIndexed: true }
   });
   if (res && res.ok) {
     setPreviewCache(cacheKey, res);
@@ -20697,6 +20973,25 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
   let totalIcons = 0;
   let totalRows = 0;
 
+  const drawIconForIndex = (idx, canvas) => {
+    const pending = getPendingImportedUnitIcon(entry);
+    if (pending && pending.targetIconIndex === idx) {
+      const sourcePreviewPromise = getUnits32AtlasPreview({
+        scenarioPath: pending.importScenarioPath || entry && entry._importScenarioPath,
+        scenarioPaths: entry && entry._importScenarioPaths
+      });
+      sourcePreviewPromise.then((sourcePreview) => {
+        if (!drawUnits32IconToCanvas(sourcePreview, pending.sourceIconIndex, canvas)) {
+          drawUnits32IconToCanvas(atlasPreview, idx, canvas);
+        }
+      }).catch(() => {
+        drawUnits32IconToCanvas(atlasPreview, idx, canvas);
+      });
+      return true;
+    }
+    return drawUnits32IconToCanvas(atlasPreview, idx, canvas);
+  };
+
   const renderVisibleIcons = () => {
     if (!atlasPreview || !gridBuilt) return;
     const token = buildToken;
@@ -20722,7 +21017,7 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
       canvas.width = 28;
       canvas.height = 28;
       canvas.className = 'entry-thumb-canvas';
-      drawUnits32IconToCanvas(atlasPreview, idx, canvas);
+      drawIconForIndex(idx, canvas);
       item.appendChild(canvas);
       item.addEventListener('click', (ev) => {
         ev.preventDefault();
@@ -20778,6 +21073,10 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
     }
     const { cols, rows } = metrics;
     totalIcons = cols * rows;
+    const pending = getPendingImportedUnitIcon(entry);
+    if (pending && pending.targetIconIndex >= totalIcons) {
+      totalIcons = (Math.floor(pending.targetIconIndex / cols) + 1) * cols;
+    }
     totalRows = Math.ceil(totalIcons / UNIT_ICON_COLS);
     grid.style.width = `${UNIT_ICON_COLS * UNIT_ICON_ITEM_SIZE}px`;
     grid.style.height = `${totalRows * UNIT_ICON_ITEM_SIZE}px`;
@@ -20820,7 +21119,7 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
   return wrap;
 }
 
-function createResourceIconIndexPicker(currentValue, onSelect) {
+function createResourceIconIndexPicker(currentValue, onSelect, entry = null) {
   const RESOURCE_ICON_ITEM_SIZE = 60;
   const RESOURCE_ICON_COLS = 6;
   const RESOURCE_ICON_OVERSCAN_ROWS = 2;
@@ -20860,13 +21159,44 @@ function createResourceIconIndexPicker(currentValue, onSelect) {
   let totalIcons = 0;
   let totalRows = 0;
 
+  const getPendingIcon = () => {
+    const pending = getPendingImportedResourceIcon(entry);
+    return pending && pending.targetIconIndex === current ? pending : null;
+  };
+
+  const drawIconForIndex = (idx, canvas) => {
+    const pending = getPendingImportedResourceIcon(entry);
+    if (pending && pending.targetIconIndex === idx) {
+      drawMagentaResourceIconPlaceholder(canvas);
+      drawPendingImportedResourceIconToCanvas(entry, canvas).then((ok) => {
+        if (!ok) drawMagentaResourceIconPlaceholder(canvas);
+      }).catch(() => {
+        drawMagentaResourceIconPlaceholder(canvas);
+      });
+      return true;
+    }
+    if (atlasPreview && drawResourceIconToCanvas(atlasPreview, idx, canvas)) return true;
+    return drawMagentaResourceIconPlaceholder(canvas);
+  };
+
   const syncPreview = async () => {
-    const preview = await getResourcesAtlasPreview();
-    if (!atlasPreview) atlasPreview = preview;
-    if (!preview || !drawResourceIconToCanvas(preview, current, previewCanvas)) {
-      previewHost.innerHTML = '';
-      previewHost.textContent = '#';
-      return;
+    const pending = getPendingIcon();
+    if (pending) {
+      drawMagentaResourceIconPlaceholder(previewCanvas);
+      const ok = await drawPendingImportedResourceIconToCanvas(entry, previewCanvas);
+      if (!ok) {
+        previewHost.innerHTML = '';
+        previewHost.textContent = '#';
+        return;
+      }
+    } else {
+      const preview = await getResourcesAtlasPreview();
+      if (!atlasPreview) atlasPreview = preview;
+      if (!preview || !drawResourceIconToCanvas(preview, current, previewCanvas)) {
+        previewHost.innerHTML = '';
+        previewHost.textContent = '#';
+        return;
+      }
     }
     if (!previewHost.contains(previewCanvas)) {
       previewHost.innerHTML = '';
@@ -20899,7 +21229,7 @@ function createResourceIconIndexPicker(currentValue, onSelect) {
       canvas.width = 32;
       canvas.height = 32;
       canvas.className = 'entry-thumb-canvas';
-      drawResourceIconToCanvas(atlasPreview, idx, canvas);
+      drawIconForIndex(idx, canvas);
       item.appendChild(canvas);
       item.addEventListener('click', (ev) => {
         ev.preventDefault();
@@ -20931,6 +21261,10 @@ function createResourceIconIndexPicker(currentValue, onSelect) {
     }
     const { cols, rows } = metrics;
     totalIcons = cols * rows;
+    const pending = getPendingImportedResourceIcon(entry);
+    if (pending && pending.targetIconIndex >= totalIcons) {
+      totalIcons = (Math.floor(pending.targetIconIndex / cols) + 1) * cols;
+    }
     totalRows = Math.ceil(totalIcons / RESOURCE_ICON_COLS);
     grid.style.width = `${RESOURCE_ICON_COLS * RESOURCE_ICON_ITEM_SIZE}px`;
     grid.style.height = `${totalRows * RESOURCE_ICON_ITEM_SIZE}px`;
@@ -24143,6 +24477,39 @@ function getResizeFillTerrainLabel(terrainId) {
   return match ? match.label : 'Selected terrain';
 }
 
+const MAP_RESIZE_HORIZONTAL_ANCHOR_OPTIONS = Object.freeze([
+  { value: 'both', label: 'Both equally' },
+  { value: 'east', label: 'East' },
+  { value: 'west', label: 'West' }
+]);
+const MAP_RESIZE_VERTICAL_ANCHOR_OPTIONS = Object.freeze([
+  { value: 'both', label: 'Both equally' },
+  { value: 'south', label: 'South' },
+  { value: 'north', label: 'North' }
+]);
+
+function normalizeMapResizeHorizontalAnchor(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return MAP_RESIZE_HORIZONTAL_ANCHOR_OPTIONS.some((option) => option.value === normalized) ? normalized : 'both';
+}
+
+function normalizeMapResizeVerticalAnchor(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return MAP_RESIZE_VERTICAL_ANCHOR_OPTIONS.some((option) => option.value === normalized) ? normalized : 'both';
+}
+
+function getMapResizeHorizontalAnchorLabel(value) {
+  const normalized = normalizeMapResizeHorizontalAnchor(value);
+  const match = MAP_RESIZE_HORIZONTAL_ANCHOR_OPTIONS.find((option) => option.value === normalized);
+  return match ? match.label : 'Both equally';
+}
+
+function getMapResizeVerticalAnchorLabel(value) {
+  const normalized = normalizeMapResizeVerticalAnchor(value);
+  const match = MAP_RESIZE_VERTICAL_ANCHOR_OPTIONS.find((option) => option.value === normalized);
+  return match ? match.label : 'Both equally';
+}
+
 function computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec) {
   if (!spec) return -1;
   if (!spec.needImage) return spec.image;
@@ -24502,7 +24869,7 @@ async function promptAddCustomMapAction(tab) {
   });
 }
 
-function collectMapResizeTrimSummary(tab, targetWidth, targetHeight) {
+function collectMapResizeTrimSummary(tab, targetWidth, targetHeight, anchors = {}) {
   const width = Math.max(0, Number(targetWidth) || 0);
   const height = Math.max(0, Number(targetHeight) || 0);
   const findSection = (code) => (Array.isArray(tab && tab.sections) ? tab.sections : []).find((section) => (
@@ -24525,7 +24892,14 @@ function collectMapResizeTrimSummary(tab, targetWidth, targetHeight) {
   const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
   const currentWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
   const currentHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
-  const offsets = computeMapResizePreviewOffsets(currentWidth, currentHeight, width, height);
+  const offsets = computeMapResizePreviewOffsets(
+    currentWidth,
+    currentHeight,
+    width,
+    height,
+    anchors.horizontalAnchor,
+    anchors.verticalAnchor
+  );
   const currentTileCount = Math.floor((Math.max(0, currentWidth) * Math.max(0, currentHeight)) / 2);
   const nextTileCount = Math.floor((width * height) / 2);
   return {
@@ -24537,36 +24911,47 @@ function collectMapResizeTrimSummary(tab, targetWidth, targetHeight) {
   };
 }
 
-function computeMapResizePreviewOffsets(sourceWidth, sourceHeight, targetWidth, targetHeight) {
-  const pickOffset = (diff, parity) => {
-    const ideal = Number(diff) / 2;
-    const min = Math.min(0, Number(diff));
-    const max = Math.max(0, Number(diff));
-    const candidates = [];
-    for (let delta = 0; delta <= 4; delta += 1) {
-      candidates.push(Math.floor(ideal) - delta, Math.ceil(ideal) + delta);
-    }
-    candidates.push(min, max);
-    const filtered = candidates
-      .filter((value, index, arr) => Number.isFinite(value) && arr.indexOf(value) === index)
-      .filter((value) => value >= min && value <= max)
-      .filter((value) => (Math.abs(value) % 2) === parity);
-    if (filtered.length <= 0) return null;
-    filtered.sort((a, b) => {
-      const distance = Math.abs(a - ideal) - Math.abs(b - ideal);
-      if (distance !== 0) return distance;
-      return a - b;
-    });
-    return filtered[0];
-  };
+function computeMapResizePreviewOffsets(sourceWidth, sourceHeight, targetWidth, targetHeight, horizontalAnchor = 'both', verticalAnchor = 'both') {
   const widthDiff = Number(targetWidth) - Number(sourceWidth);
   const heightDiff = Number(targetHeight) - Number(sourceHeight);
-  const candidates = [0, 1].map((parity) => {
-    const x = pickOffset(widthDiff, parity);
-    const y = pickOffset(heightDiff, parity);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    return { parity, x, y };
-  }).filter(Boolean);
+  const horizontal = normalizeMapResizeHorizontalAnchor(horizontalAnchor);
+  const vertical = normalizeMapResizeVerticalAnchor(verticalAnchor);
+  const getParity = (value) => ((Math.abs(Number(value) || 0) % 2) + 2) % 2;
+  const buildAxisCandidates = (diff, anchor, lowSide, highSide) => {
+    const min = Math.min(0, Number(diff));
+    const max = Math.max(0, Number(diff));
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+    const ideal = Number(diff) / 2;
+    const preferred = anchor === lowSide ? Number(diff) : anchor === highSide ? 0 : ideal;
+    const weight = anchor === 'both' ? 1 : 1000;
+    const out = [];
+    for (let value = min; value <= max; value += 1) {
+      out.push({
+        value,
+        parity: getParity(value),
+        cost: Math.abs(value - preferred) * weight,
+        centerCost: Math.abs(value - ideal),
+        anchorCost: Math.abs(value - preferred)
+      });
+    }
+    return out;
+  };
+  const xCandidates = buildAxisCandidates(widthDiff, horizontal, 'west', 'east');
+  const yCandidates = buildAxisCandidates(heightDiff, vertical, 'north', 'south');
+  const candidates = [];
+  xCandidates.forEach((xCandidate) => {
+    yCandidates.forEach((yCandidate) => {
+      if (xCandidate.parity !== yCandidate.parity) return;
+      candidates.push({
+        parity: xCandidate.parity,
+        x: xCandidate.value,
+        y: yCandidate.value,
+        cost: xCandidate.cost + yCandidate.cost,
+        anchorCost: xCandidate.anchorCost + yCandidate.anchorCost,
+        centerCost: xCandidate.centerCost + yCandidate.centerCost
+      });
+    });
+  });
   if (candidates.length <= 0) {
     return {
       x: Math.round(widthDiff / 2),
@@ -24574,9 +24959,9 @@ function computeMapResizePreviewOffsets(sourceWidth, sourceHeight, targetWidth, 
     };
   }
   candidates.sort((a, b) => {
-    const aCost = Math.abs(a.x - (widthDiff / 2)) + Math.abs(a.y - (heightDiff / 2));
-    const bCost = Math.abs(b.x - (widthDiff / 2)) + Math.abs(b.y - (heightDiff / 2));
-    if (aCost !== bCost) return aCost - bCost;
+    if (a.cost !== b.cost) return a.cost - b.cost;
+    if (a.anchorCost !== b.anchorCost) return a.anchorCost - b.anchorCost;
+    if (a.centerCost !== b.centerCost) return a.centerCost - b.centerCost;
     return a.parity - b.parity;
   });
   return { x: candidates[0].x, y: candidates[0].y };
@@ -24706,7 +25091,7 @@ function resetNewResizePreviewTileToTerrain(tile, terrainId = BIQ_TERRAIN.SEA) {
   clearNewResizePreviewTileState(tile);
 }
 
-function buildMapResizeTerrainPreview(tab, targetWidth, targetHeight, fillTerrain = BIQ_TERRAIN.SEA) {
+function buildMapResizeTerrainPreview(tab, targetWidth, targetHeight, fillTerrain = BIQ_TERRAIN.SEA, anchors = {}) {
   const width = Math.max(0, Number(targetWidth) || 0);
   const height = Math.max(0, Number(targetHeight) || 0);
   const fillCode = normalizeResizeFillTerrain(fillTerrain, BIQ_TERRAIN.SEA);
@@ -24721,7 +25106,14 @@ function buildMapResizeTerrainPreview(tab, targetWidth, targetHeight, fillTerrai
   if (!tileSection || !Array.isArray(tileSection.records) || sourceWidth <= 0 || sourceHeight <= 0 || width <= 0 || height <= 0) {
     return { width, height, tiles: preview };
   }
-  const offsets = computeMapResizePreviewOffsets(sourceWidth, sourceHeight, width, height);
+  const offsets = computeMapResizePreviewOffsets(
+    sourceWidth,
+    sourceHeight,
+    width,
+    height,
+    anchors.horizontalAnchor,
+    anchors.verticalAnchor
+  );
   const sourceTileByCoord = new Map();
   tileSection.records.forEach((record) => {
     const x = parseIntLoose(getMapFieldValue(record, 'xpos', ''), NaN);
@@ -24923,6 +25315,8 @@ function applyMapResizePreviewToTab(tab, targetWidth, targetHeight, options = {}
   const width = normalizeMapResizePreviewDimension(targetWidth, 'width');
   const height = normalizeMapResizePreviewDimension(targetHeight, 'height');
   const fillTerrain = normalizeResizeFillTerrain(options.fillTerrain, BIQ_TERRAIN.SEA);
+  const horizontalAnchor = normalizeMapResizeHorizontalAnchor(options.horizontalAnchor);
+  const verticalAnchor = normalizeMapResizeVerticalAnchor(options.verticalAnchor);
   const allowImplicitEdgeTerrain = options.fillTerrain == null || String(options.fillTerrain).trim() === '';
   const tileCount = Math.floor((width * height) / 2);
   if (tileCount > QUINT_CUSTOM_MAP_MAX_TILES) {
@@ -24968,7 +25362,7 @@ function applyMapResizePreviewToTab(tab, targetWidth, targetHeight, options = {}
     throw new Error('Cannot resize a BIQ map with invalid source dimensions.');
   }
   if (sourceWidth === width && sourceHeight === height) return;
-  const resizeOffsets = computeMapResizePreviewOffsets(sourceWidth, sourceHeight, width, height);
+  const resizeOffsets = computeMapResizePreviewOffsets(sourceWidth, sourceHeight, width, height, horizontalAnchor, verticalAnchor);
 
   const sourceTileByCoord = new Map();
   const firstTile = tileSection.records[0] || null;
@@ -25016,7 +25410,7 @@ function applyMapResizePreviewToTab(tab, targetWidth, targetHeight, options = {}
   sanitizeResizePreviewEntitySections(tab, width, height, resizeOffsets);
   recalculateResizePreviewContinentTileCounts(tileSection, contSection);
   finalizeGeneratedBlankMapTerrainFileImage(nextTileRecords, width, height);
-  tab.pendingMapResize = { width, height, fillTerrain };
+  tab.pendingMapResize = { width, height, fillTerrain, horizontalAnchor, verticalAnchor };
   state.biqMapStatsDirty = true;
 }
 
@@ -25035,7 +25429,7 @@ async function promptEditMapAction(tab) {
 
   if (el.entityModalTitle) el.entityModalTitle.textContent = 'Resize Map';
   if (el.entityModalBody) {
-    el.entityModalBody.textContent = 'Change the scenario map dimensions. Resizing keeps the existing map centered.';
+    el.entityModalBody.textContent = 'Change the scenario map dimensions and choose which sides receive added space or lose trimmed space.';
   }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = 'Update Map';
@@ -25047,7 +25441,7 @@ async function promptEditMapAction(tab) {
   form.className = 'entity-modal-content';
   const warning = document.createElement('p');
   warning.className = 'entity-modal-copy-warning';
-  warning.textContent = 'Expanding adds tiles evenly around the existing map so its existing center stays centered.';
+  warning.textContent = 'Existing content keeps its tile positions; direction choices control which edges change.';
   form.appendChild(warning);
   const grid = document.createElement('div');
   grid.className = 'entity-form-grid';
@@ -25089,17 +25483,43 @@ async function promptEditMapAction(tab) {
   totalField.appendChild(totalValue);
   grid.appendChild(totalField);
 
+  const horizontalAnchorField = document.createElement('div');
+  horizontalAnchorField.className = 'entity-field';
+  const horizontalAnchorLabel = document.createElement('label');
+  horizontalAnchorLabel.textContent = 'East / West';
+  const horizontalAnchorSelect = document.createElement('select');
+  MAP_RESIZE_HORIZONTAL_ANCHOR_OPTIONS.forEach((option) => {
+    const node = document.createElement('option');
+    node.value = option.value;
+    node.textContent = option.label;
+    horizontalAnchorSelect.appendChild(node);
+  });
+  horizontalAnchorSelect.value = 'both';
+  horizontalAnchorField.appendChild(horizontalAnchorLabel);
+  horizontalAnchorField.appendChild(horizontalAnchorSelect);
+  grid.appendChild(horizontalAnchorField);
+
+  const verticalAnchorField = document.createElement('div');
+  verticalAnchorField.className = 'entity-field';
+  const verticalAnchorLabel = document.createElement('label');
+  verticalAnchorLabel.textContent = 'North / South';
+  const verticalAnchorSelect = document.createElement('select');
+  MAP_RESIZE_VERTICAL_ANCHOR_OPTIONS.forEach((option) => {
+    const node = document.createElement('option');
+    node.value = option.value;
+    node.textContent = option.label;
+    verticalAnchorSelect.appendChild(node);
+  });
+  verticalAnchorSelect.value = 'both';
+  verticalAnchorField.appendChild(verticalAnchorLabel);
+  verticalAnchorField.appendChild(verticalAnchorSelect);
+  grid.appendChild(verticalAnchorField);
+
+  const miniPreviewField = document.createElement('div');
+  miniPreviewField.className = 'entity-field';
   const statusLine = document.createElement('div');
   statusLine.className = 'hint map-resize-status';
   statusLine.textContent = '\u00A0';
-  form.appendChild(statusLine);
-  const miniPreviewField = document.createElement('div');
-  miniPreviewField.className = 'entity-field';
-  const miniPreviewLabel = document.createElement('label');
-  miniPreviewLabel.textContent = 'Resize Preview';
-  const miniPreviewHint = document.createElement('div');
-  miniPreviewHint.className = 'hint';
-  miniPreviewHint.textContent = 'Terrain-only minimap preview. Existing terrain stays centered; new space fills with the selected terrain.';
   const miniPreviewFrame = document.createElement('div');
   miniPreviewFrame.className = 'map-resize-preview-frame';
   const miniPreviewCanvas = document.createElement('canvas');
@@ -25107,8 +25527,7 @@ async function promptEditMapAction(tab) {
   miniPreviewCanvas.height = 220;
   miniPreviewCanvas.className = 'biq-map-minimap-canvas';
   miniPreviewFrame.appendChild(miniPreviewCanvas);
-  miniPreviewField.appendChild(miniPreviewLabel);
-  miniPreviewField.appendChild(miniPreviewHint);
+  miniPreviewField.appendChild(statusLine);
   miniPreviewField.appendChild(miniPreviewFrame);
   form.appendChild(miniPreviewField);
   const terrainField = document.createElement('div');
@@ -25133,7 +25552,11 @@ async function promptEditMapAction(tab) {
     validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
     const fillTerrain = normalizeResizeFillTerrain(terrainSelect.value, BIQ_TERRAIN.SEA);
     const fillTerrainLabel = getResizeFillTerrainLabel(fillTerrain);
-    const trimSummary = collectMapResizeTrimSummary(tab, validation.width, validation.height);
+    const horizontalAnchor = normalizeMapResizeHorizontalAnchor(horizontalAnchorSelect.value);
+    const verticalAnchor = normalizeMapResizeVerticalAnchor(verticalAnchorSelect.value);
+    const trimSummary = collectMapResizeTrimSummary(tab, validation.width, validation.height, { horizontalAnchor, verticalAnchor });
+    const horizontalLabel = getMapResizeHorizontalAnchorLabel(horizontalAnchor).toLowerCase();
+    const verticalLabel = getMapResizeVerticalAnchorLabel(verticalAnchor).toLowerCase();
     totalValue.textContent = `${validation.tileCount.toLocaleString()} (${validation.width}x${validation.height})`;
     statusLine.className = 'hint map-resize-status';
     statusLine.textContent = '\u00A0';
@@ -25155,7 +25578,7 @@ async function promptEditMapAction(tab) {
     if (validation.width === currentWidth && validation.height === currentHeight) {
       statusLine.textContent = 'No size change yet.';
     } else if (validation.width >= currentWidth && validation.height >= currentHeight) {
-      statusLine.textContent = `Expansion keeps the existing map centered by adding ${fillTerrainLabel.toLowerCase()} tiles evenly around it.`;
+      statusLine.textContent = `Expansion adds ${fillTerrainLabel.toLowerCase()} tiles using east/west: ${horizontalLabel}; north/south: ${verticalLabel}.`;
     } else if (!validation.isValid) {
       statusLine.textContent = validation.reason;
     }
@@ -25164,12 +25587,17 @@ async function promptEditMapAction(tab) {
     } else if (validation.tileCount > MAP_RESIZE_MINI_PREVIEW_MAX_TILES) {
       drawMapResizeMiniPreviewPlaceholder(miniPreviewCanvas, 'Preview hidden for\nvery large map sizes');
     } else {
-      drawMapResizeMiniPreview(miniPreviewCanvas, buildMapResizeTerrainPreview(tab, validation.width, validation.height, fillTerrain));
+      drawMapResizeMiniPreview(miniPreviewCanvas, buildMapResizeTerrainPreview(tab, validation.width, validation.height, fillTerrain, {
+        horizontalAnchor,
+        verticalAnchor
+      }));
     }
     if (el.entityModalConfirm) el.entityModalConfirm.disabled = !validation.isValid;
   };
   widthInput.addEventListener('input', refreshValidation);
   heightInput.addEventListener('input', refreshValidation);
+  horizontalAnchorSelect.addEventListener('change', refreshValidation);
+  verticalAnchorSelect.addEventListener('change', refreshValidation);
   terrainSelect.addEventListener('change', refreshValidation);
   refreshValidation();
 
@@ -25189,7 +25617,9 @@ async function promptEditMapAction(tab) {
       resolveEntityModal({
         width: validation.width,
         height: validation.height,
-        fillTerrain: normalizeResizeFillTerrain(terrainSelect.value, BIQ_TERRAIN.SEA)
+        fillTerrain: normalizeResizeFillTerrain(terrainSelect.value, BIQ_TERRAIN.SEA),
+        horizontalAnchor: normalizeMapResizeHorizontalAnchor(horizontalAnchorSelect.value),
+        verticalAnchor: normalizeMapResizeVerticalAnchor(verticalAnchorSelect.value)
       });
     };
     const onCancel = () => resolveEntityModal(null);
@@ -26631,14 +27061,15 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
     const iconWarnEl = document.createElement('div');
     iconWarnEl.className = 'unit-icon-field-warning hidden';
     indexCard.appendChild(iconWarnEl);
-    ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+    ensureCurrentUnits32AtlasMetrics().then(async (metrics) => {
       if (!iconWarnEl.isConnected) return;
-      refreshPendingImportedUnitIconAssignments();
+      await refreshPendingImportedUnitIconAssignments();
       if (hasPendingImportedUnitIconWarning(entry)) {
         iconWarnEl.textContent = 'Imported unit icon needs manual setup. Create or update this scenario\'s Art/Units/units_32.pcx, then choose the correct Icon Index.';
         iconWarnEl.classList.remove('hidden');
         return;
       }
+      if (getPendingImportedUnitIcon(entry)) return;
       if (!metrics) return;
       const idx = getUnitIconValidationIndex(entry);
       if (!Number.isFinite(idx) || idx < 0) return;
@@ -26768,15 +27199,17 @@ function renderResourceArtEditor(entry, referenceEditable, onChanged) {
     const picker = createResourceIconIndexPicker(iconField.value, (value) => {
       rememberUndoSnapshotForKey(entryUndoKey);
       iconField.value = String(value);
+      if (entry && entry._pendingImportedResourceIcon) delete entry._pendingImportedResourceIcon;
       setDirty(true);
       if (onChanged) onChanged();
-    });
+    }, entry);
     indexCard.appendChild(picker);
     const iconWarnEl = document.createElement('div');
     iconWarnEl.className = 'unit-icon-field-warning hidden';
     indexCard.appendChild(iconWarnEl);
     getResourcesAtlasPreview().then((preview) => {
       if (!iconWarnEl.isConnected || !preview) return;
+      if (getPendingImportedResourceIcon(entry)) return;
       const metrics = getResourceAtlasMetrics(preview);
       if (!metrics) return;
       const idx = parseIntFromDisplayValue(iconField.value);
@@ -29939,12 +30372,32 @@ function renderReferenceTab(tab, tabKey) {
             sourceIconIndex
           });
           const newIconField = getBiqFieldByBaseKey(newEntry, 'iconindex');
-          if (newIconField) newIconField.value = '0';
-          newEntry._pendingImportedUnitIcon = {
-            sourceIconIndex: Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0 ? sourceIconIndex : null,
-            plannedIndex: 0,
-            requiresManualAssignment: true
-          };
+          if (state.settings && state.settings.autoAddImportedUnitIcons === false) {
+            if (newIconField) newIconField.value = '0';
+            newEntry._pendingImportedUnitIcon = {
+              sourceIconIndex: Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0 ? sourceIconIndex : null,
+              targetIconIndex: 0,
+              plannedIndex: 0,
+              requiresManualAssignment: true
+            };
+          } else if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
+            newEntry._pendingImportedUnitIcon = {
+              sourceIconIndex,
+              targetIconIndex: null,
+              importScenarioPath: String(result.importFilePath || '')
+            };
+          }
+        }
+        if (tabKey === 'resources') {
+          const sourceIconField = getBiqFieldByBaseKey(result.importedEntry, 'icon');
+          const sourceIconIndex = parseIntLoose(sourceIconField && sourceIconField.value, NaN);
+          if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
+            newEntry._pendingImportedResourceIcon = {
+              sourceIconIndex,
+              targetIconIndex: null,
+              importScenarioPath: String(result.importFilePath || '')
+            };
+          }
         }
         if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
           const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
@@ -29981,19 +30434,33 @@ function renderReferenceTab(tab, tabKey) {
         });
         rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);
         tab.entries.unshift(newEntry);
+        if (tabKey === 'resources') {
+          refreshPendingImportedResourceIconAssignments(tab).then((changed) => {
+            if (!changed) return;
+            rebuildReferenceDirtyCacheForTab(tabKey, tab);
+            setDirty(true);
+            renderActiveTab({ preserveTabScroll: true });
+          }).catch(() => {});
+        }
+        if (tabKey === 'units') {
+          refreshPendingImportedUnitIconAssignments(tab).then((changed) => {
+            if (!changed) return;
+            rebuildReferenceDirtyCacheForTab(tabKey, tab);
+            setDirty(true);
+            renderActiveTab({ preserveTabScroll: true });
+          }).catch(() => {});
+        }
         appendDebugLog('reference-import:entry-inserted', {
           tabKey,
           targetKey: key,
           afterCount: Array.isArray(tab && tab.entries) ? tab.entries.length : -1
         });
-        if (tabKey === 'units') {
-          if (units32AtlasMetricsCache && units32AtlasMetricsCacheKey === getUnits32TargetAtlasCacheKey()) {
-            refreshPendingImportedUnitIconAssignments(tab);
-            appendDebugLog('reference-import:unit-icon-refresh-immediate', {
-              targetKey: key,
-              cacheKey: units32AtlasMetricsCacheKey
-            });
-          }
+        if (tabKey === 'units' && units32AtlasMetricsCache && units32AtlasMetricsCacheKey === getUnits32TargetAtlasCacheKey()) {
+          refreshPendingImportedUnitIconAssignments(tab).catch(() => {});
+          appendDebugLog('reference-import:unit-icon-refresh-immediate', {
+            targetKey: key,
+            cacheKey: units32AtlasMetricsCacheKey
+          });
         }
         if (tabKey === 'civilizations') {
           setCivilizationPlayableState(newEntry, true);
@@ -30027,8 +30494,9 @@ function renderReferenceTab(tab, tabKey) {
               cols: metrics.cols,
               rows: metrics.rows
             });
-            refreshPendingImportedUnitIconAssignments(tab);
-            renderActiveTab({ preserveTabScroll: true });
+            refreshPendingImportedUnitIconAssignments(tab).then(() => {
+              renderActiveTab({ preserveTabScroll: true });
+            }).catch(() => {});
             appendDebugLog('reference-import:unit-post-metrics-render', {
               targetKey: key
             });
@@ -30307,9 +30775,9 @@ function renderReferenceTab(tab, tabKey) {
   }
 
   if (tabKey === 'units' && (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey())) {
-    ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+    ensureCurrentUnits32AtlasMetrics().then(async (metrics) => {
       if (!metrics) return;
-      refreshPendingImportedUnitIconAssignments(tab);
+      await refreshPendingImportedUnitIconAssignments(tab);
       renderReferenceBody();
     }).catch(() => {});
   }
@@ -30422,6 +30890,7 @@ function renderReferenceTab(tab, tabKey) {
       const iconIdx = getUnitIconValidationIndex(entry);
       const hasRuntimeRangeIssue = units32AtlasMetricsCache
         && units32AtlasMetricsCacheKey === getUnits32TargetAtlasCacheKey()
+        && !getPendingImportedUnitIcon(entry)
         && Number.isFinite(iconIdx)
         && iconIdx >= 0
         && Math.floor(iconIdx / units32AtlasMetricsCache.cols) >= units32AtlasMetricsCache.rows;
@@ -33343,7 +33812,11 @@ function renderMapTab(tab) {
       if (!result) return;
       rememberMapUndoSnapshot();
       try {
-        applyMapResizePreviewToTab(tab, result.width, result.height, { fillTerrain: result.fillTerrain });
+        applyMapResizePreviewToTab(tab, result.width, result.height, {
+          fillTerrain: result.fillTerrain,
+          horizontalAnchor: result.horizontalAnchor,
+          verticalAnchor: result.verticalAnchor
+        });
       } catch (err) {
         setStatus(err && err.message ? err.message : 'Could not resize the map preview.', true);
         return;
@@ -49327,6 +49800,8 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
     civ3Path: state.settings.civ3Path,
     scenarioPath: state.settings.scenarioPath,
     textFileEncoding: normalizeTextFileEncoding(state.settings.textFileEncoding),
+    autoAddImportedResourceIcons: state.settings.autoAddImportedResourceIcons !== false,
+    autoAddImportedUnitIcons: state.settings.autoAddImportedUnitIcons !== false,
     dirtyTabs,
     tabs: tabsToSave
   };
@@ -51202,6 +51677,12 @@ async function init() {
   if (typeof state.settings.mapAutoDockTileInfoLeft !== 'boolean') {
     state.settings.mapAutoDockTileInfoLeft = true;
   }
+  if (typeof state.settings.autoAddImportedResourceIcons !== 'boolean') {
+    state.settings.autoAddImportedResourceIcons = true;
+  }
+  if (typeof state.settings.autoAddImportedUnitIcons !== 'boolean') {
+    state.settings.autoAddImportedUnitIcons = true;
+  }
   if (typeof state.settings.writeLogFiles !== 'boolean') {
     state.settings.writeLogFiles = true;
   }
@@ -51384,6 +51865,40 @@ async function init() {
       if (state.mapSettingsMenuUnsubscribe) {
         state.mapSettingsMenuUnsubscribe();
         state.mapSettingsMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onResourceSettingsMenuSelect === 'function') {
+    state.resourceSettingsMenuUnsubscribe = window.c3xManager.onResourceSettingsMenuSelect((settings) => {
+      if (!state.settings || !settings || typeof settings !== 'object') return;
+      if (!Object.prototype.hasOwnProperty.call(settings, 'autoAddImportedResourceIcons')) return;
+      state.settings.autoAddImportedResourceIcons = settings.autoAddImportedResourceIcons !== false;
+      void window.c3xManager.setSettings(state.settings);
+      setStatus(state.settings.autoAddImportedResourceIcons
+        ? 'Automatic imported resource icon updates enabled.'
+        : 'Automatic imported resource icon updates disabled.');
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.resourceSettingsMenuUnsubscribe) {
+        state.resourceSettingsMenuUnsubscribe();
+        state.resourceSettingsMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onUnitSettingsMenuSelect === 'function') {
+    state.unitSettingsMenuUnsubscribe = window.c3xManager.onUnitSettingsMenuSelect((settings) => {
+      if (!state.settings || !settings || typeof settings !== 'object') return;
+      if (!Object.prototype.hasOwnProperty.call(settings, 'autoAddImportedUnitIcons')) return;
+      state.settings.autoAddImportedUnitIcons = settings.autoAddImportedUnitIcons !== false;
+      void window.c3xManager.setSettings(state.settings);
+      setStatus(state.settings.autoAddImportedUnitIcons
+        ? 'Automatic imported unit icon updates enabled.'
+        : 'Automatic imported unit icon updates disabled.');
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.unitSettingsMenuUnsubscribe) {
+        state.unitSettingsMenuUnsubscribe();
+        state.unitSettingsMenuUnsubscribe = null;
       }
     }, { once: true });
   }

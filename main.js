@@ -64,6 +64,28 @@ function readStartupReloadAfterSave() {
   }
 }
 
+function readStartupAutoAddImportedResourceIcons() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeAutoAddImportedResourceIcons(raw && raw.autoAddImportedResourceIcons);
+  } catch (_err) {
+    return true;
+  }
+}
+
+function readStartupAutoAddImportedUnitIcons() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeAutoAddImportedUnitIcons(raw && raw.autoAddImportedUnitIcons);
+  } catch (_err) {
+    return true;
+  }
+}
+
 function readStartupTextFileEncoding() {
   try {
     const settingsPath = getSettingsPathUnsafe();
@@ -142,6 +164,14 @@ function normalizeReloadAfterSave(value) {
   return value === true;
 }
 
+function normalizeAutoAddImportedResourceIcons(value) {
+  return value !== false;
+}
+
+function normalizeAutoAddImportedUnitIcons(value) {
+  return value !== false;
+}
+
 function normalizeTextFileEncoding(value) {
   const raw = String(value || 'auto').trim().toLowerCase();
   const aliases = {
@@ -170,6 +200,8 @@ function normalizeTextFileEncoding(value) {
 const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
 const startupReloadAfterSave = readStartupReloadAfterSave();
+const startupAutoAddImportedResourceIcons = readStartupAutoAddImportedResourceIcons();
+const startupAutoAddImportedUnitIcons = readStartupAutoAddImportedUnitIcons();
 const startupTextFileEncoding = readStartupTextFileEncoding();
 const startupMapAutoDockTileInfoLeft = readStartupMapAutoDockTileInfoLeft();
 const startupWriteLogFiles = readStartupWriteLogFiles();
@@ -177,6 +209,8 @@ const startupLogFolder = readStartupLogFolder();
 let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentReloadAfterSave = startupReloadAfterSave;
+let currentAutoAddImportedResourceIcons = startupAutoAddImportedResourceIcons;
+let currentAutoAddImportedUnitIcons = startupAutoAddImportedUnitIcons;
 let currentTextFileEncoding = startupTextFileEncoding;
 let currentMapAutoDockTileInfoLeft = startupMapAutoDockTileInfoLeft;
 let currentWriteLogFiles = startupWriteLogFiles;
@@ -553,6 +587,36 @@ function sendReloadAfterSaveSelection(enabled) {
   target.webContents.send('manager:reload-after-save-selected', currentReloadAfterSave);
 }
 
+function sendAutoAddImportedResourceIconsSelection(enabled) {
+  currentAutoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(enabled);
+  try {
+    persistSettingsPatch({ autoAddImportedResourceIcons: currentAutoAddImportedResourceIcons });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:resource-settings-selected', {
+    autoAddImportedResourceIcons: currentAutoAddImportedResourceIcons
+  });
+}
+
+function sendAutoAddImportedUnitIconsSelection(enabled) {
+  currentAutoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(enabled);
+  try {
+    persistSettingsPatch({ autoAddImportedUnitIcons: currentAutoAddImportedUnitIcons });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:unit-settings-selected', {
+    autoAddImportedUnitIcons: currentAutoAddImportedUnitIcons
+  });
+}
+
 function sendTextFileEncodingSelection(value) {
   currentTextFileEncoding = normalizeTextFileEncoding(value);
   try {
@@ -727,6 +791,28 @@ function buildAppMenu() {
               }
             ]
           },
+          {
+            label: 'Resources',
+            submenu: [
+              {
+                label: 'Automatically Add Imported Resource Icons to resources.pcx',
+                type: 'checkbox',
+                checked: currentAutoAddImportedResourceIcons,
+                click: (item) => sendAutoAddImportedResourceIconsSelection(item && item.checked)
+              }
+            ]
+          },
+          {
+            label: 'Units',
+            submenu: [
+              {
+                label: 'Automatically Add Imported Unit Icons to units_32.pcx',
+                type: 'checkbox',
+                checked: currentAutoAddImportedUnitIcons,
+                click: (item) => sendAutoAddImportedUnitIconsSelection(item && item.checked)
+              }
+            ]
+          },
           { type: 'separator' },
           {
             label: 'Performance',
@@ -821,6 +907,8 @@ ipcMain.handle('manager:get-settings', async () => {
     performanceMode: 'high',
     runQualityChecks: true,
     reloadAfterSave: false,
+    autoAddImportedResourceIcons: true,
+    autoAddImportedUnitIcons: true,
     mapAutoDockTileInfoLeft: true,
     writeLogFiles: true,
     logFolder: getDefaultLogFolderUnsafe(),
@@ -833,6 +921,8 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.reloadAfterSave = normalizeReloadAfterSave(merged.reloadAfterSave);
+  merged.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(merged.autoAddImportedResourceIcons);
+  merged.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(merged.autoAddImportedUnitIcons);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
   merged.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(merged.mapAutoDockTileInfoLeft);
   merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
@@ -843,6 +933,8 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.reloadAfterSave = normalizeReloadAfterSave(inferred.reloadAfterSave);
+  inferred.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(inferred.autoAddImportedResourceIcons);
+  inferred.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(inferred.autoAddImportedUnitIcons);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
   inferred.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(inferred.mapAutoDockTileInfoLeft);
   inferred.writeLogFiles = normalizeWriteLogFiles(inferred.writeLogFiles);
@@ -850,6 +942,8 @@ ipcMain.handle('manager:get-settings', async () => {
   currentPerformanceMode = inferred.performanceMode;
   currentRunQualityChecks = inferred.runQualityChecks;
   currentReloadAfterSave = inferred.reloadAfterSave;
+  currentAutoAddImportedResourceIcons = inferred.autoAddImportedResourceIcons;
+  currentAutoAddImportedUnitIcons = inferred.autoAddImportedUnitIcons;
   currentTextFileEncoding = inferred.textFileEncoding;
   currentMapAutoDockTileInfoLeft = inferred.mapAutoDockTileInfoLeft;
   currentWriteLogFiles = inferred.writeLogFiles;
@@ -862,7 +956,7 @@ ipcMain.handle('manager:get-settings', async () => {
   applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
-  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}`);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
   log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
   if (inferred.mode === 'scenario') {
@@ -881,6 +975,8 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode),
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
     reloadAfterSave: normalizeReloadAfterSave(settings && settings.reloadAfterSave),
+    autoAddImportedResourceIcons: normalizeAutoAddImportedResourceIcons(settings && settings.autoAddImportedResourceIcons),
+    autoAddImportedUnitIcons: normalizeAutoAddImportedUnitIcons(settings && settings.autoAddImportedUnitIcons),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
     mapAutoDockTileInfoLeft: normalizeMapAutoDockTileInfoLeft(settings && settings.mapAutoDockTileInfoLeft),
     writeLogFiles: normalizeWriteLogFiles(settings && settings.writeLogFiles),
@@ -889,7 +985,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   log.setCiv3Root(normalized.civ3Path || '');
   applyLogContextFromPayload(normalized);
   log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
-  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}`);
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
     log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
@@ -906,6 +1002,14 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentReloadAfterSave !== normalized.reloadAfterSave) {
     currentReloadAfterSave = normalized.reloadAfterSave;
+    buildAppMenu();
+  }
+  if (currentAutoAddImportedResourceIcons !== normalized.autoAddImportedResourceIcons) {
+    currentAutoAddImportedResourceIcons = normalized.autoAddImportedResourceIcons;
+    buildAppMenu();
+  }
+  if (currentAutoAddImportedUnitIcons !== normalized.autoAddImportedUnitIcons) {
+    currentAutoAddImportedUnitIcons = normalized.autoAddImportedUnitIcons;
     buildAppMenu();
   }
   if (currentTextFileEncoding !== normalized.textFileEncoding) {

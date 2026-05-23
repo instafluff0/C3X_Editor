@@ -1,4 +1,9 @@
 * RELEASE 27.11.1
+- Added BIQ writer and no-reload clean-state guard tests so editable BIQ UI fields must emit save edits and successful no-reload saves must clear representative BIQ tab dirty state.
+- Changed the derived BIQ Improvement category display field to read-only, leaving the persisted Wonder and Small Wonder bits as the editable category controls.
+- Added automatic Scenario resource imports that append the source `resources.pcx` map icon into a scenario-local `Art\resources.pcx`, grow the atlas with a magenta row when needed, rewrite only the imported resource's icon index, and expose a default-on File -> Settings -> Resources toggle for disabling it.
+- Added automatic Scenario unit imports that append the source `units_32.pcx` icon into a scenario-local `Art\Units\units_32.pcx`, grow the atlas with a magenta row when needed, rewrite only the imported unit's icon index, and expose a default-on File -> Settings -> Units toggle for disabling it.
+- Added Map Resize edge-anchor controls for east/west and north/south growth or trimming, with matching minimap preview, save-time BIQ resize behavior, and fixture-backed coverage for placed map content staying on the intended tiles.
 - Added a C3X base-tab `Next` warning control that jumps to the next warned setting row and marks warned rows inline.
 - Added async C3X base quality checks for unmatched building, unit, resource, technology, and government names inside structured C3X settings such as generated resources, prereqs, perfume lists, and unit limits.
 - Added a BIQ field inventory guard that fails when an editable or synthetic BIQ UI field is not represented in generated save/reload mutation coverage.

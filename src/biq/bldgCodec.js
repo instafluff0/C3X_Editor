@@ -204,7 +204,8 @@ function projectImprovementBiqFields({ rawFields, civilopediaEntry, flavorCount 
   pushField(
     'improvement',
     boolString(!readBit(otherCharValue, OTHER_CHAR_BITS.wonder) && !readBit(otherCharValue, OTHER_CHAR_BITS.smallwonder)),
-    boolString(!readBit(otherCharOriginal, OTHER_CHAR_BITS.wonder) && !readBit(otherCharOriginal, OTHER_CHAR_BITS.smallwonder))
+    boolString(!readBit(otherCharOriginal, OTHER_CHAR_BITS.wonder) && !readBit(otherCharOriginal, OTHER_CHAR_BITS.smallwonder)),
+    false
   );
 
   const smallWonderValue = parseIntLoose(readRawField('small_wonder_characteristics', 0).value, 0);

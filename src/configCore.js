@@ -16,6 +16,15 @@ const { projectUnitBiqFields, collapseUnitBiqFields } = require('./biq/unitCodec
 const { parseAllSections } = require('./biq/biqSections');
 const C3X_BASE_MANIFEST = require('./c3xBaseManifest');
 
+const RESOURCE_ATLAS_RELATIVE_PATH = 'Art/resources.pcx';
+const RESOURCE_ATLAS_COLS = 6;
+const RESOURCE_ATLAS_CELL_SIZE = 50;
+const RESOURCE_ATLAS_MAGENTA = { r: 255, g: 0, b: 255 };
+const UNIT_ATLAS_RELATIVE_PATH = 'Art/Units/units_32.pcx';
+const UNIT_ATLAS_SPRITE_SIZE = 32;
+const UNIT_ATLAS_GUTTER = 1;
+const UNIT_ATLAS_MAGENTA = RESOURCE_ATLAS_MAGENTA;
+
 const FILE_SPECS = {
   base: {
     defaultName: 'default.c3x_config.ini',
@@ -2993,6 +3002,14 @@ function getProtectedBaseCiv3Paths(civ3Path) {
   ['Civilopedia.txt', 'PediaIcons.txt', 'diplomacy.txt'].forEach((name) => {
     coreTextBases.forEach((base) => out.add(normalizePathForCompare(path.join(base, name))));
   });
+  [
+    path.join(root, 'Art', 'resources.pcx'),
+    path.join(root, 'Conquests', 'Art', 'resources.pcx'),
+    path.join(root, 'civ3PTW', 'Art', 'resources.pcx'),
+    path.join(root, 'Art', 'Units', 'units_32.pcx'),
+    path.join(root, 'Conquests', 'Art', 'Units', 'units_32.pcx'),
+    path.join(root, 'civ3PTW', 'Art', 'Units', 'units_32.pcx')
+  ].forEach((candidate) => out.add(normalizePathForCompare(candidate)));
   out.add(normalizePathForCompare(path.join(root, 'Conquests', 'conquests.biq')));
   return out;
 }
@@ -6640,6 +6657,660 @@ function resolveArtFileFromRoots(relPath, searchRoots) {
   return null;
 }
 
+function paletteRgbAt(palette, index) {
+  const idx = Number(index) | 0;
+  return {
+    r: palette[idx * 3],
+    g: palette[idx * 3 + 1],
+    b: palette[idx * 3 + 2]
+  };
+}
+
+function paletteColorMatches(palette, index, color) {
+  if (!palette || index < 0 || index > 255) return false;
+  return palette[index * 3] === color.r
+    && palette[index * 3 + 1] === color.g
+    && palette[index * 3 + 2] === color.b;
+}
+
+function findPaletteColorIndex(palette, color, preferredIndex = -1) {
+  if (Number.isInteger(preferredIndex) && preferredIndex >= 0 && preferredIndex <= 255 && paletteColorMatches(palette, preferredIndex, color)) {
+    return preferredIndex;
+  }
+  for (let idx = 0; idx < 256; idx += 1) {
+    if (paletteColorMatches(palette, idx, color)) return idx;
+  }
+  return -1;
+}
+
+function getIndexedResourceAtlas(buffer, label = 'resources.pcx') {
+  const decoded = decodePcx(buffer, { returnIndexed: true, transparentIndexes: [] });
+  if (!decoded || !decoded.indices || !decoded.palette) {
+    throw new Error(`${label} must be an indexed 256-color PCX file.`);
+  }
+  if (decoded.width < RESOURCE_ATLAS_COLS * RESOURCE_ATLAS_CELL_SIZE) {
+    throw new Error(`${label} is too narrow for a Civ3 resources.pcx atlas.`);
+  }
+  const rows = Math.floor(decoded.height / RESOURCE_ATLAS_CELL_SIZE);
+  if (rows < 1) {
+    throw new Error(`${label} does not contain any full resource icon rows.`);
+  }
+  const magentaIndex = findPaletteColorIndex(decoded.palette, RESOURCE_ATLAS_MAGENTA, 255);
+  if (magentaIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
+  }
+  return { ...decoded, rows, magentaIndex };
+}
+
+function isPaletteIndexMagenta(palette, index, magentaIndex) {
+  return index === magentaIndex || paletteColorMatches(palette, index, RESOURCE_ATLAS_MAGENTA);
+}
+
+function isResourceAtlasCellEmpty(atlas, cellIndex) {
+  const idx = Number(cellIndex) | 0;
+  if (!atlas || idx < 0) return false;
+  const row = Math.floor(idx / RESOURCE_ATLAS_COLS);
+  const col = idx % RESOURCE_ATLAS_COLS;
+  if (row < 0 || row >= atlas.rows) return false;
+  const startX = col * RESOURCE_ATLAS_CELL_SIZE;
+  const startY = row * RESOURCE_ATLAS_CELL_SIZE;
+  for (let y = 0; y < RESOURCE_ATLAS_CELL_SIZE; y += 1) {
+    const rowOff = (startY + y) * atlas.width + startX;
+    for (let x = 0; x < RESOURCE_ATLAS_CELL_SIZE; x += 1) {
+      const paletteIndex = atlas.indices[rowOff + x];
+      if (!isPaletteIndexMagenta(atlas.palette, paletteIndex, atlas.magentaIndex)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function findNextResourceAtlasSlot(targetBuffer) {
+  const atlas = getIndexedResourceAtlas(targetBuffer, 'target resources.pcx');
+  const slotCount = atlas.rows * RESOURCE_ATLAS_COLS;
+  let lastOccupied = -1;
+  for (let idx = 0; idx < slotCount; idx += 1) {
+    if (!isResourceAtlasCellEmpty(atlas, idx)) lastOccupied = idx;
+  }
+  return {
+    index: lastOccupied + 1,
+    lastOccupied,
+    rows: atlas.rows,
+    capacity: slotCount
+  };
+}
+
+function getIndexedUnitAtlas(buffer, label = 'units_32.pcx') {
+  const decoded = decodePcx(buffer, { returnIndexed: true, transparentIndexes: [] });
+  if (!decoded || !decoded.indices || !decoded.palette) {
+    throw new Error(`${label} must be an indexed 256-color PCX file.`);
+  }
+  const stride = UNIT_ATLAS_SPRITE_SIZE + UNIT_ATLAS_GUTTER;
+  if (decoded.width < UNIT_ATLAS_GUTTER + UNIT_ATLAS_SPRITE_SIZE) {
+    throw new Error(`${label} is too narrow for a Civ3 units_32.pcx atlas.`);
+  }
+  const cols = Math.floor((decoded.width - UNIT_ATLAS_GUTTER) / stride);
+  const rows = Math.floor((decoded.height - UNIT_ATLAS_GUTTER) / stride);
+  if (cols < 1 || rows < 1) {
+    throw new Error(`${label} does not contain any full unit icon cells.`);
+  }
+  const magentaIndex = findPaletteColorIndex(decoded.palette, UNIT_ATLAS_MAGENTA, 255);
+  if (magentaIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
+  }
+  return { ...decoded, cols, rows, stride, gutter: UNIT_ATLAS_GUTTER, spriteSize: UNIT_ATLAS_SPRITE_SIZE, magentaIndex };
+}
+
+function isUnitAtlasCellEmpty(atlas, cellIndex) {
+  const idx = Number(cellIndex) | 0;
+  if (!atlas || idx < 0) return false;
+  const row = Math.floor(idx / atlas.cols);
+  const col = idx % atlas.cols;
+  if (row < 0 || row >= atlas.rows) return false;
+  const startX = col * atlas.stride + atlas.gutter;
+  const startY = row * atlas.stride + atlas.gutter;
+  for (let y = 0; y < atlas.spriteSize; y += 1) {
+    const rowOff = (startY + y) * atlas.width + startX;
+    for (let x = 0; x < atlas.spriteSize; x += 1) {
+      const paletteIndex = atlas.indices[rowOff + x];
+      if (!isPaletteIndexMagenta(atlas.palette, paletteIndex, atlas.magentaIndex)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function findNextUnitAtlasSlot(targetBuffer) {
+  const atlas = getIndexedUnitAtlas(targetBuffer, 'target units_32.pcx');
+  const slotCount = atlas.rows * atlas.cols;
+  let lastOccupied = -1;
+  for (let idx = 0; idx < slotCount; idx += 1) {
+    if (!isUnitAtlasCellEmpty(atlas, idx)) lastOccupied = idx;
+  }
+  return {
+    index: lastOccupied + 1,
+    lastOccupied,
+    rows: atlas.rows,
+    cols: atlas.cols,
+    capacity: slotCount
+  };
+}
+
+function makePaletteRemap(sourcePalette, targetPalette, targetMagentaIndex) {
+  const remap = new Uint8Array(256);
+  for (let srcIdx = 0; srcIdx < 256; srcIdx += 1) {
+    const color = paletteRgbAt(sourcePalette, srcIdx);
+    if (color.r === RESOURCE_ATLAS_MAGENTA.r && color.g === RESOURCE_ATLAS_MAGENTA.g && color.b === RESOURCE_ATLAS_MAGENTA.b) {
+      remap[srcIdx] = targetMagentaIndex;
+      continue;
+    }
+    const exact = findPaletteColorIndex(targetPalette, color);
+    if (exact >= 0 && exact !== targetMagentaIndex) {
+      remap[srcIdx] = exact;
+      continue;
+    }
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    for (let targetIdx = 0; targetIdx < 256; targetIdx += 1) {
+      if (targetIdx === targetMagentaIndex) continue;
+      const targetColor = paletteRgbAt(targetPalette, targetIdx);
+      const dr = color.r - targetColor.r;
+      const dg = color.g - targetColor.g;
+      const db = color.b - targetColor.b;
+      const distance = dr * dr + dg * dg + db * db;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = targetIdx;
+        if (distance === 0) break;
+      }
+    }
+    remap[srcIdx] = bestIndex;
+  }
+  return remap;
+}
+
+function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIconIndex }) {
+  const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
+    throw new Error(`Invalid source resource icon index: ${sourceIconIndex}`);
+  }
+  const target = getIndexedResourceAtlas(targetBuffer, 'target resources.pcx');
+  const source = getIndexedResourceAtlas(sourceBuffer, 'source resources.pcx');
+  if (sourceIndex >= source.rows * RESOURCE_ATLAS_COLS) {
+    throw new Error(`Source resource icon index ${sourceIndex} is outside source resources.pcx.`);
+  }
+
+  const slot = findNextResourceAtlasSlot(targetBuffer);
+  const targetIndex = slot.index;
+  const requiredRows = Math.floor(targetIndex / RESOURCE_ATLAS_COLS) + 1;
+  const newHeight = Math.max(target.height, requiredRows * RESOURCE_ATLAS_CELL_SIZE);
+  const nextIndices = new Uint8Array(target.width * newHeight);
+  nextIndices.fill(target.magentaIndex);
+  for (let y = 0; y < target.height; y += 1) {
+    nextIndices.set(
+      target.indices.subarray(y * target.width, (y + 1) * target.width),
+      y * target.width
+    );
+  }
+
+  const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
+  const srcCol = sourceIndex % RESOURCE_ATLAS_COLS;
+  const srcRow = Math.floor(sourceIndex / RESOURCE_ATLAS_COLS);
+  const dstCol = targetIndex % RESOURCE_ATLAS_COLS;
+  const dstRow = Math.floor(targetIndex / RESOURCE_ATLAS_COLS);
+  const srcX = srcCol * RESOURCE_ATLAS_CELL_SIZE;
+  const srcY = srcRow * RESOURCE_ATLAS_CELL_SIZE;
+  const dstX = dstCol * RESOURCE_ATLAS_CELL_SIZE;
+  const dstY = dstRow * RESOURCE_ATLAS_CELL_SIZE;
+
+  for (let y = 0; y < RESOURCE_ATLAS_CELL_SIZE; y += 1) {
+    const sourceRow = (srcY + y) * source.width + srcX;
+    const targetRow = (dstY + y) * target.width + dstX;
+    for (let x = 0; x < RESOURCE_ATLAS_CELL_SIZE; x += 1) {
+      nextIndices[targetRow + x] = remap[source.indices[sourceRow + x]];
+    }
+  }
+
+  return {
+    buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
+    index: targetIndex,
+    lastOccupied: slot.lastOccupied,
+    oldRows: target.rows,
+    newRows: Math.floor(newHeight / RESOURCE_ATLAS_CELL_SIZE),
+    appendedRow: newHeight > target.height
+  };
+}
+
+function appendUnitIconToUnits32Pcx({ targetBuffer, sourceBuffer, sourceIconIndex }) {
+  const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
+    throw new Error(`Invalid source unit icon index: ${sourceIconIndex}`);
+  }
+  const target = getIndexedUnitAtlas(targetBuffer, 'target units_32.pcx');
+  const source = getIndexedUnitAtlas(sourceBuffer, 'source units_32.pcx');
+  if (sourceIndex >= source.rows * source.cols) {
+    throw new Error(`Source unit icon index ${sourceIndex} is outside source units_32.pcx.`);
+  }
+
+  const slot = findNextUnitAtlasSlot(targetBuffer);
+  const targetIndex = slot.index;
+  const requiredRows = Math.floor(targetIndex / target.cols) + 1;
+  const requiredHeight = requiredRows * target.stride + target.gutter;
+  const newHeight = Math.max(target.height, requiredHeight);
+  const nextIndices = new Uint8Array(target.width * newHeight);
+  nextIndices.fill(target.magentaIndex);
+  for (let y = 0; y < target.height; y += 1) {
+    nextIndices.set(
+      target.indices.subarray(y * target.width, (y + 1) * target.width),
+      y * target.width
+    );
+  }
+
+  const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
+  const srcCol = sourceIndex % source.cols;
+  const srcRow = Math.floor(sourceIndex / source.cols);
+  const dstCol = targetIndex % target.cols;
+  const dstRow = Math.floor(targetIndex / target.cols);
+  const srcX = srcCol * source.stride + source.gutter;
+  const srcY = srcRow * source.stride + source.gutter;
+  const dstX = dstCol * target.stride + target.gutter;
+  const dstY = dstRow * target.stride + target.gutter;
+
+  for (let y = 0; y < UNIT_ATLAS_SPRITE_SIZE; y += 1) {
+    const sourceRow = (srcY + y) * source.width + srcX;
+    const targetRow = (dstY + y) * target.width + dstX;
+    for (let x = 0; x < UNIT_ATLAS_SPRITE_SIZE; x += 1) {
+      nextIndices[targetRow + x] = remap[source.indices[sourceRow + x]];
+    }
+  }
+
+  return {
+    buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
+    index: targetIndex,
+    lastOccupied: slot.lastOccupied,
+    oldRows: target.rows,
+    newRows: Math.floor((newHeight - target.gutter) / target.stride),
+    appendedRow: newHeight > target.height
+  };
+}
+
+function getBiqFieldByBaseKey(entry, key) {
+  const target = String(key || '').trim().toLowerCase();
+  return (Array.isArray(entry && entry.biqFields) ? entry.biqFields : []).find((field) =>
+    String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target
+  ) || null;
+}
+
+function applyImportedResourceIconAtlasAssignments({ resourceTab, targetAtlasBuffer, loadSourceAtlasBuffer }) {
+  if (!resourceTab || !Array.isArray(resourceTab.recordOps) || !Array.isArray(resourceTab.entries)) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
+  }
+  const importOps = resourceTab.recordOps.filter(
+    (op) => String(op && op.op || '').toLowerCase() === 'add'
+      && String(op && op.importArtFrom || '').trim()
+  );
+  if (importOps.length === 0) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
+  }
+  if (!Buffer.isBuffer(targetAtlasBuffer)) {
+    return { ok: false, error: 'Could not load target resources.pcx for imported resource icons.' };
+  }
+  let workingBuffer = targetAtlasBuffer;
+  const assignments = [];
+  const sourceBufferCache = new Map();
+
+  for (const op of importOps) {
+    const newRef = String(op.newRecordRef || '').trim().toUpperCase();
+    const sourceBiqPath = String(op.importArtFrom || '').trim();
+    if (!newRef || !sourceBiqPath) continue;
+    const entry = resourceTab.entries.find((candidate) =>
+      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
+    );
+    if (!entry) {
+      return { ok: false, error: `Could not find imported resource entry ${newRef} for resources.pcx update.` };
+    }
+    const iconField = getBiqFieldByBaseKey(entry, 'icon');
+    if (!iconField) {
+      return { ok: false, error: `Imported resource ${newRef} has no resources.pcx icon field.` };
+    }
+    const pendingIcon = entry && entry._pendingImportedResourceIcon && typeof entry._pendingImportedResourceIcon === 'object'
+      ? entry._pendingImportedResourceIcon
+      : null;
+    const pendingSourceIndex = Number.parseInt(String(pendingIcon && pendingIcon.sourceIconIndex), 10);
+    const sourceIconIndex = Number.isFinite(pendingSourceIndex) && pendingSourceIndex >= 0
+      ? pendingSourceIndex
+      : Number.parseInt(String(iconField.value == null ? iconField.originalValue : iconField.value), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      return { ok: false, error: `Imported resource ${newRef} has invalid source resources.pcx icon index.` };
+    }
+    if (!sourceBufferCache.has(sourceBiqPath)) {
+      let sourceBuffer = null;
+      try {
+        sourceBuffer = typeof loadSourceAtlasBuffer === 'function' ? loadSourceAtlasBuffer(sourceBiqPath) : null;
+      } catch (_err) {
+        sourceBuffer = null;
+      }
+      if (!Buffer.isBuffer(sourceBuffer)) {
+        return { ok: false, error: `Could not load source resources.pcx for imported resource ${newRef}.` };
+      }
+      sourceBufferCache.set(sourceBiqPath, sourceBuffer);
+    }
+    try {
+      const result = appendResourceIconToResourcesPcx({
+        targetBuffer: workingBuffer,
+        sourceBuffer: sourceBufferCache.get(sourceBiqPath),
+        sourceIconIndex
+      });
+      workingBuffer = result.buffer;
+      iconField.value = String(result.index);
+      assignments.push({
+        civilopediaKey: newRef,
+        sourceIconIndex,
+        targetIconIndex: result.index,
+        appendedRow: result.appendedRow
+      });
+    } catch (err) {
+      return { ok: false, error: `Could not append resources.pcx icon for ${newRef}: ${err.message}` };
+    }
+  }
+
+  return {
+    ok: true,
+    changed: assignments.length > 0,
+    buffer: workingBuffer,
+    assignments
+  };
+}
+
+function applyImportedUnitIconAtlasAssignments({ unitsTab, targetAtlasBuffer, loadSourceAtlasBuffer }) {
+  if (!unitsTab || !Array.isArray(unitsTab.recordOps) || !Array.isArray(unitsTab.entries)) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
+  }
+  const importOps = unitsTab.recordOps.filter(
+    (op) => String(op && op.op || '').toLowerCase() === 'add'
+      && String(op && op.importArtFrom || '').trim()
+  );
+  if (importOps.length === 0) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
+  }
+  if (!Buffer.isBuffer(targetAtlasBuffer)) {
+    return { ok: false, error: 'Could not load target units_32.pcx for imported unit icons.' };
+  }
+  let workingBuffer = targetAtlasBuffer;
+  const assignments = [];
+  const sourceBufferCache = new Map();
+
+  for (const op of importOps) {
+    const newRef = String(op.newRecordRef || '').trim().toUpperCase();
+    const sourceBiqPath = String(op.importArtFrom || '').trim();
+    if (!newRef || !sourceBiqPath) continue;
+    const entry = unitsTab.entries.find((candidate) =>
+      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
+    );
+    if (!entry) {
+      return { ok: false, error: `Could not find imported unit entry ${newRef} for units_32.pcx update.` };
+    }
+    const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
+    if (!iconField) {
+      return { ok: false, error: `Imported unit ${newRef} has no units_32 icon index field.` };
+    }
+    const pendingIcon = entry && entry._pendingImportedUnitIcon && typeof entry._pendingImportedUnitIcon === 'object'
+      ? entry._pendingImportedUnitIcon
+      : null;
+    const pendingSourceIndex = Number.parseInt(String(pendingIcon && pendingIcon.sourceIconIndex), 10);
+    const sourceIconIndex = Number.isFinite(pendingSourceIndex) && pendingSourceIndex >= 0
+      ? pendingSourceIndex
+      : Number.parseInt(String(iconField.value == null ? iconField.originalValue : iconField.value), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      return { ok: false, error: `Imported unit ${newRef} has invalid source units_32 icon index.` };
+    }
+    if (!sourceBufferCache.has(sourceBiqPath)) {
+      let sourceBuffer = null;
+      try {
+        sourceBuffer = typeof loadSourceAtlasBuffer === 'function' ? loadSourceAtlasBuffer(sourceBiqPath) : null;
+      } catch (_err) {
+        sourceBuffer = null;
+      }
+      if (!Buffer.isBuffer(sourceBuffer)) {
+        return { ok: false, error: `Could not load source units_32.pcx for imported unit ${newRef}.` };
+      }
+      sourceBufferCache.set(sourceBiqPath, sourceBuffer);
+    }
+    try {
+      const result = appendUnitIconToUnits32Pcx({
+        targetBuffer: workingBuffer,
+        sourceBuffer: sourceBufferCache.get(sourceBiqPath),
+        sourceIconIndex
+      });
+      workingBuffer = result.buffer;
+      iconField.value = String(result.index);
+      assignments.push({
+        civilopediaKey: newRef,
+        sourceIconIndex,
+        targetIconIndex: result.index,
+        appendedRow: result.appendedRow
+      });
+    } catch (err) {
+      return { ok: false, error: `Could not append units_32.pcx icon for ${newRef}: ${err.message}` };
+    }
+  }
+
+  return {
+    ok: true,
+    changed: assignments.length > 0,
+    buffer: workingBuffer,
+    assignments
+  };
+}
+
+function resolveResourcesAtlasPath({ civ3Path, targetContentRoot, scenarioRoots }) {
+  const rel = RESOURCE_ATLAS_RELATIVE_PATH;
+  const candidates = [];
+  const add = (candidate) => {
+    if (!candidate) return;
+    const resolved = path.resolve(candidate);
+    if (candidates.some((entry) => normalizePathForCompare(entry) === normalizePathForCompare(resolved))) return;
+    candidates.push(resolved);
+  };
+  add(targetContentRoot ? path.join(targetContentRoot, rel) : '');
+  (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => add(path.join(root, rel)));
+  const civ3Root = resolveCiv3RootPath(civ3Path);
+  if (civ3Root) {
+    add(path.join(civ3Root, 'Conquests', rel));
+    add(path.join(civ3Root, 'civ3PTW', rel));
+    add(path.join(civ3Root, rel));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch (_err) {
+      // skip unreadable candidates
+    }
+  }
+  return '';
+}
+
+function resolveUnits32AtlasPath({ civ3Path, targetContentRoot, scenarioRoots }) {
+  const rel = UNIT_ATLAS_RELATIVE_PATH;
+  const candidates = [];
+  const add = (candidate) => {
+    if (!candidate) return;
+    const resolved = path.resolve(candidate);
+    if (candidates.some((entry) => normalizePathForCompare(entry) === normalizePathForCompare(resolved))) return;
+    candidates.push(resolved);
+  };
+  add(targetContentRoot ? path.join(targetContentRoot, ...rel.split('/')) : '');
+  (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => add(path.join(root, ...rel.split('/'))));
+  const civ3Root = resolveCiv3RootPath(civ3Path);
+  if (civ3Root) {
+    add(path.join(civ3Root, 'Conquests', ...rel.split('/')));
+    add(path.join(civ3Root, 'civ3PTW', ...rel.split('/')));
+    add(path.join(civ3Root, ...rel.split('/')));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch (_err) {
+      // skip unreadable candidates
+    }
+  }
+  return '';
+}
+
+function prepareImportedResourceIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
+  const resourceTab = tabs && tabs.resources;
+  if (!resourceTab || !Array.isArray(resourceTab.recordOps)) return { ok: true, changed: false };
+  const hasResourceImport = resourceTab.recordOps.some(
+    (op) => String(op && op.op || '').toLowerCase() === 'add'
+      && String(op && op.importArtFrom || '').trim()
+  );
+  if (!hasResourceImport) return { ok: true, changed: false };
+
+  const targetRoot = String(targetContentRoot || '').trim();
+  if (!targetRoot) return { ok: false, error: 'Could not determine target scenario folder for resources.pcx.' };
+  const targetPath = path.join(targetRoot, ...RESOURCE_ATLAS_RELATIVE_PATH.split('/'));
+  let targetSourcePath = '';
+  const pending = resourceTab.pendingAtlasCopies && typeof resourceTab.pendingAtlasCopies === 'object'
+    ? resourceTab.pendingAtlasCopies.resources
+    : null;
+  if (pending && pending.staged && isAbsoluteFilesystemPath(pending.sourcePath)) {
+    targetSourcePath = String(pending.sourcePath || '').trim();
+  } else {
+    targetSourcePath = resolveResourcesAtlasPath({
+      civ3Path,
+      targetContentRoot: targetRoot,
+      scenarioRoots
+    });
+  }
+  if (!targetSourcePath) {
+    return { ok: false, error: 'Could not find a target resources.pcx to copy before importing resource icons.' };
+  }
+
+  let targetAtlasBuffer;
+  try {
+    targetAtlasBuffer = fs.readFileSync(targetSourcePath);
+  } catch (err) {
+    return { ok: false, error: `Could not read target resources.pcx: ${targetSourcePath} (${err.message})` };
+  }
+
+  const sourceRootsCache = new Map();
+  const getSourceRoots = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceRootsCache.has(cacheKey)) return sourceRootsCache.get(cacheKey);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots]);
+    } catch (_err) {
+      roots = dedupePathList([resolveScenarioDir(sourceBiqPath)]);
+    }
+    sourceRootsCache.set(cacheKey, roots);
+    return roots;
+  };
+
+  const update = applyImportedResourceIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer,
+    loadSourceAtlasBuffer: (sourceBiqPath) => {
+      const sourcePath = resolveResourcesAtlasPath({
+        civ3Path,
+        targetContentRoot: '',
+        scenarioRoots: getSourceRoots(sourceBiqPath)
+      });
+      return sourcePath ? fs.readFileSync(sourcePath) : null;
+    }
+  });
+  if (!update.ok) return update;
+  if (!update.changed) return { ok: true, changed: false };
+  return {
+    ok: true,
+    changed: true,
+    path: targetPath,
+    sourcePath: targetSourcePath,
+    data: update.buffer,
+    assignments: update.assignments
+  };
+}
+
+function prepareImportedUnitIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
+  const unitsTab = tabs && tabs.units;
+  if (!unitsTab || !Array.isArray(unitsTab.recordOps)) return { ok: true, changed: false };
+  const hasUnitImport = unitsTab.recordOps.some(
+    (op) => String(op && op.op || '').toLowerCase() === 'add'
+      && String(op && op.importArtFrom || '').trim()
+  );
+  if (!hasUnitImport) return { ok: true, changed: false };
+
+  const targetRoot = String(targetContentRoot || '').trim();
+  if (!targetRoot) return { ok: false, error: 'Could not determine target scenario folder for units_32.pcx.' };
+  const targetPath = path.join(targetRoot, ...UNIT_ATLAS_RELATIVE_PATH.split('/'));
+  let targetSourcePath = '';
+  const pending = unitsTab.pendingAtlasCopies && typeof unitsTab.pendingAtlasCopies === 'object'
+    ? unitsTab.pendingAtlasCopies.units32
+    : null;
+  if (pending && pending.staged && isAbsoluteFilesystemPath(pending.sourcePath)) {
+    targetSourcePath = String(pending.sourcePath || '').trim();
+  } else {
+    targetSourcePath = resolveUnits32AtlasPath({
+      civ3Path,
+      targetContentRoot: targetRoot,
+      scenarioRoots
+    });
+  }
+  if (!targetSourcePath) {
+    return { ok: false, error: 'Could not find a target units_32.pcx to copy before importing unit icons.' };
+  }
+
+  let targetAtlasBuffer;
+  try {
+    targetAtlasBuffer = fs.readFileSync(targetSourcePath);
+  } catch (err) {
+    return { ok: false, error: `Could not read target units_32.pcx: ${targetSourcePath} (${err.message})` };
+  }
+
+  const sourceRootsCache = new Map();
+  const getSourceRoots = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceRootsCache.has(cacheKey)) return sourceRootsCache.get(cacheKey);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots]);
+    } catch (_err) {
+      roots = dedupePathList([resolveScenarioDir(sourceBiqPath)]);
+    }
+    sourceRootsCache.set(cacheKey, roots);
+    return roots;
+  };
+
+  const update = applyImportedUnitIconAtlasAssignments({
+    unitsTab,
+    targetAtlasBuffer,
+    loadSourceAtlasBuffer: (sourceBiqPath) => {
+      const sourcePath = resolveUnits32AtlasPath({
+        civ3Path,
+        targetContentRoot: '',
+        scenarioRoots: getSourceRoots(sourceBiqPath)
+      });
+      return sourcePath ? fs.readFileSync(sourcePath) : null;
+    }
+  });
+  if (!update.ok) return update;
+  if (!update.changed) return { ok: true, changed: false };
+  return {
+    ok: true,
+    changed: true,
+    path: targetPath,
+    sourcePath: targetSourcePath,
+    data: update.buffer,
+    assignments: update.assignments
+  };
+}
+
 // Imported units always start at icon index 0. The target scenario's units_32.pcx
 // is never rewritten automatically because atlas layout is mod-specific.
 function spliceImportedUnitIconsIntoAtlas({ tabs }) {
@@ -6852,6 +7523,8 @@ function buildSavePlan(payload) {
 
   const saveReport = [];
   const plannedWrites = [];
+  let importedResourceAtlasWrite = null;
+  let importedUnitAtlasWrite = null;
   const dirtyTabs = new Set(
     Array.isArray(payload && payload.dirtyTabs)
       ? payload.dirtyTabs.map((tabKey) => String(tabKey || ''))
@@ -6943,10 +7616,33 @@ function buildSavePlan(payload) {
     if (!shouldCollectBiqEdits) {
       log.debug('BiqSave', `buildSavePlan: skipped BIQ edit collection for non-BIQ dirtyTabs=[${Array.from(dirtyTabs).join(', ')}]`);
     } else {
-      // Imported units always start at icon index 0; units_32.pcx edits stay manual.
-      spliceImportedUnitIconsIntoAtlas({
-        tabs: payload.tabs || {}
-      });
+      if (payload.autoAddImportedUnitIcons === false) {
+        // Disabled compatibility path: keep imported units on the first units_32 slot for manual reassignment.
+        spliceImportedUnitIconsIntoAtlas({
+          tabs: payload.tabs || {}
+        });
+      } else {
+        importedUnitAtlasWrite = prepareImportedUnitIconAtlasWrite({
+          tabs: payload.tabs || {},
+          targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+          scenarioRoots: scenarioContext.searchRoots,
+          civ3Path
+        });
+        if (importedUnitAtlasWrite && !importedUnitAtlasWrite.ok) {
+          return { ok: false, error: importedUnitAtlasWrite.error || 'Failed to update units_32.pcx for imported unit icons.' };
+        }
+      }
+      if (payload.autoAddImportedResourceIcons !== false) {
+        importedResourceAtlasWrite = prepareImportedResourceIconAtlasWrite({
+          tabs: payload.tabs || {},
+          targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+          scenarioRoots: scenarioContext.searchRoots,
+          civ3Path
+        });
+        if (importedResourceAtlasWrite && !importedResourceAtlasWrite.ok) {
+          return { ok: false, error: importedResourceAtlasWrite.error || 'Failed to update resources.pcx for imported resource icons.' };
+        }
+      }
 
       const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
         tabs: payload.tabs || {},
@@ -7233,6 +7929,12 @@ function buildSavePlan(payload) {
       targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir
     });
     for (const atlasCopy of atlasCopies) {
+      if (importedResourceAtlasWrite && importedResourceAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedResourceAtlasWrite.path)) {
+        continue;
+      }
+      if (importedUnitAtlasWrite && importedUnitAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedUnitAtlasWrite.path)) {
+        continue;
+      }
       const protectErr = failIfProtected(atlasCopy.targetPath, 'scenario atlas copy target');
       if (protectErr) return { ok: false, error: protectErr };
       if (isProtectedBaseCiv3Path(civ3Path, atlasCopy.targetPath)) {
@@ -7246,6 +7948,46 @@ function buildSavePlan(payload) {
       }
       plannedWrites.push({ kind: 'atlas', path: atlasCopy.targetPath, sourcePath: atlasCopy.sourcePath, data });
       saveReport.push({ kind: 'atlas', path: atlasCopy.targetPath });
+    }
+
+    if (importedResourceAtlasWrite && importedResourceAtlasWrite.changed) {
+      const protectErr = failIfProtected(importedResourceAtlasWrite.path, 'scenario resources.pcx target');
+      if (protectErr) return { ok: false, error: protectErr };
+      if (isProtectedBaseCiv3Path(civ3Path, importedResourceAtlasWrite.path)) {
+        return { ok: false, error: `Refusing to modify base Civilization III file (scenario resources.pcx target): ${importedResourceAtlasWrite.path}` };
+      }
+      plannedWrites.push({
+        kind: 'atlas',
+        path: importedResourceAtlasWrite.path,
+        sourcePath: importedResourceAtlasWrite.sourcePath,
+        data: importedResourceAtlasWrite.data
+      });
+      saveReport.push({
+        kind: 'atlas',
+        path: importedResourceAtlasWrite.path,
+        applied: importedResourceAtlasWrite.assignments.length,
+        detail: `Added ${importedResourceAtlasWrite.assignments.length} imported resource icon${importedResourceAtlasWrite.assignments.length === 1 ? '' : 's'}`
+      });
+    }
+
+    if (importedUnitAtlasWrite && importedUnitAtlasWrite.changed) {
+      const protectErr = failIfProtected(importedUnitAtlasWrite.path, 'scenario units_32.pcx target');
+      if (protectErr) return { ok: false, error: protectErr };
+      if (isProtectedBaseCiv3Path(civ3Path, importedUnitAtlasWrite.path)) {
+        return { ok: false, error: `Refusing to modify base Civilization III file (scenario units_32.pcx target): ${importedUnitAtlasWrite.path}` };
+      }
+      plannedWrites.push({
+        kind: 'atlas',
+        path: importedUnitAtlasWrite.path,
+        sourcePath: importedUnitAtlasWrite.sourcePath,
+        data: importedUnitAtlasWrite.data
+      });
+      saveReport.push({
+        kind: 'atlas',
+        path: importedUnitAtlasWrite.path,
+        applied: importedUnitAtlasWrite.assignments.length,
+        detail: `Added ${importedUnitAtlasWrite.assignments.length} imported unit icon${importedUnitAtlasWrite.assignments.length === 1 ? '' : 's'}`
+      });
     }
   }
 
@@ -8363,12 +9105,25 @@ function getBiqMapResizeOp(tab) {
     && Number(pendingResize.height) === nextHeight
     ? pendingResize.fillTerrain
     : null;
-  return {
+  const pendingHorizontalAnchor = pendingResize
+    && Number(pendingResize.width) === nextWidth
+    && Number(pendingResize.height) === nextHeight
+    ? pendingResize.horizontalAnchor
+    : null;
+  const pendingVerticalAnchor = pendingResize
+    && Number(pendingResize.width) === nextWidth
+    && Number(pendingResize.height) === nextHeight
+    ? pendingResize.verticalAnchor
+    : null;
+  const op = {
     op: 'resizemap',
     width: nextWidth,
     height: nextHeight,
     fillTerrain: pendingFillTerrain
   };
+  if (pendingHorizontalAnchor != null) op.horizontalAnchor = pendingHorizontalAnchor;
+  if (pendingVerticalAnchor != null) op.verticalAnchor = pendingVerticalAnchor;
+  return op;
 }
 
 function collectBiqMapEdits(tabs) {
@@ -9666,9 +10421,17 @@ module.exports = {
   loadBundle,
   saveBundle,
   previewSavePlan,
+  collectBiqReferenceEdits,
+  collectBiqStructureEdits,
   collectBiqMapStructureOps,
   collectBiqMapRecordOps,
   collectBiqMapEdits,
+  findNextResourceAtlasSlot,
+  appendResourceIconToResourcesPcx,
+  applyImportedResourceIconAtlasAssignments,
+  findNextUnitAtlasSlot,
+  appendUnitIconToUnits32Pcx,
+  applyImportedUnitIconAtlasAssignments,
   previewFileDiff,
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,
