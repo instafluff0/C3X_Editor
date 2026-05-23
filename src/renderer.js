@@ -33577,6 +33577,89 @@ function getMapFieldValue(record, key, fallback = '') {
   return String(field.value || '');
 }
 
+function setMapDisplayFieldValue(record, key, value, label = '') {
+  if (!record) return false;
+  const normalizedValue = String(value == null ? '' : value);
+  setRecordDirectValueByBaseKey(record, key, normalizedValue);
+  if (!Array.isArray(record.fields)) record.fields = [];
+  let field = getFieldByBaseKey(record, key);
+  if (!field) {
+    field = {
+      key: String(key || ''),
+      baseKey: String(key || ''),
+      label: String(label || toFriendlyKey(key)),
+      value: '',
+      originalValue: ''
+    };
+    record.fields.push(field);
+  }
+  field.value = normalizedValue;
+  field.originalValue = normalizedValue;
+  field.mapEditorValueEdited = false;
+  return true;
+}
+
+function syncScenarioDistrictDisplayFieldsForMapTab(tab, tileSection = null) {
+  const meta = tab && tab.scenarioDistricts;
+  if (!meta) return;
+  const section = tileSection || (Array.isArray(tab.sections)
+    ? tab.sections.find((item) => String(item && item.code || '').toUpperCase() === 'TILE')
+    : null);
+  const tiles = Array.isArray(section && section.records) ? section.records : [];
+  if (tiles.length === 0) return;
+  const byCoord = new Map();
+  tiles.forEach((record) => {
+    const x = parseIntLoose(getMapFieldValue(record, 'xpos', ''), NaN);
+    const y = parseIntLoose(getMapFieldValue(record, 'ypos', ''), NaN);
+    if (Number.isFinite(x) && Number.isFinite(y)) byCoord.set(`${x},${y}`, record);
+  });
+  if (byCoord.size === 0) return;
+  const districtSections = (((state.bundle && state.bundle.tabs && state.bundle.tabs.districts && state.bundle.tabs.districts.model) || {}).sections || []);
+  const naturalSections = (((state.bundle && state.bundle.tabs && state.bundle.tabs.naturalWonders && state.bundle.tabs.naturalWonders.model) || {}).sections || []);
+  const districtIndexByName = new Map();
+  districtSections.forEach((districtSection, idx) => {
+    const name = normalizeConfigToken(getFieldValue(districtSection, 'name') || `District ${idx + 1}`).toLowerCase();
+    if (name) districtIndexByName.set(name, idx);
+  });
+  const naturalIndexByName = new Map();
+  naturalSections.forEach((naturalSection, idx) => {
+    const name = normalizeConfigToken(getFieldValue(naturalSection, 'name') || `Natural Wonder ${idx + 1}`).toLowerCase();
+    if (name) naturalIndexByName.set(name, idx);
+  });
+  (Array.isArray(meta.entries) ? meta.entries : []).forEach((entry) => {
+    const x = Number(entry && entry.x);
+    const y = Number(entry && entry.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const tile = byCoord.get(`${x},${y}`);
+    if (!tile) return;
+    const districtName = String(entry && entry.district || '').trim();
+    if (!districtName) return;
+    const districtIndex = districtIndexByName.get(normalizeConfigToken(districtName).toLowerCase());
+    if (Number.isFinite(districtIndex) && districtIndex >= 0) {
+      const existingParts = String(getMapFieldValue(tile, 'district', '') || '').split(',').map((part) => parseIntLoose(part, NaN));
+      const existingState = existingParts[0] === districtIndex && Number.isFinite(existingParts[1]) && existingParts[1] >= 0
+        ? existingParts[1]
+        : 2;
+      setMapDisplayFieldValue(tile, 'district', `${districtIndex},${existingState}`, 'District');
+    }
+    setMapDisplayFieldValue(tile, 'districtname', districtName, 'District Name');
+    const wonderName = String(entry && entry.wonderName || '').trim();
+    const wonderCity = String(entry && entry.wonderCity || '').trim();
+    setMapDisplayFieldValue(tile, 'wondername', wonderName, 'Wonder Name');
+    setMapDisplayFieldValue(tile, 'wondercity', wonderCity, 'Wonder City');
+    const naturalIndex = naturalIndexByName.get(normalizeConfigToken(wonderName).toLowerCase());
+    setMapDisplayFieldValue(tile, 'naturalwonder', Number.isFinite(naturalIndex) && naturalIndex >= 0 ? String(naturalIndex) : '', 'Natural Wonder');
+  });
+  (Array.isArray(meta.namedTiles) ? meta.namedTiles : []).forEach((entry) => {
+    const x = Number(entry && entry.x);
+    const y = Number(entry && entry.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const tile = byCoord.get(`${x},${y}`);
+    if (!tile) return;
+    setMapDisplayFieldValue(tile, 'namedtile', String(entry && entry.name || '').trim(), 'Named Tile');
+  });
+}
+
 function getMapFieldStoredValue(record, key, fallback = '') {
   const direct = getRecordDirectValueByBaseKey(record, key);
   if (direct != null) return String(direct);
@@ -33909,6 +33992,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const floatingUi = !!(options && options.inModal);
   if (floatingUi) container.classList.add('floating-ui');
   appendDebugLog('biq-map:open', { sectionId: tileSection && tileSection.id, sourcePath: tab && tab.sourcePath });
+  syncScenarioDistrictDisplayFieldsForMapTab(tab, tileSection);
   const rerenderMapView = () => {
     appendDebugLog('biq-map:rerender-request', {
       source: options && options.inModal ? 'modal-body' : 'active-tab',
@@ -43818,7 +43902,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
             ensureCityUndoSession();
             setMapFieldValue(cityRecord, 'name', nextValue, 'Name');
             setDirty(true);
-            scheduleMapCanvasRefresh(120, {
+            scheduleMapPartialRefresh([state.biqMapSelectedTile], 120, {
               source: 'city-title',
               cityRef: String(cityRef),
               previousValue,
@@ -43966,7 +44050,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         ensureCityUndoSession();
         setMapFieldValue(cityRecord, key, nextValue, label);
         setDirty(true);
-        if (refreshMode === 'canvas') {
+        if (refreshMode === 'partial') {
+          scheduleMapPartialRefresh([state.biqMapSelectedTile], 180, {
+            source: 'city-field',
+            refreshMode,
+            field: key,
+            label,
+            trigger,
+            cityRef: String(cityRef),
+            previousValue,
+            nextValue
+          });
+        } else if (refreshMode === 'canvas') {
           scheduleMapCanvasRefresh(180, {
             source: 'city-field',
             refreshMode,
@@ -43998,7 +44093,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     };
     addCityOwnerPicker();
     syncTileInfoCityTint();
-    addCityField({ key: 'size', label: 'Population', type: 'number', min: 1, refreshMode: 'canvas', live: true });
+    addCityField({ key: 'size', label: 'Population', type: 'number', min: 1, refreshMode: 'partial', live: true });
     addCityField({ key: 'culture', label: 'Culture', type: 'number', min: 0, refreshMode: 'rerender', live: false });
     editor.appendChild(fields);
 

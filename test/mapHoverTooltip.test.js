@@ -304,6 +304,16 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /setMapFieldValue\(cityRecord, 'name', nextValue, 'Name'\);[\s\S]*?setDirty\(true\);[\s\S]*?scheduleMapPartialRefresh\(\[state\.biqMapSelectedTile\], 120, \{[\s\S]*?source: 'city-title'/,
+    'renaming a city should redraw only the selected map area instead of refreshing the whole map canvas'
+  );
+  assert.match(
+    rendererText,
+    /if \(refreshMode === 'partial'\) \{[\s\S]*?scheduleMapPartialRefresh\(\[state\.biqMapSelectedTile\], 180, \{[\s\S]*?source: 'city-field'[\s\S]*?\}\);[\s\S]*?\} else if \(refreshMode === 'canvas'\)[\s\S]*?addCityField\(\{ key: 'size', label: 'Population', type: 'number', min: 1, refreshMode: 'partial', live: true \}\);[\s\S]*?addCityField\(\{ key: 'culture', label: 'Culture', type: 'number', min: 0, refreshMode: 'rerender', live: false \}\);/,
+    'city population should use the clipped partial-refresh path while culture remains on the territory-aware rerender path'
+  );
+  assert.match(
+    rendererText,
     /const renderCityOptions = \(host, tile, geom\) => \{[\s\S]*?if \(!cityRecord\) \{[\s\S]*?tileInfoPanel\.style\.removeProperty\('--tile-info-owner-tint'\);[\s\S]*?tileInfoPanel\.classList\.remove\('tile-info-owner-tinted'\);/,
     'empty city tile-info state should clear any prior civ tint before rendering its neutral no-city card'
   );
@@ -588,6 +598,21 @@ test('map art loads repaint an open map modal in place instead of rebuilding the
     rendererText,
     /if \(floatingUi\) \{[\s\S]*?mapModal\.refreshVisuals = \(meta = null\) => \{[\s\S]*?minimapBaseDirty = true;[\s\S]*?redrawMapCanvasInPlace\(\);[\s\S]*?if \(typeof renderMiniMap === 'function'\) renderMiniMap\(\);[\s\S]*?return true;[\s\S]*?\};[\s\S]*?\}/,
     'an open map modal should register a reusable visual refresh callback that repaints the canvas and minimap when art assets finish loading'
+  );
+});
+
+test('map modal reapplies scenario district metadata before redraws', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /function syncScenarioDistrictDisplayFieldsForMapTab\(tab, tileSection = null\) \{[\s\S]*?const meta = tab && tab\.scenarioDistricts;[\s\S]*?setMapDisplayFieldValue\(tile, 'district', `\$\{districtIndex\},\$\{existingState\}`, 'District'\);[\s\S]*?setMapDisplayFieldValue\(tile, 'districtname', districtName, 'District Name'\);[\s\S]*?setMapDisplayFieldValue\(tile, 'namedtile', String\(entry && entry\.name \|\| ''\)\.trim\(\), 'Named Tile'\);[\s\S]*?\}/,
+    'scenario district sidecar entries should be reapplied to TILE display fields without depending on stale modal-local state'
+  );
+  assert.match(
+    rendererText,
+    /function renderBiqMapSection\(tab, tileSection, options = \{\}\) \{[\s\S]*?appendDebugLog\('biq-map:open'[\s\S]*?syncScenarioDistrictDisplayFieldsForMapTab\(tab, tileSection\);[\s\S]*?const rerenderMapView = \(\) => \{/,
+    'map modal rendering should sync scenario district metadata before computing tile visuals'
   );
 });
 

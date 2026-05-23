@@ -5073,7 +5073,9 @@ function buildMapTabFromBiq(biqTab, mode, options = {}) {
         const recordClone = { ...(rawRecord || {}), ...record };
         const rawFields = Array.isArray(rawRecord && rawRecord.fields)
           ? rawRecord.fields
-          : parseEnglishFields(String(section && section.code || ''), String(rawRecord && rawRecord.english || ''));
+          : (Array.isArray(record && record.fields)
+            ? record.fields
+            : parseEnglishFields(String(section && section.code || ''), String(rawRecord && rawRecord.english || '')));
         rawFields.forEach((field) => {
           const baseKey = String(field && (field.baseKey || field.key) || '').trim();
           if (!baseKey) return;
