@@ -49768,6 +49768,38 @@ function markScenarioDistrictsAsSaved() {
   meta.originalNamedTiles = deepCloneUiValue(Array.isArray(meta.namedTiles) ? meta.namedTiles : []);
 }
 
+function markMapTabAsSaved(tab) {
+  if (!tab || tab.type !== 'map') return;
+  tab.recordOps = [];
+  tab.originalHasMap = !!tab.hasMapData;
+  tab.mapMutation = null;
+  tab.mapMutationSource = null;
+  tab.pendingMapResize = null;
+  const sections = Array.isArray(tab.sections) ? tab.sections : [];
+  sections.forEach((section) => {
+    const sectionCode = String(section && section.code || '').trim().toUpperCase();
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.forEach((record) => {
+      if (!record) return;
+      delete record.newRecordRef;
+      const fields = Array.isArray(record.fields) ? record.fields : [];
+      fields.forEach((field) => {
+        if (!field) return;
+        const baseKey = String(field.baseKey || field.key || '').trim().toLowerCase();
+        const preserveTileRawBool = sectionCode === 'TILE'
+          && (baseKey === 'fogofwar' || baseKey === 'ruin')
+          && !field.mapEditorValueEdited
+          && field.originalValue != null
+          && String(field.originalValue).trim() !== '';
+        if (!preserveTileRawBool) {
+          field.originalValue = String(field.value || '');
+        }
+        delete field.mapEditorValueEdited;
+      });
+    });
+  });
+}
+
 function getReferenceRecordIndexFromOriginalBiq(sectionCode, recordRef) {
   const ref = String(recordRef || '').trim().toUpperCase();
   if (!ref) return NaN;
@@ -50438,6 +50470,10 @@ function markReferenceTabsAsSaved() {
     if (!tab) return;
     if (tab.type === 'reference') {
       markReferenceTabEntryOriginals(tab);
+      return;
+    }
+    if (tab.type === 'map') {
+      markMapTabAsSaved(tab);
       return;
     }
     if (tab.type === 'biq') {

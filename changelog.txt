@@ -1,4 +1,7 @@
 * RELEASE 27.11.1
+- Added a BIQ field inventory guard that fails when an editable or synthetic BIQ UI field is not represented in generated save/reload mutation coverage.
+- Fixed Scenario Title and Description saves so those editor fields write to the BIQ header and persist after reload.
+- Fixed no-reload Map saves so successful terrain, overlay, resize, and scenario district edits clear the Map dirty badge and Save button state instead of keeping stale BIQ/map originals dirty.
 - Fixed map numeric parsing for BIQ reference display labels such as `CONT 1 (0)`, preferring the trailing game id instead of the first number in the label.
 - Added fixture-backed BIQ coverage for 6 MP Age of Discovery fog visibility counts so loaded boolean TILE flags are checked through the map-modal interpretation path.
 - Added fixture-backed BIQ save/reload coverage for 6 MP Age of Discovery map fields, including no-op edit collection and a real saved BIQ round-trip for Fog of War and city wall flags.

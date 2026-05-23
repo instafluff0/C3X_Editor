@@ -448,6 +448,208 @@ function assertEditableFieldRoundtrip(holder, expectations, label) {
   });
 }
 
+function canonicalBiqInventoryKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function makeBiqInventoryKey(sectionCode, fieldKey) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  const key = canonicalBiqInventoryKey(fieldKey);
+  return code && key ? `${code}:${key}` : '';
+}
+
+function addBiqInventoryField(inventory, sectionCode, field, source, options = {}) {
+  if (!field) return;
+  const fieldKey = field.baseKey || field.key;
+  const key = makeBiqInventoryKey(sectionCode, fieldKey);
+  if (!key) return;
+  if (options.editableOnly !== false && !field.editable) return;
+  if (!inventory.has(key)) inventory.set(key, new Set());
+  inventory.get(key).add(source || 'unknown');
+}
+
+function addBiqInventoryFields(inventory, sectionCode, holder, source, options = {}) {
+  getFieldCollection(holder).forEach((field) => {
+    const baseKey = canonicalBiqInventoryKey(field && (field.baseKey || field.key));
+    if (!baseKey) return;
+    if (typeof options.exclude === 'function' && options.exclude(field, baseKey)) return;
+    addBiqInventoryField(inventory, sectionCode, field, source, options);
+  });
+}
+
+function addBiqCoverageField(coverage, sectionCode, fieldKey, source) {
+  const key = makeBiqInventoryKey(sectionCode, fieldKey);
+  if (!key) return;
+  if (!coverage.has(key)) coverage.set(key, new Set());
+  coverage.get(key).add(source || 'unknown');
+}
+
+function addBiqCoverageFields(coverage, sectionCode, holder, source, options = {}) {
+  getFieldCollection(holder).forEach((field) => {
+    const baseKey = canonicalBiqInventoryKey(field && (field.baseKey || field.key));
+    if (!baseKey || !field.editable) return;
+    if (typeof options.exclude === 'function' && options.exclude(field, baseKey)) return;
+    addBiqCoverageField(coverage, sectionCode, baseKey, source);
+  });
+}
+
+function collectEditableBiqUiFieldInventory(bundle) {
+  const inventory = new Map();
+  const tabs = bundle && bundle.tabs ? bundle.tabs : {};
+  const referenceTabs = ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
+  referenceTabs.forEach((tabKey) => {
+    const entries = Array.isArray(tabs[tabKey] && tabs[tabKey].entries) ? tabs[tabKey].entries : [];
+    entries.forEach((entry) => addBiqInventoryFields(
+      inventory,
+      entry && entry.biqSectionCode,
+      entry,
+      `${tabKey} reference fields`
+    ));
+  });
+
+  const structuredTabs = ['scenarioSettings', 'players', 'terrain', 'world', 'rules'];
+  structuredTabs.forEach((tabKey) => {
+    const sections = Array.isArray(tabs[tabKey] && tabs[tabKey].sections) ? tabs[tabKey].sections : [];
+    sections.forEach((section) => {
+      const records = Array.isArray(section && section.records) ? section.records : [];
+      records.forEach((record) => addBiqInventoryFields(
+        inventory,
+        section && section.code,
+        record,
+        `${tabKey} structured fields`
+      ));
+    });
+  });
+
+  const mapSections = Array.isArray(tabs.map && tabs.map.sections) ? tabs.map.sections : [];
+  const mapCodes = new Set(DEFAULT_MAP_SECTION_CODES.concat(['CONT']));
+  mapSections.forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!mapCodes.has(code)) return;
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.forEach((record) => addBiqInventoryFields(inventory, code, record, 'map fields'));
+  });
+
+  ['title', 'description'].forEach((key) => {
+    const field = getScenarioSettingsField(bundle, key);
+    if (field) addBiqInventoryField(inventory, 'GAME', field, 'scenario header synthetic fields', { editableOnly: false });
+  });
+
+  return inventory;
+}
+
+function collectGeneratedBiqMutationCoverage(bundle) {
+  const coverage = new Map();
+  const tabs = bundle && bundle.tabs ? bundle.tabs : {};
+
+  const referenceCoverage = [
+    {
+      tabKey: 'civilizations',
+      sectionCode: 'RACE',
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    {
+      tabKey: 'technologies',
+      sectionCode: 'TECH',
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    {
+      tabKey: 'resources',
+      sectionCode: 'GOOD',
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    {
+      tabKey: 'improvements',
+      sectionCode: 'BLDG',
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    {
+      tabKey: 'units',
+      sectionCode: 'PRTO',
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    }
+  ];
+  referenceCoverage.forEach(({ tabKey, sectionCode, exclude }) => {
+    const entries = Array.isArray(tabs[tabKey] && tabs[tabKey].entries) ? tabs[tabKey].entries : [];
+    entries.forEach((entry) => addBiqCoverageFields(
+      coverage,
+      sectionCode,
+      entry,
+      'reference-tab generated field round-trip',
+      { exclude }
+    ));
+  });
+
+  const govEntries = Array.isArray(tabs.governments && tabs.governments.entries) ? tabs.governments.entries : [];
+  govEntries.forEach((entry) => addBiqCoverageFields(
+    coverage,
+    'GOVT',
+    entry,
+    'government generated field round-trip',
+    {
+      exclude: (_field, baseKey) => (
+        baseKey === 'civilopediaentry'
+        || /^performanceofthisgovernmentversusgovernment\d+$/.test(baseKey)
+      )
+    }
+  ));
+
+  const structuredCoverage = [
+    {
+      sectionCode: 'GAME',
+      tabKey: 'scenarioSettings',
+      exclude: (_field, baseKey) => /^playableciv\d*$/.test(baseKey) || baseKey === 'numberofplayablecivs'
+    },
+    { sectionCode: 'LEAD', tabKey: 'players' },
+    { sectionCode: 'RULE', tabKey: 'rules' },
+    { sectionCode: 'TERR', tabKey: 'terrain' },
+    {
+      sectionCode: 'TFRM',
+      tabKey: 'terrain',
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    { sectionCode: 'CTZN', tabKey: 'rules' },
+    { sectionCode: 'CULT', tabKey: 'rules' },
+    { sectionCode: 'DIFF', tabKey: 'rules' },
+    { sectionCode: 'ERAS', tabKey: 'world' },
+    { sectionCode: 'ESPN', tabKey: 'rules' },
+    { sectionCode: 'EXPR', tabKey: 'rules' },
+    { sectionCode: 'FLAV', tabKey: 'rules' },
+    { sectionCode: 'WSIZ', tabKey: 'world' },
+    { sectionCode: 'WCHR', tabKey: 'world' },
+    { sectionCode: 'WMAP', tabKey: 'map' }
+  ];
+  structuredCoverage.forEach(({ sectionCode, tabKey, exclude }) => {
+    const section = getSection(tabs[tabKey], sectionCode);
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.forEach((record) => addBiqCoverageFields(
+      coverage,
+      sectionCode,
+      record,
+      'structured-section generated field round-trip',
+      { exclude }
+    ));
+  });
+
+  const mapCoverageCodes = ['TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'];
+  mapCoverageCodes.forEach((sectionCode) => {
+    const section = getSection(tabs.map, sectionCode);
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.forEach((record) => addBiqCoverageFields(
+      coverage,
+      sectionCode,
+      record,
+      'map mutation round-trip suites'
+    ));
+  });
+
+  ['title', 'description'].forEach((fieldKey) => {
+    addBiqCoverageField(coverage, 'GAME', fieldKey, 'scenario header round-trip');
+  });
+
+  return coverage;
+}
+
 function parseDisplayIndex(value) {
   const text = String(value || '').trim();
   const match = text.match(/\((-?\d+)\)\s*$/) || text.match(/^-?\d+/);
@@ -557,6 +759,41 @@ test('BIQ round-trip persists Scenario Search Folder edits from UI payload', (t)
   assert.ok(afterField, 'expected Scenario Search Folders field after reload');
   assert.notEqual(String(afterField.value || ''), originalValue);
   assert.equal(String(afterField.value || ''), '__C3X_SHOULD_NOT_PERSIST__');
+});
+
+test('BIQ round-trip persists scenario header title and description edits', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-title-description.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const titleField = getScenarioSettingsField(bundle, 'title');
+  const descriptionField = getScenarioSettingsField(bundle, 'description');
+  assert.ok(titleField, 'expected scenario Title field');
+  assert.ok(descriptionField, 'expected scenario Description field');
+  titleField.value = 'Saved Header Title';
+  descriptionField.value = 'Saved header description from editor.';
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs,
+    dirtyTabs: ['scenarioSettings']
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.equal(String(getScenarioSettingsField(reloaded, 'title')?.value || ''), 'Saved Header Title');
+  assert.equal(String(getScenarioSettingsField(reloaded, 'description')?.value || ''), 'Saved header description from editor.');
 });
 
 test('scenario save auto-creates a sibling search folder for BIQs under shared Scenarios root', (t) => {
@@ -1191,6 +1428,35 @@ test('BIQ round-trip follows Quint PRTO strategy-map handling for duplicate-stra
   assert.deepEqual(
     reparsedRecords.map((record) => ({ other: Number(record.otherStrategy), ai: Number(record.AIStrategy) })),
     [{ other: -1, ai: 1 }, { other: 12, ai: 8 }]
+  );
+});
+
+test('BIQ generated mutation inventory covers every editable BIQ UI field', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: sampleBiq });
+  const inventory = collectEditableBiqUiFieldInventory(bundle);
+  const coverage = collectGeneratedBiqMutationCoverage(bundle);
+  const missing = Array.from(inventory.keys()).filter((key) => !coverage.has(key)).sort();
+
+  assert.deepEqual(
+    missing,
+    [],
+    [
+      'Every editable or synthetic BIQ UI field must be represented in generated BIQ mutation coverage.',
+      'Add the field to a generated round-trip pass, or add a narrowly named coverage bucket only when generic mutation would violate BIQ/map invariants.',
+      ...missing.map((key) => {
+        const sources = Array.from(inventory.get(key) || []).sort().join(', ');
+        return `- ${key} from ${sources || 'unknown inventory source'}`;
+      })
+    ].join('\n')
   );
 });
 

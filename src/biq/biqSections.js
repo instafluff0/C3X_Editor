@@ -2827,6 +2827,33 @@ function canonicalKey(k) {
   return String(k || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function encodeFixedBiqText(value, len) {
+  const out = Buffer.alloc(len, 0);
+  const encoding = normalizeBiqTextEncoding(currentBiqTextEncoding);
+  let encoded = iconv.encode(String(value || ''), encoding);
+  if (encoded.length >= len) {
+    const clippedText = decodeBiqTextBytes(encoded.subarray(0, Math.max(0, len - 1)), encoding);
+    encoded = iconv.encode(clippedText, encoding);
+  }
+  encoded.copy(out, 0, 0, Math.min(encoded.length, Math.max(0, len - 1)));
+  return out;
+}
+
+function applyBiqHeaderTextEdit(parsed, fieldKey, value) {
+  const ck = canonicalKey(fieldKey);
+  const spec = ck === 'title'
+    ? { offset: 672, len: 64, prop: 'biqTitle' }
+    : (ck === 'description' ? { offset: 32, len: 640, prop: 'biqDescription' } : null);
+  if (!spec) return false;
+  const existing = Buffer.isBuffer(parsed && parsed._headerBuf) ? parsed._headerBuf : Buffer.alloc(736, 0);
+  const header = Buffer.alloc(Math.max(736, existing.length), 0);
+  existing.copy(header, 0, 0, Math.min(existing.length, header.length));
+  encodeFixedBiqText(value, spec.len).copy(header, spec.offset);
+  parsed._headerBuf = header.subarray(0, 736);
+  parsed[spec.prop] = String(value || '');
+  return true;
+}
+
 function findRecordByRef(records, recordRef) {
   const ref = String(recordRef || '').trim();
   const upper = ref.toUpperCase();
@@ -4970,6 +4997,12 @@ function applyEdits(buf, edits, options = {}) {
       continue;
     }
     const code = String(edit.sectionCode || '').toUpperCase();
+    if (op === 'set' && code === 'GAME' && applyBiqHeaderTextEdit(parsed, edit.fieldKey, edit.value)) {
+      applied++;
+      const headerField = canonicalKey(edit.fieldKey) === 'title' ? 'title' : 'description';
+      log.debug('BiqApplyEdits', `op=set header.${headerField}`);
+      continue;
+    }
     const section = sectionByCode.get(code);
 
     if (op === 'add' || op === 'copy') {

@@ -325,6 +325,24 @@ function loadRendererNoReloadSaveHelpers(targetBundle) {
   return sandbox.__helpers;
 }
 
+function loadRendererMapSaveHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = ['markMapTabAsSaved'];
+  const sandbox = {
+    state: {
+      bundle: targetBundle
+    }
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ', state };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-map-save.vm' });
+  return sandbox.__helpers;
+}
+
 function loadRendererReferenceDirtyHelpers(targetBundle) {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
@@ -585,6 +603,52 @@ test('no-reload save reconciliation assigns new reference indexes and reload ord
   );
   assert.equal(bundle.biq.sections[0].count, 4);
   assert.equal(state.referenceSelection.technologies, 3);
+});
+
+test('no-reload save marks map edits clean for future dirty checks', () => {
+  const bundle = {
+    tabs: {
+      map: {
+        type: 'map',
+        hasMapData: true,
+        originalHasMap: false,
+        mapMutation: 'set',
+        mapMutationSource: 'custom',
+        pendingMapResize: { width: 100, height: 100 },
+        recordOps: [{ op: 'add', sectionCode: 'SLOC', newRecordRef: 'SLOC_NEW' }],
+        sections: [{
+          code: 'TILE',
+          records: [{
+            index: 0,
+            newRecordRef: 'TILE_NEW',
+            fields: [
+              { baseKey: 'terrain', value: '3', originalValue: '2', mapEditorValueEdited: true },
+              { baseKey: 'c3coverlays', value: '2147483648', originalValue: '0', mapEditorValueEdited: true },
+              { baseKey: 'fogofwar', value: '0', originalValue: 'false' },
+              { baseKey: 'ruin', value: '1', originalValue: '0', mapEditorValueEdited: true }
+            ]
+          }]
+        }]
+      }
+    }
+  };
+  const { markMapTabAsSaved } = loadRendererMapSaveHelpers(bundle);
+  const mapTab = bundle.tabs.map;
+  markMapTabAsSaved(mapTab);
+
+  assert.equal(Array.isArray(mapTab.recordOps), true);
+  assert.equal(mapTab.recordOps.length, 0);
+  assert.equal(mapTab.originalHasMap, true);
+  assert.equal(mapTab.mapMutation, null);
+  assert.equal(mapTab.mapMutationSource, null);
+  assert.equal(mapTab.pendingMapResize, null);
+  assert.equal(Object.prototype.hasOwnProperty.call(mapTab.sections[0].records[0], 'newRecordRef'), false);
+  const fields = mapTab.sections[0].records[0].fields;
+  assert.equal(fields.find((field) => field.baseKey === 'terrain').originalValue, '3');
+  assert.equal(fields.find((field) => field.baseKey === 'c3coverlays').originalValue, '2147483648');
+  assert.equal(fields.find((field) => field.baseKey === 'fogofwar').originalValue, 'false');
+  assert.equal(fields.find((field) => field.baseKey === 'ruin').originalValue, '1');
+  assert.equal(fields.some((field) => field.mapEditorValueEdited), false);
 });
 
 test('reference dirty cache rebuild removes stale identities after new entry key changes', () => {
