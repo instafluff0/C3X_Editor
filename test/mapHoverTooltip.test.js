@@ -643,6 +643,36 @@ test('Availability by Civ keeps Undo actions in the modal header', () => {
   );
 });
 
+test('reference tab preserved list keeps thumbnail hydration queue attached', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const rebuildPendingReferenceListThumbQueue = \(filteredEntries\) => \{[\s\S]*?entriesByIdentity\.set\(getReferenceEntryIdentity\(tabKey, entry, baseIndex\), entry\);[\s\S]*?pendingListThumbs = \[\];[\s\S]*?listPane\.querySelectorAll\('\.entry-list-item\[data-entry-id\]'\)[\s\S]*?thumb\.dataset\.thumbPending !== '1'[\s\S]*?pendingListThumbs\.push\(\{ thumb, entry \}\);[\s\S]*?\};/,
+    'reference tabs should rebuild their pending thumbnail queue from mounted rows when preserving the list DOM'
+  );
+  assert.match(
+    rendererText,
+    /else \{[\s\S]*?const activeIdentity = filteredEntries\[selectedFilteredIndex\][\s\S]*?: '';[\s\S]*?rebuildPendingReferenceListThumbQueue\(filteredEntries\);[\s\S]*?Array\.from\(listPane\.querySelectorAll\('\.entry-list-item'\)\)\.forEach/,
+    'selection changes that skip list rebuilds should reattach pending thumbnails before updating active row state'
+  );
+});
+
+test('sectioned tab preserved list keeps thumbnail hydration queue attached', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const rebuildPendingSectionThumbQueue = \(sectionEntries\) => \{[\s\S]*?entriesByIndex\.set\(String\(entry\.sectionIndex\), entry\);[\s\S]*?pendingSectionThumbs = \[\];[\s\S]*?listPane\.querySelectorAll\('\.entry-list-item\[data-index\]'\)[\s\S]*?thumb\.dataset\.thumbPending !== '1'[\s\S]*?load: makeSectionThumbLoad\(entry\.section, thumb\)[\s\S]*?\};/,
+    'sectioned tabs should rebuild their pending thumbnail queue from mounted rows when preserving the list DOM'
+  );
+  assert.match(
+    rendererText,
+    /else \{[\s\S]*?rebuildPendingSectionThumbQueue\(sectionEntries\);[\s\S]*?Array\.from\(listPane\.querySelectorAll\('\.entry-list-item'\)\)\.forEach/,
+    'Districts, Wonder Districts, and Natural Wonders selection changes should reattach pending thumbnails before updating active row state'
+  );
+});
+
 test('modal map zoom previews on the existing canvas stack and defers the expensive rerender until input settles', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 

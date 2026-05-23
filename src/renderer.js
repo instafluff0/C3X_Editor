@@ -4245,7 +4245,7 @@ function applyDirtyBadgeToTabButton(button, key, tab) {
         warningCount
       );
     }
-  } else if (shouldRunQualityChecks() && ['civilizations', 'technologies', 'resources', 'governments', 'improvements'].includes(key)) {
+  } else if (shouldRunQualityChecks() && ['civilizations', 'technologies', 'resources', 'governments', 'improvements', 'gameConcepts'].includes(key)) {
     const warningCount = getLoadAuditBadgeCount(key);
     if (warningCount > 0) {
       appendWarningCountBadge(
@@ -29797,6 +29797,22 @@ function renderReferenceTab(tab, tabKey) {
     });
   };
 
+  const rebuildPendingReferenceListThumbQueue = (filteredEntries) => {
+    const entriesByIdentity = new Map();
+    (Array.isArray(filteredEntries) ? filteredEntries : []).forEach(({ entry, baseIndex }) => {
+      entriesByIdentity.set(getReferenceEntryIdentity(tabKey, entry, baseIndex), entry);
+    });
+    pendingListThumbs = [];
+    Array.from(listPane.querySelectorAll('.entry-list-item[data-entry-id]')).forEach((itemBtn) => {
+      const identity = String(itemBtn.getAttribute('data-entry-id') || '');
+      const entry = entriesByIdentity.get(identity);
+      if (!entry) return;
+      const thumb = itemBtn.querySelector('.entry-thumb');
+      if (!thumb || thumb.dataset.thumbPending !== '1') return;
+      pendingListThumbs.push({ thumb, entry });
+    });
+  };
+
   const hydrateVisibleReferenceListThumbs = (limit = 24) => {
     const maxToLoad = Math.max(1, Number(limit) || 24);
     if (maxToLoad <= 0 || !listPane.isConnected) return;
@@ -30064,6 +30080,7 @@ function renderReferenceTab(tab, tabKey) {
     const activeIdentity = filteredEntries[selectedFilteredIndex]
       ? getReferenceEntryIdentity(tabKey, filteredEntries[selectedFilteredIndex].entry, filteredEntries[selectedFilteredIndex].baseIndex)
       : '';
+    rebuildPendingReferenceListThumbQueue(filteredEntries);
     Array.from(listPane.querySelectorAll('.entry-list-item')).forEach((itemBtn) => {
       const isActive = String(itemBtn.getAttribute('data-entry-id') || '') === activeIdentity;
       itemBtn.classList.toggle('active', isActive);
@@ -47533,6 +47550,31 @@ function renderSectionTab(tab, tabKey) {
     });
   };
 
+  const makeSectionThumbLoad = (section, thumb) => {
+    if (tabKey === 'districts') return () => loadDistrictRepresentativePreview(section, thumb, 35);
+    if (tabKey === 'wonders') return () => loadWonderCompletedThumbnail(section, thumb, 44);
+    if (tabKey === 'naturalWonders') return () => loadNaturalWonderThumbnail(section, thumb, 44);
+    return () => Promise.resolve(false);
+  };
+
+  const rebuildPendingSectionThumbQueue = (sectionEntries) => {
+    const entriesByIndex = new Map();
+    (Array.isArray(sectionEntries) ? sectionEntries : []).forEach((entry) => {
+      entriesByIndex.set(String(entry.sectionIndex), entry);
+    });
+    pendingSectionThumbs = [];
+    Array.from(listPane.querySelectorAll('.entry-list-item[data-index]')).forEach((itemBtn) => {
+      const entry = entriesByIndex.get(String(itemBtn.dataset.index || ''));
+      if (!entry || !entry.section) return;
+      const thumb = itemBtn.querySelector('.entry-thumb');
+      if (!thumb || thumb.dataset.thumbPending !== '1') return;
+      pendingSectionThumbs.push({
+        thumb,
+        load: makeSectionThumbLoad(entry.section, thumb)
+      });
+    });
+  };
+
   const hydrateVisibleSectionThumbs = (limit = 20) => {
     const maxToLoad = Math.max(1, Number(limit) || 20);
     if (maxToLoad <= 0 || !listPane.isConnected) return;
@@ -47713,7 +47755,7 @@ function renderSectionTab(tab, tabKey) {
         thumb.dataset.thumbPending = '1';
         pendingSectionThumbs.push({
           thumb,
-          load: () => loadDistrictRepresentativePreview(section, thumb, 35)
+          load: makeSectionThumbLoad(section, thumb)
         });
       }
       const primary = document.createElement('strong');
@@ -47741,10 +47783,7 @@ function renderSectionTab(tab, tabKey) {
         thumb.dataset.thumbPending = '1';
         pendingSectionThumbs.push({
           thumb,
-          load: () => {
-            if (tabKey === 'wonders') loadWonderCompletedThumbnail(section, thumb, 44);
-            else loadNaturalWonderThumbnail(section, thumb, 44);
-          }
+          load: makeSectionThumbLoad(section, thumb)
         });
       }
       itemBtn.insertAdjacentHTML('beforeend', `<strong>${sectionTitle}</strong>`);
@@ -47774,6 +47813,7 @@ function renderSectionTab(tab, tabKey) {
     sectionEntries.forEach((entry) => addSectionListButton(entry));
     scheduleHydrateVisibleSectionThumbs(28);
   } else {
+    rebuildPendingSectionThumbQueue(sectionEntries);
     Array.from(listPane.querySelectorAll('.entry-list-item')).forEach((itemBtn) => {
       const isActive = String(itemBtn.dataset.index || '') === String(selectedIndex);
       itemBtn.classList.toggle('active', isActive);

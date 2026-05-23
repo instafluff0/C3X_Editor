@@ -441,6 +441,17 @@ test('improvements top board renderer receives the reference context it uses for
   );
 });
 
+test('reference warning badges include Game Concepts', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /\['civilizations', 'technologies', 'resources', 'governments', 'improvements', 'gameConcepts'\]\.includes\(key\)/,
+    'Game Concepts should use the shared reference-tab warning badge path'
+  );
+});
+
 test('improvements required districts picker wires district dropdown thumbnails', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

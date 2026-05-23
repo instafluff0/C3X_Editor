@@ -1,4 +1,5 @@
 * RELEASE 27.11.1.0
+- Fixed Game Concepts tab warning badges so Civilopedia link warnings counted on individual entries also appear in the top tab name.
 - Changed Districts, Wonder Districts, and Natural Wonders structural actions and atlas-copy staging to use section-scoped Undo snapshots, and grouped Natural Wonder animation text edits into normal edit-session Undo steps.
 - Tightened C3X/base structured-list Undo capture so add/remove actions keep one scoped base snapshot per click and grouped base inputs explicitly use their field-level Undo key.
 - Fixed the Availability by Civ header Save button to sync its disabled state immediately on modal open, matching the main app Save button when there are no unsaved changes.
@@ -9,6 +10,8 @@
 - Changed the Availability by Civ modal to keep its unit rows mounted, debounce search filtering, cache per-civ availability during refreshes, and lazy-hydrate visible thumbnails, so civ switches and availability toggles no longer rebuild the whole grid on every interaction.
 - Fixed Availability by Civ search row filtering to hide non-matching mounted cards instead of only updating the shown-count summary, so searches now visibly narrow the grid again after the mounted-row optimization.
 - Changed Availability by Civ Undo and Undo All to refresh the mounted modal in place against the live Units tab instead of reopening the whole modal after each undo, so undoing availability edits no longer tears down and rebuilds the dialog DOM.
+- Fixed shared reference-tab thumbnail hydration after selection changes by rebuilding the pending thumbnail queue from preserved list rows, so scrolling Units, Improvements, and similar tabs after selecting a new item still loads thumbnails as rows enter the viewport.
+- Fixed Districts, Wonder Districts, and Natural Wonders thumbnail hydration after selection changes by rebuilding the pending section thumbnail queue from preserved list rows, so scrolling after selecting an entry still loads newly visible art.
 - Changed Units and other reference-tab Civilopedia edits to capture entry-scoped Undo snapshots, so undoing a completed Civilopedia text edit no longer needs the full scenario restore path.
 - Changed reference art slot edits, including Unit Civilopedia icon replacement and pending filename renames, to use entry-scoped Undo snapshots instead of the full restore path.
 - Changed reference-tab top `Name` edits to use the same entry-scoped Undo snapshot as Units rule fields, so undoing a unit rename restores in memory without showing the full restore modal.
