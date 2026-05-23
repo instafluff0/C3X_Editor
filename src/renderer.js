@@ -3829,6 +3829,27 @@ function rebuildDirtyTabCounts() {
   });
 }
 
+function rebuildReferenceDirtyCacheForTab(tabKey, tabOverride = null) {
+  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  if (!normalizedTabKey || !state.bundle || !state.bundle.tabs) return false;
+  const tab = tabOverride || state.bundle.tabs[normalizedTabKey];
+  if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return false;
+  const set = ensureReferenceDirtySet(normalizedTabKey);
+  set.clear();
+  tab.entries.forEach((entry, idx) => {
+    const identity = getReferenceEntryIdentity(normalizedTabKey, entry, idx);
+    if (!identity) return;
+    const cleanEntry = getCleanReferenceEntry(normalizedTabKey, entry, idx);
+    if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey: normalizedTabKey, fallbackIndex: idx })) {
+      set.add(identity);
+    }
+  });
+  const cleanTab = getEffectiveCleanTabForDirty(normalizedTabKey);
+  const extra = normalizedTabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
+  setTabDirtyCount(normalizedTabKey, set.size + extra);
+  return true;
+}
+
 function recomputeDirtyStateFromBundle() {
   if (!state.bundle || !state.bundle.tabs) {
     state.isDirty = false;
@@ -18278,7 +18299,7 @@ function buildCivilizationTopBoardCards(entry, referenceEditable, selectedBaseIn
     getBiqFieldByBaseKey(entry, 'culturegroup')
   ].filter(Boolean);
   if (grammarFields.length > 0) {
-    const { cell, control } = createCivilizationTopBoardCell(entry, 'GRAMMER / CULTURE', grammarFields);
+    const { cell, control } = createCivilizationTopBoardCell(entry, 'GRAMMAR / CULTURE', grammarFields);
     grammarFields.forEach((field) => {
       const fieldControl = buildCivilizationTopFieldControl({ entry, field, referenceEditable, selectedBaseIndex });
       if (fieldControl) control.appendChild(fieldControl);
@@ -18391,11 +18412,11 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
     const rightCol = document.createElement('div');
     rightCol.className = 'civilization-dashboard-col civilization-dashboard-col-right';
 
-    [topCards.identity, topCards.leader, topCards.colors, nameListsCard].forEach((card) => {
+    [topCards.identity, topCards.grammar, topCards.leader, topCards.colors, nameListsCard].forEach((card) => {
       if (card) leftCol.appendChild(card);
     });
 
-    [topCards.grammar, topCards.personality, traitsCard, governorCard, flavorsCard, buildCard].forEach((card) => {
+    [topCards.personality, traitsCard, governorCard, flavorsCard, buildCard].forEach((card) => {
       if (card) rightCol.appendChild(card);
     });
 
@@ -28476,6 +28497,7 @@ function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExist
       if (nextIdentity) set.add(nextIdentity);
     }
   }
+  if (state.isDirty) rebuildReferenceDirtyCacheForTab(tabKey, tab);
   return true;
 }
 
@@ -29766,6 +29788,8 @@ function renderReferenceTab(tab, tabKey) {
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
+      state.isDirty = true;
+      rebuildReferenceDirtyCacheForTab(tabKey, tab);
       setDirty(true);
       setStatus(`Added new ${tab.title.slice(0, -1)}. Edit Name and Key, then save.`);
       renderActiveTab({ preserveTabScroll: true });
@@ -29793,6 +29817,8 @@ function renderReferenceTab(tab, tabKey) {
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
+      state.isDirty = true;
+      rebuildReferenceDirtyCacheForTab(tabKey, tab);
       setDirty(true);
       setStatus(`Copied "${selectedEntry.name || selectedEntry.civilopediaKey}" to a new entry. Update Name/Key as needed.`);
       renderActiveTab({ preserveTabScroll: true });
@@ -29907,6 +29933,8 @@ function renderReferenceTab(tab, tabKey) {
           setCivilizationPlayableState(newEntry, true);
         }
         state.referenceSelection[tabKey] = 0;
+        state.isDirty = true;
+        rebuildReferenceDirtyCacheForTab(tabKey, tab);
         setDirty(true);
         setStatus(`Imported "${result.importedEntry.name || result.importedEntry.civilopediaKey}" into this scenario as a new entry.`);
         appendDebugLog('reference-import:pre-render', {
@@ -29981,6 +30009,8 @@ function renderReferenceTab(tab, tabKey) {
         _dbgLog('INF', 'BiqCRUD', `reference delete (was new, reverted create op): tabKey=${tabKey} ref=${targetKey}`);
       }
       state.referenceSelection[tabKey] = 0;
+      state.isDirty = true;
+      rebuildReferenceDirtyCacheForTab(tabKey, tab);
       setDirty(true);
       renderActiveTab({ preserveTabScroll: true });
     });

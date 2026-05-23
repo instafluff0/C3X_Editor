@@ -1,4 +1,6 @@
 * RELEASE 27.11.1
+- Fixed reference-tab dirty badge counts so newly added/copied entries that have their keys edited are counted once instead of retaining stale pre-rename dirty identities.
+- Moved Civs Grammar / Culture directly after Identity in the two-column layout and corrected the section heading spelling.
 - Fixed Civs Colors / Diplomacy rows so the Diplomacy Text input shrinks inside the card in two-column layout instead of overflowing into the neighboring panel.
 - Fixed no-reload saves so newly added or copied BIQ reference entries receive their saved BIQ indexes and move into reload-equivalent index order immediately after Save.
 - Fixed copied BIQ reference entries so fields inherited from an unsaved edited source are saved onto the copied record too, preserving chained new Tech prerequisites and similar references after reload.

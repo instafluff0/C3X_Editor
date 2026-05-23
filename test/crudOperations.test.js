@@ -325,6 +325,52 @@ function loadRendererNoReloadSaveHelpers(targetBundle) {
   return sandbox.__helpers;
 }
 
+function loadRendererReferenceDirtyHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = ['rebuildReferenceDirtyCacheForTab'];
+  const sandbox = {
+    state: {
+      bundle: targetBundle,
+      dirtyReferenceKeysByTab: {
+        technologies: new Set(['id:NEW_TECH_OLD', 'key:TECH_NEW_TECH', 'id:NEW_TECH'])
+      },
+      dirtyTabCounts: {},
+      cleanReferenceDirtySignatureByKey: new Map()
+    },
+    getReferenceEntryIdentity,
+    ensureReferenceDirtySet: (tabKey) => {
+      if (!sandbox.state.dirtyReferenceKeysByTab[tabKey]) sandbox.state.dirtyReferenceKeysByTab[tabKey] = new Set();
+      return sandbox.state.dirtyReferenceKeysByTab[tabKey];
+    },
+    getCleanReferenceEntry: (tabKey, entry) => {
+      const cleanEntries = targetBundle.cleanTabs && targetBundle.cleanTabs[tabKey] && targetBundle.cleanTabs[tabKey].entries;
+      const identity = getReferenceEntryIdentity(tabKey, entry, 0);
+      return (Array.isArray(cleanEntries) ? cleanEntries : []).find((cleanEntry, idx) => (
+        getReferenceEntryIdentity(tabKey, cleanEntry, idx) === identity
+      )) || null;
+    },
+    hasReferenceEntryChangedFromClean: (entry, cleanEntry) => {
+      if (!entry || !cleanEntry) return true;
+      return JSON.stringify(entry) !== JSON.stringify(cleanEntry);
+    },
+    getEffectiveCleanTabForDirty: (tabKey) => targetBundle.cleanTabs && targetBundle.cleanTabs[tabKey] || null,
+    countCivilizationDiplomacySlotChanges: () => 0,
+    setTabDirtyCount: (tabKey, count) => {
+      const n = Number(count) || 0;
+      if (n > 0) sandbox.state.dirtyTabCounts[tabKey] = n;
+      else delete sandbox.state.dirtyTabCounts[tabKey];
+    }
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ', state };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-reference-dirty.vm' });
+  return sandbox.__helpers;
+}
+
 function loadRendererTopNameHelpers() {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
@@ -539,6 +585,35 @@ test('no-reload save reconciliation assigns new reference indexes and reload ord
   );
   assert.equal(bundle.biq.sections[0].count, 4);
   assert.equal(state.referenceSelection.technologies, 3);
+});
+
+test('reference dirty cache rebuild removes stale identities after new entry key changes', () => {
+  const bundle = {
+    cleanTabs: {
+      technologies: {
+        type: 'reference',
+        entries: [
+          { id: 'ALPHA', civilopediaKey: 'TECH_ALPHA', name: 'Alpha', biqIndex: 0 }
+        ]
+      }
+    },
+    tabs: {
+      technologies: {
+        type: 'reference',
+        entries: [
+          { id: 'NEW_TECH', civilopediaKey: 'TECH_NEW_TECH', name: 'New Tech', biqIndex: null, isNew: true },
+          { id: 'ALPHA', civilopediaKey: 'TECH_ALPHA', name: 'Alpha', biqIndex: 0 }
+        ]
+      }
+    }
+  };
+  const { rebuildReferenceDirtyCacheForTab, state } = loadRendererReferenceDirtyHelpers(bundle);
+  assert.equal(rebuildReferenceDirtyCacheForTab('technologies', bundle.tabs.technologies), true);
+  assert.deepEqual(
+    Array.from(state.dirtyReferenceKeysByTab.technologies).sort(),
+    ['id:NEW_TECH']
+  );
+  assert.equal(state.dirtyTabCounts.technologies, 1);
 });
 
 /**
