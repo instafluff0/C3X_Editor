@@ -1,4 +1,8 @@
 * RELEASE 27.11.1.0
+- Deferred reference-picker dropdown row construction until the picker opens, reducing Rules -> General startup work from hidden unit-reference menus.
+- Fixed reference-tab `Next warning` jumps so the left item list scrolls the newly selected warned entry into view.
+- Changed Districts, Wonder Districts, and Natural Wonders selection to paint the active list-row state before deferring the heavier detail-pane rebuild, matching the BIQ reference-tab responsiveness path.
+- Changed BIQ reference-tab selection to paint the active list-row state before deferring the heavier detail-pane rebuild, so Units and similar tabs respond to clicks before paying detail render cost.
 - Fixed Game Concepts tab warning badges so Civilopedia link warnings counted on individual entries also appear in the top tab name.
 - Changed Districts, Wonder Districts, and Natural Wonders structural actions and atlas-copy staging to use section-scoped Undo snapshots, and grouped Natural Wonder animation text edits into normal edit-session Undo steps.
 - Tightened C3X/base structured-list Undo capture so add/remove actions keep one scoped base snapshot per click and grouped base inputs explicitly use their field-level Undo key.

@@ -19803,97 +19803,102 @@ function createReferencePicker(config) {
       if (maybeLoadThumbForNode(node)) remaining -= 1;
     }
   };
-  normalizedOptions.forEach((opt) => {
-    if (opt.separator) {
-      const groupHeader = document.createElement('div');
-      groupHeader.className = 'tech-picker-group-header';
-      groupHeader.textContent = opt.label;
-      listWrap.appendChild(groupHeader);
-      return;
-    }
-    const row = document.createElement('div');
-    row.className = 'tech-picker-row';
-    if (opt.special) row.classList.add('special');
-    row.dataset.search = String(opt.label || '').toLowerCase();
-    const rowJumpTarget = resolveOptionJumpTarget(opt, opt.value);
-    const selectBtn = document.createElement('button');
-    selectBtn.type = 'button';
-    selectBtn.className = 'tech-picker-row-main';
-    const thumb = document.createElement('span');
-    thumb.className = 'entry-thumb';
-    if (thumbClassName) thumb.classList.add(...thumbClassName.split(/\s+/).filter(Boolean));
-    const resolvedRowThumbEntry = targetTabKey
-      ? resolveReferenceEntryForPicker(targetTabKey, opt.value, normalizedOptions)
-      : null;
-    const rowThumbEntry = (() => {
-      const hasThumbData = (entry) => !!(
-        entry
-        && (
-          String(entry.thumbPath || '').trim()
-          || (Array.isArray(entry.iconPaths) && entry.iconPaths.some((value) => String(value || '').trim()))
-          || (Array.isArray(entry.racePaths) && entry.racePaths.some((value) => String(value || '').trim()))
-        )
-      );
-      if (hasThumbData(resolvedRowThumbEntry)) return resolvedRowThumbEntry;
-      if (hasThumbData(opt.entry)) return opt.entry;
-      return resolvedRowThumbEntry || opt.entry || null;
-    })();
-    let customThumbPainted = false;
-    if (showOptionThumbs && renderOptionThumb) {
-      customThumbPainted = !!renderOptionThumb({
-        holder: thumb,
-        option: opt,
-        value: opt.value,
-        targetTabKey,
-        selected: false
-      });
-    }
-    if (showOptionThumbs && !customThumbPainted && rowThumbEntry && targetTabKey) {
-      thumb.dataset.thumbPending = '1';
-      thumb.__thumbEntry = rowThumbEntry;
-      pendingThumbNodes.push(thumb);
-    }
-    selectBtn.appendChild(thumb);
-    const textWrap = document.createElement('span');
-    textWrap.className = 'tech-picker-row-text';
-    const text = document.createElement('span');
-    text.className = 'tech-picker-row-label';
-    text.textContent = String(opt.label || '');
-    textWrap.appendChild(text);
-    const metaText = getOptionMetaText ? String(getOptionMetaText(opt) || '').trim() : '';
-    if (metaText) {
-      const meta = document.createElement('span');
-      meta.className = 'tech-picker-row-meta';
-      meta.textContent = metaText;
-      textWrap.appendChild(meta);
-    }
-    selectBtn.appendChild(textWrap);
-    selectBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      renderButton(opt.value);
-      closeMenu();
-      if (onSelect) onSelect(opt.value);
-      if (resetAfterSelect) renderButton(currentValue);
-    });
-    row.appendChild(selectBtn);
-    if (rowJumpTarget) {
-      const jumpBtn = document.createElement('button');
-      jumpBtn.type = 'button';
-      jumpBtn.className = 'tech-picker-row-jump';
-      jumpBtn.textContent = '↗';
-      jumpBtn.title = `Open ${opt.label}`;
-      jumpBtn.setAttribute('aria-label', `Open ${opt.label}`);
-      jumpBtn.addEventListener('click', (ev) => {
+  let menuRowsBuilt = false;
+  const buildMenuRows = () => {
+    if (menuRowsBuilt) return;
+    menuRowsBuilt = true;
+    normalizedOptions.forEach((opt) => {
+      if (opt.separator) {
+        const groupHeader = document.createElement('div');
+        groupHeader.className = 'tech-picker-group-header';
+        groupHeader.textContent = opt.label;
+        listWrap.appendChild(groupHeader);
+        return;
+      }
+      const row = document.createElement('div');
+      row.className = 'tech-picker-row';
+      if (opt.special) row.classList.add('special');
+      row.dataset.search = String(opt.label || '').toLowerCase();
+      const rowJumpTarget = resolveOptionJumpTarget(opt, opt.value);
+      const selectBtn = document.createElement('button');
+      selectBtn.type = 'button';
+      selectBtn.className = 'tech-picker-row-main';
+      const thumb = document.createElement('span');
+      thumb.className = 'entry-thumb';
+      if (thumbClassName) thumb.classList.add(...thumbClassName.split(/\s+/).filter(Boolean));
+      const resolvedRowThumbEntry = targetTabKey
+        ? resolveReferenceEntryForPicker(targetTabKey, opt.value, normalizedOptions)
+        : null;
+      const rowThumbEntry = (() => {
+        const hasThumbData = (entry) => !!(
+          entry
+          && (
+            String(entry.thumbPath || '').trim()
+            || (Array.isArray(entry.iconPaths) && entry.iconPaths.some((value) => String(value || '').trim()))
+            || (Array.isArray(entry.racePaths) && entry.racePaths.some((value) => String(value || '').trim()))
+          )
+        );
+        if (hasThumbData(resolvedRowThumbEntry)) return resolvedRowThumbEntry;
+        if (hasThumbData(opt.entry)) return opt.entry;
+        return resolvedRowThumbEntry || opt.entry || null;
+      })();
+      let customThumbPainted = false;
+      if (showOptionThumbs && renderOptionThumb) {
+        customThumbPainted = !!renderOptionThumb({
+          holder: thumb,
+          option: opt,
+          value: opt.value,
+          targetTabKey,
+          selected: false
+        });
+      }
+      if (showOptionThumbs && !customThumbPainted && rowThumbEntry && targetTabKey) {
+        thumb.dataset.thumbPending = '1';
+        thumb.__thumbEntry = rowThumbEntry;
+        pendingThumbNodes.push(thumb);
+      }
+      selectBtn.appendChild(thumb);
+      const textWrap = document.createElement('span');
+      textWrap.className = 'tech-picker-row-text';
+      const text = document.createElement('span');
+      text.className = 'tech-picker-row-label';
+      text.textContent = String(opt.label || '');
+      textWrap.appendChild(text);
+      const metaText = getOptionMetaText ? String(getOptionMetaText(opt) || '').trim() : '';
+      if (metaText) {
+        const meta = document.createElement('span');
+        meta.className = 'tech-picker-row-meta';
+        meta.textContent = metaText;
+        textWrap.appendChild(meta);
+      }
+      selectBtn.appendChild(textWrap);
+      selectBtn.addEventListener('click', (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
+        renderButton(opt.value);
         closeMenu();
-        triggerJump(rowJumpTarget, opt);
+        if (onSelect) onSelect(opt.value);
+        if (resetAfterSelect) renderButton(currentValue);
       });
-      row.appendChild(jumpBtn);
-    }
-    listWrap.appendChild(row);
-  });
+      row.appendChild(selectBtn);
+      if (rowJumpTarget) {
+        const jumpBtn = document.createElement('button');
+        jumpBtn.type = 'button';
+        jumpBtn.className = 'tech-picker-row-jump';
+        jumpBtn.textContent = '↗';
+        jumpBtn.title = `Open ${opt.label}`;
+        jumpBtn.setAttribute('aria-label', `Open ${opt.label}`);
+        jumpBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          closeMenu();
+          triggerJump(rowJumpTarget, opt);
+        });
+        row.appendChild(jumpBtn);
+      }
+      listWrap.appendChild(row);
+    });
+  };
   menu.appendChild(listWrap);
   if (!usePortaledMenu) wrap.appendChild(menu);
 
@@ -19933,6 +19938,7 @@ function createReferencePicker(config) {
       activeReferencePickerCloser();
     }
     activeReferencePickerCloser = closeMenu;
+    buildMenuRows();
     menu.classList.remove('hidden');
     if (!menu.classList.contains('hidden')) {
       if (usePortaledMenu) {
@@ -29781,12 +29787,75 @@ function renderReferenceTab(tab, tabKey) {
   let pendingListThumbs = [];
   let currentRenderedSelectionIdentity = '';
   let listThumbHydrationRaf = 0;
+  let referenceSelectionRenderRaf = 0;
+  let referenceSelectionRenderTimer = 0;
+  let referenceSelectionRenderToken = 0;
   const listThumbsInFlight = new Set();
 
   const updateSelectionActionButtons = () => {
     const selectedEntry = getSelectedEntry();
     if (copyBtn) copyBtn.disabled = !selectedEntry;
     if (deleteBtn) deleteBtn.disabled = !selectedEntry;
+  };
+
+  const cancelScheduledReferenceSelectionRender = () => {
+    referenceSelectionRenderToken += 1;
+    if (referenceSelectionRenderRaf) {
+      window.cancelAnimationFrame(referenceSelectionRenderRaf);
+      referenceSelectionRenderRaf = 0;
+    }
+    if (referenceSelectionRenderTimer) {
+      window.clearTimeout(referenceSelectionRenderTimer);
+      referenceSelectionRenderTimer = 0;
+    }
+  };
+
+  const updateReferenceListActiveState = (baseIndex) => {
+    const activeEntry = allEntries[baseIndex] || null;
+    const activeIdentity = activeEntry
+      ? getReferenceEntryIdentity(tabKey, activeEntry, baseIndex)
+      : '';
+    Array.from(listPane.querySelectorAll('.entry-list-item[data-entry-id]')).forEach((itemBtn) => {
+      const isActive = !!activeIdentity && String(itemBtn.getAttribute('data-entry-id') || '') === activeIdentity;
+      itemBtn.classList.toggle('active', isActive);
+      if (!isActive) return;
+      const thumb = itemBtn.querySelector('.entry-thumb');
+      if (!thumb || thumb.dataset.thumbPending !== '1') return;
+      thumb.dataset.thumbPending = '0';
+      loadReferenceListThumbnail(tabKey, activeEntry, thumb);
+    });
+    updateSelectionActionButtons();
+  };
+
+  const scrollActiveReferenceListItemIntoView = () => {
+    window.requestAnimationFrame(() => {
+      if (!listPane.isConnected) return;
+      const activeBtn = listPane.querySelector('.entry-list-item.active');
+      if (!activeBtn) return;
+      const paneRect = listPane.getBoundingClientRect();
+      const btnRect = activeBtn.getBoundingClientRect();
+      if (btnRect.bottom <= paneRect.bottom && btnRect.top >= paneRect.top) return;
+      const relativeTop = btnRect.top - paneRect.top + listPane.scrollTop;
+      const nextTop = Math.max(0, relativeTop - (listPane.clientHeight - btnRect.height) / 2);
+      listPane.scrollTo({ top: nextTop, behavior: 'smooth' });
+    });
+  };
+
+  const scheduleReferenceSelectionDetailRender = (options = {}) => {
+    cancelScheduledReferenceSelectionRender();
+    const token = referenceSelectionRenderToken;
+    referenceSelectionRenderRaf = window.requestAnimationFrame(() => {
+      referenceSelectionRenderRaf = 0;
+      referenceSelectionRenderTimer = window.setTimeout(() => {
+        referenceSelectionRenderTimer = 0;
+        if (token !== referenceSelectionRenderToken || !wrap.isConnected) return;
+        renderReferenceBody({
+          skipListRebuild: true,
+          resetDetailScroll: !!options.resetDetailScroll,
+          fromScheduledSelectionRender: true
+        });
+      }, 0);
+    });
   };
 
   const scheduleHydrateVisibleReferenceListThumbs = (limit = 24) => {
@@ -29906,8 +29975,9 @@ function renderReferenceTab(tab, tabKey) {
     if (options.resetDetailScroll) state.referenceDetailScrollTop[tabKey] = 0;
     state.tabContentScrollTop = el.tabContent.scrollTop;
     const after = captureViewSnapshot();
-    renderReferenceBody({
-      skipListRebuild: true,
+    updateReferenceListActiveState(baseIndex);
+    if (options.scrollListToSelection) scrollActiveReferenceListItemIntoView();
+    scheduleReferenceSelectionDetailRender({
       resetDetailScroll: !!options.resetDetailScroll
     });
     if (!state.isApplyingHistory && before && after && snapshotKey(before) !== snapshotKey(after)) {
@@ -29927,6 +29997,9 @@ function renderReferenceTab(tab, tabKey) {
   }
 
   function renderReferenceBody(options = {}) {
+    if (options.fromScheduledSelectionRender !== true) {
+      cancelScheduledReferenceSelectionRender();
+    }
     const skipListRebuild = options.skipListRebuild === true;
     const preserveDetailIfSameSelection = options.preserveDetailIfSameSelection === true;
     const resetDetailScroll = options.resetDetailScroll === true;
@@ -30000,8 +30073,7 @@ function renderReferenceTab(tab, tabKey) {
     if (warningEntries.length <= 0) return;
     const next = warningEntries.find((item) => item.filteredIndex > selectedFilteredIndex) || warningEntries[0];
     if (!next) return;
-    state.referenceListScrollTop[tabKey] = 0;
-    selectReferenceEntry(next.baseIndex, { resetDetailScroll: true });
+    selectReferenceEntry(next.baseIndex, { resetDetailScroll: true, scrollListToSelection: true });
   };
   const isUnitEraVariantEntry = (entry) => {
     const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
@@ -47540,6 +47612,9 @@ function renderSectionTab(tab, tabKey) {
   wrap.appendChild(bodyHost);
   let pendingSectionThumbs = [];
   let sectionThumbHydrationRaf = 0;
+  let sectionSelectionRenderRaf = 0;
+  let sectionSelectionRenderTimer = 0;
+  let sectionSelectionRenderToken = 0;
   const sectionThumbsInFlight = new Set();
 
   const scheduleHydrateVisibleSectionThumbs = (limit = 20) => {
@@ -47572,6 +47647,50 @@ function renderSectionTab(tab, tabKey) {
         thumb,
         load: makeSectionThumbLoad(entry.section, thumb)
       });
+    });
+  };
+
+  const cancelScheduledSectionSelectionRender = () => {
+    sectionSelectionRenderToken += 1;
+    if (sectionSelectionRenderRaf) {
+      window.cancelAnimationFrame(sectionSelectionRenderRaf);
+      sectionSelectionRenderRaf = 0;
+    }
+    if (sectionSelectionRenderTimer) {
+      window.clearTimeout(sectionSelectionRenderTimer);
+      sectionSelectionRenderTimer = 0;
+    }
+  };
+
+  const updateSectionListActiveState = (sectionIndex) => {
+    const section = tab.model && Array.isArray(tab.model.sections)
+      ? tab.model.sections[sectionIndex]
+      : null;
+    Array.from(listPane.querySelectorAll('.entry-list-item[data-index]')).forEach((itemBtn) => {
+      const isActive = String(itemBtn.dataset.index || '') === String(sectionIndex);
+      itemBtn.classList.toggle('active', isActive);
+      if (!isActive || !section) return;
+      const thumb = itemBtn.querySelector('.entry-thumb');
+      if (!thumb || thumb.dataset.thumbPending !== '1') return;
+      thumb.dataset.thumbPending = '0';
+      makeSectionThumbLoad(section, thumb)();
+    });
+  };
+
+  const scheduleSectionSelectionDetailRender = (options = {}) => {
+    cancelScheduledSectionSelectionRender();
+    const token = sectionSelectionRenderToken;
+    sectionSelectionRenderRaf = window.requestAnimationFrame(() => {
+      sectionSelectionRenderRaf = 0;
+      sectionSelectionRenderTimer = window.setTimeout(() => {
+        sectionSelectionRenderTimer = 0;
+        if (token !== sectionSelectionRenderToken || !wrap.isConnected) return;
+        renderSectionBody({
+          skipListRebuild: true,
+          resetDetailScroll: !!options.resetDetailScroll,
+          fromScheduledSelectionRender: true
+        });
+      }, 0);
     });
   };
 
@@ -47667,8 +47786,8 @@ function renderSectionTab(tab, tabKey) {
     if (options.resetDetailScroll) state.sectionDetailScrollTop[tabKey] = 0;
     state.tabContentScrollTop = el.tabContent.scrollTop;
     const after = captureViewSnapshot();
-    renderSectionBody({
-      skipListRebuild: true,
+    updateSectionListActiveState(sectionIndex);
+    scheduleSectionSelectionDetailRender({
       resetDetailScroll: !!options.resetDetailScroll
     });
     if (!state.isApplyingHistory && before && after && snapshotKey(before) !== snapshotKey(after)) {
@@ -47680,6 +47799,9 @@ function renderSectionTab(tab, tabKey) {
   };
 
   function renderSectionBody(options = {}) {
+  if (options.fromScheduledSelectionRender !== true) {
+    cancelScheduledSectionSelectionRender();
+  }
   const skipListRebuild = options.skipListRebuild === true;
   const resetDetailScroll = options.resetDetailScroll === true;
 

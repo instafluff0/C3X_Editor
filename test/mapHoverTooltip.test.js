@@ -658,6 +658,56 @@ test('reference tab preserved list keeps thumbnail hydration queue attached', ()
   );
 });
 
+test('reference tab selection paints active row before deferred detail render', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const updateReferenceListActiveState = \(baseIndex\) => \{[\s\S]*?itemBtn\.classList\.toggle\('active', isActive\);[\s\S]*?loadReferenceListThumbnail\(tabKey, activeEntry, thumb\);[\s\S]*?updateSelectionActionButtons\(\);[\s\S]*?\};/,
+    'reference tabs should expose a cheap active-row update path that does not rebuild the detail pane'
+  );
+  assert.match(
+    rendererText,
+    /const scheduleReferenceSelectionDetailRender = \(options = \{\}\) => \{[\s\S]*?window\.requestAnimationFrame\(\(\) => \{[\s\S]*?window\.setTimeout\(\(\) => \{[\s\S]*?renderReferenceBody\(\{[\s\S]*?skipListRebuild: true,[\s\S]*?fromScheduledSelectionRender: true[\s\S]*?\}\);/,
+    'reference tab selection should defer the heavier detail-pane render until after the browser has a paint opportunity'
+  );
+  assert.match(
+    rendererText,
+    /function selectReferenceEntry\(baseIndex, options = \{\}\) \{[\s\S]*?state\.referenceSelection\[tabKey\] = baseIndex;[\s\S]*?updateReferenceListActiveState\(baseIndex\);[\s\S]*?scheduleReferenceSelectionDetailRender\(\{[\s\S]*?resetDetailScroll: !!options\.resetDetailScroll[\s\S]*?\}\);/,
+    'clicking a BIQ reference entry should update the active list item before scheduling the expensive detail refresh'
+  );
+});
+
+test('reference next-warning jumps scroll selected list item into view', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const scrollActiveReferenceListItemIntoView = \(\) => \{[\s\S]*?listPane\.querySelector\('\.entry-list-item\.active'\)[\s\S]*?listPane\.scrollTo\(\{ top: nextTop, behavior: 'smooth' \}\);[\s\S]*?\};/,
+    'reference warning jumps should have a dedicated active-row scroll helper for preserved list DOM'
+  );
+  assert.match(
+    rendererText,
+    /nextWarningBtn\.onclick = \(\) => \{[\s\S]*?selectReferenceEntry\(next\.baseIndex, \{ resetDetailScroll: true, scrollListToSelection: true \}\);[\s\S]*?\};/,
+    'Reference Next warning should request selected-row scrolling after it changes selection'
+  );
+});
+
+test('reference picker defers hidden option rows until opened', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /let menuRowsBuilt = false;[\s\S]*?const buildMenuRows = \(\) => \{[\s\S]*?if \(menuRowsBuilt\) return;[\s\S]*?normalizedOptions\.forEach\(\(opt\) => \{/,
+    'reference pickers should not build every hidden dropdown row during initial render'
+  );
+  assert.match(
+    rendererText,
+    /activeReferencePickerCloser = closeMenu;[\s\S]*?buildMenuRows\(\);[\s\S]*?menu\.classList\.remove\('hidden'\);/,
+    'reference picker option rows should be built when the menu is opened'
+  );
+});
+
 test('sectioned tab preserved list keeps thumbnail hydration queue attached', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
@@ -670,6 +720,26 @@ test('sectioned tab preserved list keeps thumbnail hydration queue attached', ()
     rendererText,
     /else \{[\s\S]*?rebuildPendingSectionThumbQueue\(sectionEntries\);[\s\S]*?Array\.from\(listPane\.querySelectorAll\('\.entry-list-item'\)\)\.forEach/,
     'Districts, Wonder Districts, and Natural Wonders selection changes should reattach pending thumbnails before updating active row state'
+  );
+});
+
+test('sectioned tab selection paints active row before deferred detail render', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const updateSectionListActiveState = \(sectionIndex\) => \{[\s\S]*?itemBtn\.classList\.toggle\('active', isActive\);[\s\S]*?makeSectionThumbLoad\(section, thumb\)\(\);[\s\S]*?\};/,
+    'sectioned tabs should expose a cheap active-row update path that does not rebuild the detail pane'
+  );
+  assert.match(
+    rendererText,
+    /const scheduleSectionSelectionDetailRender = \(options = \{\}\) => \{[\s\S]*?window\.requestAnimationFrame\(\(\) => \{[\s\S]*?window\.setTimeout\(\(\) => \{[\s\S]*?renderSectionBody\(\{[\s\S]*?skipListRebuild: true,[\s\S]*?fromScheduledSelectionRender: true[\s\S]*?\}\);/,
+    'Districts, Wonder Districts, and Natural Wonders selection should defer heavier detail rendering until after a paint opportunity'
+  );
+  assert.match(
+    rendererText,
+    /const selectSection = \(sectionIndex, options = \{\}\) => \{[\s\S]*?state\.sectionSelection\[tabKey\] = sectionIndex;[\s\S]*?updateSectionListActiveState\(sectionIndex\);[\s\S]*?scheduleSectionSelectionDetailRender\(\{[\s\S]*?resetDetailScroll: !!options\.resetDetailScroll[\s\S]*?\}\);/,
+    'clicking a sectioned C3X entry should update the active list item before scheduling the expensive detail refresh'
   );
 });
 
