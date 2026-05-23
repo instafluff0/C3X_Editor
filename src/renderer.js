@@ -236,6 +236,7 @@ const state = {
   settingsPersistTimer: null,
   performanceMenuUnsubscribe: null,
   qualityChecksMenuUnsubscribe: null,
+  reloadAfterSaveMenuUnsubscribe: null,
   logSettingsMenuUnsubscribe: null,
   mapSettingsMenuUnsubscribe: null,
   textFileEncodingMenuUnsubscribe: null,
@@ -2553,7 +2554,13 @@ function getUndoSnapshotForKey(key = '') {
     const parts = normalizedKey.split(':');
     const tabKey = String(parts[1] || '').trim().toLowerCase();
     if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
-      return snapshotSelectedEditableTabs([tabKey]);
+      return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `tab:${tabKey}` });
+    }
+  }
+  if (normalizedKey.startsWith('BIQ_FIELD:')) {
+    const tabKey = String(state.activeTab || '').trim().toLowerCase();
+    if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
+      return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `tab:${tabKey}` });
     }
   }
   if (normalizedKey.startsWith('TECH_TOP:')) {
@@ -3873,6 +3880,13 @@ function isScopedSectionTabUndoSnapshot(snapshot) {
   return (kind === 'partial-tabs' || kind === 'serialized-partial-tabs') && scope.startsWith('section:');
 }
 
+function isScopedTabUndoSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  const kind = String(snapshot.kind || '').trim().toLowerCase();
+  const scope = String(snapshot.scope || '').trim().toLowerCase();
+  return (kind === 'partial-tabs' || kind === 'serialized-partial-tabs') && scope.startsWith('tab:');
+}
+
 function recomputeDirtyStateForScopedBaseSnapshot(snapshot) {
   if (!isScopedBaseUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs || !state.bundle.tabs.base) return false;
   setTabDirtyCount('base', computeTabDirtyCount('base'));
@@ -3884,6 +3898,16 @@ function recomputeDirtyStateForScopedSectionTabSnapshot(snapshot) {
   if (!isScopedSectionTabUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs) return false;
   const scope = String(snapshot.scope || '').trim().toLowerCase();
   const tabKey = scope.slice('section:'.length).trim();
+  if (!tabKey || !state.bundle.tabs[tabKey]) return false;
+  setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+  return true;
+}
+
+function recomputeDirtyStateForScopedTabSnapshot(snapshot) {
+  if (!isScopedTabUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs) return false;
+  const scope = String(snapshot.scope || '').trim().toLowerCase();
+  const tabKey = scope.slice('tab:'.length).trim();
   if (!tabKey || !state.bundle.tabs[tabKey]) return false;
   setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
@@ -49525,16 +49549,21 @@ function buildSaveOutcome(preparedItems, res, fallbackError = '') {
   };
 }
 
-function canSkipPostSaveReload({ res, scenarioSearchFolderChanged, shouldReloadForAutoScenarioSearchFolder }) {
-  if (!res || !res.ok) return false;
-  if (scenarioSearchFolderChanged || shouldReloadForAutoScenarioSearchFolder) return false;
-  const simpleKinds = new Set(['base', 'districts', 'wonders', 'naturalwonders', 'animations']);
-  const report = Array.isArray(res.saveReport) ? res.saveReport : [];
-  if (report.length === 0) return false;
-  return report.every((entry) => simpleKinds.has(String(entry && entry.kind || '').trim().toLowerCase()));
+function shouldReloadBundleAfterSave() {
+  return !!(state.settings && state.settings.reloadAfterSave);
 }
 
-function markCurrentBundleCleanAfterSimpleSave() {
+function markScenarioDistrictsAsSaved() {
+  const mapTab = state.bundle && state.bundle.tabs && state.bundle.tabs.map;
+  const meta = mapTab && mapTab.scenarioDistricts;
+  if (!meta) return;
+  meta.originalEntries = deepCloneUiValue(Array.isArray(meta.entries) ? meta.entries : []);
+  meta.originalNamedTiles = deepCloneUiValue(Array.isArray(meta.namedTiles) ? meta.namedTiles : []);
+}
+
+function markCurrentBundleCleanAfterSave() {
+  markReferenceTabsAsSaved();
+  markScenarioDistrictsAsSaved();
   state.cleanSnapshot = snapshotTabs();
   state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
   clearCleanReferenceDirtySignatureCache();
@@ -49815,9 +49844,17 @@ async function saveCurrentBundle() {
 
     const paths = res.saveReport.map((r) => _dbgRelPath(r.path)).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
-    if (canSkipPostSaveReload({ res, scenarioSearchFolderChanged, shouldReloadForAutoScenarioSearchFolder })) {
-      markCurrentBundleCleanAfterSimpleSave();
-      _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload for simple config save');
+    const hasBiqSaveWarning = !!(biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim()));
+    if (!shouldReloadBundleAfterSave()) {
+      if (hasBiqSaveWarning) {
+        const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
+        const suffix = warningText ? ` ${warningText}` : '';
+        _dbgWarn('saveBundle', 'Skipped post-save bundle reload, but kept BIQ changes dirty because the BIQ save reported skipped edits or warnings');
+        setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
+        return true;
+      }
+      markCurrentBundleCleanAfterSave();
+      _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload because Reload After Save is off');
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
       return true;
     }
@@ -49841,7 +49878,7 @@ async function saveCurrentBundle() {
       referenceSelectionKeys,
       loadingText: 'Refreshing saved data...'
     });
-    if (biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim())) {
+    if (hasBiqSaveWarning) {
       const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
       const suffix = warningText ? ` ${warningText}` : '';
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
@@ -50022,6 +50059,7 @@ function markReferenceTabEntryOriginals(tab) {
     entry.originalWonderSplashPath = String(entry.wonderSplashPath || '');
     entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
     entry.originalAnimationName = String(entry.animationName || '');
+    entry.forcePediaIconsBlockWrite = false;
     entry.unitAnimationEdited = false;
     entry.unitFolderCloneSource = '';
     if (entry.unitIniEditor) {
@@ -50057,6 +50095,18 @@ function markReferenceTabsAsSaved() {
     }
     if (tab.type === 'biq') {
       tab.recordOps = [];
+      if (tab.key === 'scenarioSettings') {
+        tab.customRulesMutation = null;
+      }
+      if (tab.key === 'players') {
+        tab.customPlayerDataMutation = null;
+      }
+      if (tab.key === 'map') {
+        tab.originalHasMap = !!tab.hasMapData;
+        tab.mapMutation = null;
+        tab.mapMutationSource = null;
+        tab.pendingMapResize = null;
+      }
       const sections = Array.isArray(tab.sections) ? tab.sections : [];
       sections.forEach((section) => {
         const records = Array.isArray(section && section.records) ? section.records : [];
@@ -50262,6 +50312,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && targetSnapshot.kind === 'serialized-section-item'
   );
   const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot(targetSnapshot);
+  const isScopedTabSnapshot = isScopedTabUndoSnapshot(targetSnapshot);
   const restoredSearchFolder = Object.prototype.hasOwnProperty.call(restoredEditableTabs, 'scenarioSettings')
     ? getScenarioSearchFolderValueFromTabs(restoredEditableTabs)
     : getScenarioSearchFolderValueFromTabs(state.bundle && state.bundle.tabs ? state.bundle.tabs : {});
@@ -50270,6 +50321,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     !isSerializedReferenceEntrySnapshot
     && !isSerializedSectionSnapshot
     && !isScopedSectionTabSnapshot
+    && !isScopedTabSnapshot
     && state.settings
     && state.settings.mode === 'scenario'
     && state.settings.scenarioPath
@@ -50338,6 +50390,7 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   );
   const isScopedBaseSnapshot = isScopedBaseUndoSnapshot(targetSnapshot);
   const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot(targetSnapshot);
+  const isScopedTabSnapshot = isScopedTabUndoSnapshot(targetSnapshot);
   const restoredEditableTabs = isSerializedReferenceEntrySnapshot ? {} : extractUndoSnapshotTabs(targetSnapshot);
   const isMapRecordDiffSnapshot = !!(
     targetSnapshot
@@ -50386,7 +50439,10 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   const appliedFastSectionTabDirtyState = !appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState && isScopedSectionTabSnapshot
     ? recomputeDirtyStateForScopedSectionTabSnapshot(targetSnapshot)
     : false;
-  if (!appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState && !appliedFastSectionTabDirtyState) {
+  const appliedFastTabDirtyState = !appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState && !appliedFastSectionTabDirtyState && isScopedTabSnapshot
+    ? recomputeDirtyStateForScopedTabSnapshot(targetSnapshot)
+    : false;
+  if (!appliedFastReferenceDirtyState && !appliedFastSectionDirtyState && !appliedFastBaseDirtyState && !appliedFastSectionTabDirtyState && !appliedFastTabDirtyState) {
     recomputeDirtyStateFromBundle();
   }
   markFilesReadEntriesDirty();
@@ -50691,6 +50747,9 @@ async function init() {
   if (typeof state.settings.runQualityChecks !== 'boolean') {
     state.settings.runQualityChecks = true;
   }
+  if (typeof state.settings.reloadAfterSave !== 'boolean') {
+    state.settings.reloadAfterSave = false;
+  }
   if (typeof state.settings.mapAutoDockTileInfoLeft !== 'boolean') {
     state.settings.mapAutoDockTileInfoLeft = true;
   }
@@ -50814,6 +50873,20 @@ async function init() {
       if (state.qualityChecksMenuUnsubscribe) {
         state.qualityChecksMenuUnsubscribe();
         state.qualityChecksMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onReloadAfterSaveMenuSelect === 'function') {
+    state.reloadAfterSaveMenuUnsubscribe = window.c3xManager.onReloadAfterSaveMenuSelect((enabled) => {
+      if (!state.settings) return;
+      state.settings.reloadAfterSave = enabled === true;
+      void window.c3xManager.setSettings(state.settings);
+      setStatus(state.settings.reloadAfterSave ? 'Reload after Save enabled.' : 'Reload after Save disabled.');
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.reloadAfterSaveMenuUnsubscribe) {
+        state.reloadAfterSaveMenuUnsubscribe();
+        state.reloadAfterSaveMenuUnsubscribe = null;
       }
     }, { once: true });
   }

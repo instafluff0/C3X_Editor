@@ -304,6 +304,12 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
 
   assert.match(
     text,
+    /if \(normalizedKey\.startsWith\('RULE_FIELD:'\)\) \{[\s\S]*?return snapshotSelectedEditableTabs\(\{\s*tabKeys: \[tabKey\],\s*scope: `tab:\$\{tabKey\}`\s*\}\);[\s\S]*?if \(normalizedKey\.startsWith\('BIQ_FIELD:'\)\) \{[\s\S]*?const tabKey = String\(state\.activeTab \|\| ''\)\.trim\(\)\.toLowerCase\(\);[\s\S]*?return snapshotSelectedEditableTabs\(\{\s*tabKeys: \[tabKey\],\s*scope: `tab:\$\{tabKey\}`\s*\}\);/m,
+    'BIQ-backed field edits should capture tab-scoped undo snapshots instead of falling back to full editable-tab snapshots'
+  );
+
+  assert.match(
+    text,
     /function extractUndoSnapshotTabs\(snapshot\) \{[\s\S]*?snapshot\.kind === 'partial-tabs'[\s\S]*?snapshot\.tabs/,
     'Undo restore should understand partial-tab snapshot entries'
   );
@@ -316,8 +322,8 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
 
   assert.match(
     text,
-    /const isScopedBaseSnapshot = isScopedBaseUndoSnapshot\(targetSnapshot\);[\s\S]*?const isSerializedReferenceEntrySnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-reference-entry'[\s\S]*?\);[\s\S]*?const isSerializedSectionSnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-section-item'[\s\S]*?\);[\s\S]*?if \(\s*!isScopedBaseSnapshot[\s\S]*?!isSerializedReferenceEntrySnapshot[\s\S]*?&& !isSerializedSectionSnapshot[\s\S]*?await loadBundleAndRender\(\{/m,
-    'Scoped base, entry-scoped reference, and section-scoped undo should skip the scenario reload path so unrelated in-memory edits are not discarded before the snapshot is applied'
+    /const isScopedBaseSnapshot = isScopedBaseUndoSnapshot\(targetSnapshot\);[\s\S]*?const isSerializedReferenceEntrySnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-reference-entry'[\s\S]*?\);[\s\S]*?const isSerializedSectionSnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-section-item'[\s\S]*?\);[\s\S]*?const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot\(targetSnapshot\);[\s\S]*?const isScopedTabSnapshot = isScopedTabUndoSnapshot\(targetSnapshot\);[\s\S]*?if \(\s*!isScopedBaseSnapshot[\s\S]*?!isSerializedReferenceEntrySnapshot[\s\S]*?&& !isSerializedSectionSnapshot[\s\S]*?&& !isScopedSectionTabSnapshot[\s\S]*?&& !isScopedTabSnapshot[\s\S]*?await loadBundleAndRender\(\{/m,
+    'Scoped base, entry-scoped reference, section-scoped, and tab-scoped undo should skip the scenario reload path so unrelated in-memory edits are not discarded before the snapshot is applied'
   );
 });
 

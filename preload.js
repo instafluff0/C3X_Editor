@@ -41,6 +41,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:quality-checks-selected', listener);
     };
   },
+  onReloadAfterSaveMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, enabled) => handler(enabled);
+    ipcRenderer.on('manager:reload-after-save-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:reload-after-save-selected', listener);
+    };
+  },
   onTextFileEncodingMenuSelect: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};

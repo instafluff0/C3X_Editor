@@ -292,6 +292,31 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     /label: 'Map',[\s\S]*?label: 'Auto-Dock Tile Info Left Near Right Edge',[\s\S]*?checked: currentMapAutoDockTileInfoLeft,[\s\S]*?sendMapAutoDockTileInfoLeftSelection\(item && item\.checked\)/,
     'File -> Settings should expose a default-on Map toggle for tile-info auto-docking'
   );
+  assert.match(
+    rendererText,
+    /if \(typeof state\.settings\.reloadAfterSave !== 'boolean'\) \{[\s\S]*?state\.settings\.reloadAfterSave = false;[\s\S]*?\}/,
+    'older saved settings should default Reload After Save to disabled'
+  );
+  assert.match(
+    rendererText,
+    /function shouldReloadBundleAfterSave\(\) \{[\s\S]*?return !!\(state\.settings && state\.settings\.reloadAfterSave\);[\s\S]*?\}/,
+    'post-save reload should be gated by the dedicated Reload After Save setting'
+  );
+  assert.match(
+    rendererText,
+    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?markCurrentBundleCleanAfterSave\(\);[\s\S]*?Skipped post-save bundle reload because Reload After Save is off/,
+    'Save should keep the current bundle open and mark it clean when Reload After Save is disabled'
+  );
+  assert.match(
+    preloadText,
+    /onReloadAfterSaveMenuSelect: \(handler\) => \{[\s\S]*?ipcRenderer\.on\('manager:reload-after-save-selected', listener\);/,
+    'preload should expose Reload After Save menu updates to the renderer'
+  );
+  assert.match(
+    mainText,
+    /label: 'Reload After Save',[\s\S]*?checked: currentReloadAfterSave,[\s\S]*?sendReloadAfterSaveSelection\(item && item\.checked\)/,
+    'File -> Settings should expose a default-off Reload After Save toggle'
+  );
   assert.doesNotMatch(
     rendererText,
     /const buildMapSelectionCategorySelect = \(value, options = \{\}\) => \{[\s\S]*?scheduleTileInfoRender\(\);[\s\S]*?refreshMapViewForToolChange\(\);/,

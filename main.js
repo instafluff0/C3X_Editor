@@ -53,6 +53,17 @@ function readStartupRunQualityChecks() {
   }
 }
 
+function readStartupReloadAfterSave() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return false;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeReloadAfterSave(raw && raw.reloadAfterSave);
+  } catch (_err) {
+    return false;
+  }
+}
+
 function readStartupTextFileEncoding() {
   try {
     const settingsPath = getSettingsPathUnsafe();
@@ -127,6 +138,10 @@ function normalizeRunQualityChecks(value) {
   return value !== false;
 }
 
+function normalizeReloadAfterSave(value) {
+  return value === true;
+}
+
 function normalizeTextFileEncoding(value) {
   const raw = String(value || 'auto').trim().toLowerCase();
   const aliases = {
@@ -154,12 +169,14 @@ function normalizeTextFileEncoding(value) {
 
 const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
+const startupReloadAfterSave = readStartupReloadAfterSave();
 const startupTextFileEncoding = readStartupTextFileEncoding();
 const startupMapAutoDockTileInfoLeft = readStartupMapAutoDockTileInfoLeft();
 const startupWriteLogFiles = readStartupWriteLogFiles();
 const startupLogFolder = readStartupLogFolder();
 let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
+let currentReloadAfterSave = startupReloadAfterSave;
 let currentTextFileEncoding = startupTextFileEncoding;
 let currentMapAutoDockTileInfoLeft = startupMapAutoDockTileInfoLeft;
 let currentWriteLogFiles = startupWriteLogFiles;
@@ -523,6 +540,19 @@ function sendQualityChecksSelection(enabled) {
   target.webContents.send('manager:quality-checks-selected', currentRunQualityChecks);
 }
 
+function sendReloadAfterSaveSelection(enabled) {
+  currentReloadAfterSave = normalizeReloadAfterSave(enabled);
+  try {
+    persistSettingsPatch({ reloadAfterSave: currentReloadAfterSave });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:reload-after-save-selected', currentReloadAfterSave);
+}
+
 function sendTextFileEncodingSelection(value) {
   currentTextFileEncoding = normalizeTextFileEncoding(value);
   try {
@@ -677,6 +707,12 @@ function buildAppMenu() {
             click: (item) => sendQualityChecksSelection(item && item.checked)
           },
           {
+            label: 'Reload After Save',
+            type: 'checkbox',
+            checked: currentReloadAfterSave,
+            click: (item) => sendReloadAfterSaveSelection(item && item.checked)
+          },
+          {
             label: 'Logging',
             submenu: buildLogMenuItems()
           },
@@ -784,6 +820,7 @@ ipcMain.handle('manager:get-settings', async () => {
     textFileEncoding: 'auto',
     performanceMode: 'high',
     runQualityChecks: true,
+    reloadAfterSave: false,
     mapAutoDockTileInfoLeft: true,
     writeLogFiles: true,
     logFolder: getDefaultLogFolderUnsafe(),
@@ -795,6 +832,7 @@ ipcMain.handle('manager:get-settings', async () => {
   const merged = { ...defaults, ...(saved || {}) };
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
+  merged.reloadAfterSave = normalizeReloadAfterSave(merged.reloadAfterSave);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
   merged.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(merged.mapAutoDockTileInfoLeft);
   merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
@@ -804,12 +842,14 @@ ipcMain.handle('manager:get-settings', async () => {
   const inferred = inferDefaultPaths(merged);
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
+  inferred.reloadAfterSave = normalizeReloadAfterSave(inferred.reloadAfterSave);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
   inferred.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(inferred.mapAutoDockTileInfoLeft);
   inferred.writeLogFiles = normalizeWriteLogFiles(inferred.writeLogFiles);
   inferred.logFolder = normalizeLogFolder(inferred.logFolder);
   currentPerformanceMode = inferred.performanceMode;
   currentRunQualityChecks = inferred.runQualityChecks;
+  currentReloadAfterSave = inferred.reloadAfterSave;
   currentTextFileEncoding = inferred.textFileEncoding;
   currentMapAutoDockTileInfoLeft = inferred.mapAutoDockTileInfoLeft;
   currentWriteLogFiles = inferred.writeLogFiles;
@@ -822,7 +862,7 @@ ipcMain.handle('manager:get-settings', async () => {
   applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
-  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}`);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
   log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
   if (inferred.mode === 'scenario') {
@@ -840,6 +880,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     ...(settings || {}),
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode),
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
+    reloadAfterSave: normalizeReloadAfterSave(settings && settings.reloadAfterSave),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
     mapAutoDockTileInfoLeft: normalizeMapAutoDockTileInfoLeft(settings && settings.mapAutoDockTileInfoLeft),
     writeLogFiles: normalizeWriteLogFiles(settings && settings.writeLogFiles),
@@ -848,7 +889,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   log.setCiv3Root(normalized.civ3Path || '');
   applyLogContextFromPayload(normalized);
   log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
-  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}`);
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
     log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
@@ -861,6 +902,10 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentRunQualityChecks !== normalized.runQualityChecks) {
     currentRunQualityChecks = normalized.runQualityChecks;
+    buildAppMenu();
+  }
+  if (currentReloadAfterSave !== normalized.reloadAfterSave) {
+    currentReloadAfterSave = normalized.reloadAfterSave;
     buildAppMenu();
   }
   if (currentTextFileEncoding !== normalized.textFileEncoding) {
