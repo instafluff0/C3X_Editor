@@ -1,4 +1,5 @@
 * RELEASE 27.12
+- Fixed Map saves so stale non-map BIQ field edits and resize-generated preview field edits are not collected during map-only saves, allowing successful terrain, overlay, and resize saves to clear the dirty Save state; also synced the Map modal Save button with the shared Save disabled/saving states and added volcano plus C3C overlay coverage.
 - Upgraded the Units Table modal with an All/Civ availability filter, Manual column sorting with ascending/descending header indicators, and viewport-limited row/thumb hydration for faster large unit lists.
 - Remembered the Show King Units preference separately for the Availability by Civ and Unit Table modals.
 - Kept no-tech real units such as Warriors, Workers, and Settlers visible in Availability by Civ and Unit Table while still excluding PRTO era-variant pseudo units.

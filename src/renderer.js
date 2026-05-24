@@ -2190,7 +2190,7 @@ function openFilesReadModal() {
 }
 
 function getSaveButtons() {
-  return [el.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn].filter((btn) => btn && btn.isConnected);
+  return [el.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn, mapModal.saveBtn].filter((btn) => btn && btn.isConnected);
 }
 
 function updateSaveButtonLabel() {

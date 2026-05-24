@@ -18,7 +18,8 @@ const {
   collectBiqMapEdits,
   collectBiqMapStructureOps,
   loadBundle,
-  saveBundle
+  saveBundle,
+  previewSavePlan
 } = require('../src/configCore');
 
 function mkTmpDir() {
@@ -220,7 +221,9 @@ test('loadBundle + saveBundle writes to scope targets', () => {
   assert.match(savedText, /flag = false/);
 });
 
-test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips WMAP dimensions', () => {
+test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips resize-managed preview fields', () => {
+  const editedTerrain = makeMapField('baserealterrain', 34, 18);
+  editedTerrain.mapEditorValueEdited = true;
   const tabs = {
     map: {
       hasMapData: true,
@@ -236,6 +239,27 @@ test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips WMA
               makeMapField('width', 140, 130),
               makeMapField('height', 120, 110),
               makeMapField('flags', 3, 1)
+            ]
+          }]
+        },
+        {
+          code: 'TILE',
+          records: [{
+            index: 0,
+            fields: [
+              makeMapField('xpos', 2, 0),
+              makeMapField('ypos', 0, 0),
+              makeMapField('baseterrain', 2, 1),
+              editedTerrain
+            ]
+          }]
+        },
+        {
+          code: 'CONT',
+          records: [{
+            index: 0,
+            fields: [
+              makeMapField('numtiles', 4000, 3000)
             ]
           }]
         }
@@ -257,8 +281,103 @@ test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips WMA
       recordRef: '@INDEX:0',
       fieldKey: 'flags',
       value: '3'
+    },
+    {
+      sectionCode: 'TILE',
+      recordRef: '@INDEX:0',
+      fieldKey: 'baserealterrain',
+      value: '34'
     }
   ]);
+});
+
+test('collectBiqMapEdits includes volcano terrain and C3C overlay edits from map modal paint', () => {
+  const volcanoPackedOnGrassland = (10 << 4) | 2;
+  const roadAndCrater = 0x00000001 | 0x00000100;
+  const baseTerrain = makeMapField('baserealterrain', volcanoPackedOnGrassland, 2);
+  const c3cTerrain = makeMapField('c3cbaserealterrain', volcanoPackedOnGrassland, 2);
+  const c3cOverlays = makeMapField('c3coverlays', roadAndCrater, 0);
+  baseTerrain.mapEditorValueEdited = true;
+  c3cTerrain.mapEditorValueEdited = true;
+  c3cOverlays.mapEditorValueEdited = true;
+  const tabs = {
+    map: {
+      hasMapData: true,
+      originalHasMap: true,
+      mapMutation: null,
+      sections: [{
+        code: 'TILE',
+        records: [{
+          index: 7,
+          fields: [
+            baseTerrain,
+            c3cTerrain,
+            c3cOverlays
+          ]
+        }]
+      }]
+    }
+  };
+
+  assert.deepEqual(collectBiqMapEdits(tabs), [
+    {
+      sectionCode: 'TILE',
+      recordRef: '@INDEX:7',
+      fieldKey: 'baserealterrain',
+      value: String(volcanoPackedOnGrassland)
+    },
+    {
+      sectionCode: 'TILE',
+      recordRef: '@INDEX:7',
+      fieldKey: 'c3cbaserealterrain',
+      value: String(volcanoPackedOnGrassland)
+    },
+    {
+      sectionCode: 'TILE',
+      recordRef: '@INDEX:7',
+      fieldKey: 'c3coverlays',
+      value: String(roadAndCrater)
+    }
+  ]);
+});
+
+test('map-only BIQ save planning ignores stale reference field edits', () => {
+  const root = mkTmpDir();
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = A\nini_path = X\\Y.ini\ntype = terrain\nterrain_types = grassland\n', 'utf8');
+  const scenario = path.join(root, 'map-save-filter.biq');
+  fs.copyFileSync(path.join(__dirname, 'fixtures', 'biq_map_units_fixture.biq'), scenario);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: root, scenarioPath: scenario });
+  const mapTab = bundle.tabs.map;
+  const tileSection = mapTab.sections.find((section) => section.code === 'TILE');
+  const tile = tileSection.records[0];
+  const terrainField = tile.fields.find((field) => field.baseKey === 'baserealterrain');
+  terrainField.value = String((10 << 4) | 2);
+  terrainField.mapEditorValueEdited = true;
+  const c3cTerrainField = tile.fields.find((field) => field.baseKey === 'c3cbaserealterrain');
+  c3cTerrainField.value = String((10 << 4) | 2);
+  c3cTerrainField.mapEditorValueEdited = true;
+
+  const staleCivField = bundle.tabs.civilizations.entries[0].biqFields.find((field) => field.baseKey === 'civilizationname');
+  staleCivField.originalValue = `${staleCivField.value} stale`;
+
+  const preview = previewSavePlan({
+    mode: 'scenario',
+    c3xPath: root,
+    scenarioPath: scenario,
+    dirtyTabs: ['map'],
+    tabs: bundle.tabs
+  });
+
+  assert.equal(preview.ok, true, preview.error || 'preview failed');
+  const biqReport = preview.saveReport.find((entry) => entry.kind === 'biq');
+  assert.ok(biqReport, 'expected BIQ write for map edits');
+  assert.equal(biqReport.skipped, 0);
+  assert.ok(biqReport.applied >= 2);
 });
 
 test('loadBundle does not write target files before save', () => {

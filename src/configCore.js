@@ -7644,24 +7644,28 @@ function buildSavePlan(payload) {
         }
       }
 
+      const biqTabsForCollection = getTabsForDirtyBiqCollection(payload.tabs || {}, {
+        dirtyTabs,
+        includeAllFieldEdits: hasPendingBiqFieldEdits
+      });
       const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
-        tabs: payload.tabs || {},
+        tabs: biqTabsForCollection,
         civ3Path,
         textEncoding: inferredBiqTextEncoding
       });
       const biqCustomPlayerDataOps = collectBiqCustomPlayerDataMutationOps({
-        tabs: payload.tabs || {}
+        tabs: biqTabsForCollection
       });
       const biqRecordOps = resolveExternalImportedPrtoRecordOps(
-        collectBiqReferenceRecordOps(payload.tabs || {}),
+        collectBiqReferenceRecordOps(biqTabsForCollection),
         civ3Path
       );
-      const biqStructureRecordOps = collectBiqStructureRecordOps(payload.tabs || {});
-      const biqMapStructureOps = collectBiqMapStructureOps(payload.tabs || {});
-      const biqMapRecordOps = collectBiqMapRecordOps(payload.tabs || {});
-      const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
-      const structureEdits = collectBiqStructureEdits(payload.tabs || {});
-      const mapEdits = collectBiqMapEdits(payload.tabs || {});
+      const biqStructureRecordOps = collectBiqStructureRecordOps(biqTabsForCollection);
+      const biqMapStructureOps = collectBiqMapStructureOps(biqTabsForCollection);
+      const biqMapRecordOps = collectBiqMapRecordOps(biqTabsForCollection);
+      const biqEdits = collectBiqReferenceEdits(biqTabsForCollection);
+      const structureEdits = collectBiqStructureEdits(biqTabsForCollection);
+      const mapEdits = collectBiqMapEdits(biqTabsForCollection);
       const autoSearchField = !pendingSearchFolderOverride || pendingSearchFolderOverride.length === 0
         ? getScenarioSearchFieldMeta(biqTab)
         : null;
@@ -8636,6 +8640,30 @@ function hasPendingBiqFieldEditPayload(tabs) {
     || collectBiqMapEdits(source).length > 0;
 }
 
+function getTabsForDirtyBiqCollection(tabs, options = {}) {
+  const source = tabs || {};
+  const dirtyTabs = options && options.dirtyTabs instanceof Set ? options.dirtyTabs : new Set();
+  if (dirtyTabs.size === 0 || (options && options.includeAllFieldEdits)) return source;
+  const out = {};
+  const shouldIncludeOperationTab = (tabKey, tab) => {
+    if (!tab) return false;
+    if (tabKey === 'scenarioSettings' && String(tab.customRulesMutation || '').trim()) return true;
+    if (tabKey === 'players' && String(tab.customPlayerDataMutation || '').trim()) return true;
+    if (Array.isArray(tab.recordOps) && tab.recordOps.length > 0) return true;
+    if (tabKey === 'map') {
+      if (String(tab.mapMutation || '').trim()) return true;
+      if (tab.pendingMapResize && typeof tab.pendingMapResize === 'object') return true;
+    }
+    return false;
+  };
+  Object.entries(source).forEach(([tabKey, tab]) => {
+    if (dirtyTabs.has(tabKey) || shouldIncludeOperationTab(tabKey, tab)) {
+      out[tabKey] = tab;
+    }
+  });
+  return out;
+}
+
 function collectBiqReferenceEdits(tabs) {
   const edits = [];
   for (const spec of REFERENCE_TAB_SPECS) {
@@ -9132,7 +9160,9 @@ function collectBiqMapEdits(tabs) {
   const mutation = String(tab && tab.mapMutation || '').trim().toLowerCase();
   if (mutation === 'set' || mutation === 'remove') return edits;
   if (!tab || !Array.isArray(tab.sections)) return edits;
+  const hasResizeOp = !!getBiqMapResizeOp(tab);
   const editableMapSections = new Set(['WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+  const resizeManagedSections = new Set(['TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
   const canonicalFieldKey = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
   const getDirectRecordValue = (record, key) => {
     if (!record || typeof record !== 'object') return undefined;
@@ -9172,6 +9202,7 @@ function collectBiqMapEdits(tabs) {
         if (sectionCode === 'WMAP' && (keyLower === 'width' || keyLower === 'height')) return;
         if (sectionCode === 'TILE' && ['district', 'districtname', 'wondername', 'wondercity', 'naturalwonder', 'namedtile'].includes(keyLower)) return;
         if (keyLower === 'civilopediaentry' || keyLower === 'note') return;
+        if (hasResizeOp && resizeManagedSections.has(sectionCode) && !field.mapEditorValueEdited && !isNew) return;
         const value = getRawMapFieldValue(record, field);
         const originalValue = cleanDisplayText(field.originalValue);
         if (value === originalValue) return;
