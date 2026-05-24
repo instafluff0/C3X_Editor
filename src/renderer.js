@@ -26163,6 +26163,28 @@ function sanitizeResizePreviewEntitySections(tab, width, height, offsets = {}) {
   }
 }
 
+function shiftScenarioDistrictsForMapResize(tab, width, height, offsets = {}) {
+  const meta = tab && tab.scenarioDistricts;
+  if (!meta) return;
+  const offsetX = Number.isFinite(offsets.x) ? Number(offsets.x) : 0;
+  const offsetY = Number.isFinite(offsets.y) ? Number(offsets.y) : 0;
+  const shiftEntry = (entry) => {
+    if (!entry || typeof entry !== 'object') return null;
+    const x = parseIntLoose(entry.x, NaN);
+    const y = parseIntLoose(entry.y, NaN);
+    const shiftedX = x + offsetX;
+    const shiftedY = y + offsetY;
+    if (!isMapResizePreviewCoordInBounds(shiftedX, shiftedY, width, height)) return null;
+    return { ...entry, x: shiftedX, y: shiftedY };
+  };
+  if (Array.isArray(meta.entries)) {
+    meta.entries = meta.entries.map(shiftEntry).filter(Boolean);
+  }
+  if (Array.isArray(meta.namedTiles)) {
+    meta.namedTiles = meta.namedTiles.map(shiftEntry).filter(Boolean);
+  }
+}
+
 function applyMapResizePreviewToTab(tab, targetWidth, targetHeight, options = {}) {
   const width = normalizeMapResizePreviewDimension(targetWidth, 'width');
   const height = normalizeMapResizePreviewDimension(targetHeight, 'height');
@@ -26260,6 +26282,8 @@ function applyMapResizePreviewToTab(tab, targetWidth, targetHeight, options = {}
   setPreviewMapFieldValue(wmapRecord, 'width', width, 'Width');
   setPreviewMapFieldValue(wmapRecord, 'height', height, 'Height');
   sanitizeResizePreviewEntitySections(tab, width, height, resizeOffsets);
+  shiftScenarioDistrictsForMapResize(tab, width, height, resizeOffsets);
+  syncScenarioDistrictDisplayFieldsForMapTab(tab, tileSection);
   recalculateResizePreviewContinentTileCounts(tileSection, contSection);
   finalizeGeneratedBlankMapTerrainFileImage(nextTileRecords, width, height);
   tab.pendingMapResize = { width, height, fillTerrain, horizontalAnchor, verticalAnchor };

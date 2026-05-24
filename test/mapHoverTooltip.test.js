@@ -2,6 +2,34 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+
+function extractFunctionSource(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `expected ${name} function to exist`);
+  let parenDepth = 0;
+  let braceStart = -1;
+  for (let index = source.indexOf('(', start); index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '(') parenDepth += 1;
+    if (char === ')') parenDepth -= 1;
+    if (char === '{' && parenDepth === 0) {
+      braceStart = index;
+      break;
+    }
+  }
+  assert.notEqual(braceStart, -1, `expected ${name} function body to exist`);
+  let depth = 0;
+  for (let index = braceStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  throw new Error(`Could not extract ${name}`);
+}
 
 test('Map canvas hover tooltip shows current grid coordinates', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
@@ -748,6 +776,68 @@ test('map modal reapplies scenario district metadata before redraws', () => {
     /function renderBiqMapSection\(tab, tileSection, options = \{\}\) \{[\s\S]*?appendDebugLog\('biq-map:open'[\s\S]*?syncScenarioDistrictDisplayFieldsForMapTab\(tab, tileSection\);[\s\S]*?const rerenderMapView = \(\) => \{/,
     'map modal rendering should sync scenario district metadata before computing tile visuals'
   );
+  assert.match(
+    rendererText,
+    /function applyMapResizePreviewToTab\(tab, targetWidth, targetHeight, options = \{\}\) \{[\s\S]*?sanitizeResizePreviewEntitySections\(tab, width, height, resizeOffsets\);\s*shiftScenarioDistrictsForMapResize\(tab, width, height, resizeOffsets\);\s*syncScenarioDistrictDisplayFieldsForMapTab\(tab, tileSection\);/,
+    'map resize should shift scenario district sidecar metadata and reapply display fields before redraw/save'
+  );
+});
+
+test('map resize shifts and trims scenario district sidecar metadata', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const context = {
+    parseIntLoose(value, fallback = 0) {
+      const parsed = Number.parseInt(String(value == null ? '' : value).trim(), 10);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext([
+    extractFunctionSource(rendererText, 'isMapResizePreviewCoordInBounds'),
+    extractFunctionSource(rendererText, 'shiftScenarioDistrictsForMapResize'),
+    'this.shiftScenarioDistrictsForMapResize = shiftScenarioDistrictsForMapResize;'
+  ].join('\n'), context);
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+
+  const growTab = {
+    scenarioDistricts: {
+      entries: [
+        { x: 2, y: 3, district: 'Neighborhood', wonderName: 'Colossus', wonderCity: 'Rome' },
+        { x: 0, y: 0, district: 'Trimmed District' }
+      ],
+      namedTiles: [
+        { x: '4', y: '5', name: 'Mountain Pass' },
+        { x: 99, y: 99, name: 'Out of Bounds' }
+      ]
+    }
+  };
+  context.shiftScenarioDistrictsForMapResize(growTab, 8, 8, { x: 1, y: -1 });
+  assert.deepEqual(plain(growTab.scenarioDistricts.entries), [
+    { x: 3, y: 2, district: 'Neighborhood', wonderName: 'Colossus', wonderCity: 'Rome' }
+  ]);
+  assert.deepEqual(plain(growTab.scenarioDistricts.namedTiles), [
+    { x: 5, y: 4, name: 'Mountain Pass' }
+  ]);
+
+  const shrinkTab = {
+    scenarioDistricts: {
+      entries: [
+        { x: 1, y: 1, district: 'Trimmed' },
+        { x: 6, y: 6, district: 'Kept' }
+      ],
+      namedTiles: [
+        { x: 2, y: 3, name: 'Kept Tile' },
+        { x: 1, y: 0, name: 'Trimmed Tile' }
+      ]
+    }
+  };
+  context.shiftScenarioDistrictsForMapResize(shrinkTab, 5, 5, { x: -2, y: -2 });
+  assert.deepEqual(plain(shrinkTab.scenarioDistricts.entries), [
+    { x: 4, y: 4, district: 'Kept' }
+  ]);
+  assert.deepEqual(plain(shrinkTab.scenarioDistricts.namedTiles), [
+    { x: 0, y: 1, name: 'Kept Tile' }
+  ]);
 });
 
 test('Files modal tracks scenario district sidecar writes from map edits', () => {
