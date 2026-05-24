@@ -1,4 +1,9 @@
+* RELEASE 27.12.0
+- Upgraded the Units Table modal with an All/Civ availability filter, Manual column sorting with ascending/descending header indicators, and viewport-limited row/thumb hydration for faster large unit lists.
+- Remembered the Show King Units preference separately for the Availability by Civ and Unit Table modals.
+
 * RELEASE 27.12
+- Tightened new BIQ reference Civilopedia key editing so Add/Copy/Import keys follow the entered name casing from creation, preserve required prefixes like `TECH_`, show the 31-character limit, warn when spaces will become underscores, and auto-suffix duplicate keys before Save.
 - Fixed reference and sectioned tab item selection so changing the selected Civ, Tech, Resource, District, or similar entry preserves the current detail scroll position instead of jumping back to the top.
 - Added a Techs Unlocks board for editing the Units, Improvements, Resources, Governments, and obsolete Improvements tied to the selected tech through their real BIQ reference fields.
 - Added Districts to the Techs Unlocks board, editing C3X `advance_prereqs` by tech name while preserving unrelated district prerequisites and precise Districts dirty counts.

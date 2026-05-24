@@ -1054,6 +1054,33 @@ button:disabled {
   width: 100%;
 }
 
+.entity-field input.is-invalid,
+.key-input-inline.is-invalid {
+  border-color: rgba(182, 52, 28, 0.7);
+  box-shadow: 0 0 0 2px rgba(182, 52, 28, 0.1);
+}
+
+.reference-key-feedback {
+  margin: 0;
+  color: #6b6688;
+  font-size: 0.74rem;
+  line-height: 1.3;
+}
+
+.reference-key-feedback.inline {
+  flex: 1 0 100%;
+  margin-top: -2px;
+}
+
+.reference-key-feedback.is-warning {
+  color: #8a5a10;
+}
+
+.reference-key-feedback.is-error {
+  color: #9f2d18;
+  font-weight: 700;
+}
+
 .map-resize-status {
   height: calc(1.45em * 2);
   line-height: 1.45;
@@ -7602,6 +7629,16 @@ details > summary:focus-visible {
   min-width: 160px;
 }
 
+.unit-table-civ-picker {
+  flex: 0 0 220px;
+  min-width: 220px;
+  max-width: 220px;
+}
+
+.unit-table-civ-picker .tech-picker-btn {
+  min-height: 32px;
+}
+
 .unit-table-era-select,
 .unit-table-class-select,
 .unit-table-sort-select {
@@ -7681,7 +7718,7 @@ details > summary:focus-visible {
   position: sticky;
   top: 0;
   z-index: 4;
-  padding: 6px 8px;
+  padding: 0;
   text-align: left;
   color: #25324f;
   font-size: 0.64rem;
@@ -7694,6 +7731,60 @@ details > summary:focus-visible {
   word-break: break-word;
   line-height: 1.05;
   border-radius: 0;
+}
+
+.unit-table-sort-header-btn {
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 0;
+  padding: 6px 6px 6px 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  box-shadow: none;
+  transform: none;
+}
+
+.unit-table-sort-header-btn:hover,
+.unit-table-sort-header-btn:focus {
+  background: rgba(46, 135, 225, 0.08);
+  outline: none;
+  box-shadow: none;
+  transform: none;
+}
+
+.unit-table-sort-header-label {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-height: 1.05;
+}
+
+.unit-table-sort-indicator {
+  color: rgba(37, 50, 79, 0.62);
+  font-size: 0.72rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.unit-table-sorted-heading {
+  background: linear-gradient(180deg, rgba(229, 241, 255, 0.99), rgba(215, 232, 255, 0.99)) !important;
+  box-shadow: inset 0 -2px 0 rgba(46, 135, 225, 0.72);
+}
+
+.unit-table-sorted-heading .unit-table-sort-indicator {
+  color: #155eac;
 }
 
 .unit-table-grid td {

@@ -470,6 +470,41 @@ function loadRendererTopNameHelpers() {
   return sandbox.__helpers;
 }
 
+function loadRendererCivilopediaKeyHelpers() {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = [
+    'normalizeReferenceKeyToken',
+    'stripReferencePrefixToken',
+    'trimReferenceCivilopediaKeyToMax',
+    'makeReferenceCivilopediaKeyFromInput',
+    'ensureReferenceCivilopediaKeyInputPrefix',
+    'getExistingReferenceCivilopediaKeys',
+    'makeUniqueReferenceCivilopediaKeyFromKey',
+    'makeUniqueReferenceCivilopediaKey',
+    'validateReferenceCivilopediaKeyInput'
+  ];
+  const sandbox = {
+    REFERENCE_KEY_MAX_LENGTH: 31,
+    REFERENCE_PREFIX_BY_TAB: {
+      civilizations: 'RACE_',
+      technologies: 'TECH_',
+      resources: 'GOOD_',
+      improvements: 'BLDG_',
+      governments: 'GOVT_',
+      units: 'PRTO_'
+    },
+    ALL_REFERENCE_PREFIXES: ['RACE_', 'TECH_', 'GOOD_', 'BLDG_', 'GOVT_', 'PRTO_']
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ' };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-civilopedia-key.vm' });
+  return sandbox.__helpers;
+}
+
 function buildReferenceIndexMap(bundle, tabKey) {
   const entries = bundle && bundle.tabs && bundle.tabs[tabKey] && bundle.tabs[tabKey].entries;
   return (Array.isArray(entries) ? entries : []).map((entry, fallbackIdx) => ({
@@ -496,6 +531,54 @@ test('reference top-name editor targets civilizationName for Civs', () => {
 test('civilizationName field is hidden from Civs detail fields because top Name edits it', () => {
   const { shouldHideBiqField } = loadRendererTopNameHelpers();
   assert.equal(shouldHideBiqField('civilizations', { key: 'civilizationname', baseKey: 'civilizationname' }), true);
+});
+
+test('Civilopedia key helper prefixes names, replaces spaces, and enforces BIQ length', () => {
+  const { makeReferenceCivilopediaKeyFromInput, ensureReferenceCivilopediaKeyInputPrefix, validateReferenceCivilopediaKeyInput } = loadRendererCivilopediaKeyHelpers();
+  assert.equal(makeReferenceCivilopediaKeyFromInput('technologies', 'Pottery', { preserveCase: true }), 'TECH_Pottery');
+  assert.equal(ensureReferenceCivilopediaKeyInputPrefix('technologies', ''), 'TECH_');
+  assert.equal(ensureReferenceCivilopediaKeyInputPrefix('technologies', 'TECH'), 'TECH_');
+  assert.equal(ensureReferenceCivilopediaKeyInputPrefix('technologies', 'TEC'), 'TECH_');
+  assert.equal(ensureReferenceCivilopediaKeyInputPrefix('technologies', 'Pottery'), 'TECH_Pottery');
+  const spaced = validateReferenceCivilopediaKeyInput({ entries: [] }, 'technologies', 'TECH_Ancient Pottery');
+  assert.equal(spaced.key, 'TECH_Ancient_Pottery');
+  assert.equal(spaced.isValid, true);
+  assert.match(spaced.warning, /Spaces/);
+  const longKey = makeReferenceCivilopediaKeyFromInput('technologies', 'A'.repeat(80), { preserveCase: true });
+  assert.equal(longKey.length, 31);
+  assert.equal(longKey.startsWith('TECH_'), true);
+});
+
+test('initial copied Civilopedia keys preserve the display name casing', () => {
+  const { makeUniqueReferenceCivilopediaKey } = loadRendererCivilopediaKeyHelpers();
+  const tab = {
+    entries: [
+      { civilopediaKey: 'TECH_BRONZE_WORKING' },
+      { civilopediaKey: 'TECH_Bronze_Working_Copy' }
+    ]
+  };
+  assert.equal(
+    makeUniqueReferenceCivilopediaKey(tab, 'technologies', 'Bronze Working Copy', '', { preserveCase: true }),
+    'TECH_Bronze_Working_Copy1'
+  );
+});
+
+test('Civilopedia key validation warns and uniquifies duplicates while allowing the current new entry key', () => {
+  const { validateReferenceCivilopediaKeyInput } = loadRendererCivilopediaKeyHelpers();
+  const tab = {
+    entries: [
+      { civilopediaKey: 'TECH_POTTERY' },
+      { civilopediaKey: 'TECH_NEW_CLAY', isNew: true }
+    ],
+    recordOps: [{ op: 'add', newRecordRef: 'TECH_NEW_CLAY' }]
+  };
+  const duplicate = validateReferenceCivilopediaKeyInput(tab, 'technologies', 'Pottery', { excludeKey: 'TECH_NEW_CLAY' });
+  assert.equal(duplicate.isValid, true);
+  assert.equal(duplicate.key, 'TECH_Pottery1');
+  assert.match(duplicate.warning, /already exists/);
+  const current = validateReferenceCivilopediaKeyInput(tab, 'technologies', 'TECH_NEW_CLAY', { excludeKey: 'TECH_NEW_CLAY' });
+  assert.equal(current.isValid, true);
+  assert.equal(current.key, 'TECH_NEW_CLAY');
 });
 
 test('pending added references predict appended BIQ index instead of using list position', () => {

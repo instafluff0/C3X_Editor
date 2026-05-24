@@ -96,9 +96,15 @@ const state = {
   unitTableView: {
     isOpen: false,
     query: '',
+    civ: 'all',
     era: 'all',
     unitClass: 'all',
     sort: 'ingame',
+    manualSortColumn: '',
+    manualSortDirection: 'asc',
+    showKingUnits: false
+  },
+  unitAvailabilityView: {
     showKingUnits: false
   },
   referenceContextPaneVisible: {},
@@ -6162,9 +6168,19 @@ function sanitizeUnitTableView(view) {
   return {
     isOpen: !!source.isOpen,
     query: String(source.query || ''),
+    civ: String(source.civ || 'all'),
     era: String(source.era || 'all'),
     unitClass: String(source.unitClass || 'all'),
     sort: String(source.sort || 'ingame'),
+    manualSortColumn: String(source.manualSortColumn || ''),
+    manualSortDirection: String(source.manualSortDirection || 'asc') === 'desc' ? 'desc' : 'asc',
+    showKingUnits: !!source.showKingUnits
+  };
+}
+
+function sanitizeUnitAvailabilityView(view) {
+  const source = view && typeof view === 'object' ? view : {};
+  return {
     showKingUnits: !!source.showKingUnits
   };
 }
@@ -6208,6 +6224,7 @@ function captureViewSnapshot() {
     referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
     referenceUnitSort: cloneStateMap(state.referenceUnitSort),
     unitTableView: sanitizeUnitTableView(state.unitTableView),
+    unitAvailabilityView: sanitizeUnitAvailabilityView(state.unitAvailabilityView),
     referenceContextPaneVisible: cloneStateMap(state.referenceContextPaneVisible),
     biqSectionSelectionByTab: cloneStateMap(state.biqSectionSelectionByTab),
     biqRecordSelection: cloneStateMap(state.biqRecordSelection),
@@ -6409,6 +6426,7 @@ function applyViewSnapshot(snapshot) {
   state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
   state.referenceUnitSort = cloneStateMap(snapshot.referenceUnitSort);
   state.unitTableView = sanitizeUnitTableView(snapshot.unitTableView);
+  state.unitAvailabilityView = sanitizeUnitAvailabilityView(snapshot.unitAvailabilityView);
   state.referenceContextPaneVisible = cloneStateMap(snapshot.referenceContextPaneVisible);
   state.biqSectionSelectionByTab = cloneStateMap(snapshot.biqSectionSelectionByTab);
   state.biqRecordSelection = cloneStateMap(snapshot.biqRecordSelection);
@@ -12143,6 +12161,18 @@ function getSectionValidationError() {
       }
     }
   }
+  for (const tabKey of REFERENCE_MUTABLE_ENTITY_TABS) {
+    const tab = state.bundle.tabs[tabKey];
+    const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      const err = String(entry && entry._pendingCivilopediaKeyError || '').trim();
+      if (!err) continue;
+      const title = String(tab && tab.title || tabKey || 'Reference').trim();
+      const name = String(entry && (entry.name || entry.civilopediaKey) || `Entry ${i + 1}`).trim();
+      return `${title}: ${name}: ${err}`;
+    }
+  }
   return '';
 }
 
@@ -14352,19 +14382,22 @@ const UNIT_TABLE_COLUMNS = Object.freeze([
   { key: 'upgradeto', label: 'Upgrade To', type: 'reference', width: 192 },
   { key: 'attack', label: 'Attack', type: 'number', width: 84, min: 0 },
   { key: 'defence', label: 'Defence', type: 'number', width: 92, min: 0 },
-  { key: 'movement', label: 'Movement', type: 'number', width: 96, min: 0 },
+  { key: 'movement', label: 'Movement', type: 'number', width: 100, min: 0 },
   { key: 'bombardstrength', label: 'Bombard Strength', type: 'number', width: 106, min: 0 },
   { key: 'bombardrange', label: 'Bombard Range', type: 'number', width: 96, min: 0 },
   { key: 'rateoffire', label: 'Rate Of Fire', type: 'number', width: 88, min: 0 },
   { key: 'airdefence', label: 'Air Defence', type: 'number', width: 92, min: 0 },
   { key: 'hitpointbonus', label: 'Hit Point Bonus', type: 'number', width: 104, min: 0 },
-  { key: 'operationalrange', label: 'Operational Range', type: 'number', width: 110, min: 0 },
+  { key: 'operationalrange', label: 'Operational Range', type: 'number', width: 114, min: 0 },
   { key: 'capacity', label: 'Transport Capacity', type: 'number', width: 110, min: 0 },
   { key: 'shieldcost', label: 'Shield Cost', type: 'number', width: 104, min: 0 },
-  { key: 'populationcost', label: 'Population Cost', type: 'number', width: 100, min: 0 },
+  { key: 'populationcost', label: 'Population Cost', type: 'number', width: 110, min: 0 },
   { key: 'zoneofcontrol', label: 'Zone Of Control', type: 'bool', width: 98 },
   { key: 'requiressupport', label: 'Requires Support', type: 'bool', width: 108 }
 ]);
+const UNIT_TABLE_ROW_HEIGHT = 34;
+const UNIT_TABLE_THUMB_CONCURRENCY = 8;
+const UNIT_TABLE_THUMB_BATCH = 24;
 
 function isReadonlyRuleField(tabKey, field) {
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
@@ -18371,7 +18404,7 @@ function renderTechnologyUnlocksBoard({ entry, selectedBaseIndex, referenceEdita
   const title = document.createElement('label');
   title.className = 'field-meta technology-top-cell-label';
   const strong = document.createElement('strong');
-  strong.textContent = 'Unlocks';
+  strong.textContent = 'Enables';
   title.appendChild(strong);
   board.appendChild(title);
   const grid = document.createElement('div');
@@ -23379,7 +23412,8 @@ function getUnitReferenceSortOptions() {
   return [
     { value: 'ingame', label: 'In-game order' },
     { value: 'az', label: 'A → Z' },
-    { value: 'za', label: 'Z → A' }
+    { value: 'za', label: 'Z → A' },
+    { value: 'manual', label: 'Manual' }
   ];
 }
 
@@ -23390,6 +23424,13 @@ function getUnitClassFilterOptions() {
     { value: 'sea', label: 'Sea' },
     { value: 'air', label: 'Air' }
   ];
+}
+
+function getUnitTableCivilizationFilterOptions() {
+  return getCivilizationBitmaskOptions().map((opt) => ({
+    ...opt,
+    displayLabel: String(opt && opt.label || opt && opt.value || '')
+  }));
 }
 
 function isUnitEraVariantReferenceEntry(entry) {
@@ -23462,12 +23503,13 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   ) || tab;
   const initialMatch = civOptions.find((opt) => String(opt.value) === String(initialCivValue));
   let selectedCiv = initialMatch ? String(initialMatch.value) : getDefaultUnitAvailabilityCivValue();
+  const persistedView = sanitizeUnitAvailabilityView(state.unitAvailabilityView);
   const filters = {
     query: '',
     era: 'all',
     unitClass: 'all',
     status: 'all',
-    showKingUnits: false
+    showKingUnits: !!persistedView.showKingUnits
   };
 
   const panel = document.createElement('div');
@@ -23538,7 +23580,7 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   showKingWrap.className = 'unit-availability-king-toggle';
   const showKingCheck = document.createElement('input');
   showKingCheck.type = 'checkbox';
-  showKingCheck.checked = false;
+  showKingCheck.checked = !!filters.showKingUnits;
   const showKingText = document.createElement('span');
   showKingText.textContent = 'Show King Units';
   showKingWrap.appendChild(showKingCheck);
@@ -23577,6 +23619,13 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   const getSelectedCivIndex = () => {
     const idx = Number.parseInt(String(selectedCiv), 10);
     return Number.isFinite(idx) && idx >= 0 && idx <= 31 ? idx : null;
+  };
+
+  const syncUnitAvailabilityView = () => {
+    state.unitAvailabilityView = {
+      showKingUnits: !!filters.showKingUnits
+    };
+    syncCurrentNavigationSnapshot();
   };
 
   const rowElementsByIdentity = new Map();
@@ -23773,6 +23822,7 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   });
   showKingCheck.addEventListener('change', () => {
     filters.showKingUnits = !!showKingCheck.checked;
+    syncUnitAvailabilityView();
     render();
   });
   setVisibleBtn.addEventListener('click', () => {
@@ -24001,9 +24051,71 @@ function createUnitTableReferencePicker(column, currentValue, onSelect, config =
   });
 }
 
-function sortUnitTableRows(rows, sortMode) {
+function getUnitTableRowGameIndex(row) {
+  const biqIndex = row && row.entry && row.entry.biqIndex != null ? Number(row.entry.biqIndex) : NaN;
+  if (Number.isFinite(biqIndex)) return biqIndex;
+  const fallback = Number(row && row.fallbackIndex);
+  return Number.isFinite(fallback) ? fallback : Infinity;
+}
+
+function getUnitTableSortValue(row, column, getColumnMeta = null) {
+  const type = String(column && column.type || '');
+  const key = String(column && column.key || '');
+  const raw = row && row.values ? row.values[key] : '';
+  if (type === 'number') {
+    const parsed = parseIntFromDisplayValue(raw);
+    return { kind: 'number', value: parsed == null ? null : parsed };
+  }
+  if (type === 'bool') {
+    return { kind: 'number', value: String(raw || '').trim().toLowerCase() === 'true' ? 1 : 0 };
+  }
+  if ((type === 'enum' || type === 'reference') && typeof getColumnMeta === 'function') {
+    const meta = getColumnMeta(column) || {};
+    const selected = findOptionByValue(Array.isArray(meta.options) ? meta.options : [], normalizeUnitTableCellValue(raw, column));
+    return {
+      kind: 'text',
+      value: String(selected && (selected.displayLabel || selected.label) || raw || '').trim().toLowerCase()
+    };
+  }
+  return { kind: 'text', value: String(raw == null ? '' : raw).trim().toLowerCase() };
+}
+
+function compareUnitTableSortValues(left, right, direction) {
+  const dir = direction === 'desc' ? -1 : 1;
+  if (left.kind === 'number' && right.kind === 'number') {
+    const leftMissing = left.value == null;
+    const rightMissing = right.value == null;
+    if (leftMissing || rightMissing) {
+      if (leftMissing && rightMissing) return 0;
+      return leftMissing ? 1 : -1;
+    }
+    return (Number(left.value) - Number(right.value)) * dir;
+  }
+  const result = String(left.value || '').localeCompare(String(right.value || ''), 'en', {
+    numeric: true,
+    sensitivity: 'base'
+  });
+  return result * dir;
+}
+
+function sortUnitTableRows(rows, sortMode, options = {}) {
   const items = Array.isArray(rows) ? rows.slice() : [];
   const mode = String(sortMode || 'ingame');
+  if (mode === 'manual') {
+    const columnKey = String(options.columnKey || '').trim();
+    const column = UNIT_TABLE_COLUMNS.find((item) => item.key === columnKey) || UNIT_TABLE_COLUMNS[0];
+    const direction = String(options.direction || 'asc') === 'desc' ? 'desc' : 'asc';
+    items.sort((a, b) => {
+      const result = compareUnitTableSortValues(
+        getUnitTableSortValue(a, column, options.getColumnMeta),
+        getUnitTableSortValue(b, column, options.getColumnMeta),
+        direction
+      );
+      if (result !== 0) return result;
+      return getUnitTableRowGameIndex(a) - getUnitTableRowGameIndex(b);
+    });
+    return items;
+  }
   if (mode === 'az') {
     items.sort((a, b) => String(a && a.values && a.values.name || '').localeCompare(String(b && b.values && b.values.name || '')));
     return items;
@@ -24013,9 +24125,7 @@ function sortUnitTableRows(rows, sortMode) {
     return items;
   }
   items.sort((a, b) => {
-    const ai = a && a.entry && a.entry.biqIndex != null ? a.entry.biqIndex : Infinity;
-    const bi = b && b.entry && b.entry.biqIndex != null ? b.entry.biqIndex : Infinity;
-    return ai - bi;
+    return getUnitTableRowGameIndex(a) - getUnitTableRowGameIndex(b);
   });
   return items;
 }
@@ -24027,14 +24137,21 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   const persistedView = sanitizeUnitTableView(state.unitTableView);
   const filters = {
     query: persistedView.query,
+    civ: persistedView.civ || 'all',
     era: persistedView.era || String(state.referenceEraFilter.units || 'all'),
     unitClass: persistedView.unitClass,
     sort: persistedView.sort || String(state.referenceUnitSort.units || 'ingame'),
+    manualSortColumn: persistedView.manualSortColumn || '',
+    manualSortDirection: persistedView.manualSortDirection || 'asc',
     showKingUnits: !!persistedView.showKingUnits
   };
   let visibleRows = [];
   let lastFocusedCellId = '';
   let activeEditingRowId = '';
+  let unitTableThumbHydrationRaf = 0;
+  let unitTableThumbsInFlight = 0;
+  const pendingUnitTableThumbs = new Set();
+  if (filters.sort === 'manual' && !filters.manualSortColumn) filters.manualSortColumn = 'name';
 
   const panel = document.createElement('div');
   panel.className = 'unit-table-panel';
@@ -24056,10 +24173,31 @@ function createUnitTablePanel({ tab, referenceEditable }) {
   panel.appendChild(toolbar);
   panel.appendChild(tableWrap);
 
+  const civOptions = getUnitTableCivilizationFilterOptions();
+  const civPicker = createReferencePicker({
+    targetTabKey: 'civilizations',
+    options: civOptions,
+    currentValue: filters.civ === 'all' ? '-1' : filters.civ,
+    includeNone: true,
+    noneLabel: 'All Civs',
+    pickerClassName: 'unit-table-civ-picker',
+    menuClassName: 'unit-table-civ-picker-menu',
+    searchPlaceholder: 'Search civilizations...',
+    menuPortalRoot: () => unitTableModal.node || document.body,
+    onSelect: (value) => {
+      filters.civ = String(value) === '-1' ? 'all' : String(value);
+      tableWrap.scrollTop = 0;
+      syncUnitTableView();
+      render();
+    }
+  });
+  filterRow.appendChild(civPicker);
+
   const searchInput = document.createElement('input');
   searchInput.type = 'search';
   searchInput.className = 'app-search-input';
   searchInput.placeholder = 'Search units...';
+  searchInput.value = filters.query;
   filterRow.appendChild(searchInput);
 
   const eraSelect = document.createElement('select');
@@ -24081,6 +24219,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     option.textContent = opt.label;
     classSelect.appendChild(option);
   });
+  classSelect.value = filters.unitClass;
   filterRow.appendChild(classSelect);
 
   const sortSelect = document.createElement('select');
@@ -24132,9 +24271,12 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     state.unitTableView = {
       isOpen: true,
       query: String(filters.query || ''),
+      civ: String(filters.civ || 'all'),
       era: String(filters.era || 'all'),
       unitClass: String(filters.unitClass || 'all'),
       sort: String(filters.sort || 'ingame'),
+      manualSortColumn: String(filters.manualSortColumn || ''),
+      manualSortDirection: String(filters.manualSortDirection || 'asc') === 'desc' ? 'desc' : 'asc',
       showKingUnits: !!filters.showKingUnits
     };
     syncCurrentNavigationSnapshot();
@@ -24142,18 +24284,28 @@ function createUnitTablePanel({ tab, referenceEditable }) {
 
   const getVisibleRows = () => {
     const needle = String(filters.query || '').trim().toLowerCase();
-    return sortUnitTableRows(rows, filters.sort).filter((row) => {
+    const civIdx = filters.civ === 'all' ? null : Number.parseInt(String(filters.civ), 10);
+    const filteredRows = rows.filter((row) => {
       const hay = `${String(row && row.values && row.values.name || '')} ${String(row && row.key || '')}`.toLowerCase();
       if (needle && !hay.includes(needle)) return false;
+      if (Number.isFinite(civIdx) && civIdx >= 0 && !isUnitAvailableToCivilization(row.entry, civIdx)) return false;
       if (!filters.showKingUnits && isUnitAvailabilityKingUnit(row.entry)) return false;
       if (filters.era !== 'all' && String(row.eraIndex) !== String(filters.era)) return false;
       if (filters.unitClass !== 'all' && getUnitTableClassValue(row) !== filters.unitClass) return false;
       return true;
     });
+    return sortUnitTableRows(filteredRows, filters.sort, {
+      columnKey: filters.manualSortColumn,
+      direction: filters.manualSortDirection,
+      getColumnMeta: getUnitTableColumnMeta
+    });
   };
 
   const updateToolbar = () => {
-    summary.textContent = `${visibleRows.length} shown · ${rows.length} total`;
+    const civLabel = filters.civ === 'all'
+      ? 'All Civs'
+      : String((civOptions.find((opt) => String(opt.value) === String(filters.civ)) || {}).label || 'Selected Civ');
+    summary.textContent = `${visibleRows.length} shown · ${rows.length} total · ${civLabel}`;
     refreshDirtyUi();
     const hasImmediateUndo = !!getLatestUndoSnapshot() || hasPendingTrackedEditSessions();
     if (unitTableModal.undoBtn) unitTableModal.undoBtn.disabled = !referenceEditable || !hasImmediateUndo;
@@ -24220,8 +24372,13 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     if (rowIndex < 0 || colIndex < 0) return;
     const nextRowIndex = Math.max(0, Math.min(visibleRows.length - 1, rowIndex + rowOffset));
     const nextColIndex = Math.max(0, Math.min(UNIT_TABLE_COLUMNS.length - 1, colIndex + colOffset));
-      const target = panel.querySelector(`[data-unit-table-row="${CSS.escape(visibleRows[nextRowIndex].identity)}"][data-unit-table-col="${CSS.escape(UNIT_TABLE_COLUMNS[nextColIndex].key)}"]`);
-    if (!target) return;
+    const target = panel.querySelector(`[data-unit-table-row="${CSS.escape(visibleRows[nextRowIndex].identity)}"][data-unit-table-col="${CSS.escape(UNIT_TABLE_COLUMNS[nextColIndex].key)}"]`);
+    if (!target) {
+      lastFocusedCellId = `${visibleRows[nextRowIndex].identity}::${UNIT_TABLE_COLUMNS[nextColIndex].key}`;
+      tableWrap.scrollTop = Math.max(0, nextRowIndex * UNIT_TABLE_ROW_HEIGHT);
+      render();
+      return;
+    }
     target.focus({ preventScroll: true });
     if (typeof target.select === 'function' && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
       target.select();
@@ -24328,6 +24485,58 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     return issues;
   };
 
+  const scheduleHydrateVisibleUnitTableThumbs = () => {
+    if (unitTableThumbHydrationRaf) return;
+    unitTableThumbHydrationRaf = window.requestAnimationFrame(() => {
+      unitTableThumbHydrationRaf = 0;
+      hydrateVisibleUnitTableThumbs();
+    });
+  };
+
+  const queueUnitTableThumb = (row, thumb) => {
+    if (!thumb) return;
+    thumb.dataset.thumbPending = '1';
+    thumb.__thumbRow = row;
+    pendingUnitTableThumbs.add(thumb);
+    scheduleHydrateVisibleUnitTableThumbs();
+  };
+
+  const hydrateVisibleUnitTableThumbs = () => {
+    if (unitTableThumbsInFlight >= UNIT_TABLE_THUMB_CONCURRENCY) return;
+    const wrapRect = tableWrap.getBoundingClientRect();
+    const candidates = Array.from(pendingUnitTableThumbs).filter((thumb) => {
+      if (!thumb || thumb.dataset.thumbPending !== '1' || !thumb.isConnected) {
+        pendingUnitTableThumbs.delete(thumb);
+        return false;
+      }
+      const rowEl = thumb.closest('tr[data-unit-table-row-id]');
+      if (!rowEl) return false;
+      const rowRect = rowEl.getBoundingClientRect();
+      return rowRect.bottom >= (wrapRect.top - 80) && rowRect.top <= (wrapRect.bottom + 80);
+    }).slice(0, UNIT_TABLE_THUMB_BATCH);
+    candidates.forEach((thumb) => {
+      if (unitTableThumbsInFlight >= UNIT_TABLE_THUMB_CONCURRENCY) return;
+      const row = thumb.__thumbRow || null;
+      if (!row) {
+        thumb.dataset.thumbPending = '0';
+        pendingUnitTableThumbs.delete(thumb);
+        return;
+      }
+      thumb.dataset.thumbPending = '0';
+      pendingUnitTableThumbs.delete(thumb);
+      unitTableThumbsInFlight += 1;
+      Promise.resolve(loadReferenceListThumbnail('units', row.entry, thumb))
+        .catch(() => {})
+        .finally(() => {
+          if (thumb.isConnected && isUnitTableRowDirty(row) && !thumb.querySelector('.dirty-dot-badge')) {
+            appendDirtyBadge(thumb, `${row.values.name || row.key || 'Unit'} has unsaved edits`);
+          }
+          unitTableThumbsInFlight = Math.max(0, unitTableThumbsInFlight - 1);
+          if (pendingUnitTableThumbs.size > 0) scheduleHydrateVisibleUnitTableThumbs();
+        });
+    });
+  };
+
   const render = () => {
     visibleRows = getVisibleRows();
     const headRow = document.createElement('tr');
@@ -24337,8 +24546,37 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     headRow.appendChild(thumbHead);
     UNIT_TABLE_COLUMNS.forEach((column) => {
       const th = document.createElement('th');
-      th.textContent = getUnitTableColumnDisplayLabel(column);
-      th.title = getUnitTableColumnDisplayLabel(column);
+      const label = getUnitTableColumnDisplayLabel(column);
+      const isManualColumn = filters.sort === 'manual' && String(filters.manualSortColumn || '') === String(column.key || '');
+      const sortBtn = document.createElement('button');
+      sortBtn.type = 'button';
+      sortBtn.className = 'unit-table-sort-header-btn';
+      sortBtn.title = `Sort by ${label}`;
+      sortBtn.setAttribute('aria-label', `Sort by ${label}`);
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'unit-table-sort-header-label';
+      labelSpan.textContent = label;
+      const indicator = document.createElement('span');
+      indicator.className = 'unit-table-sort-indicator';
+      indicator.textContent = isManualColumn ? (filters.manualSortDirection === 'desc' ? '↓' : '↑') : '↕';
+      sortBtn.appendChild(labelSpan);
+      sortBtn.appendChild(indicator);
+      sortBtn.addEventListener('click', () => {
+        const sameColumn = filters.sort === 'manual' && String(filters.manualSortColumn || '') === String(column.key || '');
+        filters.sort = 'manual';
+        filters.manualSortColumn = String(column.key || '');
+        filters.manualSortDirection = sameColumn && filters.manualSortDirection === 'asc' ? 'desc' : 'asc';
+        sortSelect.value = 'manual';
+        state.referenceUnitSort.units = 'manual';
+        tableWrap.scrollTop = 0;
+        syncUnitTableView();
+        render();
+      });
+      th.appendChild(sortBtn);
+      th.title = label;
+      th.classList.add('unit-table-sortable-heading');
+      th.classList.toggle('unit-table-sorted-heading', isManualColumn);
+      th.setAttribute('aria-sort', isManualColumn ? (filters.manualSortDirection === 'desc' ? 'descending' : 'ascending') : 'none');
       attachRichTooltip(th, () => createRuleFieldTooltipText((rows[0] && rows[0].entry) || null, 'units', getUnitTableFieldStub(column)));
       if (column.key === 'name') th.classList.add('unit-table-col-name');
       if (column.type === 'bool') th.classList.add('unit-table-col-bool');
@@ -24360,7 +24598,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb unit-table-thumb';
       thumbCell.appendChild(thumb);
-      loadReferenceListThumbnail('units', row.entry, thumb);
+      queueUnitTableThumb(row, thumb);
       if (isUnitTableRowDirty(row)) {
         appendDirtyBadge(thumb, `${row.values.name || row.key || 'Unit'} has unsaved edits`);
       }
@@ -24521,6 +24759,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     });
     tbody.appendChild(fragment);
     updateToolbar();
+    scheduleHydrateVisibleUnitTableThumbs();
 
     if (lastFocusedCellId) {
       const [rowId, colKey] = lastFocusedCellId.split('::');
@@ -24548,29 +24787,41 @@ function createUnitTablePanel({ tab, referenceEditable }) {
 
   searchInput.addEventListener('input', () => {
     filters.query = searchInput.value;
+    tableWrap.scrollTop = 0;
     syncUnitTableView();
     render();
   });
   eraSelect.addEventListener('change', () => {
     filters.era = eraSelect.value || 'all';
+    tableWrap.scrollTop = 0;
     syncUnitTableView();
     render();
   });
   classSelect.addEventListener('change', () => {
     filters.unitClass = classSelect.value || 'all';
+    tableWrap.scrollTop = 0;
     syncUnitTableView();
     render();
   });
   sortSelect.addEventListener('change', () => {
     filters.sort = sortSelect.value || 'ingame';
+    if (filters.sort === 'manual' && !filters.manualSortColumn) {
+      filters.manualSortColumn = 'name';
+      filters.manualSortDirection = 'asc';
+    }
     state.referenceUnitSort.units = filters.sort;
+    tableWrap.scrollTop = 0;
     syncUnitTableView();
     render();
   });
   showKingCheck.addEventListener('change', () => {
     filters.showKingUnits = !!showKingCheck.checked;
+    tableWrap.scrollTop = 0;
     syncUnitTableView();
     render();
+  });
+  tableWrap.addEventListener('scroll', () => {
+    scheduleHydrateVisibleUnitTableThumbs();
   });
   syncUnitTableView();
   render();
@@ -29385,35 +29636,106 @@ function inferReferenceNameFromKey(civilopediaKey, tabKey) {
     .trim() || 'New Entry';
 }
 
+function trimReferenceCivilopediaKeyToMax(tabKey, key) {
+  const raw = String(key || '');
+  if (raw.length <= REFERENCE_KEY_MAX_LENGTH) return raw;
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  if (!prefix || !raw.toUpperCase().startsWith(prefix)) return raw.slice(0, REFERENCE_KEY_MAX_LENGTH);
+  const maxTokenLength = Math.max(1, REFERENCE_KEY_MAX_LENGTH - prefix.length);
+  return `${prefix}${raw.slice(prefix.length, prefix.length + maxTokenLength)}`;
+}
+
+function makeReferenceCivilopediaKeyFromInput(tabKey, raw, options = {}) {
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  let token = normalizeReferenceKeyToken(raw, options);
+  if (prefix) token = stripReferencePrefixToken(token);
+  if (!token) return '';
+  return trimReferenceCivilopediaKeyToMax(tabKey, prefix ? `${prefix}${token}` : token);
+}
+
+function ensureReferenceCivilopediaKeyInputPrefix(tabKey, raw) {
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  const text = String(raw || '');
+  if (!prefix) return text;
+  if (!text) return prefix;
+  const upper = text.toUpperCase();
+  if (prefix.startsWith(upper)) return prefix;
+  if (upper.startsWith(prefix)) {
+    return `${prefix}${text.slice(prefix.length)}`;
+  }
+  const token = stripReferencePrefixToken(text);
+  return `${prefix}${token}`;
+}
+
+function getExistingReferenceCivilopediaKeys(tab, excludeKey = '') {
+  const exclude = String(excludeKey || '').toUpperCase();
+  const existing = new Set();
+  const add = (value) => {
+    const key = String(value || '').trim().toUpperCase();
+    if (key && key !== exclude) existing.add(key);
+  };
+  ((tab && Array.isArray(tab.entries)) ? tab.entries : []).forEach((entry) => {
+    add(entry && entry.civilopediaKey);
+    add(entry && entry.lookupCivilopediaKey);
+    add(entry && entry.rawBiqCivilopediaKey);
+  });
+  ((tab && Array.isArray(tab.recordOps)) ? tab.recordOps : []).forEach((op) => {
+    add(op && op.newRecordRef);
+    add(op && op.recordRef);
+  });
+  return existing;
+}
+
+function makeUniqueReferenceCivilopediaKeyFromKey(tab, tabKey, key, excludeKey = '') {
+  const existing = getExistingReferenceCivilopediaKeys(tab, excludeKey);
+  const baseKey = trimReferenceCivilopediaKeyToMax(tabKey, key);
+  if (!baseKey || !existing.has(baseKey.toUpperCase())) return baseKey;
+  for (let i = 1; i < 10000; i += 1) {
+    const suffix = String(i);
+    const maxBaseLength = Math.max(1, REFERENCE_KEY_MAX_LENGTH - suffix.length);
+    const next = `${baseKey.slice(0, maxBaseLength)}${suffix}`;
+    if (!existing.has(next.toUpperCase())) return next;
+  }
+  return baseKey;
+}
+
+function validateReferenceCivilopediaKeyInput(tab, tabKey, rawKey, options = {}) {
+  const excludeKey = String(options.excludeKey || '').trim().toUpperCase();
+  const requireNonEmpty = options.requireNonEmpty !== false;
+  const raw = String(rawKey || '');
+  const baseKey = makeReferenceCivilopediaKeyFromInput(tabKey, raw, { preserveCase: true });
+  const key = makeUniqueReferenceCivilopediaKeyFromKey(tab, tabKey, baseKey, excludeKey);
+  const existing = getExistingReferenceCivilopediaKeys(tab, excludeKey);
+  let error = '';
+  let warning = '';
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  if (requireNonEmpty && !baseKey) {
+    error = prefix
+      ? `Civilopedia key needs text after ${prefix}.`
+      : 'Civilopedia key is required.';
+  } else if (baseKey && key.toUpperCase() !== baseKey.toUpperCase() && existing.has(baseKey.toUpperCase())) {
+    warning = `Civilopedia key "${baseKey}" already exists. This will be saved as "${key}".`;
+  } else if (/\s/.test(raw)) {
+    warning = 'Spaces in Civilopedia keys are changed to underscores.';
+  }
+  const wasTrimmed = raw.length > REFERENCE_KEY_MAX_LENGTH || key.length > REFERENCE_KEY_MAX_LENGTH;
+  const helper = error || warning || `Maximum ${REFERENCE_KEY_MAX_LENGTH} characters.`;
+  return {
+    key,
+    error,
+    warning,
+    helper,
+    isValid: !error,
+    wasTrimmed
+  };
+}
+
 function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName, excludeKey = '', options = {}) {
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
-  const entries = (tab && Array.isArray(tab.entries)) ? tab.entries : [];
-  const exclude = String(excludeKey || '').toUpperCase();
-  const existing = new Set(
-    entries
-      .map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase())
-      .filter((key) => key && key !== exclude)
-  );
   let token = normalizeReferenceKeyToken(desiredName, options);
   if (prefix) token = stripReferencePrefixToken(token);
   if (!token) token = `NEW_${Date.now()}`;
-  const trimToMaxLength = (value) => {
-    const raw = String(value || '');
-    if (raw.length <= REFERENCE_KEY_MAX_LENGTH) return raw;
-    if (!prefix || !raw.toUpperCase().startsWith(prefix)) return raw.slice(0, REFERENCE_KEY_MAX_LENGTH);
-    const maxTokenLength = Math.max(1, REFERENCE_KEY_MAX_LENGTH - prefix.length);
-    return `${prefix}${raw.slice(prefix.length, prefix.length + maxTokenLength)}`;
-  };
-  let key = trimToMaxLength(prefix ? `${prefix}${token}` : token);
-  let i = 2;
-  while (existing.has(key.toUpperCase())) {
-    const suffix = `_${i}`;
-    const maxBaseLength = Math.max(1, REFERENCE_KEY_MAX_LENGTH - suffix.length);
-    const base = trimToMaxLength(prefix ? `${prefix}${token}` : token).slice(0, maxBaseLength);
-    key = `${base}${suffix}`;
-    i += 1;
-  }
-  return key;
+  return makeUniqueReferenceCivilopediaKeyFromKey(tab, tabKey, prefix ? `${prefix}${token}` : token, excludeKey);
 }
 
 function makeDefaultReferenceFieldValue(field, name) {
@@ -29547,15 +29869,20 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
 
 function renamePendingReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw) {
   if (!tab || !entry || !entry.isNew) return false;
-  return renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExisting: false });
+  const oldKey = String(entry.civilopediaKey || '').toUpperCase();
+  const validation = validateReferenceCivilopediaKeyInput(tab, tabKey, desiredKeyRaw, { excludeKey: oldKey });
+  if (!validation.isValid) return false;
+  return renameReferenceEntryKey(tab, tabKey, entry, validation.key, { allowExisting: false, exactKey: true });
 }
 
-function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExisting = false } = {}) {
+function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExisting = false, exactKey = false } = {}) {
   if (!tab || !entry) return false;
   if (!allowExisting && !entry.isNew) return false;
   const oldKey = String(entry.civilopediaKey || '').toUpperCase();
   const oldDisplayKey = getEntryCivilopediaDisplayKey(entry);
-  const nextKey = makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredKeyRaw, oldKey, { preserveCase: true });
+  const nextKey = exactKey
+    ? makeReferenceCivilopediaKeyFromInput(tabKey, desiredKeyRaw, { preserveCase: true })
+    : makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredKeyRaw, oldKey, { preserveCase: true });
   const nextLookupKey = String(nextKey || '').trim().toUpperCase();
   if (!nextKey || (nextLookupKey === oldKey && nextKey === oldDisplayKey)) return false;
   entry.civilopediaKey = nextLookupKey;
@@ -30326,8 +30653,12 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   keyInput.type = 'text';
   keyInput.placeholder = `${REFERENCE_PREFIX_BY_TAB[tabKey] || ''}...`;
   keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
+  keyInput.title = `Civilopedia key. Maximum ${REFERENCE_KEY_MAX_LENGTH} characters.`;
+  const keyFeedback = document.createElement('p');
+  keyFeedback.className = 'reference-key-feedback';
   keyField.appendChild(keyLabel);
   keyField.appendChild(keyInput);
+  keyField.appendChild(keyFeedback);
   grid.appendChild(keyField);
 
   const modeField = document.createElement('div');
@@ -30400,7 +30731,6 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   let importEntries = [];
   let importDiplomacySlots = [];
   let selectedImportKey = '';
-  let keySetByImport = false;
   const loadImportSource = async (filePath) => {
     if (!filePath) return;
     importSourcePill.disabled = true;
@@ -30457,9 +30787,11 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
           if (!nameEditedManually) {
             nameInput.value = String(picked.name || inferReferenceNameFromKey(picked.civilopediaKey, tabKey));
           }
-          // Always sync key from the import entry's own civilopediaKey
-          keyInput.value = makeUniqueReferenceCivilopediaKey(tab, tabKey, picked.civilopediaKey);
-          keySetByImport = true;
+          keyInput.value = makeReferenceCivilopediaKeyFromInput(
+            tabKey,
+            nameInput.value || picked.civilopediaKey,
+            { preserveCase: true }
+          );
           keyEditedManually = false;
         }
         updateConfirmButtonState();
@@ -30474,26 +30806,29 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     updateConfirmButtonState();
   };
   const syncKeyFromName = () => {
-    if (keyEditedManually || keySetByImport) return;
+    if (keyEditedManually) return;
     const name = String(nameInput.value || '').trim();
-    keyInput.value = makeUniqueReferenceCivilopediaKey(tab, tabKey, name || `NEW_${Date.now()}`);
+    keyInput.value = makeReferenceCivilopediaKeyFromInput(tabKey, name || `NEW_${Date.now()}`, { preserveCase: true });
+    updateKeyFeedback();
+  };
+  const getKeyValidation = () => validateReferenceCivilopediaKeyInput(tab, tabKey, keyInput.value, { requireNonEmpty: true });
+  const updateKeyFeedback = () => {
+    const validation = getKeyValidation();
+    keyFeedback.textContent = validation.helper;
+    keyFeedback.classList.toggle('is-error', !!validation.error);
+    keyFeedback.classList.toggle('is-warning', !!validation.warning && !validation.error);
+    keyInput.classList.toggle('is-invalid', !!validation.error);
+    return validation;
   };
   const getConfirmEnabled = () => {
     const mode = modeSelect.value;
-    const rawKey = String(keyInput.value || '').trim();
-    const normalizedToken = normalizeReferenceKeyToken(rawKey, { preserveCase: true });
-    const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
-    const strippedToken = prefix ? stripReferencePrefixToken(normalizedToken) : normalizedToken;
-    const fullKey = prefix ? (strippedToken ? `${prefix}${strippedToken}` : '') : normalizedToken;
-    const keyNonEmpty = fullKey.length > 0;
-    const keyInLength = rawKey.length <= REFERENCE_KEY_MAX_LENGTH;
-    const entries = (tab && Array.isArray(tab.entries)) ? tab.entries : [];
-    const existingKeys = new Set(entries.map((e) => String(e && e.civilopediaKey || '').toUpperCase()));
-    const keyUnique = keyNonEmpty && !existingKeys.has(fullKey.toUpperCase());
+    const validation = updateKeyFeedback();
+    const name = String(nameInput.value || '').trim();
     if (mode === 'import') {
-      return !!selectedImportKey && keyNonEmpty && keyInLength && keyUnique;
+      return !!selectedImportKey && !!name && validation.isValid;
     }
-    return true;
+    if (mode === 'copy' && !selectedEntry) return false;
+    return !!name && validation.isValid;
   };
   const updateConfirmButtonState = () => {
     if (el.entityModalConfirm) el.entityModalConfirm.disabled = !getConfirmEnabled();
@@ -30503,11 +30838,20 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   nameInput.addEventListener('input', () => {
     nameEditedManually = true;
     syncKeyFromName();
+    updateConfirmButtonState();
   });
   keyInput.addEventListener('input', () => {
     keyEditedManually = true;
-    keySetByImport = false;
+    const fixed = ensureReferenceCivilopediaKeyInputPrefix(tabKey, keyInput.value);
+    if (fixed !== keyInput.value) keyInput.value = fixed;
     updateConfirmButtonState();
+  });
+  keyInput.addEventListener('change', () => {
+    keyInput.value = ensureReferenceCivilopediaKeyInputPrefix(tabKey, keyInput.value);
+    const validation = updateKeyFeedback();
+    keyInput.value = validation.key;
+    updateConfirmButtonState();
+    if (validation.warning) setStatus(validation.warning);
   });
   importSourcePill.addEventListener('change', async () => {
     const value = String(importSourcePill.value || '');
@@ -30550,7 +30894,8 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     const onConfirm = () => {
       const name = String(nameInput.value || '').trim();
       const mode = String(modeSelect.value || 'blank');
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, keyInput.value || name || `NEW_${Date.now()}`, '', { preserveCase: true });
+      const validation = updateKeyFeedback();
+      const key = validation.key;
       appendDebugLog('ref-create:confirm', {
         tabKey,
         mode,
@@ -30563,6 +30908,11 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
         setStatus('Name is required.', true);
         return;
       }
+      if (!validation.isValid) {
+        setStatus(validation.error || 'Fix the Civilopedia key before continuing.', true);
+        return;
+      }
+      keyInput.value = key;
       if (mode === 'import') {
         if (!importFilePath) {
           setStatus('Select an import scenario first.', true);
@@ -30867,13 +31217,14 @@ function renderReferenceTab(tab, tabKey) {
     addBtn.addEventListener('click', () => {
       const selectedEntry = getSelectedEntry();
       const singular = String(tab.title || 'Entry').replace(/s$/, '') || 'Entry';
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, `NEW_${tab.title.slice(0, 3)}_${Date.now()}`);
+      const displayName = `New ${singular}`;
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, displayName, '', { preserveCase: true });
       const newEntry = buildNewReferenceEntryFromTemplate({
         tabKey,
         sourceEntry: selectedEntry || allEntries[0] || null,
         civilopediaKey: key,
         mode: 'blank',
-        displayName: `New ${singular}`
+        displayName
       });
       const ops = ensureReferenceRecordOps(tab);
       ops.push({
@@ -30895,7 +31246,7 @@ function renderReferenceTab(tab, tabKey) {
       const selectedEntry = getSelectedEntry();
       if (!selectedEntry) return;
       const copyName = `${selectedEntry.name || inferReferenceNameFromKey(selectedEntry.civilopediaKey, tabKey)} Copy`;
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, copyName);
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, copyName, '', { preserveCase: true });
       const newEntry = buildNewReferenceEntryFromTemplate({
         tabKey,
         sourceEntry: selectedEntry,
@@ -30938,7 +31289,12 @@ function renderReferenceTab(tab, tabKey) {
           importedEntryName: String(result && result.importedEntry && result.importedEntry.name || '')
         });
         if (!result || result.mode !== 'import' || !result.importedEntry) return;
-        const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.key || result.name);
+        const keyValidation = validateReferenceCivilopediaKeyInput(tab, tabKey, result.key || result.name, { requireNonEmpty: true });
+        if (!keyValidation.isValid) {
+          setStatus(keyValidation.error || 'Import needs a unique Civilopedia key.', true);
+          return;
+        }
+        const key = keyValidation.key;
         appendDebugLog('reference-import:begin', {
           tabKey,
           targetKey: key,
@@ -31676,6 +32032,53 @@ function renderReferenceTab(tab, tabKey) {
       if (tabKey === 'improvements') nameControl.classList.add('improvement-name-control');
       let inlineKeyChip = null;
       let editableKeyInput = null;
+      let editableKeyFeedback = null;
+      const clearInlineKeyValidation = () => {
+        if (!entry) return;
+        entry._pendingCivilopediaKeyError = '';
+        entry._pendingCivilopediaKeyDraft = '';
+      };
+      const showInlineKeyValidation = (validation) => {
+        if (!editableKeyInput || !editableKeyFeedback) return validation;
+        editableKeyFeedback.textContent = validation.helper;
+        editableKeyFeedback.classList.toggle('is-error', !!validation.error);
+        editableKeyFeedback.classList.toggle('is-warning', !!validation.warning && !validation.error);
+        editableKeyInput.classList.toggle('is-invalid', !!validation.error);
+        if (validation.error) {
+          entry._pendingCivilopediaKeyError = validation.error;
+          entry._pendingCivilopediaKeyDraft = editableKeyInput.value;
+        } else {
+          clearInlineKeyValidation();
+        }
+        refreshDirtyUi();
+        return validation;
+      };
+      const validateInlineKeyDraft = () => validateReferenceCivilopediaKeyInput(tab, tabKey, editableKeyInput ? editableKeyInput.value : '', {
+        excludeKey: entry && entry.civilopediaKey
+      });
+      const applyInlineKeyDraft = ({ snapshot = false, rerender = false } = {}) => {
+        if (!editableKeyInput) return false;
+        const validation = showInlineKeyValidation(validateInlineKeyDraft());
+        if (!validation.isValid) {
+          setStatus(validation.error, true);
+          return false;
+        }
+        editableKeyInput.value = validation.key;
+        if (validation.warning) setStatus(validation.warning);
+        if (snapshot) rememberUndoSnapshotForKey(buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex));
+        const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, validation.key);
+        clearInlineKeyValidation();
+        showInlineKeyValidation(validateInlineKeyDraft());
+        if (!changed) return false;
+        setDirty(true);
+        if (rerender) renderActiveTab({ preserveTabScroll: true });
+        return true;
+      };
+      const syncInlineKeyFromName = (name) => {
+        if (!editableKeyInput || entry._civilopediaKeyEditedManually) return;
+        editableKeyInput.value = makeReferenceCivilopediaKeyFromInput(tabKey, name || `NEW_${Date.now()}`, { preserveCase: true });
+        applyInlineKeyDraft({ snapshot: false, rerender: false });
+      };
       if (referenceEditable) {
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
@@ -31702,6 +32105,7 @@ function renderReferenceTab(tab, tabKey) {
           } else {
             const nameField = ensureBiqFieldByBaseKey(entry, getReferenceTopNameBiqFieldKey(tabKey), 'Name', next);
             if (nameField) nameField.value = next;
+            if (entry.isNew) syncInlineKeyFromName(next);
           }
           setDirty(true);
         });
@@ -31720,19 +32124,24 @@ function renderReferenceTab(tab, tabKey) {
         if (tabKey === 'improvements') keyInput.classList.add('improvement-key-input-inline');
         keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
         keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
-        keyInput.title = 'Record key (editable for new entries)';
+        keyInput.title = `Record key (editable for new entries). Maximum ${REFERENCE_KEY_MAX_LENGTH} characters.`;
+        const keyFeedback = document.createElement('span');
+        keyFeedback.className = 'reference-key-feedback inline';
+        keyInput.addEventListener('input', () => {
+          entry._civilopediaKeyEditedManually = true;
+          const fixed = ensureReferenceCivilopediaKeyInputPrefix(tabKey, keyInput.value);
+          if (fixed !== keyInput.value) keyInput.value = fixed;
+          showInlineKeyValidation(validateInlineKeyDraft());
+        });
         keyInput.addEventListener('change', () => {
-          rememberUndoSnapshotForKey(buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex));
-          const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
-          if (!changed) {
-            keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
-            return;
-          }
-          setDirty(true);
-          renderActiveTab({ preserveTabScroll: true });
+          keyInput.value = ensureReferenceCivilopediaKeyInputPrefix(tabKey, keyInput.value);
+          applyInlineKeyDraft({ snapshot: true, rerender: true });
         });
         editableKeyInput = keyInput;
+        editableKeyFeedback = keyFeedback;
         nameControl.appendChild(keyInput);
+        nameControl.appendChild(keyFeedback);
+        showInlineKeyValidation(validateInlineKeyDraft());
       } else {
         const inlineKey = document.createElement('span');
         inlineKey.className = 'key-display-chip';
@@ -31763,6 +32172,7 @@ function renderReferenceTab(tab, tabKey) {
         keyInput.value = getEntryCivilopediaDisplayKey(entry) || '';
         keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
         keyInput.addEventListener('change', () => {
+          keyInput.value = ensureReferenceCivilopediaKeyInputPrefix(tabKey, keyInput.value);
           rememberUndoSnapshotForKey(buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex));
           const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
           if (!changed) {
