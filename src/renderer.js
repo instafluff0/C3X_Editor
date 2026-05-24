@@ -23466,6 +23466,7 @@ function getUnitAvailabilityRows(tab) {
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   return entries.map((entry, fallbackIndex) => {
     const key = String(entry && entry.civilopediaKey || '');
+    const isEraVariant = isUnitEraVariantReferenceEntry(entry);
     const eraIndex = getUnitModalEraIndex(entry);
     const eraOpt = getReferenceEraFilterOptions().find((item) => String(item.value) === String(eraIndex));
     return {
