@@ -23438,9 +23438,14 @@ function isUnitEraVariantReferenceEntry(entry) {
   return key.startsWith('PRTO_') && key.includes('_ERAS_');
 }
 
-function isStandardEraUnitEntry(entry) {
-  const eraIndex = getReferenceEntryEraIndex('units', entry);
-  return !isUnitEraVariantReferenceEntry(entry) && Number.isFinite(eraIndex) && eraIndex >= 0;
+function isGenuineUnitReferenceEntry(entry) {
+  return !isUnitEraVariantReferenceEntry(entry);
+}
+
+function getUnitModalEraIndex(entry) {
+  const rawEraIndex = getReferenceEntryEraIndex('units', entry);
+  if (Number.isFinite(rawEraIndex) && rawEraIndex >= 0) return rawEraIndex;
+  return isUnitEraVariantReferenceEntry(entry) ? -1 : 0;
 }
 
 function isUnitAvailabilityKingUnit(entry) {
@@ -23461,9 +23466,7 @@ function getUnitAvailabilityRows(tab) {
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   return entries.map((entry, fallbackIndex) => {
     const key = String(entry && entry.civilopediaKey || '');
-    const isEraVariant = isUnitEraVariantReferenceEntry(entry);
-    const rawEraIndex = getReferenceEntryEraIndex('units', entry);
-    const eraIndex = Number.isFinite(rawEraIndex) && rawEraIndex >= 0 ? rawEraIndex : (isEraVariant ? -1 : 0);
+    const eraIndex = getUnitModalEraIndex(entry);
     const eraOpt = getReferenceEraFilterOptions().find((item) => String(item.value) === String(eraIndex));
     return {
       entry,
@@ -23639,7 +23642,7 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   const AVAILABILITY_THUMB_BATCH = 18;
 
   const syncCurrentRows = () => {
-    currentRows = getUnitAvailabilityRows(getCurrentUnitsTab()).filter((row) => isStandardEraUnitEntry(row.entry));
+    currentRows = getUnitAvailabilityRows(getCurrentUnitsTab()).filter((row) => isGenuineUnitReferenceEntry(row.entry));
     currentRowByIdentity = new Map(currentRows.map((row) => [row.identity, row]));
     return currentRows;
   };
@@ -24004,7 +24007,7 @@ function getUnitTableClassValue(row) {
 
 function getUnitTableRows(tab) {
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
-  return entries.filter((entry) => isStandardEraUnitEntry(entry)).map((entry, fallbackIndex) => {
+  return entries.filter((entry) => isGenuineUnitReferenceEntry(entry)).map((entry, fallbackIndex) => {
     const values = {};
     UNIT_TABLE_COLUMNS.forEach((column) => {
       values[column.key] = getUnitTableCellValue(entry, column);
@@ -24015,7 +24018,7 @@ function getUnitTableRows(tab) {
       fallbackIndex,
       identity: getReferenceEntryIdentity('units', entry, fallbackIndex) || `idx:${fallbackIndex}`,
       key: String(entry && entry.civilopediaKey || ''),
-      eraIndex: getReferenceEntryEraIndex('units', entry),
+      eraIndex: getUnitModalEraIndex(entry),
       originalValues,
       values
     };

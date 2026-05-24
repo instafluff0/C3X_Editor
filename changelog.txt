@@ -1,6 +1,7 @@
 * RELEASE 27.12.0
 - Upgraded the Units Table modal with an All/Civ availability filter, Manual column sorting with ascending/descending header indicators, and viewport-limited row/thumb hydration for faster large unit lists.
 - Remembered the Show King Units preference separately for the Availability by Civ and Unit Table modals.
+- Kept no-tech real units such as Warriors, Workers, and Settlers visible in Availability by Civ and Unit Table while still excluding PRTO era-variant pseudo units.
 
 * RELEASE 27.12
 - Tightened new BIQ reference Civilopedia key editing so Add/Copy/Import keys follow the entered name casing from creation, preserve required prefixes like `TECH_`, show the 31-character limit, warn when spaces will become underscores, and auto-suffix duplicate keys before Save.
