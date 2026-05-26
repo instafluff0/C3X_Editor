@@ -3271,6 +3271,15 @@ function getCleanMapUndoSnapshot() {
   return buildSerializedScopedSnapshot('map', { map: cleanTabs.map });
 }
 
+function hasPendingMapWriteState(tab) {
+  if (!tab || typeof tab !== 'object') return false;
+  return !!(
+    String(tab.mapMutation || '').trim()
+    || (tab.pendingMapResize && typeof tab.pendingMapResize === 'object')
+    || (Array.isArray(tab.recordOps) && tab.recordOps.length > 0)
+  );
+}
+
 function reconcileMaterializedMapTabSnapshots(mapTab) {
   if (!mapTab) return;
   state.cleanSnapshot = replaceMapTabInSnapshot(state.cleanSnapshot, mapTab);
@@ -3279,11 +3288,23 @@ function reconcileMaterializedMapTabSnapshots(mapTab) {
   state.undoHistory = cloneUndoHistoryEntries(state.undoHistory).map((entry) => replaceMapTabInSnapshot(entry, mapTab));
 }
 
-function isMapDirty() {
+function hasTrackedUnsavedMapChanges() {
+  if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs.map || !state.isDirty) return false;
+  const mapTab = state.bundle.tabs.map;
   if (getTabDirtyCount('map') > 0) return true;
-  const currentMap = state.bundle && state.bundle.tabs ? state.bundle.tabs.map : null;
-  const cleanMap = getCleanTabsObject().map || null;
-  return hasChangedFromClean(currentMap, cleanMap);
+  if (hasPendingMapWriteState(mapTab)) return true;
+  if (!getLatestScopedUndoSnapshot('map')) return false;
+  return hasChangedFromClean(mapTab, getCleanTabsObject().map || null);
+}
+
+function isMapDirty() {
+  return hasTrackedUnsavedMapChanges();
+}
+
+function reconcilePassiveMapRenderWithCleanSnapshot(mapTab) {
+  if (!mapTab || hasTrackedUnsavedMapChanges()) return false;
+  reconcileMaterializedMapTabSnapshots(mapTab);
+  return true;
 }
 
 async function ensureMapTabLoaded(options = {}) {
@@ -7810,6 +7831,11 @@ function makeNamedListPickerEditor(config) {
   wrap.className = 'structured-list';
   let values = Array.isArray(cfg.values) ? cfg.values.map((v) => normalizeConfigToken(v)).filter(Boolean) : [];
   if (values.length === 0) values = [''];
+  const getSelectedOptions = (sourceValues = values) => (Array.isArray(sourceValues) ? sourceValues : [])
+    .map((value) => {
+      const normalized = normalizeConfigToken(value);
+      return options.find((opt) => normalizeConfigToken(opt && opt.value) === normalized) || { value: normalized, label: normalized, entry: null };
+    });
   const rerender = () => {
     wrap.innerHTML = '';
     const hasSelectedValue = values.some((value) => !!normalizeConfigToken(value));
@@ -7829,7 +7855,10 @@ function makeNamedListPickerEditor(config) {
         onSelect: (next) => {
           const normalized = normalizeConfigToken(next);
           values[idx] = normalized === '-1' ? '' : normalized;
-          if (onValuesChange) onValuesChange(values.filter(Boolean));
+          if (onValuesChange) {
+            const emitted = values.filter(Boolean);
+            onValuesChange(emitted, getSelectedOptions(emitted));
+          }
           rerender();
         }
       });
@@ -7841,7 +7870,10 @@ function makeNamedListPickerEditor(config) {
       del.addEventListener('click', () => {
         values.splice(idx, 1);
         if (values.length === 0) values.push('');
-        if (onValuesChange) onValuesChange(values.filter(Boolean));
+        if (onValuesChange) {
+          const emitted = values.filter(Boolean);
+          onValuesChange(emitted, getSelectedOptions(emitted));
+        }
         rerender();
       });
       line.appendChild(del);
@@ -7853,7 +7885,10 @@ function makeNamedListPickerEditor(config) {
     add.classList.toggle('hidden', hideActionsWhenEmpty && !hasSelectedValue);
     add.addEventListener('click', () => {
       values.push('');
-      if (onValuesChange) onValuesChange(values.filter(Boolean));
+      if (onValuesChange) {
+        const emitted = values.filter(Boolean);
+        onValuesChange(emitted, getSelectedOptions(emitted));
+      }
       rerender();
     });
     wrap.appendChild(add);
@@ -7904,8 +7939,12 @@ function makeNamedListTokenEditor(config) {
   const chips = document.createElement('div');
   chips.className = 'segmented-multi-list';
 
+  const getSelectedOptions = () => values.map((value) => (
+    optionByValue.get(value) || { value, label: value, entry: null }
+  ));
+
   const emit = () => {
-    if (onValuesChange) onValuesChange(values.slice());
+    if (onValuesChange) onValuesChange(values.slice(), getSelectedOptions());
   };
 
   const rerenderChips = () => {
@@ -11870,22 +11909,19 @@ async function refreshPendingImportedUnitIconAssignments(tab) {
     return changed;
   }
   const ops = Array.isArray(unitsTab.recordOps)
-    ? unitsTab.recordOps.filter((op) =>
-      String(op && op.op || '').toLowerCase() === 'add' && String(op && op.importArtFrom || '').trim()
-    )
+    ? getActiveImportedIconOps(unitsTab)
     : [];
   if (ops.length === 0) return false;
   const preview = await getUnits32AtlasPreview();
-  const firstSlot = findNextUnits32PreviewSlot(preview);
+  const firstSlot = getNextUnits32PreviewAssignmentSlot(preview, unitsTab, ops);
   if (!Number.isFinite(firstSlot) || firstSlot < 0) return false;
   let changed = false;
   let offset = 0;
-  for (const op of ops) {
-    const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+  for (const importItem of ops) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
     if (!newRef) continue;
-    const entry = unitsTab.entries.find((candidate) =>
-      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
-    );
+    const entry = importItem.entry;
     if (!entry) continue;
     const pending = getPendingImportedUnitIconMeta(entry);
     if (!pending) continue;
@@ -14687,12 +14723,15 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         const initialValues = Array.isArray(field.multiValues)
           ? field.multiValues
           : String(field.value || '').split(',').map((v) => v.trim()).filter(Boolean);
+        const unitListOptions = makeIndexOptionsForTab('units');
         const editor = makeNamedListPickerEditor({
           tabKey: 'units',
+          options: unitListOptions,
           values: initialValues,
           onValuesChange: (values) => {
             rememberUndoSnapshotForKey(fieldUndoKey);
             setUnitListFieldValues(entry, String(field.baseKey || field.key || 'stealth_target'), values);
+            setUnitListReferenceTargets(entry, String(field.baseKey || field.key || 'stealth_target'), 'units', values, unitListOptions);
             setDirty(true);
             renderActiveTab({ preserveTabScroll: true });
           }
@@ -14754,9 +14793,10 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           searchPlaceholder: `Search ${labelText}...`,
           noneLabel: '(none)',
           showOptionThumbs: targetTabKey === 'units' || targetTabKey === 'governments',
-          onSelect: (value) => {
+          onSelect: (value, option) => {
             rememberUndoSnapshotForKey(fieldUndoKey);
             field.value = String(value);
+            setFieldReferenceTargetMeta(field, targetTabKey, option, value, refOptions);
             setDirty(true);
           }
         });
@@ -14813,6 +14853,10 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           rememberUndoSnapshotForKey(fieldUndoKey);
           const selectedOpt = options.find((opt) => String(opt.value) === String(select.value));
           field.value = selectedOpt ? String(selectedOpt.value) : '-1';
+          if (hasRefOptions) {
+            const targetTabKey = (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '';
+            setFieldReferenceTargetMeta(field, targetTabKey, selectedOpt, field.value, refOptions);
+          }
           setDirty(true);
         });
         controlWrap.appendChild(select);
@@ -15032,19 +15076,21 @@ function createImprovementTopRow(entry, labelText, sourceFields = []) {
 
 function buildImprovementTopReferenceControl(field, labelText, referenceEditable, undoKey = '') {
   const options = getReferenceOptionsForField('improvements', field);
+  const targetTabKey = (BIQ_FIELD_REFS.improvements || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '';
   if (options.length > 0) {
     const normalizedCurrentValue = field.value;
     return createReferencePicker({
       options,
-      targetTabKey: (BIQ_FIELD_REFS.improvements || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
+      targetTabKey,
       currentValue: normalizedCurrentValue,
       searchPlaceholder: `Search ${labelText || String(field.label || field.key || 'value')}...`,
       noneLabel: '(none)',
       showOptionThumbs: true,
       readOnly: !referenceEditable,
-      onSelect: referenceEditable ? (value) => {
+      onSelect: referenceEditable ? (value, option) => {
         rememberUndoSnapshotForKey(undoKey);
         field.value = String(value);
+        setFieldReferenceTargetMeta(field, targetTabKey, option, value, options);
         setDirty(true);
       } : null
     });
@@ -15120,17 +15166,20 @@ function appendImprovementSpecialRows(groupCard, groupName, fields, entry, refer
         cellLabel.className = 'field-meta';
         cellLabel.textContent = `[${idx}]`;
         cell.appendChild(cellLabel);
+        const resourceOptions = getReferenceOptionsForField('improvements', field);
+        const resourceTargetTabKey = (BIQ_FIELD_REFS.improvements || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '';
         const picker = createReferencePicker({
-          options: getReferenceOptionsForField('improvements', field),
-          targetTabKey: (BIQ_FIELD_REFS.improvements || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
+          options: resourceOptions,
+          targetTabKey: resourceTargetTabKey,
           currentValue: field.value,
           searchPlaceholder: `Search ${String(field.label || field.key || 'resource')}...`,
           noneLabel: '(none)',
           showOptionThumbs: true,
           readOnly: !referenceEditable,
-          onSelect: referenceEditable ? (value) => {
+          onSelect: referenceEditable ? (value, option) => {
             rememberUndoSnapshotForKey(entryUndoKey);
             field.value = String(value);
+            setFieldReferenceTargetMeta(field, resourceTargetTabKey, option, value, resourceOptions);
             setDirty(true);
             renderActiveTab({ preserveTabScroll: true });
           } : null
@@ -15778,7 +15827,9 @@ function setUnitAvailableToCivilization(entry, civIndex, enabled) {
   if (enabled) set.add(idx);
   else set.delete(idx);
   if (had === set.has(idx)) return false;
-  field.value = encodeAvailableToFromIndices(Array.from(set).sort((a, b) => a - b));
+  const values = Array.from(set).sort((a, b) => a - b).map((value) => String(value));
+  field.value = encodeAvailableToFromIndices(values);
+  setFieldReferenceTargetsMeta(field, 'civilizations', values, getCivilizationBitmaskOptions());
   return true;
 }
 
@@ -16949,8 +17000,10 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
             entry.biqFields.push(field);
           }
           field.value = encodeAvailableToFromIndices([]);
+          delete field.referenceTargets;
         } else if (cfg.kind === 'stealthTargets') {
           setUnitListFieldValues(entry, stealthState.key, []);
+          setUnitListReferenceTargets(entry, stealthState.key, 'units', [], makeIndexOptionsForTab('units'));
         }
         setDirty(true);
         renderActiveTab({ preserveTabScroll: true });
@@ -17044,19 +17097,22 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
         onValuesChange: (values) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           if (field) field.value = encodeAvailableToFromIndices(values);
+          setFieldReferenceTargetsMeta(field, 'civilizations', values, civOptions);
           setDirty(true);
         }
       });
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'stealthTargets') {
+      const unitOptions = makeIndexOptionsForTab('units');
       const editor = makeNamedListTokenEditor({
         tabKey: 'units',
-        options: makeIndexOptionsForTab('units'),
+        options: unitOptions,
         values: stealthState.values,
         aliasLabels: makeUnitIndexToLabelMap(),
         onValuesChange: (values) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           setUnitListFieldValues(entry, stealthState.key, values);
+          setUnitListReferenceTargets(entry, stealthState.key, 'units', values, unitOptions);
           setDirty(true);
         }
       });
@@ -17070,25 +17126,29 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       });
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'legalUnitTelepads') {
+      const unitOptions = makeIndexOptionsForTab('units');
       const editor = makeNamedListTokenEditor({
         tabKey: 'units',
-        options: makeIndexOptionsForTab('units'),
+        options: unitOptions,
         values: legalUnitTelepadState.values,
         onValuesChange: (values) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           setUnitListFieldValues(entry, legalUnitTelepadState.key, values);
+          setUnitListReferenceTargets(entry, legalUnitTelepadState.key, 'units', values, unitOptions);
           setDirty(true);
         }
       });
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'legalBuildingTelepads') {
+      const improvementOptions = makeIndexOptionsForTab('improvements');
       const editor = makeNamedListTokenEditor({
         tabKey: 'improvements',
-        options: makeIndexOptionsForTab('improvements'),
+        options: improvementOptions,
         values: legalBuildingTelepadState.values,
         onValuesChange: (values) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           setUnitListFieldValues(entry, legalBuildingTelepadState.key, values);
+          setUnitListReferenceTargets(entry, legalBuildingTelepadState.key, 'improvements', values, improvementOptions);
           setDirty(true);
         }
       });
@@ -17149,6 +17209,7 @@ function createStealthTargetsCopyControl(entry, stealthState) {
     }
     rememberUndoSnapshotForKey(buildReferenceEntryUndoKey('units', entry));
     setUnitListFieldValues(entry, stealthState.key, merged);
+    setUnitListReferenceTargets(entry, stealthState.key, 'units', merged, makeIndexOptionsForTab('units'));
     setDirty(true);
     renderActiveTab({ preserveTabScroll: true });
     setStatus(`Added ${addedCount} stealth target${addedCount === 1 ? '' : 's'} from "${source.label}".`);
@@ -17307,6 +17368,8 @@ function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabK
   list.className = 'unit-prereq-resource-list';
 
   if (requiredTechField) {
+    const requiredTechOptions = getReferenceOptionsForField(tabKey, requiredTechField);
+    const requiredTechTargetTabKey = (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(requiredTechField && (requiredTechField.baseKey || requiredTechField.key))] || '';
     const techWrap = document.createElement('div');
     techWrap.className = 'unit-prereq-resource-picker unit-prereq-tech-picker';
     attachRichTooltip(techWrap, createRuleFieldTooltipText(entry, tabKey, requiredTechField));
@@ -17317,16 +17380,17 @@ function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabK
     techLabel.appendChild(techStrong);
     techWrap.appendChild(techLabel);
     const techPicker = createReferencePicker({
-      options: getReferenceOptionsForField(tabKey, requiredTechField),
-      targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(requiredTechField && (requiredTechField.baseKey || requiredTechField.key))] || '',
+      options: requiredTechOptions,
+      targetTabKey: requiredTechTargetTabKey,
       currentValue: requiredTechField.value,
       searchPlaceholder: 'Search required tech...',
       noneLabel: '(none)',
       showOptionThumbs: true,
       readOnly: !referenceEditable,
-      onSelect: referenceEditable ? (value) => {
+      onSelect: referenceEditable ? (value, option) => {
         rememberUndoSnapshotForKey(entryUndoKey);
         requiredTechField.value = String(value);
+        setFieldReferenceTargetMeta(requiredTechField, requiredTechTargetTabKey, option, value, requiredTechOptions);
         setDirty(true);
         renderActiveTab({ preserveTabScroll: true });
       } : null
@@ -17359,17 +17423,20 @@ function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabK
     const resourcePickerList = document.createElement('div');
     resourcePickerList.className = 'unit-prereq-resource-picker-list';
     visibleResourceFields.forEach((field, idx) => {
+      const resourceOptions = getReferenceOptionsForField(tabKey, field);
+      const resourceTargetTabKey = (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '';
       const picker = createReferencePicker({
-        options: getReferenceOptionsForField(tabKey, field),
-        targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
+        options: resourceOptions,
+        targetTabKey: resourceTargetTabKey,
         currentValue: field.value,
         searchPlaceholder: `Search required resource ${idx + 1}...`,
         noneLabel: '(none)',
         showOptionThumbs: true,
         readOnly: !referenceEditable,
-        onSelect: referenceEditable ? (value) => {
+        onSelect: referenceEditable ? (value, option) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           field.value = String(value);
+          setFieldReferenceTargetMeta(field, resourceTargetTabKey, option, value, resourceOptions);
           setDirty(true);
           renderActiveTab({ preserveTabScroll: true });
         } : null
@@ -17750,10 +17817,13 @@ function buildTechnologyTopReferenceControl(field, labelText, referenceEditable,
     noneLabel: '(none)',
     showOptionThumbs: !!options.showOptionThumbs || !referenceEditable,
     readOnly: !referenceEditable,
-    onSelect: referenceEditable ? (value) => {
+    onSelect: referenceEditable ? (value, option) => {
       if (undoKey) rememberUndoSnapshotForKey(undoKey);
       else rememberUndoSnapshot();
       field.value = String(value);
+      const refOptions = getReferenceOptionsForField('technologies', field);
+      const targetTabKey = (BIQ_FIELD_REFS.technologies || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '';
+      setFieldReferenceTargetMeta(field, targetTabKey, option, value, refOptions);
       setDirty(true);
       if (typeof options.onSelect === 'function') options.onSelect(value);
     } : null
@@ -18160,6 +18230,14 @@ function ensureTechnologyUnlockFieldByBaseKey(entry, baseKey, label = '', initia
   return field;
 }
 
+function setTechnologyUnlockTechReferenceTarget(field, techEntry, techIndex) {
+  if (!field) return;
+  const options = makeIndexOptionsForTab('technologies');
+  const option = options.find((opt) => String(opt && opt.value) === String(techIndex))
+    || (techEntry ? { value: String(techIndex), entry: techEntry } : null);
+  setFieldReferenceTargetMeta(field, 'technologies', option, String(techIndex), options);
+}
+
 function getTechnologyUnlockSelectedEntries(spec, techIndex, techEntry = null) {
   if (spec && spec.kind === 'section') {
     const techName = getTechnologyUnlockTechName(techEntry);
@@ -18236,6 +18314,7 @@ function setTechnologyUnlockMembership(spec, techIndex, selectedEntryIndices, te
         const openField = getTechnologyUnlockPrerequisiteOpenField(entry, spec);
         if (openField) {
           openField.value = String(techIndex);
+          setTechnologyUnlockTechReferenceTarget(openField, techEntry, techIndex);
           didChange = true;
         }
       } else if (!shouldUseTech && hasTech) {
@@ -18243,6 +18322,7 @@ function setTechnologyUnlockMembership(spec, techIndex, selectedEntryIndices, te
           if (resolveTechIndexFromValue(field && field.value) !== techIndex) return;
           if (String(field.value || '').trim() === '-1') return;
           field.value = '-1';
+          setFieldReferenceTargetMeta(field, 'technologies', null, '-1', []);
           didChange = true;
         });
       }
@@ -18266,11 +18346,13 @@ function setTechnologyUnlockMembership(spec, techIndex, selectedEntryIndices, te
     if (shouldUseTech) {
       if (currentTechIndex !== techIndex) {
         field.value = String(techIndex);
+        setTechnologyUnlockTechReferenceTarget(field, techEntry, techIndex);
         didChange = true;
       }
     } else if (currentTechIndex === techIndex) {
       if (String(field.value || '').trim() !== '-1') {
         field.value = '-1';
+        setFieldReferenceTargetMeta(field, 'technologies', null, '-1', []);
         didChange = true;
       }
     }
@@ -20704,6 +20786,54 @@ function resolveReferenceEntryForPicker(targetTabKey, rawValue, options = []) {
   }) || null;
 }
 
+function makeReferenceTargetMeta(targetTabKey, option, value, options = []) {
+  const tabKey = String(targetTabKey || '').trim();
+  if (!tabKey) return null;
+  const entry = option && option.entry
+    ? option.entry
+    : resolveReferenceEntryForPicker(tabKey, value, options);
+  const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+  if (!key) return null;
+  return { tabKey, key };
+}
+
+function setFieldReferenceTargetMeta(field, targetTabKey, option, value, options = []) {
+  if (!field) return;
+  const normalizedValue = normalizeConfigToken(value);
+  const meta = normalizedValue && normalizedValue !== '-1'
+    ? makeReferenceTargetMeta(targetTabKey, option, normalizedValue, options)
+    : null;
+  if (meta) {
+    field.referenceTarget = meta;
+  } else {
+    delete field.referenceTarget;
+  }
+}
+
+function setFieldReferenceTargetsMeta(field, targetTabKey, values, options = []) {
+  if (!field) return;
+  const targets = (Array.isArray(values) ? values : [])
+    .map((value) => makeReferenceTargetMeta(targetTabKey, null, value, options))
+    .filter(Boolean);
+  if (targets.length > 0) {
+    field.referenceTargets = targets;
+  } else {
+    delete field.referenceTargets;
+  }
+}
+
+function setUnitListReferenceTargets(entry, key, targetTabKey, values, options = []) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  const targetCanon = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleaned = (Array.isArray(values) ? values : []).map((value) => normalizeConfigToken(value)).filter(Boolean);
+  const fields = entry.biqFields.filter((field) => canonicalBiqFieldKey(field) === targetCanon);
+  fields.forEach((field, idx) => {
+    const value = idx < cleaned.length ? cleaned[idx] : '';
+    const option = options.find((opt) => normalizeConfigToken(opt && opt.value) === value) || null;
+    setFieldReferenceTargetMeta(field, targetTabKey, option, value, options);
+  });
+}
+
 let activeReferencePickerCloser = null;
 
 function createReferencePicker(config) {
@@ -21035,7 +21165,7 @@ function createReferencePicker(config) {
         ev.stopPropagation();
         renderButton(opt.value);
         closeMenu();
-        if (onSelect) onSelect(opt.value);
+        if (onSelect) onSelect(opt.value, opt);
         if (resetAfterSelect) renderButton(currentValue);
       });
       row.appendChild(selectBtn);
@@ -21241,6 +21371,66 @@ function createColorSlotPicker(config) {
   return wrap;
 }
 
+function getActiveImportedIconOps(tab) {
+  if (!tab || !Array.isArray(tab.recordOps) || !Array.isArray(tab.entries)) return [];
+  const entriesByRef = new Map();
+  tab.entries.forEach((entry) => {
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (ref) entriesByRef.set(ref, entry);
+  });
+  const activeByRef = new Map();
+  tab.recordOps.forEach((op) => {
+    const kind = String(op && op.op || '').trim().toLowerCase();
+    if (kind === 'delete') {
+      const ref = String(op && op.recordRef || '').trim().toUpperCase();
+      if (ref && activeByRef.has(ref)) activeByRef.delete(ref);
+      return;
+    }
+    if (kind === 'add' && String(op && op.importArtFrom || '').trim()) {
+      const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+      if (!newRef) return;
+      const entry = entriesByRef.get(newRef) || null;
+      if (!entry) return;
+      activeByRef.set(newRef, { op, newRef, entry });
+    }
+  });
+  return Array.from(activeByRef.values());
+}
+
+function getReferenceIconIndexAllocationFloor(tab, fieldKey, excludedRefs = new Set()) {
+  let maxIndex = -1;
+  (Array.isArray(tab && tab.entries) ? tab.entries : []).forEach((entry) => {
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (ref && excludedRefs.has(ref)) return;
+    const field = getBiqFieldByBaseKey(entry, fieldKey);
+    const idx = parseIntLoose(field && field.value, NaN);
+    if (Number.isFinite(idx) && idx >= 0) maxIndex = Math.max(maxIndex, idx);
+  });
+  return maxIndex + 1;
+}
+
+function getImportedIconOpRefs(importOps) {
+  return new Set((Array.isArray(importOps) ? importOps : [])
+    .map((item) => String(item && item.newRef || '').trim().toUpperCase())
+    .filter(Boolean));
+}
+
+function getNextResourcePreviewAssignmentSlot(preview, resourceTab, importOps = null) {
+  const scanSlot = findNextResourcePreviewSlot(preview);
+  if (!Number.isFinite(scanSlot) || scanSlot < 0) return scanSlot;
+  const activeOps = Array.isArray(importOps) ? importOps : getActiveImportedIconOps(resourceTab);
+  const referenceFloor = getReferenceIconIndexAllocationFloor(resourceTab, 'icon', getImportedIconOpRefs(activeOps));
+  return Math.max(scanSlot, referenceFloor);
+}
+
+function getNextUnits32PreviewAssignmentSlot(preview, unitsTab, importOps = null) {
+  const scanSlot = findNextUnits32PreviewSlot(preview);
+  if (!Number.isFinite(scanSlot) || scanSlot < 0) return scanSlot;
+  const activeOps = Array.isArray(importOps) ? importOps : getActiveImportedIconOps(unitsTab);
+  const referenceFloor = getReferenceIconIndexAllocationFloor(unitsTab, 'iconindex', getImportedIconOpRefs(activeOps));
+  return Math.max(scanSlot, referenceFloor);
+}
+
 function getUnits32AtlasMetrics(preview, spriteSize = 32, gutter = 1) {
   const atlas = rgbaToCanvas(preview);
   if (!atlas || !atlas.width || !atlas.height) return null;
@@ -21409,9 +21599,11 @@ function isResourcePreviewCellEmpty(preview, slotIndex) {
   const indices = getResourceAtlasIndices(preview);
   const palette = getResourceAtlasPalette(preview);
   if (indices && palette) {
-    for (let y = 0; y < cellH; y += 1) {
+    // resources.pcx stores non-magenta grid lines on the top and left edges of
+    // each 50x50 slot. Ignore those guide pixels when deciding if a slot is open.
+    for (let y = 1; y < cellH; y += 1) {
       const rowOff = (sy + y) * preview.width + sx;
-      for (let x = 0; x < cellW; x += 1) {
+      for (let x = 1; x < cellW; x += 1) {
         if (!isResourceAtlasPaletteMagenta(palette, indices[rowOff + x])) return false;
       }
     }
@@ -21419,8 +21611,8 @@ function isResourcePreviewCellEmpty(preview, slotIndex) {
   }
   const rgba = getResourceAtlasRgba(preview);
   if (!rgba) return false;
-  for (let y = 0; y < cellH; y += 1) {
-    for (let x = 0; x < cellW; x += 1) {
+  for (let y = 1; y < cellH; y += 1) {
+    for (let x = 1; x < cellW; x += 1) {
       const off = ((sy + y) * preview.width + sx + x) * 4;
       if (!(rgba[off] === 255 && rgba[off + 1] === 0 && rgba[off + 2] === 255)) {
         return false;
@@ -21466,21 +21658,18 @@ async function drawPendingImportedResourceIconToCanvas(entry, canvas) {
 async function refreshPendingImportedResourceIconAssignments(tab = null) {
   const resourceTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.resources);
   if (!resourceTab || !Array.isArray(resourceTab.recordOps) || !Array.isArray(resourceTab.entries)) return false;
-  const ops = resourceTab.recordOps.filter((op) =>
-    String(op && op.op || '').toLowerCase() === 'add' && String(op && op.importArtFrom || '').trim()
-  );
+  const ops = getActiveImportedIconOps(resourceTab);
   if (ops.length === 0) return false;
   const preview = await getResourcesAtlasPreview();
-  const firstSlot = findNextResourcePreviewSlot(preview);
+  const firstSlot = getNextResourcePreviewAssignmentSlot(preview, resourceTab, ops);
   if (!Number.isFinite(firstSlot) || firstSlot < 0) return false;
   let changed = false;
   let offset = 0;
-  for (const op of ops) {
-    const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+  for (const importItem of ops) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
     if (!newRef) continue;
-    const entry = resourceTab.entries.find((candidate) =>
-      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
-    );
+    const entry = importItem.entry;
     if (!entry) continue;
     const iconField = getBiqFieldByBaseKey(entry, 'icon');
     if (!iconField) continue;
@@ -22438,10 +22627,11 @@ function createTechIdentityPicker(field, onChange, undoKey = '') {
     currentValue: parsedCurrent == null ? '-1' : String(parsedCurrent),
     searchPlaceholder: 'Search tech...',
     noneLabel: '(none)',
-    onSelect: (value) => {
+    onSelect: (value, option) => {
       if (entryUndoKey) rememberUndoSnapshotForKey(entryUndoKey);
       else rememberUndoSnapshot();
       field.value = String(value);
+      setFieldReferenceTargetMeta(field, 'technologies', option, value, techOptions);
       if (onChange) onChange();
     }
   });
@@ -25073,7 +25263,7 @@ function ensureMapModalNode() {
   }
   if (mapModal.undoAllBtn) {
     mapModal.undoAllBtn.addEventListener('click', async () => {
-      if (!isScenarioMode() || !isMapDirty()) return;
+      if (!isScenarioMode() || !hasTrackedUnsavedMapChanges()) return;
       await undoAllMapChanges();
     });
   }
@@ -25098,7 +25288,7 @@ function refreshMapModalUndoButtons() {
     mapModal.undoBtn.disabled = !isScenarioMode() || !getLatestScopedUndoSnapshot('map') || state.isLoading;
   }
   if (mapModal.undoAllBtn) {
-    mapModal.undoAllBtn.disabled = !isScenarioMode() || !isMapDirty() || state.isLoading;
+    mapModal.undoAllBtn.disabled = !isScenarioMode() || !hasTrackedUnsavedMapChanges() || state.isLoading;
   }
 }
 
@@ -25122,6 +25312,7 @@ function renderMapModalBody() {
   mapModal.body.innerHTML = '';
   try {
     mapModal.body.appendChild(renderBiqMapSection(mapModal.tab, mapModal.tileSection, { inModal: true }));
+    reconcilePassiveMapRenderWithCleanSnapshot(mapModal.tab);
     appendDebugLog('biq-map:modal-render-done', {
       durationMs: Number((debugNowMs() - renderStartedAt).toFixed(2))
     });
@@ -31685,7 +31876,20 @@ function renderReferenceTab(tab, tabKey) {
       state.isDirty = true;
       rebuildReferenceDirtyCacheForTab(tabKey, tab);
       setDirty(true);
-      renderActiveTab({ preserveTabScroll: true });
+      const renderDeletedState = () => renderActiveTab({ preserveTabScroll: true });
+      if (tabKey === 'resources') {
+        refreshPendingImportedResourceIconAssignments(tab).then((changed) => {
+          if (changed) rebuildReferenceDirtyCacheForTab(tabKey, tab);
+          renderDeletedState();
+        }).catch(renderDeletedState);
+      } else if (tabKey === 'units') {
+        refreshPendingImportedUnitIconAssignments(tab).then((changed) => {
+          if (changed) rebuildReferenceDirtyCacheForTab(tabKey, tab);
+          renderDeletedState();
+        }).catch(renderDeletedState);
+      } else {
+        renderDeletedState();
+      }
     });
 
     actionRow.appendChild(addBtn);
@@ -31916,7 +32120,19 @@ function renderReferenceTab(tab, tabKey) {
   if (tabKey === 'units' && (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey())) {
     ensureCurrentUnits32AtlasMetrics().then(async (metrics) => {
       if (!metrics) return;
-      await refreshPendingImportedUnitIconAssignments(tab);
+      const changed = await refreshPendingImportedUnitIconAssignments(tab);
+      if (changed) {
+        rebuildReferenceDirtyCacheForTab(tabKey, tab);
+        setDirty(true);
+      }
+      renderReferenceBody();
+    }).catch(() => {});
+  }
+  if (tabKey === 'resources') {
+    refreshPendingImportedResourceIconAssignments(tab).then((changed) => {
+      if (!changed) return;
+      rebuildReferenceDirtyCacheForTab(tabKey, tab);
+      setDirty(true);
       renderReferenceBody();
     }).catch(() => {});
   }
@@ -34310,9 +34526,10 @@ function renderBiqTab(tab) {
                 currentValue: parsed == null ? '-1' : String(parsed),
                 searchPlaceholder: 'Search TECH...',
                 noneLabel: '(none)',
-                onSelect: (value) => {
+                onSelect: (value, option) => {
                   rememberUndoSnapshot();
                   techField.value = String(value);
+                  setFieldReferenceTargetMeta(techField, techRefTabKey, option, value, techOptions);
                   setDirty(true);
                 }
               });
@@ -34636,9 +34853,10 @@ function renderBiqTab(tab) {
                 renderOptionThumb: useTerrainThumbFallback
                   ? ({ holder, option }) => renderTerrainReferenceThumb(holder, option && option.label)
                   : null,
-                onSelect: (value) => {
+                onSelect: (value, option) => {
                   rememberUndoSnapshot();
                   field.value = String(value);
+                  setFieldReferenceTargetMeta(field, refTargetTabKey, option, value, refOptions);
                   if (selected.code === 'LEAD' && baseKey === 'civ') {
                     const listItem = listPane.querySelector(`.entry-list-item[data-index="${selectedRecordIndex}"]`);
                     const thumbHost = listItem ? listItem.querySelector('.entry-thumb') : null;
@@ -52798,7 +53016,7 @@ async function undoAllChanges() {
 }
 
 async function undoAllMapChanges() {
-  if (!state.bundle || !isMapDirty()) {
+  if (!state.bundle || !hasTrackedUnsavedMapChanges()) {
     setStatus('No unsaved map changes to undo.');
     return false;
   }

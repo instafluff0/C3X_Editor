@@ -6714,9 +6714,12 @@ function isResourceAtlasCellEmpty(atlas, cellIndex) {
   if (row < 0 || row >= atlas.rows) return false;
   const startX = col * RESOURCE_ATLAS_CELL_SIZE;
   const startY = row * RESOURCE_ATLAS_CELL_SIZE;
-  for (let y = 0; y < RESOURCE_ATLAS_CELL_SIZE; y += 1) {
+  // Civ3 resources.pcx cells include non-magenta top/left grid lines inside each
+  // 50x50 slot. Those guide pixels are not icon content and must not make an
+  // otherwise empty right-most slot look occupied.
+  for (let y = 1; y < RESOURCE_ATLAS_CELL_SIZE; y += 1) {
     const rowOff = (startY + y) * atlas.width + startX;
-    for (let x = 0; x < RESOURCE_ATLAS_CELL_SIZE; x += 1) {
+    for (let x = 1; x < RESOURCE_ATLAS_CELL_SIZE; x += 1) {
       const paletteIndex = atlas.indices[rowOff + x];
       if (!isPaletteIndexMagenta(atlas.palette, paletteIndex, atlas.magentaIndex)) {
         return false;
@@ -6738,6 +6741,59 @@ function findNextResourceAtlasSlot(targetBuffer) {
     lastOccupied,
     rows: atlas.rows,
     capacity: slotCount
+  };
+}
+
+function getActiveImportedAtlasOps(tab) {
+  if (!tab || !Array.isArray(tab.recordOps) || !Array.isArray(tab.entries)) return [];
+  const entriesByRef = new Map();
+  tab.entries.forEach((entry) => {
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (ref) entriesByRef.set(ref, entry);
+  });
+  const activeByRef = new Map();
+  tab.recordOps.forEach((op) => {
+    const kind = String(op && op.op || '').trim().toLowerCase();
+    if (kind === 'delete') {
+      const ref = String(op && op.recordRef || '').trim().toUpperCase();
+      if (ref && activeByRef.has(ref)) activeByRef.delete(ref);
+      return;
+    }
+    if (kind === 'add' && String(op && op.importArtFrom || '').trim()) {
+      const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+      if (!newRef) return;
+      const entry = entriesByRef.get(newRef) || null;
+      if (!entry) return;
+      activeByRef.set(newRef, { op, newRef, entry });
+    }
+  });
+  return Array.from(activeByRef.values());
+}
+
+function getBiqIconIndexAllocationFloor(tab, fieldKey, excludedRefs = new Set()) {
+  const fields = Array.isArray(tab && tab.entries) ? tab.entries : [];
+  let maxIndex = -1;
+  fields.forEach((entry) => {
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (ref && excludedRefs.has(ref)) return;
+    const field = getBiqFieldByBaseKey(entry, fieldKey);
+    const raw = field ? (field.value == null ? field.originalValue : field.value) : '';
+    const idx = Number.parseInt(String(raw == null ? '' : raw), 10);
+    if (Number.isFinite(idx) && idx >= 0) maxIndex = Math.max(maxIndex, idx);
+  });
+  return maxIndex + 1;
+}
+
+function getNextResourceAtlasAssignmentSlot(targetBuffer, resourceTab, activeImports = null) {
+  const scan = findNextResourceAtlasSlot(targetBuffer);
+  const imports = Array.isArray(activeImports) ? activeImports : getActiveImportedAtlasOps(resourceTab);
+  const excludedRefs = new Set(imports.map((item) => String(item && item.newRef || '').trim().toUpperCase()).filter(Boolean));
+  const referenceFloor = getBiqIconIndexAllocationFloor(resourceTab, 'icon', excludedRefs);
+  return {
+    ...scan,
+    index: Math.max(scan.index, referenceFloor),
+    scanIndex: scan.index,
+    referenceFloor
   };
 }
 
@@ -6798,6 +6854,19 @@ function findNextUnitAtlasSlot(targetBuffer) {
   };
 }
 
+function getNextUnitAtlasAssignmentSlot(targetBuffer, unitsTab, activeImports = null) {
+  const scan = findNextUnitAtlasSlot(targetBuffer);
+  const imports = Array.isArray(activeImports) ? activeImports : getActiveImportedAtlasOps(unitsTab);
+  const excludedRefs = new Set(imports.map((item) => String(item && item.newRef || '').trim().toUpperCase()).filter(Boolean));
+  const referenceFloor = getBiqIconIndexAllocationFloor(unitsTab, 'iconindex', excludedRefs);
+  return {
+    ...scan,
+    index: Math.max(scan.index, referenceFloor),
+    scanIndex: scan.index,
+    referenceFloor
+  };
+}
+
 function makePaletteRemap(sourcePalette, targetPalette, targetMagentaIndex) {
   const remap = new Uint8Array(256);
   for (let srcIdx = 0; srcIdx < 256; srcIdx += 1) {
@@ -6831,11 +6900,12 @@ function makePaletteRemap(sourcePalette, targetPalette, targetMagentaIndex) {
   return remap;
 }
 
-function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIconIndex }) {
+function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIconIndex, targetIconIndex = null }) {
   const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
   if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
     throw new Error(`Invalid source resource icon index: ${sourceIconIndex}`);
   }
+  const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
   const target = getIndexedResourceAtlas(targetBuffer, 'target resources.pcx');
   const source = getIndexedResourceAtlas(sourceBuffer, 'source resources.pcx');
   if (sourceIndex >= source.rows * RESOURCE_ATLAS_COLS) {
@@ -6843,7 +6913,9 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
   }
 
   const slot = findNextResourceAtlasSlot(targetBuffer);
-  const targetIndex = slot.index;
+  const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
+    ? explicitTargetIndex
+    : slot.index;
   const requiredRows = Math.floor(targetIndex / RESOURCE_ATLAS_COLS) + 1;
   const newHeight = Math.max(target.height, requiredRows * RESOURCE_ATLAS_CELL_SIZE);
   const nextIndices = new Uint8Array(target.width * newHeight);
@@ -6877,17 +6949,19 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
     buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
     index: targetIndex,
     lastOccupied: slot.lastOccupied,
+    scanIndex: slot.index,
     oldRows: target.rows,
     newRows: Math.floor(newHeight / RESOURCE_ATLAS_CELL_SIZE),
     appendedRow: newHeight > target.height
   };
 }
 
-function appendUnitIconToUnits32Pcx({ targetBuffer, sourceBuffer, sourceIconIndex }) {
+function appendUnitIconToUnits32Pcx({ targetBuffer, sourceBuffer, sourceIconIndex, targetIconIndex = null }) {
   const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
   if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
     throw new Error(`Invalid source unit icon index: ${sourceIconIndex}`);
   }
+  const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
   const target = getIndexedUnitAtlas(targetBuffer, 'target units_32.pcx');
   const source = getIndexedUnitAtlas(sourceBuffer, 'source units_32.pcx');
   if (sourceIndex >= source.rows * source.cols) {
@@ -6895,7 +6969,9 @@ function appendUnitIconToUnits32Pcx({ targetBuffer, sourceBuffer, sourceIconInde
   }
 
   const slot = findNextUnitAtlasSlot(targetBuffer);
-  const targetIndex = slot.index;
+  const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
+    ? explicitTargetIndex
+    : slot.index;
   const requiredRows = Math.floor(targetIndex / target.cols) + 1;
   const requiredHeight = requiredRows * target.stride + target.gutter;
   const newHeight = Math.max(target.height, requiredHeight);
@@ -6930,6 +7006,7 @@ function appendUnitIconToUnits32Pcx({ targetBuffer, sourceBuffer, sourceIconInde
     buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
     index: targetIndex,
     lastOccupied: slot.lastOccupied,
+    scanIndex: slot.index,
     oldRows: target.rows,
     newRows: Math.floor((newHeight - target.gutter) / target.stride),
     appendedRow: newHeight > target.height
@@ -6947,10 +7024,7 @@ function applyImportedResourceIconAtlasAssignments({ resourceTab, targetAtlasBuf
   if (!resourceTab || !Array.isArray(resourceTab.recordOps) || !Array.isArray(resourceTab.entries)) {
     return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
   }
-  const importOps = resourceTab.recordOps.filter(
-    (op) => String(op && op.op || '').toLowerCase() === 'add'
-      && String(op && op.importArtFrom || '').trim()
-  );
+  const importOps = getActiveImportedAtlasOps(resourceTab);
   if (importOps.length === 0) {
     return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
   }
@@ -6960,14 +7034,14 @@ function applyImportedResourceIconAtlasAssignments({ resourceTab, targetAtlasBuf
   let workingBuffer = targetAtlasBuffer;
   const assignments = [];
   const sourceBufferCache = new Map();
+  let nextTargetIndex = getNextResourceAtlasAssignmentSlot(workingBuffer, resourceTab, importOps).index;
 
-  for (const op of importOps) {
-    const newRef = String(op.newRecordRef || '').trim().toUpperCase();
-    const sourceBiqPath = String(op.importArtFrom || '').trim();
+  for (const importItem of importOps) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
+    const sourceBiqPath = String(op && op.importArtFrom || '').trim();
     if (!newRef || !sourceBiqPath) continue;
-    const entry = resourceTab.entries.find((candidate) =>
-      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
-    );
+    const entry = importItem.entry;
     if (!entry) {
       return { ok: false, error: `Could not find imported resource entry ${newRef} for resources.pcx update.` };
     }
@@ -7001,10 +7075,12 @@ function applyImportedResourceIconAtlasAssignments({ resourceTab, targetAtlasBuf
       const result = appendResourceIconToResourcesPcx({
         targetBuffer: workingBuffer,
         sourceBuffer: sourceBufferCache.get(sourceBiqPath),
-        sourceIconIndex
+        sourceIconIndex,
+        targetIconIndex: nextTargetIndex
       });
       workingBuffer = result.buffer;
       iconField.value = String(result.index);
+      nextTargetIndex = result.index + 1;
       assignments.push({
         civilopediaKey: newRef,
         sourceIconIndex,
@@ -7028,10 +7104,7 @@ function applyImportedUnitIconAtlasAssignments({ unitsTab, targetAtlasBuffer, lo
   if (!unitsTab || !Array.isArray(unitsTab.recordOps) || !Array.isArray(unitsTab.entries)) {
     return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
   }
-  const importOps = unitsTab.recordOps.filter(
-    (op) => String(op && op.op || '').toLowerCase() === 'add'
-      && String(op && op.importArtFrom || '').trim()
-  );
+  const importOps = getActiveImportedAtlasOps(unitsTab);
   if (importOps.length === 0) {
     return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
   }
@@ -7041,14 +7114,14 @@ function applyImportedUnitIconAtlasAssignments({ unitsTab, targetAtlasBuffer, lo
   let workingBuffer = targetAtlasBuffer;
   const assignments = [];
   const sourceBufferCache = new Map();
+  let nextTargetIndex = getNextUnitAtlasAssignmentSlot(workingBuffer, unitsTab, importOps).index;
 
-  for (const op of importOps) {
-    const newRef = String(op.newRecordRef || '').trim().toUpperCase();
-    const sourceBiqPath = String(op.importArtFrom || '').trim();
+  for (const importItem of importOps) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
+    const sourceBiqPath = String(op && op.importArtFrom || '').trim();
     if (!newRef || !sourceBiqPath) continue;
-    const entry = unitsTab.entries.find((candidate) =>
-      String(candidate && candidate.civilopediaKey || '').trim().toUpperCase() === newRef
-    );
+    const entry = importItem.entry;
     if (!entry) {
       return { ok: false, error: `Could not find imported unit entry ${newRef} for units_32.pcx update.` };
     }
@@ -7082,10 +7155,12 @@ function applyImportedUnitIconAtlasAssignments({ unitsTab, targetAtlasBuffer, lo
       const result = appendUnitIconToUnits32Pcx({
         targetBuffer: workingBuffer,
         sourceBuffer: sourceBufferCache.get(sourceBiqPath),
-        sourceIconIndex
+        sourceIconIndex,
+        targetIconIndex: nextTargetIndex
       });
       workingBuffer = result.buffer;
       iconField.value = String(result.index);
+      nextTargetIndex = result.index + 1;
       assignments.push({
         civilopediaKey: newRef,
         sourceIconIndex,
@@ -7162,11 +7237,8 @@ function resolveUnits32AtlasPath({ civ3Path, targetContentRoot, scenarioRoots })
 function prepareImportedResourceIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
   const resourceTab = tabs && tabs.resources;
   if (!resourceTab || !Array.isArray(resourceTab.recordOps)) return { ok: true, changed: false };
-  const hasResourceImport = resourceTab.recordOps.some(
-    (op) => String(op && op.op || '').toLowerCase() === 'add'
-      && String(op && op.importArtFrom || '').trim()
-  );
-  if (!hasResourceImport) return { ok: true, changed: false };
+  const activeResourceImports = getActiveImportedAtlasOps(resourceTab);
+  if (activeResourceImports.length === 0) return { ok: true, changed: false };
 
   const targetRoot = String(targetContentRoot || '').trim();
   if (!targetRoot) return { ok: false, error: 'Could not determine target scenario folder for resources.pcx.' };
@@ -7238,11 +7310,8 @@ function prepareImportedResourceIconAtlasWrite({ tabs, targetContentRoot, scenar
 function prepareImportedUnitIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
   const unitsTab = tabs && tabs.units;
   if (!unitsTab || !Array.isArray(unitsTab.recordOps)) return { ok: true, changed: false };
-  const hasUnitImport = unitsTab.recordOps.some(
-    (op) => String(op && op.op || '').toLowerCase() === 'add'
-      && String(op && op.importArtFrom || '').trim()
-  );
-  if (!hasUnitImport) return { ok: true, changed: false };
+  const activeUnitImports = getActiveImportedAtlasOps(unitsTab);
+  if (activeUnitImports.length === 0) return { ok: true, changed: false };
 
   const targetRoot = String(targetContentRoot || '').trim();
   if (!targetRoot) return { ok: false, error: 'Could not determine target scenario folder for units_32.pcx.' };
@@ -7373,24 +7442,21 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
     const tab = tabs[spec.key];
     if (!tab || !Array.isArray(tab.recordOps)) continue;
 
-    const importOps = tab.recordOps.filter(
-      (op) => String(op && op.op || '').toLowerCase() === 'add' &&
-               String(op && op.importArtFrom || '').trim()
-    );
+    const importOps = getActiveImportedAtlasOps(tab);
     if (importOps.length === 0) continue;
 
     const sectionCode = getSectionCodeForReferenceTabKey(spec.key);
 
-    for (const op of importOps) {
-      const newRef = String(op.newRecordRef || '').trim().toUpperCase();
-      const sourceBiqPath = String(op.importArtFrom || '').trim();
+    for (const importItem of importOps) {
+      const op = importItem.op;
+      const newRef = importItem.newRef;
+      const sourceBiqPath = String(op && op.importArtFrom || '').trim();
       if (!newRef || !sourceBiqPath) continue;
       let sourceExists = false;
       try { sourceExists = fs.existsSync(sourceBiqPath) && fs.statSync(sourceBiqPath).isFile(); } catch (_e) { /* skip */ }
       if (!sourceExists) continue;
 
-      const entry = (Array.isArray(tab.entries) ? tab.entries : [])
-        .find((e) => String(e && e.civilopediaKey || '').toUpperCase() === newRef);
+      const entry = importItem.entry;
       if (!entry) continue;
 
       const sourceRoots = getSourceRoots(sourceBiqPath);
@@ -7647,6 +7713,10 @@ function buildSavePlan(payload) {
       const biqTabsForCollection = getTabsForDirtyBiqCollection(payload.tabs || {}, {
         dirtyTabs,
         includeAllFieldEdits: hasPendingBiqFieldEdits
+      });
+      normalizePendingReferenceTargetsForSave({
+        tabs: biqTabsForCollection,
+        biqTab
       });
       const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
         tabs: biqTabsForCollection,
@@ -8295,6 +8365,329 @@ function getReferenceTabKeyForSectionCode(sectionCode) {
   const code = String(sectionCode || '').trim().toUpperCase();
   const spec = REFERENCE_TAB_SPECS.find((entry) => getSectionCodeForReferencePrefix(entry.prefix) === code);
   return spec ? spec.key : '';
+}
+
+const BIQ_SAVE_REFERENCE_FIELD_TARGETS = {
+  resources: {
+    prerequisite: 'technologies'
+  },
+  improvements: {
+    reqimprovement: 'improvements',
+    reqgovernment: 'governments',
+    reqadvance: 'technologies',
+    obsoleteby: 'technologies',
+    reqresource1: 'resources',
+    reqresource2: 'resources',
+    unitproduced: 'units',
+    gainineverycity: 'improvements',
+    gainoncontinent: 'improvements',
+    doubleshappiness: 'improvements'
+  },
+  units: {
+    requiredtech: 'technologies',
+    upgradeto: 'units',
+    requiredresource1: 'resources',
+    requiredresource2: 'resources',
+    requiredresource3: 'resources',
+    enslaveresultsin: 'units',
+    enslaveresultsinto: 'units',
+    stealthtarget: 'units',
+    legalunittelepad: 'units',
+    legalbuildingtelepad: 'improvements'
+  },
+  civilizations: {
+    freetech1index: 'technologies',
+    freetech1: 'technologies',
+    freetech2index: 'technologies',
+    freetech2: 'technologies',
+    freetech3index: 'technologies',
+    freetech3: 'technologies',
+    freetech4index: 'technologies',
+    freetech4: 'technologies',
+    shunnedgovernment: 'governments',
+    favoritegovernment: 'governments',
+    kingunit: 'units'
+  },
+  governments: {
+    prerequisitetechnology: 'technologies',
+    immuneto: ''
+  },
+  technologies: {
+    prerequisite1: 'technologies',
+    prerequisite2: 'technologies',
+    prerequisite3: 'technologies',
+    prerequisite4: 'technologies'
+  },
+  rules: {
+    slave: 'units',
+    startunit1: 'units',
+    startunit2: 'units',
+    scout: 'units',
+    battlecreatedunit: 'units',
+    buildarmyunit: 'units',
+    basicbarbarian: 'units',
+    advancedbarbarian: 'units',
+    barbarianseaunit: 'units',
+    flagunit: 'units',
+    defaultmoneyresource: 'resources'
+  }
+};
+
+const BIQ_SAVE_SECTION_TO_REFERENCE_TAB = {
+  RACE: 'civilizations',
+  TECH: 'technologies',
+  GOOD: 'resources',
+  BLDG: 'improvements',
+  GOVT: 'governments',
+  PRTO: 'units'
+};
+
+function getSaveReferenceTargetTabKey(sourceTabKey, fieldKey) {
+  const source = String(sourceTabKey || '').trim();
+  const canon = canonicalFieldKey(fieldKey);
+  if (!source || !canon) return '';
+  return ((BIQ_SAVE_REFERENCE_FIELD_TARGETS[source] || {})[canon]) || '';
+}
+
+function getBiqStructureSaveRefSpec(sectionCode, fieldKey) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  const canon = canonicalFieldKey(fieldKey);
+  if (!code || !canon) return null;
+  const unitRefKeys = new Set([
+    'advancedbarbarian', 'basicbarbarian', 'barbarianseaunit', 'battlecreatedunit', 'buildarmyunit',
+    'scout', 'slave', 'startunit1', 'startunit2', 'flagunit'
+  ]);
+  if ((code === 'GAME' || code === 'RULE') && unitRefKeys.has(canon)) return { tabKey: 'units' };
+  if ((code === 'GAME' || code === 'RULE') && canon === 'defaultmoneyresource') return { tabKey: 'resources' };
+  if (code === 'GAME' && (canon === 'playableciv' || canon.startsWith('playableciv'))) return { tabKey: 'civilizations' };
+  if (code === 'LEAD' && canon === 'civ') return { tabKey: 'civilizations' };
+  if (code === 'LEAD' && canon === 'government') return { tabKey: 'governments' };
+  if (code === 'LEAD' && /^startingtechnology\d+$/.test(canon)) return { tabKey: 'technologies' };
+  if (code === 'TFRM' && canon === 'requiredadvance') return { tabKey: 'technologies' };
+  if (code === 'TFRM' && (canon === 'requiredresource1' || canon === 'requiredresource2')) return { tabKey: 'resources' };
+  if (code === 'CTZN' && canon === 'prerequisite') return { tabKey: 'technologies' };
+  return null;
+}
+
+function normalizeReferenceTargetPayload(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    const key = String(raw || '').trim().toUpperCase();
+    return key ? { key } : null;
+  }
+  if (typeof raw !== 'object') return null;
+  const key = String(raw.key || raw.civilopediaKey || raw.referenceKey || raw.recordRef || '').trim().toUpperCase();
+  if (!key) return null;
+  const tabKey = String(raw.tabKey || raw.targetTabKey || '').trim();
+  return {
+    key,
+    tabKey
+  };
+}
+
+function getFieldReferenceTarget(field) {
+  if (!field || typeof field !== 'object') return null;
+  return normalizeReferenceTargetPayload(field.referenceTarget)
+    || normalizeReferenceTargetPayload(field.reference)
+    || normalizeReferenceTargetPayload(field._referenceTarget)
+    || normalizeReferenceTargetPayload(field.pendingReferenceTarget)
+    || normalizeReferenceTargetPayload(field.referenceTargetKey)
+    || normalizeReferenceTargetPayload(field._referenceTargetKey);
+}
+
+function getFieldReferenceTargets(field) {
+  if (!field || typeof field !== 'object') return [];
+  const candidates = [
+    field.referenceTargets,
+    field.referenceTargetKeys,
+    field._referenceTargets,
+    field._referenceTargetKeys,
+    field.pendingReferenceTargets
+  ];
+  for (const value of candidates) {
+    if (!Array.isArray(value)) continue;
+    return value.map((entry) => normalizeReferenceTargetPayload(entry)).filter(Boolean);
+  }
+  return [];
+}
+
+function encodeSigned32Bitmask(indices) {
+  let mask = 0 >>> 0;
+  (Array.isArray(indices) ? indices : []).forEach((idx) => {
+    const bit = Number.parseInt(String(idx), 10);
+    if (!Number.isFinite(bit) || bit < 0 || bit > 31) return;
+    mask = (mask | ((1 << bit) >>> 0)) >>> 0;
+  });
+  return String(mask > 0x7fffffff ? mask - 0x100000000 : mask);
+}
+
+function getPlannedReferenceIndex(indexMaps, targetTabKey, target) {
+  const normalizedTarget = normalizeReferenceTargetPayload(target);
+  if (!normalizedTarget || !normalizedTarget.key) return NaN;
+  const expectedTabKey = String(targetTabKey || normalizedTarget.tabKey || '').trim();
+  if (!expectedTabKey) return NaN;
+  if (normalizedTarget.tabKey && String(normalizedTarget.tabKey).trim() !== expectedTabKey) return NaN;
+  const map = indexMaps && indexMaps[expectedTabKey];
+  if (!map || !(map.byKey instanceof Map)) return NaN;
+  const value = map.byKey.get(String(normalizedTarget.key || '').trim().toUpperCase());
+  return Number.isFinite(value) ? value : NaN;
+}
+
+function getBiqRecordPlanningRef(record) {
+  const key = String(getBiqRecordCivilopediaKey(record) || '').trim().toUpperCase();
+  if (key) return key;
+  const idx = Number(record && record.index);
+  return Number.isFinite(idx) && idx >= 0 ? `@INDEX:${idx}` : '';
+}
+
+function findPlannedRecordIndex(records, recordRef) {
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return -1;
+  if (ref.startsWith('@INDEX:')) {
+    const idx = Number.parseInt(ref.slice(7), 10);
+    if (!Number.isFinite(idx)) return -1;
+    return records.findIndex((record) => Number(record && record.index) === idx);
+  }
+  return records.findIndex((record) => (
+    String(record && record.key || '').trim().toUpperCase() === ref
+    || String(record && record.newRecordRef || '').trim().toUpperCase() === ref
+  ));
+}
+
+function getReferenceRecordOpsForPlanning(tabs, tabKey) {
+  const tab = tabs && tabs[tabKey];
+  return Array.isArray(tab && tab.recordOps) ? tab.recordOps : [];
+}
+
+function getReferencePlanningRecordsForSection(biqTab, sectionCode) {
+  const records = getBiqRecordListForSection(biqTab, sectionCode);
+  if (String(sectionCode || '').trim().toUpperCase() !== 'PRTO') return records;
+  return (Array.isArray(records) ? records : []).filter((record) => !isPrtoStrategyMapRecord(record));
+}
+
+function buildPlannedReferenceIndexMaps(tabs, biqTab) {
+  const out = {};
+  Object.entries(BIQ_SAVE_SECTION_TO_REFERENCE_TAB).forEach(([sectionCode, tabKey]) => {
+    const originalRecords = getReferencePlanningRecordsForSection(biqTab, sectionCode);
+    const planned = (Array.isArray(originalRecords) ? originalRecords : []).map((record, idx) => ({
+      key: getBiqRecordPlanningRef(record),
+      index: Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx,
+      originalIndex: Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx
+    }));
+    getReferenceRecordOpsForPlanning(tabs, tabKey).forEach((op) => {
+      const kind = String(op && op.op || '').trim().toLowerCase();
+      if (kind === 'add' || kind === 'copy') {
+        const newRecordRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+        if (!newRecordRef) return;
+        if (planned.some((record) => String(record && record.key || '').trim().toUpperCase() === newRecordRef
+          || String(record && record.newRecordRef || '').trim().toUpperCase() === newRecordRef)) {
+          return;
+        }
+        planned.push({
+          key: newRecordRef,
+          newRecordRef,
+          index: planned.length
+        });
+        return;
+      }
+      if (kind === 'delete') {
+        const deleteIdx = findPlannedRecordIndex(planned, op && op.recordRef);
+        if (deleteIdx < 0) return;
+        planned.splice(deleteIdx, 1);
+        planned.forEach((record, idx) => { record.index = idx; });
+      }
+    });
+    const byKey = new Map();
+    planned.forEach((record, idx) => {
+      const key = String(record && record.key || '').trim().toUpperCase();
+      if (key) byKey.set(key, idx);
+      const newRef = String(record && record.newRecordRef || '').trim().toUpperCase();
+      if (newRef) byKey.set(newRef, idx);
+      const originalIndex = Number(record && record.originalIndex);
+      if (Number.isFinite(originalIndex) && originalIndex >= 0) byKey.set(`@INDEX:${originalIndex}`, idx);
+      else byKey.set(`@INDEX:${idx}`, idx);
+    });
+    const tabEntries = tabs && tabs[tabKey] && Array.isArray(tabs[tabKey].entries) ? tabs[tabKey].entries : [];
+    tabEntries.forEach((entry) => {
+      const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      const originalIndex = Number(entry && entry.biqIndex);
+      if (!key || !Number.isFinite(originalIndex) || originalIndex < 0) return;
+      const plannedIndex = byKey.get(`@INDEX:${originalIndex}`);
+      if (Number.isFinite(plannedIndex) && plannedIndex >= 0) byKey.set(key, plannedIndex);
+    });
+    out[tabKey] = {
+      sectionCode,
+      records: planned,
+      byKey
+    };
+  });
+  return out;
+}
+
+function normalizeReferenceFieldValueForSave(field, targetTabKey, indexMaps) {
+  const target = getFieldReferenceTarget(field);
+  if (!target) return false;
+  const finalIndex = getPlannedReferenceIndex(indexMaps, targetTabKey, target);
+  field.value = Number.isFinite(finalIndex) && finalIndex >= 0 ? String(finalIndex) : '-1';
+  return true;
+}
+
+function normalizeReferenceListFieldValueForSave(field, targetTabKey, indexMaps) {
+  const targets = getFieldReferenceTargets(field);
+  if (targets.length === 0) return false;
+  const finalIndices = targets
+    .map((target) => getPlannedReferenceIndex(indexMaps, targetTabKey, target))
+    .filter((idx) => Number.isFinite(idx) && idx >= 0);
+  if (canonicalFieldKey(field && (field.baseKey || field.key)) === 'availableto') {
+    field.value = encodeSigned32Bitmask(finalIndices);
+    return true;
+  }
+  field.value = finalIndices.join(',');
+  return true;
+}
+
+function normalizePendingReferenceTargetsForSave({ tabs, biqTab }) {
+  const sourceTabs = tabs || {};
+  const indexMaps = buildPlannedReferenceIndexMaps(sourceTabs, biqTab);
+  let changed = 0;
+
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const tab = sourceTabs[spec.key];
+    if (!tab || !Array.isArray(tab.entries)) continue;
+    tab.entries.forEach((entry) => {
+      (Array.isArray(entry && entry.biqFields) ? entry.biqFields : []).forEach((field) => {
+        if (!field) return;
+        const canon = canonicalFieldKey(field.baseKey || field.key);
+        if (spec.key === 'units' && canon === 'availableto') {
+          if (normalizeReferenceListFieldValueForSave(field, 'civilizations', indexMaps)) changed += 1;
+          return;
+        }
+        const targetTabKey = getSaveReferenceTargetTabKey(spec.key, canon);
+        if (!targetTabKey) return;
+        if (normalizeReferenceFieldValueForSave(field, targetTabKey, indexMaps)) changed += 1;
+      });
+    });
+  }
+
+  for (const spec of BIQ_STRUCTURE_TAB_SPECS) {
+    const tab = sourceTabs[spec.key];
+    if (!tab || !Array.isArray(tab.sections)) continue;
+    tab.sections.forEach((section) => {
+      const sectionCode = String(section && section.code || '').trim().toUpperCase();
+      (Array.isArray(section && section.records) ? section.records : []).forEach((record) => {
+        (Array.isArray(record && record.fields) ? record.fields : []).forEach((field) => {
+          const refSpec = getBiqStructureSaveRefSpec(sectionCode, field && (field.baseKey || field.key));
+          if (!refSpec || !refSpec.tabKey) return;
+          if (normalizeReferenceFieldValueForSave(field, refSpec.tabKey, indexMaps)) changed += 1;
+        });
+      });
+    });
+  }
+
+  if (changed > 0) {
+    log.info('BiqCollect', `normalizePendingReferenceTargetsForSave: resolved ${changed} reference field(s) through planned BIQ indices`);
+  }
+  return { changed, indexMaps };
 }
 
 function isLockedBiqField(sectionCode, fieldKey) {
@@ -10458,9 +10851,11 @@ module.exports = {
   collectBiqMapRecordOps,
   collectBiqMapEdits,
   findNextResourceAtlasSlot,
+  getNextResourceAtlasAssignmentSlot,
   appendResourceIconToResourcesPcx,
   applyImportedResourceIconAtlasAssignments,
   findNextUnitAtlasSlot,
+  getNextUnitAtlasAssignmentSlot,
   appendUnitIconToUnits32Pcx,
   applyImportedUnitIconAtlasAssignments,
   previewFileDiff,

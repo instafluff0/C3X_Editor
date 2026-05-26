@@ -188,8 +188,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /async function refreshPendingImportedResourceIconAssignments\(tab = null\) \{[\s\S]*?const firstSlot = findNextResourcePreviewSlot\(preview\);[\s\S]*?const targetIconIndex = firstSlot \+ offset;[\s\S]*?entry\._pendingImportedResourceIcon = \{[\s\S]*?sourceIconIndex,[\s\S]*?targetIconIndex,[\s\S]*?\};[\s\S]*?iconField\.value = String\(targetIconIndex\);/,
-    'resource imports should assign the predicted target slot to the imported entry before Save'
+    /async function refreshPendingImportedResourceIconAssignments\(tab = null\) \{[\s\S]*?const ops = getActiveImportedIconOps\(resourceTab\);[\s\S]*?const firstSlot = getNextResourcePreviewAssignmentSlot\(preview, resourceTab, ops\);[\s\S]*?const targetIconIndex = firstSlot \+ offset;[\s\S]*?entry\._pendingImportedResourceIcon = \{[\s\S]*?sourceIconIndex,[\s\S]*?targetIconIndex,[\s\S]*?\};[\s\S]*?iconField\.value = String\(targetIconIndex\);/,
+    'resource imports should assign the predicted target slot to active imported entries before Save'
   );
   assert.match(
     rendererText,
@@ -208,8 +208,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /async function refreshPendingImportedUnitIconAssignments\(tab\) \{[\s\S]*?const firstSlot = findNextUnits32PreviewSlot\(preview\);[\s\S]*?const targetIconIndex = firstSlot \+ offset;[\s\S]*?entry\._pendingImportedUnitIcon = \{[\s\S]*?sourceIconIndex,[\s\S]*?targetIconIndex,[\s\S]*?\};[\s\S]*?iconField\.value = String\(targetIconIndex\);/,
-    'unit imports should assign the predicted target slot to the imported entry before Save'
+    /async function refreshPendingImportedUnitIconAssignments\(tab\) \{[\s\S]*?const ops = Array\.isArray\(unitsTab\.recordOps\)[\s\S]*?getActiveImportedIconOps\(unitsTab\)[\s\S]*?const firstSlot = getNextUnits32PreviewAssignmentSlot\(preview, unitsTab, ops\);[\s\S]*?const targetIconIndex = firstSlot \+ offset;[\s\S]*?entry\._pendingImportedUnitIcon = \{[\s\S]*?sourceIconIndex,[\s\S]*?targetIconIndex,[\s\S]*?\};[\s\S]*?iconField\.value = String\(targetIconIndex\);/,
+    'unit imports should assign the predicted target slot to active imported entries before Save'
   );
   assert.match(
     rendererText,
@@ -1106,5 +1106,25 @@ test('map overlay rendering offsets colony-like overlays, draws barricades, and 
     rendererText,
     /const drawRuinsOverlay = \(record, sx, sy\) => \{[\s\S]*?const drawX = sx - Math\.round\(\(drawW - tileW\) \/ 2\) - Math\.round\(20 \* scale\) \+ Math\.round\(tileW \/ 4\);[\s\S]*?const drawY = sy \+ Math\.floor\(tileH \/ 2\) - Math\.round\(15 \* scale\) - Math\.round\(\(drawH - tileH\) \/ 2\) \+ Math\.round\(tileH \/ 4\);/,
     'ruins overlay should render half a tile farther right and lower than the previous placement'
+  );
+});
+
+test('map modal undo all follows tracked map dirty state', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /function hasTrackedUnsavedMapChanges\(\) \{[\s\S]*?!state\.isDirty[\s\S]*?getTabDirtyCount\('map'\) > 0[\s\S]*?hasPendingMapWriteState\(mapTab\)[\s\S]*?!getLatestScopedUndoSnapshot\('map'\)[\s\S]*?hasChangedFromClean\(mapTab, getCleanTabsObject\(\)\.map \|\| null\)/,
+    'map-specific undo-all enablement should use tracked dirty sources instead of passive structural map comparison'
+  );
+  assert.match(
+    rendererText,
+    /mapModal\.undoAllBtn\.disabled = !isScenarioMode\(\) \|\| !hasTrackedUnsavedMapChanges\(\) \|\| state\.isLoading;/,
+    'map modal Undo All should disable unless tracked map changes exist'
+  );
+  assert.match(
+    rendererText,
+    /mapModal\.body\.appendChild\(renderBiqMapSection\(mapModal\.tab, mapModal\.tileSection, \{ inModal: true \}\)\);\s*reconcilePassiveMapRenderWithCleanSnapshot\(mapModal\.tab\);/,
+    'opening the map modal should reconcile passive render-only map fields into the clean snapshot'
   );
 });

@@ -75,6 +75,7 @@ function loadPreviewOptionHelpers(bundle) {
     'setDistrictAdvancePrereqTokens',
     'getTechnologyUnlockFieldByBaseKey',
     'ensureTechnologyUnlockFieldByBaseKey',
+    'setTechnologyUnlockTechReferenceTarget',
     'getTechnologyUnlockSelectedEntries',
     'setTechnologyUnlockMembership'
   ];
@@ -130,6 +131,31 @@ function loadPreviewOptionHelpers(bundle) {
       };
       entry.biqFields.push(field);
       return field;
+    },
+    makeIndexOptionsForTab: (tabKey) => {
+      const tab = sandbox.state.bundle && sandbox.state.bundle.tabs
+        ? sandbox.state.bundle.tabs[tabKey]
+        : null;
+      const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+      return entries.map((entry, fallbackIdx) => ({
+        value: String(sandbox.getReferenceEntryIndexForOption(tabKey, entry, fallbackIdx, { allowFallback: true })),
+        label: String(entry && (entry.name || entry.civilopediaKey) || ''),
+        entry
+      }));
+    },
+    setFieldReferenceTargetMeta: (field, targetTabKey, option, value, options = []) => {
+      if (!field) return;
+      const normalized = String(value == null ? '' : value).trim();
+      if (!normalized || normalized === '-1') {
+        delete field.referenceTarget;
+        return;
+      }
+      const match = (option && option.entry)
+        ? option
+        : (Array.isArray(options) ? options : []).find((opt) => String(opt && opt.value) === normalized);
+      const key = String(match && match.entry && match.entry.civilopediaKey || '').trim().toUpperCase();
+      if (key) field.referenceTarget = { tabKey: String(targetTabKey || ''), key };
+      else delete field.referenceTarget;
     },
     resolveTechIndexFromValue: (rawValue) => {
       const text = String(rawValue == null ? '' : rawValue).trim();

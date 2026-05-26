@@ -5,9 +5,11 @@ const assert = require('node:assert/strict');
 
 const {
   findNextResourceAtlasSlot,
+  getNextResourceAtlasAssignmentSlot,
   appendResourceIconToResourcesPcx,
   applyImportedResourceIconAtlasAssignments,
   findNextUnitAtlasSlot,
+  getNextUnitAtlasAssignmentSlot,
   appendUnitIconToUnits32Pcx,
   applyImportedUnitIconAtlasAssignments
 } = require('../src/configCore');
@@ -60,6 +62,44 @@ function makeAtlas(rows, occupied = {}, palette = makePalette()) {
   indices.fill(MAGENTA);
   Object.entries(occupied).forEach(([slot, colorIndex]) => {
     paintCell(indices, Number(slot), Number(colorIndex));
+  });
+  return encodePcx(indices, palette, WIDTH, rows * CELL);
+}
+
+function paintResourceGrid(indices, rows, borderIndex = 254, width = WIDTH) {
+  for (let row = 0; row < rows; row += 1) {
+    const startY = row * CELL;
+    for (let x = 0; x < width; x += 1) {
+      indices[startY * width + x] = borderIndex;
+    }
+  }
+  for (let col = 0; col < COLS; col += 1) {
+    const startX = col * CELL;
+    for (let y = 0; y < rows * CELL; y += 1) {
+      indices[y * width + startX] = borderIndex;
+    }
+  }
+}
+
+function paintResourceIconInterior(indices, slot, colorIndex, width = WIDTH) {
+  const col = slot % COLS;
+  const row = Math.floor(slot / COLS);
+  const startX = col * CELL;
+  const startY = row * CELL;
+  for (let y = 12; y < 22; y += 1) {
+    const rowOff = (startY + y) * width + startX;
+    for (let x = 12; x < 22; x += 1) {
+      indices[rowOff + x] = colorIndex;
+    }
+  }
+}
+
+function makeResourceGridAtlas(rows, occupied = {}, palette = makePalette()) {
+  const indices = new Uint8Array(WIDTH * rows * CELL);
+  indices.fill(MAGENTA);
+  paintResourceGrid(indices, rows, 254);
+  Object.entries(occupied).forEach(([slot, colorIndex]) => {
+    paintResourceIconInterior(indices, Number(slot), Number(colorIndex));
   });
   return encodePcx(indices, palette, WIDTH, rows * CELL);
 }
@@ -130,6 +170,50 @@ test('findNextResourceAtlasSlot appends after the last occupied PCX cell and ign
   assert.equal(slot.lastOccupied, 75);
   assert.equal(slot.index, 76);
   assert.equal(slot.capacity, 78);
+});
+
+test('findNextResourceAtlasSlot treats resources.pcx grid-only right-most cells as open', () => {
+  const atlas = makeResourceGridAtlas(1, {
+    0: 10,
+    1: 11,
+    2: 12,
+    3: 13,
+    4: 14
+  });
+
+  const slot = findNextResourceAtlasSlot(atlas);
+  assert.equal(slot.lastOccupied, 4);
+  assert.equal(slot.index, 5);
+  assert.equal(slot.capacity, 6);
+});
+
+test('getNextResourceAtlasAssignmentSlot respects existing BIQ icon references beyond visible pixels', () => {
+  const atlas = makeResourceGridAtlas(5, {
+    0: 10
+  });
+  const resourceTab = {
+    entries: [
+      {
+        civilopediaKey: 'GOOD_EXISTING_HIGH',
+        biqFields: [{ baseKey: 'icon', value: '25', originalValue: '25' }]
+      },
+      {
+        civilopediaKey: 'GOOD_IMPORT',
+        _pendingImportedResourceIcon: { sourceIconIndex: 2, targetIconIndex: 1 },
+        biqFields: [{ baseKey: 'icon', value: '1', originalValue: '' }]
+      }
+    ],
+    recordOps: [{
+      op: 'add',
+      newRecordRef: 'GOOD_IMPORT',
+      importArtFrom: '/source/scenario.biq'
+    }]
+  };
+
+  const slot = getNextResourceAtlasAssignmentSlot(atlas, resourceTab);
+  assert.equal(slot.scanIndex, 1);
+  assert.equal(slot.referenceFloor, 26);
+  assert.equal(slot.index, 26);
 });
 
 test('appendResourceIconToResourcesPcx writes the next slot without touching existing resource indices', () => {
@@ -275,6 +359,89 @@ test('applyImportedResourceIconAtlasAssignments uses pending source index after 
   assert.equal(cellHasOnlyIndex(decoded, 1, 45), true, 'target slot should use pending source icon 5, not predicted target value 1');
 });
 
+test('applyImportedResourceIconAtlasAssignments compacts pending targets after an imported resource is deleted before save', () => {
+  const target = makeResourceGridAtlas(2, {
+    0: 30
+  });
+  const source = makeAtlas(1, {
+    1: 41,
+    2: 42,
+    3: 43
+  });
+  const resourceTab = {
+    entries: [
+      {
+        civilopediaKey: 'GOOD_EXISTING_HIGH',
+        biqFields: [{ baseKey: 'icon', value: '5', originalValue: '5' }]
+      },
+      {
+        civilopediaKey: 'GOOD_IMPORT_A',
+        _pendingImportedResourceIcon: { sourceIconIndex: 1, targetIconIndex: 6 },
+        biqFields: [{ baseKey: 'icon', value: '6', originalValue: '' }]
+      },
+      {
+        civilopediaKey: 'GOOD_IMPORT_C',
+        _pendingImportedResourceIcon: { sourceIconIndex: 3, targetIconIndex: 8 },
+        biqFields: [{ baseKey: 'icon', value: '8', originalValue: '' }]
+      }
+    ],
+    recordOps: [
+      { op: 'add', newRecordRef: 'GOOD_IMPORT_A', importArtFrom: '/source/scenario.biq' },
+      { op: 'add', newRecordRef: 'GOOD_IMPORT_B', importArtFrom: '/source/scenario.biq' },
+      { op: 'add', newRecordRef: 'GOOD_IMPORT_C', importArtFrom: '/source/scenario.biq' },
+      { op: 'delete', recordRef: 'GOOD_IMPORT_B' }
+    ]
+  };
+
+  const result = applyImportedResourceIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer: target,
+    loadSourceAtlasBuffer: () => source
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.assignments.map((item) => item.civilopediaKey), ['GOOD_IMPORT_A', 'GOOD_IMPORT_C']);
+  assert.deepEqual(result.assignments.map((item) => item.targetIconIndex), [6, 7]);
+  assert.equal(resourceTab.entries.find((entry) => entry.civilopediaKey === 'GOOD_IMPORT_A').biqFields[0].value, '6');
+  assert.equal(resourceTab.entries.find((entry) => entry.civilopediaKey === 'GOOD_IMPORT_C').biqFields[0].value, '7');
+  assert.equal(cellHasOnlyIndex(decoded, 6, 41), true);
+  assert.equal(cellHasOnlyIndex(decoded, 7, 43), true);
+});
+
+test('applyImportedResourceIconAtlasAssignments keeps a same-key import active when an old record was deleted first', () => {
+  const target = makeResourceGridAtlas(1, {
+    0: 30
+  });
+  const source = makeAtlas(1, {
+    2: 42
+  });
+  const resourceTab = {
+    entries: [{
+      civilopediaKey: 'GOOD_REUSED_KEY',
+      _pendingImportedResourceIcon: { sourceIconIndex: 2, targetIconIndex: 1 },
+      biqFields: [{ baseKey: 'icon', value: '1', originalValue: '' }]
+    }],
+    recordOps: [
+      { op: 'delete', recordRef: 'GOOD_REUSED_KEY' },
+      { op: 'add', newRecordRef: 'GOOD_REUSED_KEY', importArtFrom: '/source/scenario.biq' }
+    ]
+  };
+
+  const result = applyImportedResourceIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer: target,
+    loadSourceAtlasBuffer: () => source
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.assignments.length, 1);
+  assert.equal(result.assignments[0].targetIconIndex, 1);
+  assert.equal(resourceTab.entries[0].biqFields[0].value, '1');
+  assert.equal(cellHasOnlyIndex(decoded, 1, 42), true);
+});
+
 test('findNextUnitAtlasSlot appends after the last occupied units_32 cell and ignores earlier holes', () => {
   const atlas = makeUnitAtlas(4, {
     0: 10,
@@ -286,6 +453,46 @@ test('findNextUnitAtlasSlot appends after the last occupied units_32 cell and ig
   assert.equal(slot.lastOccupied, 30);
   assert.equal(slot.index, 31);
   assert.equal(slot.capacity, 32);
+});
+
+test('findNextUnitAtlasSlot uses the right-most open unit slot before adding a row', () => {
+  const occupied = {};
+  for (let i = 0; i < UNIT_COLS - 1; i += 1) occupied[i] = 20 + i;
+  const atlas = makeUnitAtlas(1, occupied);
+
+  const slot = findNextUnitAtlasSlot(atlas);
+  assert.equal(slot.lastOccupied, UNIT_COLS - 2);
+  assert.equal(slot.index, UNIT_COLS - 1);
+  assert.equal(slot.capacity, UNIT_COLS);
+});
+
+test('getNextUnitAtlasAssignmentSlot respects existing BIQ icon references beyond visible pixels', () => {
+  const atlas = makeUnitAtlas(3, {
+    0: 10
+  });
+  const unitsTab = {
+    entries: [
+      {
+        civilopediaKey: 'PRTO_EXISTING_HIGH',
+        biqFields: [{ baseKey: 'iconindex', value: '20', originalValue: '20' }]
+      },
+      {
+        civilopediaKey: 'PRTO_IMPORT',
+        _pendingImportedUnitIcon: { sourceIconIndex: 2, targetIconIndex: 1 },
+        biqFields: [{ baseKey: 'iconindex', value: '1', originalValue: '' }]
+      }
+    ],
+    recordOps: [{
+      op: 'add',
+      newRecordRef: 'PRTO_IMPORT',
+      importArtFrom: '/source/scenario.biq'
+    }]
+  };
+
+  const slot = getNextUnitAtlasAssignmentSlot(atlas, unitsTab);
+  assert.equal(slot.scanIndex, 1);
+  assert.equal(slot.referenceFloor, 21);
+  assert.equal(slot.index, 21);
 });
 
 test('appendUnitIconToUnits32Pcx writes the next slot without touching existing unit indices', () => {
@@ -375,4 +582,54 @@ test('applyImportedUnitIconAtlasAssignments uses pending source index after rend
   assert.equal(result.assignments[0].targetIconIndex, 1);
   assert.equal(unitsTab.entries[0].biqFields.find((field) => field.baseKey === 'iconindex').value, '1');
   assert.equal(unitCellHasOnlyIndex(decoded, 1, 45), true, 'target slot should use pending source icon 5, not predicted target value 1');
+});
+
+test('applyImportedUnitIconAtlasAssignments compacts pending targets after an imported unit is deleted before save', () => {
+  const target = makeUnitAtlas(2, {
+    0: 30
+  });
+  const source = makeUnitAtlas(1, {
+    1: 41,
+    2: 42,
+    3: 43
+  });
+  const unitsTab = {
+    entries: [
+      {
+        civilopediaKey: 'PRTO_EXISTING_HIGH',
+        biqFields: [{ baseKey: 'iconindex', value: '7', originalValue: '7' }]
+      },
+      {
+        civilopediaKey: 'PRTO_IMPORT_A',
+        _pendingImportedUnitIcon: { sourceIconIndex: 1, targetIconIndex: 8 },
+        biqFields: [{ baseKey: 'iconindex', value: '8', originalValue: '' }]
+      },
+      {
+        civilopediaKey: 'PRTO_IMPORT_C',
+        _pendingImportedUnitIcon: { sourceIconIndex: 3, targetIconIndex: 10 },
+        biqFields: [{ baseKey: 'iconindex', value: '10', originalValue: '' }]
+      }
+    ],
+    recordOps: [
+      { op: 'add', newRecordRef: 'PRTO_IMPORT_A', importArtFrom: '/source/scenario.biq' },
+      { op: 'add', newRecordRef: 'PRTO_IMPORT_B', importArtFrom: '/source/scenario.biq' },
+      { op: 'add', newRecordRef: 'PRTO_IMPORT_C', importArtFrom: '/source/scenario.biq' },
+      { op: 'delete', recordRef: 'PRTO_IMPORT_B' }
+    ]
+  };
+
+  const result = applyImportedUnitIconAtlasAssignments({
+    unitsTab,
+    targetAtlasBuffer: target,
+    loadSourceAtlasBuffer: () => source
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.assignments.map((item) => item.civilopediaKey), ['PRTO_IMPORT_A', 'PRTO_IMPORT_C']);
+  assert.deepEqual(result.assignments.map((item) => item.targetIconIndex), [8, 9]);
+  assert.equal(unitsTab.entries.find((entry) => entry.civilopediaKey === 'PRTO_IMPORT_A').biqFields[0].value, '8');
+  assert.equal(unitsTab.entries.find((entry) => entry.civilopediaKey === 'PRTO_IMPORT_C').biqFields[0].value, '9');
+  assert.equal(unitCellHasOnlyIndex(decoded, 8, 41), true);
+  assert.equal(unitCellHasOnlyIndex(decoded, 9, 43), true);
 });

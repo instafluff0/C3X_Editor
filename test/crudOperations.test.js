@@ -118,9 +118,87 @@ function fieldVal(entry, key) {
   return f ? f.value : undefined;
 }
 
+function findBiqField(entry, key) {
+  if (!entry || !Array.isArray(entry.biqFields)) return null;
+  const target = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  return entry.biqFields.find((field) =>
+    String(field && (field.baseKey || field.key) || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') === target
+  ) || null;
+}
+
+function ensureBiqField(entry, key, value = '-1') {
+  let field = findBiqField(entry, key);
+  if (field) return field;
+  if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+  field = {
+    key,
+    baseKey: key,
+    label: key,
+    value: String(value),
+    originalValue: '',
+    editable: true
+  };
+  entry.biqFields.push(field);
+  return field;
+}
+
+function setReferenceField(field, targetTabKey, targetKey, staleIndex) {
+  assert.ok(field, `expected field for ${targetKey}`);
+  field.value = String(staleIndex);
+  field.referenceTarget = {
+    tabKey: targetTabKey,
+    key: String(targetKey || '').trim().toUpperCase()
+  };
+}
+
+function setReferenceTargetsField(field, targetTabKey, targetKeys, staleIndices, encode = null) {
+  assert.ok(field, `expected list field for ${targetTabKey}`);
+  const values = (Array.isArray(staleIndices) ? staleIndices : []).map((idx) => String(idx));
+  field.value = typeof encode === 'function' ? encode(values) : values.join(',');
+  field.referenceTargets = (Array.isArray(targetKeys) ? targetKeys : []).map((key) => ({
+    tabKey: targetTabKey,
+    key: String(key || '').trim().toUpperCase()
+  }));
+}
+
+function encodeSigned32Bitmask(indices) {
+  let mask = 0 >>> 0;
+  (Array.isArray(indices) ? indices : []).forEach((idx) => {
+    const bit = Number.parseInt(String(idx), 10);
+    if (!Number.isFinite(bit) || bit < 0 || bit > 31) return;
+    mask = (mask | ((1 << bit) >>> 0)) >>> 0;
+  });
+  return String(mask > 0x7fffffff ? mask - 0x100000000 : mask);
+}
+
+function decodeSigned32Bitmask(rawValue) {
+  const parsed = Number.parseInt(String(rawValue == null ? '' : rawValue).trim(), 10);
+  if (!Number.isFinite(parsed)) return [];
+  const unsigned = parsed < 0 ? (parsed + 0x100000000) >>> 0 : parsed >>> 0;
+  const out = [];
+  for (let bit = 0; bit < 32; bit += 1) {
+    if (((unsigned >>> bit) & 1) === 1) out.push(bit);
+  }
+  return out;
+}
+
+function getEntryIndex(bundle, tabKey, key) {
+  const entry = getEntry(bundle, tabKey, key);
+  const idx = Number(entry && entry.biqIndex);
+  return Number.isFinite(idx) ? idx : -1;
+}
+
 function getSection(bundle, sectionCode) {
   const sections = (bundle && bundle.biq && Array.isArray(bundle.biq.sections))
     ? bundle.biq.sections : [];
+  const code = String(sectionCode || '').trim().toUpperCase();
+  return sections.find((section) => String(section && section.code || '').trim().toUpperCase() === code) || null;
+}
+
+function getTabSection(bundle, tabKey, sectionCode) {
+  const sections = bundle && bundle.tabs && bundle.tabs[tabKey] && Array.isArray(bundle.tabs[tabKey].sections)
+    ? bundle.tabs[tabKey].sections
+    : [];
   const code = String(sectionCode || '').trim().toUpperCase();
   return sections.find((section) => String(section && section.code || '').trim().toUpperCase() === code) || null;
 }
@@ -144,9 +222,11 @@ function getRawRecordField(record, key) {
 
 function getRawRecordInt(record, key, fallback = NaN) {
   const field = getRawRecordField(record, key);
-  const match = String(field && field.value || '').match(/-?\d+/);
+  const text = String(field && field.value || '');
+  const trailing = text.match(/\((-?\d+)\)\s*$/);
+  const match = trailing || text.match(/-?\d+/);
   if (!match) return fallback;
-  const parsed = Number.parseInt(match[0], 10);
+  const parsed = Number.parseInt(trailing ? match[1] : match[0], 10);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -699,6 +779,397 @@ test('copying from an unsaved edited tech preserves inherited prereqs after save
   assert.equal(getRawRecordInt({ fields: reloadedFirst.biqFields }, 'prerequisite1'), prereqTargetIndex);
   assert.equal(getRawRecordInt({ fields: reloadedSecond.biqFields }, 'prerequisite1'), prereqTargetIndex);
   assert.equal(getRawRecordInt({ fields: reloadedSecond.biqFields }, 'prerequisite2'), baseCount);
+});
+
+test('pending tech references are resolved after deleting the middle unsaved tech before first save', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const baseCount = countSection(before, 'TECH');
+  const host = before.tabs.technologies.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'prerequisite1') && findBiqField(entry, 'prerequisite2')
+  );
+  if (!host) return t.skip('No editable technology prerequisite host found');
+
+  const firstKey = makeShortTestRef('TECH_', 'PEND_A');
+  const deletedKey = makeShortTestRef('TECH_', 'PEND_B');
+  const survivorKey = makeShortTestRef('TECH_', 'PEND_C');
+  setReferenceField(findBiqField(host, 'prerequisite1'), 'technologies', firstKey, baseCount);
+  setReferenceField(findBiqField(host, 'prerequisite2'), 'technologies', survivorKey, baseCount + 2);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      technologies: {
+        entries: [host],
+        recordOps: [
+          { op: 'add', newRecordRef: firstKey },
+          { op: 'add', newRecordRef: survivorKey }
+        ]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(getEntry(after, 'technologies', deletedKey), null, 'deleted pending tech should never be written');
+  const firstIndex = getEntryIndex(after, 'technologies', firstKey);
+  const survivorIndex = getEntryIndex(after, 'technologies', survivorKey);
+  assert.equal(firstIndex, baseCount);
+  assert.equal(survivorIndex, baseCount + 1);
+  const reloadedHost = getEntry(after, 'technologies', host.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'prerequisite1'), firstIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'prerequisite2'), survivorIndex);
+});
+
+test('pending resource references in unit requirements survive middle pending resource deletion', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const baseCount = countSection(before, 'GOOD');
+  const host = before.tabs.units.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'requiredresource1') && findBiqField(entry, 'requiredresource2')
+  );
+  if (!host) return t.skip('No editable unit resource requirement host found');
+
+  const firstKey = makeShortTestRef('GOOD_', 'PEND_A');
+  const deletedKey = makeShortTestRef('GOOD_', 'PEND_B');
+  const survivorKey = makeShortTestRef('GOOD_', 'PEND_C');
+  setReferenceField(findBiqField(host, 'requiredresource1'), 'resources', firstKey, baseCount);
+  setReferenceField(findBiqField(host, 'requiredresource2'), 'resources', survivorKey, baseCount + 2);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      resources: {
+        recordOps: [
+          { op: 'add', newRecordRef: firstKey },
+          { op: 'add', newRecordRef: survivorKey }
+        ]
+      },
+      units: { entries: [host] }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(getEntry(after, 'resources', deletedKey), null, 'deleted pending resource should never be written');
+  const firstIndex = getEntryIndex(after, 'resources', firstKey);
+  const survivorIndex = getEntryIndex(after, 'resources', survivorKey);
+  const reloadedHost = getEntry(after, 'units', host.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'requiredresource1'), firstIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'requiredresource2'), survivorIndex);
+});
+
+test('pending improvement self-references survive middle pending improvement deletion', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const baseCount = countSection(before, 'BLDG');
+  const host = before.tabs.improvements.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'reqimprovement') && findBiqField(entry, 'gainineverycity')
+  );
+  if (!host) return t.skip('No editable improvement reference host found');
+
+  const firstKey = makeShortTestRef('BLDG_', 'PEND_A');
+  const deletedKey = makeShortTestRef('BLDG_', 'PEND_B');
+  const survivorKey = makeShortTestRef('BLDG_', 'PEND_C');
+  setReferenceField(findBiqField(host, 'reqimprovement'), 'improvements', firstKey, baseCount);
+  setReferenceField(findBiqField(host, 'gainineverycity'), 'improvements', survivorKey, baseCount + 2);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      improvements: {
+        entries: [host],
+        recordOps: [
+          { op: 'add', newRecordRef: firstKey },
+          { op: 'add', newRecordRef: survivorKey }
+        ]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(getEntry(after, 'improvements', deletedKey), null, 'deleted pending improvement should never be written');
+  const firstIndex = getEntryIndex(after, 'improvements', firstKey);
+  const survivorIndex = getEntryIndex(after, 'improvements', survivorKey);
+  const reloadedHost = getEntry(after, 'improvements', host.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'reqimprovement'), firstIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'gainineverycity'), survivorIndex);
+});
+
+test('pending unit scalar and list references survive middle pending unit deletion', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const baseCount = countSection(before, 'PRTO');
+  const host = before.tabs.units.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'upgradeto')
+  );
+  if (!host) return t.skip('No editable unit reference host found');
+
+  const firstKey = makeShortTestRef('PRTO_', 'PEND_A');
+  const deletedKey = makeShortTestRef('PRTO_', 'PEND_B');
+  const survivorKey = makeShortTestRef('PRTO_', 'PEND_C');
+  setReferenceField(findBiqField(host, 'upgradeto'), 'units', survivorKey, baseCount + 2);
+  const stealthField = ensureBiqField(host, 'stealth_target', String(baseCount + 2));
+  setReferenceField(stealthField, 'units', survivorKey, baseCount + 2);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: {
+        entries: [host],
+        recordOps: [
+          { op: 'add', newRecordRef: firstKey },
+          { op: 'add', newRecordRef: survivorKey }
+        ]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(getEntry(after, 'units', deletedKey), null, 'deleted pending unit should never be written');
+  const survivorIndex = getEntryIndex(after, 'units', survivorKey);
+  assert.ok(survivorIndex >= 0, 'expected surviving pending unit to be written');
+  const reloadedHost = getEntry(after, 'units', host.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'upgradeto'), survivorIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'stealth_target'), survivorIndex);
+});
+
+test('pending government references in civilizations survive middle pending government deletion', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const baseCount = countSection(before, 'GOVT');
+  const host = before.tabs.civilizations.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'favoritegovernment') && findBiqField(entry, 'shunnedgovernment')
+  );
+  if (!host) return t.skip('No editable civilization government host found');
+
+  const firstKey = makeShortTestRef('GOVT_', 'PEND_A');
+  const deletedKey = makeShortTestRef('GOVT_', 'PEND_B');
+  const survivorKey = makeShortTestRef('GOVT_', 'PEND_C');
+  setReferenceField(findBiqField(host, 'favoritegovernment'), 'governments', firstKey, baseCount);
+  setReferenceField(findBiqField(host, 'shunnedgovernment'), 'governments', survivorKey, baseCount + 2);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      governments: {
+        recordOps: [
+          { op: 'add', newRecordRef: firstKey },
+          { op: 'add', newRecordRef: survivorKey }
+        ]
+      },
+      civilizations: { entries: [host] }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(getEntry(after, 'governments', deletedKey), null, 'deleted pending government should never be written');
+  const firstIndex = getEntryIndex(after, 'governments', firstKey);
+  const survivorIndex = getEntryIndex(after, 'governments', survivorKey);
+  const reloadedHost = getEntry(after, 'civilizations', host.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'favoritegovernment'), firstIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'shunnedgovernment'), survivorIndex);
+});
+
+test('pending civilization availability bitmask survives middle pending civilization deletion', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const seedRefs = ((before.tabs.civilizations && before.tabs.civilizations.entries) || [])
+    .filter((entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase() !== 'RACE_BARBARIANS')
+    .slice(-3)
+    .map((entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase());
+  if (seedRefs.length < 3) return t.skip('Need at least three deletable civs to free pending civ slots');
+  const freeSlots = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: {
+        recordOps: seedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
+      }
+    }
+  });
+  assert.equal(freeSlots.ok, true, String(freeSlots.error || 'failed to free civ slots'));
+
+  const afterFree = reload(c3xDir, biqPath);
+  const baseCount = countSection(afterFree, 'RACE');
+  const host = afterFree.tabs.units.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'availableto')
+  );
+  if (!host) return t.skip('No editable unit availability host found');
+  const existingCiv = afterFree.tabs.civilizations.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && String(entry && entry.civilopediaKey || '').trim()
+  );
+  if (!existingCiv) return t.skip('No surviving existing civilization found');
+  const existingCivKey = String(existingCiv.civilopediaKey || '').trim().toUpperCase();
+  const existingCivIndex = Number(existingCiv.biqIndex);
+
+  const firstKey = makeShortTestRef('RACE_', 'PEND_A');
+  const deletedKey = makeShortTestRef('RACE_', 'PEND_B');
+  const survivorKey = makeShortTestRef('RACE_', 'PEND_C');
+  const availableTo = findBiqField(host, 'availableto');
+  setReferenceTargetsField(
+    availableTo,
+    'civilizations',
+    [existingCivKey, firstKey, survivorKey],
+    [existingCivIndex, baseCount, baseCount + 2],
+    encodeSigned32Bitmask
+  );
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: {
+        entries: afterFree.tabs.civilizations.entries,
+        recordOps: [
+          { op: 'add', newRecordRef: firstKey },
+          { op: 'add', newRecordRef: survivorKey }
+        ]
+      },
+      units: { entries: [host] }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(getEntry(after, 'civilizations', deletedKey), null, 'deleted pending civ should never be written');
+  const firstIndex = getEntryIndex(after, 'civilizations', firstKey);
+  const survivorIndex = getEntryIndex(after, 'civilizations', survivorKey);
+  const reloadedHost = getEntry(after, 'units', host.civilopediaKey);
+  const expectedAvailable = [existingCivIndex, firstIndex, survivorIndex].sort((a, b) => a - b);
+  assert.deepEqual(
+    decodeSigned32Bitmask(fieldVal(reloadedHost, 'availableto')),
+    expectedAvailable
+  );
+});
+
+test('pending BIQ structure references resolve through final resource, unit, and tech indices', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const rulesSection = getTabSection(before, 'rules', 'RULE');
+  const ruleRecord = rulesSection && Array.isArray(rulesSection.records) ? rulesSection.records[0] : null;
+  const terrainSection = getTabSection(before, 'terrain', 'TFRM');
+  const terrainRecord = terrainSection && Array.isArray(terrainSection.records) ? terrainSection.records[0] : null;
+  const moneyResourceField = getRawRecordField(ruleRecord, 'defaultmoneyresource');
+  const battleCreatedUnitField = getRawRecordField(ruleRecord, 'battlecreatedunit');
+  const workerTechField = getRawRecordField(terrainRecord, 'requiredadvance');
+  const workerResourceField = getRawRecordField(terrainRecord, 'requiredresource1');
+  if (!ruleRecord || !terrainRecord || !moneyResourceField || !battleCreatedUnitField || !workerTechField || !workerResourceField) {
+    return t.skip('Fixture does not expose the representative RULE/TFRM reference fields');
+  }
+
+  const resourceBaseCount = countSection(before, 'GOOD');
+  const unitBaseCount = countSection(before, 'PRTO');
+  const techBaseCount = countSection(before, 'TECH');
+  const resourceFirstKey = makeShortTestRef('GOOD_', 'RULE_A');
+  const resourceSurvivorKey = makeShortTestRef('GOOD_', 'RULE_C');
+  const unitFirstKey = makeShortTestRef('PRTO_', 'RULE_A');
+  const unitSurvivorKey = makeShortTestRef('PRTO_', 'RULE_C');
+  const techFirstKey = makeShortTestRef('TECH_', 'TFRM_A');
+  const techSurvivorKey = makeShortTestRef('TECH_', 'TFRM_C');
+
+  setReferenceField(moneyResourceField, 'resources', resourceSurvivorKey, resourceBaseCount + 2);
+  setReferenceField(battleCreatedUnitField, 'units', unitSurvivorKey, unitBaseCount + 2);
+  setReferenceField(workerTechField, 'technologies', techSurvivorKey, techBaseCount + 2);
+  setReferenceField(workerResourceField, 'resources', resourceSurvivorKey, resourceBaseCount + 2);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      resources: {
+        recordOps: [
+          { op: 'add', newRecordRef: resourceFirstKey },
+          { op: 'add', newRecordRef: resourceSurvivorKey }
+        ]
+      },
+      units: {
+        recordOps: [
+          { op: 'add', newRecordRef: unitFirstKey },
+          { op: 'add', newRecordRef: unitSurvivorKey }
+        ]
+      },
+      technologies: {
+        recordOps: [
+          { op: 'add', newRecordRef: techFirstKey },
+          { op: 'add', newRecordRef: techSurvivorKey }
+        ]
+      },
+      rules: {
+        sections: [{
+          ...rulesSection,
+          records: [ruleRecord]
+        }]
+      },
+      terrain: {
+        sections: [{
+          ...terrainSection,
+          records: [terrainRecord]
+        }]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const reRuleSection = getTabSection(after, 'rules', 'RULE');
+  const reRuleRecord = reRuleSection && Array.isArray(reRuleSection.records) ? reRuleSection.records[0] : null;
+  const reTerrainSection = getTabSection(after, 'terrain', 'TFRM');
+  const reTerrainRecord = reTerrainSection && Array.isArray(reTerrainSection.records) ? reTerrainSection.records[0] : null;
+  assert.equal(
+    getRawRecordInt(reRuleRecord, 'defaultmoneyresource'),
+    getEntryIndex(after, 'resources', resourceSurvivorKey)
+  );
+  assert.equal(
+    getRawRecordInt(reRuleRecord, 'battlecreatedunit'),
+    getEntryIndex(after, 'units', unitSurvivorKey)
+  );
+  assert.equal(
+    getRawRecordInt(reTerrainRecord, 'requiredadvance'),
+    getEntryIndex(after, 'technologies', techSurvivorKey)
+  );
+  assert.equal(
+    getRawRecordInt(reTerrainRecord, 'requiredresource1'),
+    getEntryIndex(after, 'resources', resourceSurvivorKey)
+  );
 });
 
 test('no-reload save reconciliation assigns new reference indexes and reload ordering', () => {
