@@ -60,6 +60,7 @@ test('C3X base string families serialize and reload with explicit audited syntax
     resource_perfume: '["Coal": 20, "Iron": -50%]',
     sea_retreat_rules: 'if-not-slower',
     seasonal_cycle_mode: 'specified',
+    show_tile_destruct_animation_after: '[bombard pillage]',
     special_defensive_bombard_rules: '[lethal aerial]',
     special_helicopter_rules: '[allow-on-carriers no-escape]',
     special_zone_of_control_rules: '[amphibious not-from-inside]',

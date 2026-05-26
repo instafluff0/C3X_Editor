@@ -4196,6 +4196,36 @@ button.danger:hover {
   flex: 0 0 auto;
 }
 
+.animation-adjacent-list {
+  gap: 10px;
+}
+
+.animation-adjacent-rule {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(36, 25, 64, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.animation-adjacent-chip-group {
+  display: grid;
+  gap: 6px;
+}
+
+.animation-adjacent-chip-label {
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: #4e5680;
+}
+
+.animation-adjacent-rule-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .c3x-release-badge {
   display: inline-flex;
   align-items: center;
@@ -4618,6 +4648,21 @@ button.danger:hover {
   background: #ffffff;
 }
 
+.preview-native-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgba(73, 69, 98, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.preview-native-frame .preview-canvas {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
 .preview-meta {
   margin-top: 4px;
   font-size: 0.66rem;
@@ -4650,31 +4695,56 @@ button.danger:hover {
   font-size: 0.7rem;
 }
 
+.natural-animation-top-controls {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(240px, 360px);
+  gap: 8px;
+  align-items: end;
+}
+
+.natural-animation-top-controls .path-input-with-btn,
+.natural-animation-frame-inline {
+  min-width: 0;
+}
+
+.natural-animation-frame-inline {
+  display: grid;
+  gap: 4px;
+}
+
+.natural-animation-frame-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .natural-animation-spec-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 8px;
 }
 
-.natural-animation-readonly-chips {
-  margin-top: 4px;
-}
-
-.natural-animation-readonly-chips .segmented-multi-btn {
-  cursor: default;
-}
-
-.natural-animation-hours-grid {
-  margin-top: 4px;
+.natural-animation-offset-row {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
 }
 
-.natural-animation-hours-grid .segmented-multi-btn {
-  min-height: 24px;
-  padding: 3px 6px;
-  font-size: 0.68rem;
+.natural-animation-direction-chips {
+  margin-top: 4px;
+}
+
+.natural-animation-day-night-row {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 820px) {
+  .natural-animation-top-controls,
+  .natural-animation-offset-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .reference-detail-layout {

@@ -304,8 +304,20 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
 
   assert.match(
     text,
-    /if \(normalizedKey\.startsWith\('RULE_FIELD:'\)\) \{[\s\S]*?return snapshotSelectedEditableTabs\(\{\s*tabKeys: \[tabKey\],\s*scope: `tab:\$\{tabKey\}`\s*\}\);[\s\S]*?if \(normalizedKey\.startsWith\('BIQ_FIELD:'\)\) \{[\s\S]*?const tabKey = String\(state\.activeTab \|\| ''\)\.trim\(\)\.toLowerCase\(\);[\s\S]*?return snapshotSelectedEditableTabs\(\{\s*tabKeys: \[tabKey\],\s*scope: `tab:\$\{tabKey\}`\s*\}\);/m,
+    /if \(normalizedKey\.startsWith\('RULE_FIELD:'\)\) \{[\s\S]*?const tabKey = normalizeEditableTabKey\(parts\[1\]\);[\s\S]*?return snapshotSelectedEditableTabs\(\{\s*tabKeys: \[tabKey\],\s*scope: `tab:\$\{tabKey\}`\s*\}\);[\s\S]*?if \(normalizedKey\.startsWith\('BIQ_FIELD:'\)\) \{[\s\S]*?const tabKey = normalizeEditableTabKey\(state\.activeTab\);[\s\S]*?return snapshotSelectedEditableTabs\(\{\s*tabKeys: \[tabKey\],\s*scope: `tab:\$\{tabKey\}`\s*\}\);/m,
     'BIQ-backed field edits should capture tab-scoped undo snapshots instead of falling back to full editable-tab snapshots'
+  );
+
+  assert.match(
+    text,
+    /function normalizeEditableTabKey\(tabKey\) \{[\s\S]*?EDITABLE_TAB_KEYS\.find\(\(key\) => String\(key \|\| ''\)\.toLowerCase\(\) === lower\)/,
+    'Undo snapshot keys should canonicalize camelCase tabs such as naturalWonders instead of lowercasing them into missing tab keys'
+  );
+
+  assert.match(
+    text,
+    /if \(normalizedKey\.startsWith\('SECTION_ITEM:'\)\) \{[\s\S]*?const tabKey = normalizeEditableTabKey\(parts\[1\]\);[\s\S]*?return buildSerializedSectionSnapshot\(tabKey, sections\[sectionIndex\], sectionIndex\);/,
+    'Sectioned item edits should capture serialized section snapshots so Undo avoids the full restore modal'
   );
 
   assert.match(
@@ -324,6 +336,113 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
     text,
     /const isScopedBaseSnapshot = isScopedBaseUndoSnapshot\(targetSnapshot\);[\s\S]*?const isSerializedReferenceEntrySnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-reference-entry'[\s\S]*?\);[\s\S]*?const isSerializedSectionSnapshot = !!\([\s\S]*?targetSnapshot\.kind === 'serialized-section-item'[\s\S]*?\);[\s\S]*?const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot\(targetSnapshot\);[\s\S]*?const isScopedTabSnapshot = isScopedTabUndoSnapshot\(targetSnapshot\);[\s\S]*?if \(\s*!isScopedBaseSnapshot[\s\S]*?!isSerializedReferenceEntrySnapshot[\s\S]*?&& !isSerializedSectionSnapshot[\s\S]*?&& !isScopedSectionTabSnapshot[\s\S]*?&& !isScopedTabSnapshot[\s\S]*?await loadBundleAndRender\(\{/m,
     'Scoped base, entry-scoped reference, section-scoped, and tab-scoped undo should skip the scenario reload path so unrelated in-memory edits are not discarded before the snapshot is applied'
+  );
+});
+
+test('animation direction changes refresh FLC previews', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /animations:\s*new Set\(\['ini_path', 'frame_time_seconds', 'direction'\]\)/,
+    'Tile Animation direction should be treated as a preview-driving field'
+  );
+
+  assert.match(
+    text,
+    /const animationSpec = parseNaturalWonderAnimationSpec\(firstAnimationSpec\);[\s\S]*?const directionIndex = resolveAnimationDirectionIndexFromValue\(animationSpec\.direction\);[\s\S]*?request: \{ kind: 'animationIni', c3xPath: state\.settings\.c3xPath, iniPath, directionIndex \}/,
+    'Natural Wonder animation preview requests should pass the animation spec direction into the FLC decoder'
+  );
+});
+
+test('Tile Animation frame-time drags keep the current FLC preview mounted', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const blockStart = text.indexOf("if (state.activeTab === 'animations' && effectiveField.key === 'frame_time_seconds') {");
+  assert.ok(blockStart >= 0, 'Expected Tile Animation frame-time slider renderer');
+  const blockEnd = text.indexOf("if (state.activeTab === 'animations' && effectiveField.key === 'resource_type') {", blockStart);
+  assert.ok(blockEnd > blockStart, 'Expected next Tile Animation renderer block');
+  const block = text.slice(blockStart, blockEnd);
+  const inputStart = block.indexOf("slider.addEventListener('input'");
+  const changeStart = block.indexOf("slider.addEventListener('change'");
+  assert.ok(inputStart >= 0 && changeStart > inputStart, 'Expected separate input and change handlers');
+  const inputBlock = block.slice(inputStart, changeStart);
+
+  assert.doesNotMatch(
+    inputBlock,
+    /onValueChange|setSingleFieldValue/,
+    'Dragging the Tile Animation frame-time slider should update only the label, not reload or commit the preview'
+  );
+
+  assert.match(
+    block.slice(changeStart),
+    /setSingleFieldValue\(section, effectiveField\.key, serialized, \{ captureUndo: false \}\);/,
+    'Mouseup/change should commit the new frame time so the mounted preview loop can pick up the delay'
+  );
+});
+
+test('Tile Animations use the shared section add/delete action row', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const useInlineFilterActions = tabKey === 'districts' \|\| tabKey === 'wonders' \|\| tabKey === 'naturalWonders' \|\| tabKey === 'animations';/,
+    'Tile Animations should use the standard section tab Add/Delete action row'
+  );
+
+  assert.match(
+    text,
+    /if \(!useInlineFilterActions\) \{[\s\S]*?addSectionBtn\.textContent = `\+ Add \$\{schema\.entityName\}`;[\s\S]*?\}[\s\S]*?if \(useInlineFilterActions\) \{[\s\S]*?addSectionBtn\.textContent = '\+ Add';[\s\S]*?deleteSectionBtn\.innerHTML = '<span class="btn-icon">🗑<\/span>Delete';/,
+    'Inline section actions should use the compact shared Add and Delete labels'
+  );
+});
+
+test('Tile Animation adjacent rules use terrain thumbnails and direction chips', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const match = text.match(/function renderAnimationAdjacentToEditor\(section, onValueChange\) \{[\s\S]*?\nfunction renderNaturalWonderAnimationSpecsEditor/);
+  assert.ok(match, 'Renderer should keep a dedicated Tile Animation adjacency editor');
+  const body = match[0];
+
+  assert.match(
+    body,
+    /makeSegmentedSingleValueEditor\(\s*terrainOpts[\s\S]*?iconRenderer:\s*\(optionName\) => makeTerrainOptionPreviewIcon\(optionName\)/,
+    'Tile Animation adjacent terrain choices should use segmented chips with terrain thumbnails'
+  );
+  assert.match(
+    body,
+    /makeSegmentedSingleValueEditor\(\s*dirOptions[\s\S]*?emptyLabel:\s*'\(any direction\)'[\s\S]*?showTokenIcon:\s*false/,
+    'Tile Animation adjacent direction choices should use segmented direction chips'
+  );
+  assert.doesNotMatch(
+    body,
+    /document\.createElement\('select'\)/,
+    'Tile Animation adjacency rules should not fall back to dropdown selectors'
+  );
+});
+
+test('section list item clicks preserve left-pane scroll during detail-only renders', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /renderSectionBody\(\{\s*skipListRebuild: true,\s*resetDetailScroll: !!options\.resetDetailScroll,\s*preserveListScroll: !!options\.preserveListScroll,/,
+    'Scheduled section selection renders should carry the list-scroll preservation flag'
+  );
+
+  assert.match(
+    text,
+    /itemBtn\.addEventListener\('click', \(\) => \{\s*selectSection\(sectionIndex, \{ preserveListScroll: true \}\);/,
+    'Direct section list clicks should preserve the current left-pane scroll'
+  );
+
+  assert.match(
+    text,
+    /if \(!skipListRebuild \|\| preserveListScroll\) listPane\.scrollTop = savedListTop;[\s\S]*?if \(skipListRebuild && preserveListScroll\) return;[\s\S]*?listPane\.scrollTo\(/,
+    'Preserved detail-only selection renders should restore list scroll and skip the active-item auto-scroll'
   );
 });
 

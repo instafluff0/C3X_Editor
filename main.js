@@ -914,7 +914,7 @@ ipcMain.handle('manager:get-settings', async () => {
     logFolder: getDefaultLogFolderUnsafe(),
     uiFontScale: 1,
     uiStateByContext: {},
-    c3xVersion: 'R27'
+    c3xVersion: 'R28'
   };
   const saved = readJsonIfExists(getSettingsPath(), defaults);
   const merged = { ...defaults, ...(saved || {}) };

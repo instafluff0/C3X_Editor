@@ -113,6 +113,25 @@ const DIRECTION_OPTIONS = [
   'east'
 ];
 
+const ANIMATION_TYPE_OPTIONS = ['terrain', 'resource', 'pcx', 'destruct-initial', 'destruct-after', 'coastal-wave'];
+const SEASON_OPTIONS = ['spring', 'summer', 'fall', 'winter'];
+
+const NATURAL_WONDER_ANIMATION_SPEC_ALIASES = new Map([
+  ['ini', 'ini'],
+  ['ini_path', 'ini'],
+  ['frame_time_seconds', 'frame_time_seconds'],
+  ['frame_time', 'frame_time_seconds'],
+  ['x_offset', 'x_offset'],
+  ['y_offset', 'y_offset'],
+  ['offsets', 'offsets'],
+  ['direction', 'direction'],
+  ['hours', 'show_in_day_night_hours'],
+  ['show_in_day_night_hours', 'show_in_day_night_hours'],
+  ['day_night_hours', 'show_in_day_night_hours'],
+  ['show_in_seasons', 'show_in_seasons'],
+  ['seasons', 'show_in_seasons']
+]);
+
 const DISTRICT_BUILDABLE_SQUARE_TOKENS = [
   'desert', 'deserts',
   'plain', 'plains',
@@ -280,6 +299,25 @@ const SECTION_LINT_SPECS = {
       ['Impassable_to_wheeled', { type: 'bool' }],
       ['animation', { type: 'text' }]
     ])
+  },
+  animations: {
+    label: 'Tile Animation',
+    knownFields: new Map([
+      ['name', { type: 'text' }],
+      ['ini_path', { type: 'text' }],
+      ['frame_time_seconds', { type: 'decimal' }],
+      ['type', { type: 'select', options: ANIMATION_TYPE_OPTIONS }],
+      ['resource_type', { type: 'text' }],
+      ['pcx_file', { type: 'text' }],
+      ['pcx_index', { type: 'number' }],
+      ['terrain_types', { type: 'list', acceptedOptions: DISTRICT_BUILDABLE_SQUARE_TOKENS }],
+      ['adjacent_to', { type: 'list', acceptedOptions: DISTRICT_ADJACENT_SQUARE_TOKENS }],
+      ['direction', { type: 'select', options: DIRECTION_OPTIONS }],
+      ['x_offset', { type: 'number' }],
+      ['y_offset', { type: 'number' }],
+      ['show_in_day_night_hours', { type: 'day-night-hours' }],
+      ['show_in_seasons', { type: 'list', acceptedOptions: SEASON_OPTIONS }]
+    ])
   }
 };
 
@@ -372,6 +410,13 @@ function isIntegerToken(value) {
   return /^-?\d+$/.test(String(value == null ? '' : value).trim());
 }
 
+function isDecimalNumberToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return false;
+  if (!/^-?(?:\d+|\d*\.\d+)$/.test(raw)) return false;
+  return Number.isFinite(Number(raw));
+}
+
 function normalizeReferenceLookup(value) {
   return normalizeConfigToken(value).toLowerCase();
 }
@@ -383,6 +428,65 @@ function hasBalancedQuotes(value) {
     if (src[i] === '"') inQuotes = !inQuotes;
   }
   return !inQuotes;
+}
+
+function validateDayNightHoursSyntax(value) {
+  const raw = normalizeConfigToken(value);
+  if (!raw) return '';
+  const parts = raw.split(',');
+  if (parts.some((part) => String(part || '').trim() === '')) {
+    return `invalid day/night hour syntax "${raw}". Use comma-separated hours or ranges like "7-17, 22".`;
+  }
+  for (const part of parts) {
+    const token = String(part || '').trim();
+    const match = token.match(/^(\d{1,2})(?:\s*-\s*(\d{1,2}))?$/);
+    if (!match) {
+      return `invalid day/night hour syntax "${raw}". Use comma-separated hours or ranges like "7-17, 22".`;
+    }
+    const start = Number.parseInt(match[1], 10);
+    const end = typeof match[2] === 'string' ? Number.parseInt(match[2], 10) : start;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start > 23 || end < 0 || end > 23) {
+      return `day/night hours must be between 0 and 23 in "${raw}".`;
+    }
+  }
+  return '';
+}
+
+function parseNaturalWonderAnimationSpec(spec) {
+  const parsed = {
+    ini: '',
+    frame_time_seconds: '',
+    x_offset: '',
+    y_offset: '',
+    direction: '',
+    show_in_day_night_hours: '',
+    show_in_seasons: ''
+  };
+  String(spec || '')
+    .split(';')
+    .map((chunk) => String(chunk || '').trim())
+    .filter(Boolean)
+    .forEach((chunk) => {
+      const match = chunk.match(/^([^:=]+)\s*[:=]\s*(.*)$/);
+      const rawKey = match ? String(match[1] || '').trim() : '';
+      const rawValue = match ? String(match[2] || '').trim() : String(chunk || '').trim();
+      const knownKey = NATURAL_WONDER_ANIMATION_SPEC_ALIASES.get(normalizeConfigToken(rawKey).toLowerCase());
+      const value = rawValue.replace(/^"(.*)"$/, '$1').trim();
+      if (knownKey === 'offsets') {
+        const offsetMatch = value.match(/^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/);
+        if (offsetMatch) {
+          parsed.x_offset = offsetMatch[1];
+          parsed.y_offset = offsetMatch[2];
+        }
+        return;
+      }
+      if (knownKey) {
+        parsed[knownKey] = value;
+        return;
+      }
+      if (!match && !parsed.ini) parsed.ini = value;
+    });
+  return parsed;
 }
 
 function getFieldValue(section, key) {
@@ -1008,6 +1112,13 @@ function lintSectionFieldValue(fieldSpec, rawValue) {
   if (fieldSpec.type === 'number' && !isIntegerToken(value)) {
     return `Field "${fieldSpec.key}" has invalid integer value "${value}".`;
   }
+  if (fieldSpec.type === 'decimal' && !isDecimalNumberToken(value)) {
+    return `Field "${fieldSpec.key}" has invalid decimal value "${value}".`;
+  }
+  if (fieldSpec.type === 'day-night-hours') {
+    const issue = validateDayNightHoursSyntax(value);
+    if (issue) return `Field "${fieldSpec.key}" has ${issue}`;
+  }
   if (fieldSpec.type === 'select' && Array.isArray(acceptedOptions) && acceptedOptions.length > 0 && !acceptedOptions.includes(value)) {
     return `Field "${fieldSpec.key}" has unknown value "${value}". Expected one of: ${acceptedOptions.join(', ')}.`;
   }
@@ -1048,6 +1159,31 @@ function lintSectionedTab(bundle, result, tabKey) {
       if (fieldIssue) {
         addSectionIssue(result, tabKey, index, `${label}: ${fieldIssue}`, 'section-invalid-value');
       }
+    });
+  });
+}
+
+function lintNaturalWonderAnimationSpecs(bundle, result) {
+  const model = ((((bundle || {}).tabs || {}).naturalWonders || {}).model) || null;
+  const sections = Array.isArray(model && model.sections) ? model.sections : [];
+  sections.forEach((section, index) => {
+    const label = getSectionDisplayName(section, index, 'Natural Wonder');
+    const fields = Array.isArray(section && section.fields) ? section.fields : [];
+    const animationSpecs = fields
+      .filter((field) => String(field && field.key || '').trim() === 'animation')
+      .map((field) => String(field && field.value || '').trim())
+      .filter(Boolean);
+    animationSpecs.forEach((spec, specIndex) => {
+      const parsed = parseNaturalWonderAnimationSpec(spec);
+      const issue = validateDayNightHoursSyntax(parsed.show_in_day_night_hours);
+      if (!issue) return;
+      addSectionIssue(
+        result,
+        'naturalWonders',
+        index,
+        `${label}: Animation ${specIndex + 1} has ${issue}`,
+        'natural-wonder-animation-invalid-hours'
+      );
     });
   });
 }
@@ -1308,6 +1444,8 @@ function auditLoadedBundle(bundle, options = {}) {
   lintSectionedTab(bundle, result, 'districts');
   lintSectionedTab(bundle, result, 'wonders');
   lintSectionedTab(bundle, result, 'naturalWonders');
+  lintSectionedTab(bundle, result, 'animations');
+  lintNaturalWonderAnimationSpecs(bundle, result);
   auditCurrentDistrictArt(bundle, result);
   auditCurrentWonderArt(bundle, result);
   auditCurrentNaturalWonderArt(bundle, result);

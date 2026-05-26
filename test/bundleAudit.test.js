@@ -1054,6 +1054,80 @@ test('auditLoadedBundle reports unknown section keys and invalid section values'
   assert.ok(result.tabs.naturalWonders.sections['0'].some((entry) => /adjacency_dir.+unknown value "upward"/i.test(entry.message)));
 });
 
+test('auditLoadedBundle reports invalid animation day/night hour syntax', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeBundle(c3xRoot, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      naturalWonders: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Crystal Cave',
+              animation: 'ini=NaturalWonders\\Crystal\\Crystal.INI; show_in_day_night_hours=7-25, dusk'
+            })
+          ]
+        }
+      },
+      animations: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Wave',
+              ini_path: 'Terrain\\Wave\\Wave.INI',
+              type: 'coastal-wave',
+              frame_time_seconds: '0.14',
+              show_in_day_night_hours: '7-17, 24'
+            })
+          ]
+        }
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.ok(result.tabs.naturalWonders.sections['0'].some((entry) => /Animation 1.+day\/night hours must be between 0 and 23.+7-25, dusk/i.test(entry.message)));
+  assert.ok(result.tabs.animations.sections['0'].some((entry) => /show_in_day_night_hours.+day\/night hours must be between 0 and 23.+7-17, 24/i.test(entry.message)));
+  assert.equal(result.tabs.animations.sections['0'].some((entry) => /frame_time_seconds/i.test(entry.message)), false);
+});
+
+test('auditLoadedBundle reports invalid animation frame-time syntax without rejecting decimals', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeBundle(c3xRoot, {
+    tabs: {
+      animations: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Deer',
+              ini_path: 'Resources\\Deer\\Deer.INI',
+              type: 'resource',
+              frame_time_seconds: '0.14'
+            }),
+            makeSection({
+              name: 'Broken',
+              ini_path: 'Resources\\Broken\\Broken.INI',
+              type: 'resource',
+              frame_time_seconds: 'fast'
+            })
+          ]
+        }
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const validSectionMessages = result.tabs.animations.sections['0'] || [];
+  const invalidSectionMessages = result.tabs.animations.sections['1'] || [];
+  assert.equal(validSectionMessages.some((entry) => /frame_time_seconds/i.test(entry.message)), false);
+  assert.ok(invalidSectionMessages.some((entry) => /frame_time_seconds.+invalid decimal value "fast"/i.test(entry.message)));
+});
+
 test('auditLoadedBundle allows empty bitfield-list base values', () => {
   const c3xRoot = mkTmpDir();
   const bundle = makeBundle(c3xRoot, {

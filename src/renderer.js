@@ -675,6 +675,7 @@ function normalizeTextFileEncoding(value) {
 }
 
 const DIRECTION_OPTIONS = ['northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north'];
+const ANIMATION_TYPE_OPTIONS = ['terrain', 'resource', 'pcx', 'destruct-initial', 'destruct-after', 'coastal-wave'];
 const TERRAIN_OPTIONS = ['desert', 'plains', 'grassland', 'jungle', 'tundra', 'floodplain', 'marsh', 'hill', 'mountain', 'forest', 'volcano', 'snow-forest', 'snow-mountain', 'snow-volcano', 'coast', 'sea', 'ocean'];
 const TAB_ICONS = {
   units: 'icon-unit',
@@ -824,7 +825,8 @@ const BASE_MULTI_CHOICE_LIST_OPTIONS = {
   special_zone_of_control_rules: ['amphibious', 'lethal', 'aerial', 'not-from-inside', 'all'],
   land_transport_rules: ['load-onto-boat', 'join-army', 'no-defense-from-inside', 'no-escape'],
   special_helicopter_rules: ['allow-on-carriers', 'passenger-airdrop', 'no-defense-from-inside', 'no-escape'],
-  enabled_seasons: ['summer', 'fall', 'winter', 'spring']
+  enabled_seasons: ['summer', 'fall', 'winter', 'spring'],
+  show_tile_destruct_animation_after: ['bombard', 'bomb', 'pillage']
 };
 
 const BASE_STRUCTURED_LIST_FIELDS = new Set([
@@ -847,6 +849,8 @@ const BASE_FIELD_DETAILS = Object.freeze({
   enable_wonder_districts: 'Enables the wonder district layer.',
   enable_natural_wonders: 'Enables natural wonder systems and placement.',
   enable_custom_animations: 'Enables tile animation configs.',
+  show_tile_destruct_animation_after: 'Unit actions that trigger tile destruction animation display.',
+  show_tile_destruction_animation_for_turns: 'Number of turns to keep tile destruction animation visible.',
   expand_water_tile_checks_to_city_work_area: 'Uses the full city work radius for water-adjacency checks.',
   workers_can_enter_coast: 'Lets workers move onto coast tiles without embarking.',
   max_contiguous_bridge_districts: 'Sets the maximum number of bridge districts that can be contiguous in a line.',
@@ -894,6 +898,14 @@ const EDITABLE_TAB_KEYS = [
   'world',
   'rules'
 ];
+
+function normalizeEditableTabKey(tabKey) {
+  const raw = String(tabKey || '').trim();
+  if (!raw) return '';
+  if (EDITABLE_TAB_KEYS.includes(raw)) return raw;
+  const lower = raw.toLowerCase();
+  return EDITABLE_TAB_KEYS.find((key) => String(key || '').toLowerCase() === lower) || '';
+}
 
 const SECTION_SCHEMAS = {
   districts: {
@@ -1018,7 +1030,7 @@ const SECTION_SCHEMAS = {
       { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Worked-tile happiness bonus.', type: 'number', minRelease: 'R27' },
       { key: 'Impassable', label: 'Impassable', desc: 'Disallow movement through tile.', type: 'bool', minRelease: 'R27' },
       { key: 'Impassable_to_wheeled', label: 'Impassable To Wheeled', desc: 'Disallow wheeled movement unless connected.', type: 'bool', minRelease: 'R27' },
-      { key: 'animation', label: 'Animation Item', desc: 'Natural wonder animation spec string.', type: 'text', multi: true, minRelease: 'R28' }
+      { key: 'animation', label: 'Animation Items', desc: 'Natural wonder animation spec string.', type: 'text', multi: true, minRelease: 'R28' }
     ],
     template: {
       name: 'New Natural Wonder',
@@ -1035,7 +1047,8 @@ const SECTION_SCHEMAS = {
     fields: [
       { key: 'name', label: 'Animation Name', desc: 'Unique animation identifier.', type: 'text', required: true },
       { key: 'ini_path', label: 'INI Path', desc: 'Relative to Art/Animations/.', type: 'text', required: true },
-      { key: 'type', label: 'Animation Type', desc: 'Rule type controlling where this animation can appear.', type: 'select', options: ['terrain', 'resource', 'pcx', 'coastal-wave'], required: true },
+      { key: 'frame_time_seconds', label: 'Frame Time', desc: 'Per-frame seconds.', type: 'text' },
+      { key: 'type', label: 'Animation Type', desc: 'Rule type controlling where this animation can appear.', type: 'select', options: ANIMATION_TYPE_OPTIONS, required: true },
       { key: 'resource_type', label: 'Resource Type', desc: 'Required for type=resource.', type: 'text' },
       { key: 'pcx_file', label: 'PCX File', desc: 'Required for type=pcx.', type: 'select', options: ['deltaRivers.pcx', 'floodplains.pcx', 'LMHills.pcx', 'Mountains.pcx', 'Mountains-snow.pcx', 'mtnRivers.pcx', 'Volcanos.pcx', 'Volcanos-snow.pcx', 'waterfalls.pcx', 'xhills.pcx'] },
       { key: 'pcx_index', label: 'PCX Index', desc: 'Required for type=pcx.', type: 'number' },
@@ -1044,7 +1057,6 @@ const SECTION_SCHEMAS = {
       { key: 'direction', label: 'Direction Override', desc: 'Optional fixed facing direction.', type: 'select', options: DIRECTION_OPTIONS },
       { key: 'x_offset', label: 'X Offset', desc: 'Horizontal pixel offset.', type: 'number' },
       { key: 'y_offset', label: 'Y Offset', desc: 'Vertical pixel offset.', type: 'number' },
-      { key: 'frame_time_seconds', label: 'Frame Time', desc: 'Per-frame seconds.', type: 'text' },
       { key: 'show_in_day_night_hours', label: 'Day/Night Hours', desc: 'Hour list/ranges where animation appears.', type: 'list' },
       { key: 'show_in_seasons', label: 'Seasons', desc: 'Allowed seasons.', type: 'list', options: ['spring', 'summer', 'fall', 'winter'] }
     ],
@@ -2486,7 +2498,7 @@ function buildSerializedScopedSnapshot(scope, tabsByKey) {
 }
 
 function buildReferenceEntryUndoKey(tabKey, entry, fallbackIndex) {
-  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  const normalizedTabKey = normalizeEditableTabKey(tabKey);
   if (!normalizedTabKey || !EDITABLE_TAB_KEYS.includes(normalizedTabKey)) return '';
   const identity = getReferenceEntryIdentity(normalizedTabKey, entry, fallbackIndex);
   if (!identity) return `REFERENCE_TAB:${normalizedTabKey}`;
@@ -2494,7 +2506,7 @@ function buildReferenceEntryUndoKey(tabKey, entry, fallbackIndex) {
 }
 
 function buildSerializedReferenceEntrySnapshot(tabKey, identity, entry, selectedIndex) {
-  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  const normalizedTabKey = normalizeEditableTabKey(tabKey);
   const normalizedIdentity = String(identity || '').trim();
   if (!normalizedTabKey || !normalizedIdentity || !entry) return 'null';
   return {
@@ -2508,7 +2520,7 @@ function buildSerializedReferenceEntrySnapshot(tabKey, identity, entry, selected
 }
 
 function buildSectionItemUndoKey(tabKey, section, fallbackIndex) {
-  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  const normalizedTabKey = normalizeEditableTabKey(tabKey);
   if (!normalizedTabKey || !EDITABLE_TAB_KEYS.includes(normalizedTabKey) || !section) return '';
   const sectionName = Array.isArray(section && section.fields) ? String(getFieldValue(section, 'name') || '').trim() : '';
   if (sectionName) return `SECTION_ITEM:${normalizedTabKey}:name:${sectionName}`;
@@ -2533,7 +2545,7 @@ function buildSectionFieldEditSessionKey(section, fieldKey, itemIndex = null) {
 
 function findSectionUndoLocation(section) {
   if (!section || !state.bundle || !state.bundle.tabs) return null;
-  const activeTabKey = String(state.activeTab || '').trim().toLowerCase();
+  const activeTabKey = normalizeEditableTabKey(state.activeTab);
   const activeTab = activeTabKey ? state.bundle.tabs[activeTabKey] : null;
   if (activeTab && activeTab.model && Array.isArray(activeTab.model.sections)) {
     const activeIndex = activeTab.model.sections.indexOf(section);
@@ -2549,7 +2561,7 @@ function findSectionUndoLocation(section) {
 }
 
 function buildSerializedSectionSnapshot(tabKey, section, selectedIndex) {
-  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  const normalizedTabKey = normalizeEditableTabKey(tabKey);
   if (!normalizedTabKey || !section) return 'null';
   const sectionName = Array.isArray(section && section.fields) ? String(getFieldValue(section, 'name') || '').trim() : '';
   return {
@@ -2569,13 +2581,13 @@ function getUndoSnapshotForKey(key = '') {
   }
   if (normalizedKey.startsWith('RULE_FIELD:')) {
     const parts = normalizedKey.split(':');
-    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(parts[1]);
     if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
       return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `tab:${tabKey}` });
     }
   }
   if (normalizedKey.startsWith('BIQ_FIELD:')) {
-    const tabKey = String(state.activeTab || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(state.activeTab);
     if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
       return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `tab:${tabKey}` });
     }
@@ -2585,21 +2597,21 @@ function getUndoSnapshotForKey(key = '') {
   }
   if (normalizedKey.startsWith('TECH_UNLOCK_TAB:')) {
     const parts = normalizedKey.split(':');
-    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(parts[1]);
     if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
       return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `tab:${tabKey}` });
     }
   }
   if (normalizedKey.startsWith('REFERENCE_TAB:')) {
     const parts = normalizedKey.split(':');
-    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(parts[1]);
     if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
       return snapshotSelectedEditableTabs([tabKey]);
     }
   }
   if (normalizedKey.startsWith('REFERENCE_ENTRY:')) {
     const parts = String(key || '').trim().split(':');
-    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(parts[1]);
     const identity = parts.slice(2).join(':').trim();
     const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
     const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
@@ -2616,7 +2628,7 @@ function getUndoSnapshotForKey(key = '') {
   }
   if (normalizedKey.startsWith('SECTION_ITEM:')) {
     const parts = String(key || '').trim().split(':');
-    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(parts[1]);
     const mode = String(parts[2] || '').trim().toLowerCase();
     const rawValue = parts.slice(3).join(':').trim();
     const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
@@ -2639,7 +2651,7 @@ function getUndoSnapshotForKey(key = '') {
   }
   if (normalizedKey.startsWith('SECTION_TAB:')) {
     const parts = String(key || '').trim().split(':');
-    const tabKey = String(parts[1] || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(parts[1]);
     if (tabKey && EDITABLE_TAB_KEYS.includes(tabKey)) {
       return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `section:${tabKey}` });
     }
@@ -2653,11 +2665,11 @@ function getUndoSnapshotForKey(key = '') {
 
 function getUndoSnapshotScope(snapshot) {
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-reference-entry') {
-    const tabKey = String(snapshot.tabKey || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(snapshot.tabKey);
     return tabKey ? `reference:${tabKey}` : 'reference';
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-section-item') {
-    const tabKey = String(snapshot.tabKey || '').trim().toLowerCase();
+    const tabKey = normalizeEditableTabKey(snapshot.tabKey);
     return tabKey ? `section:${tabKey}` : 'section';
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-partial-tabs') {
@@ -2691,7 +2703,7 @@ function findLatestUndoSnapshotIndex(predicate) {
 
 function getLatestScopedUndoSnapshot(scope) {
   const normalizedScope = String(scope || '').trim().toLowerCase();
-  const idx = findLatestUndoSnapshotIndex((entry) => getUndoSnapshotScope(entry) === normalizedScope);
+  const idx = findLatestUndoSnapshotIndex((entry) => String(getUndoSnapshotScope(entry) || '').toLowerCase() === normalizedScope);
   return idx >= 0 ? state.undoHistory[idx] : null;
 }
 
@@ -3907,7 +3919,7 @@ function recomputeDirtyStateFromBundle() {
 }
 
 function recomputeDirtyStateForSerializedReferenceEntrySnapshot(snapshot) {
-  const tabKey = String(snapshot && snapshot.tabKey || '').trim().toLowerCase();
+  const tabKey = normalizeEditableTabKey(snapshot && snapshot.tabKey);
   if (!tabKey || !state.bundle || !state.bundle.tabs) return false;
   const tab = state.bundle.tabs[tabKey];
   if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return false;
@@ -3963,7 +3975,7 @@ function recomputeDirtyStateForScopedBaseSnapshot(snapshot) {
 function recomputeDirtyStateForScopedSectionTabSnapshot(snapshot) {
   if (!isScopedSectionTabUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs) return false;
   const scope = String(snapshot.scope || '').trim().toLowerCase();
-  const tabKey = scope.slice('section:'.length).trim();
+  const tabKey = normalizeEditableTabKey(scope.slice('section:'.length).trim());
   if (!tabKey || !state.bundle.tabs[tabKey]) return false;
   setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
@@ -3973,7 +3985,7 @@ function recomputeDirtyStateForScopedSectionTabSnapshot(snapshot) {
 function recomputeDirtyStateForScopedTabSnapshot(snapshot) {
   if (!isScopedTabUndoSnapshot(snapshot) || !state.bundle || !state.bundle.tabs) return false;
   const scope = String(snapshot.scope || '').trim().toLowerCase();
-  const tabKey = scope.slice('tab:'.length).trim();
+  const tabKey = normalizeEditableTabKey(scope.slice('tab:'.length).trim());
   if (!tabKey || !state.bundle.tabs[tabKey]) return false;
   setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
@@ -3981,7 +3993,7 @@ function recomputeDirtyStateForScopedTabSnapshot(snapshot) {
 }
 
 function applySerializedSectionSnapshotToTabs(mergedTabs, snapshot) {
-  const tabKey = String(snapshot && snapshot.tabKey || '').trim().toLowerCase();
+  const tabKey = normalizeEditableTabKey(snapshot && snapshot.tabKey);
   const currentTab = mergedTabs && mergedTabs[tabKey];
   const currentSections = currentTab && currentTab.model && Array.isArray(currentTab.model.sections) ? currentTab.model.sections : null;
   if (!tabKey || !currentSections) return false;
@@ -4013,7 +4025,7 @@ function applySerializedSectionSnapshotToTabs(mergedTabs, snapshot) {
 }
 
 function recomputeDirtyStateForSerializedSectionSnapshot(snapshot) {
-  const tabKey = String(snapshot && snapshot.tabKey || '').trim().toLowerCase();
+  const tabKey = normalizeEditableTabKey(snapshot && snapshot.tabKey);
   if (!tabKey || !state.bundle || !state.bundle.tabs) return false;
   const tab = state.bundle.tabs[tabKey];
   const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : null;
@@ -4425,7 +4437,7 @@ function applyDirtyBadgeToTabButton(button, key, tab) {
         warningCount
       );
     }
-  } else if (shouldRunQualityChecks() && (key === 'base' || key === 'naturalWonders')) {
+  } else if (shouldRunQualityChecks() && (key === 'base' || key === 'naturalWonders' || key === 'animations')) {
     const warningCount = getLoadAuditBadgeCount(key);
     if (warningCount > 0) {
       appendWarningCountBadge(
@@ -9548,21 +9560,6 @@ function getNaturalWonderAnimationIniPath(spec) {
   return String(parsed.ini || '').trim();
 }
 
-function syncNaturalWonderAnimationDirections(section, options = {}) {
-  const adjacencyDirection = String(getFieldValue(section, 'adjacency_dir') || '').trim();
-  const specs = getFieldValuesRaw(section, 'animation');
-  if (!adjacencyDirection || specs.length === 0) return;
-  const nextSpecs = specs
-    .map((raw) => {
-      const parsed = parseNaturalWonderAnimationSpec(raw);
-      parsed.direction = adjacencyDirection;
-      return serializeNaturalWonderAnimationSpec(parsed);
-    })
-    .map((raw) => String(raw || '').trim())
-    .filter(Boolean);
-  setMultiFieldValues(section, 'animation', nextSpecs, options);
-}
-
 function parseFrameSecondsFromSpec(spec) {
   const parsed = parseNaturalWonderAnimationSpec(spec);
   const v = Number.parseFloat(parsed.frame_time_seconds);
@@ -9595,10 +9592,23 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
   canvas.width = preview.width;
   canvas.height = preview.height;
   canvas.className = 'preview-canvas';
+  const nativeSize = !!(options && options.nativeSize);
   const previewWidth = Number.isFinite(displayWidth) && displayWidth > 0 ? displayWidth : state.previewSize;
-  canvas.style.width = `${previewWidth}px`;
-  canvas.style.height = 'auto';
+  canvas.style.width = nativeSize ? `${preview.width}px` : `${previewWidth}px`;
+  canvas.style.height = nativeSize ? `${preview.height}px` : 'auto';
   const ctx = canvas.getContext('2d');
+  let previewNode = canvas;
+  if (options && options.fixedPreviewFrame) {
+    const frameSize = typeof options.fixedPreviewFrame === 'object' ? options.fixedPreviewFrame : {};
+    const frame = document.createElement('div');
+    frame.className = 'preview-native-frame';
+    const frameWidth = Number.isFinite(Number(frameSize.width)) ? Number(frameSize.width) : state.previewSize;
+    const frameHeight = Number.isFinite(Number(frameSize.height)) ? Number(frameSize.height) : state.previewSize;
+    frame.style.width = `${Math.max(1, frameWidth)}px`;
+    frame.style.height = `${Math.max(1, frameHeight)}px`;
+    frame.appendChild(canvas);
+    previewNode = frame;
+  }
   if (options && options.softBlueFrame) {
     const frame = document.createElement('div');
     frame.className = 'section-art-soft-frame';
@@ -9609,10 +9619,10 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
       hint.title = String(options.directionHint.title || '');
       frame.appendChild(hint);
     }
-    frame.appendChild(canvas);
+    frame.appendChild(previewNode);
     card.appendChild(frame);
   } else {
-    card.appendChild(canvas);
+    card.appendChild(previewNode);
   }
 
   const meta = document.createElement('div');
@@ -9741,6 +9751,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap, shouldContin
       : null;
     if (tabKey === 'naturalWonders' && String(taskTitle || '') === 'Animation') {
       return { ...(previewOptions || {}), skipBlankMagentaFrames: true };
+    }
+    if (tabKey === 'animations' && String(taskTitle || '') === 'Animation FLC') {
+      return { nativeSize: true, fixedPreviewFrame: { width: state.previewSize, height: state.previewSize } };
     }
     if (wonderDirectionHint) {
       return { ...(previewOptions || {}), directionHint: wonderDirectionHint };
@@ -9872,18 +9885,21 @@ async function loadPreviewsForSection(tabKey, section, previewWrap, shouldContin
     });
     const firstAnimationSpec = getFieldValuesRaw(section, 'animation').find((spec) => getNaturalWonderAnimationIniPath(spec));
     if (firstAnimationSpec) {
+      const animationSpec = parseNaturalWonderAnimationSpec(firstAnimationSpec);
       const iniPath = getNaturalWonderAnimationIniPath(firstAnimationSpec);
+      const directionIndex = resolveAnimationDirectionIndexFromValue(animationSpec.direction);
       tasks.push({
         title: 'Animation',
         displayWidth: Math.max(120, Math.round(state.previewSize * 0.72)),
-        request: { kind: 'animationIni', c3xPath: state.settings.c3xPath, iniPath }
+        request: { kind: 'animationIni', c3xPath: state.settings.c3xPath, iniPath, directionIndex }
       });
     }
   } else if (tabKey === 'animations') {
-    const iniPath = getFieldValue(section, 'ini_path');
+    const iniPath = normalizeAnimationIniRelativePath(getFieldValue(section, 'ini_path'));
+    const directionIndex = resolveAnimationDirectionIndex(section);
     tasks.push({
       title: 'Animation FLC',
-      request: { kind: 'animationIni', c3xPath: state.settings.c3xPath, iniPath }
+      request: { kind: 'animationIni', c3xPath: state.settings.c3xPath, iniPath, directionIndex }
     });
   }
 
@@ -9896,12 +9912,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap, shouldContin
       const res = await window.c3xManager.getPreview(task.request);
       if (!isCurrent()) return;
       if (res && res.ok) {
-        const prepared = (tabKey === 'animations')
-          ? (() => {
-              const dirIndex = resolveAnimationDirectionIndex(section);
-              return Number.isInteger(dirIndex) ? sliceUnitPreviewByDirection(res, dirIndex) : res;
-            })()
-          : res;
+        const prepared = res;
         appendDebugLog('preview:response:ok', { tabKey, title: task.title, animated: !!res.animated, width: res.width, height: res.height, sourcePath: res.sourcePath, frames: res.framesBase64 ? res.framesBase64.length : 0, debug: res.debug || null });
         const lane = String(task && task.lane || 'base');
         if (tabKey === 'wonders' && lane === 'alt' && !altWrap) {
@@ -10481,7 +10492,7 @@ async function loadPreviewsForReferenceEntry(tabKey, entry, previewWrap) {
   }
 }
 
-function drawPreviewFrameToCanvas(preview, canvas) {
+function drawPreviewFrameToCanvas(preview, canvas, options = {}) {
   const ctx = canvas.getContext('2d');
   if (!ctx || !preview) return;
   let rgba;
@@ -10491,12 +10502,25 @@ function drawPreviewFrameToCanvas(preview, canvas) {
     }
     rgba = preview._cachedRgbaBytes;
   } else if (preview.framesBase64 && preview.framesBase64[0]) {
-    if (!preview._cachedFirstFrameBytes) {
-      preview._cachedFirstFrameBytes = fromBase64ToUint8(preview.framesBase64[0]);
+    const frameCount = preview.framesBase64.length;
+    const requestedFrame = Number.isFinite(Number(options.frameIndex)) ? Math.trunc(Number(options.frameIndex)) : 0;
+    const frameIndex = Math.max(0, Math.min(frameCount - 1, requestedFrame));
+    if (!preview._cachedFrameBytesByIndex) preview._cachedFrameBytesByIndex = {};
+    if (!preview._cachedFrameBytesByIndex[frameIndex]) {
+      preview._cachedFrameBytesByIndex[frameIndex] = fromBase64ToUint8(preview.framesBase64[frameIndex]);
     }
-    rgba = preview._cachedFirstFrameBytes;
+    rgba = preview._cachedFrameBytesByIndex[frameIndex];
   } else {
     return;
+  }
+  if (options.transparentMagenta) {
+    const copy = new Uint8ClampedArray(rgba);
+    for (let i = 0; i < copy.length; i += 4) {
+      if (copy[i] === 255 && copy[i + 1] === 0 && copy[i + 2] === 255) {
+        copy[i + 3] = 0;
+      }
+    }
+    rgba = copy;
   }
   const scratch = getPreviewScratchCanvas(preview.width, preview.height);
   if (!scratch || !scratch.ctx || !scratch.canvas) return;
@@ -11623,6 +11647,23 @@ function applyPreferredSectionFieldOrder(tabKey, orderedFields) {
       ['adjacent_to', 6],
       ['adjacency_dir', 7]
     ]);
+  } else if (tabKey === 'animations') {
+    priorityByKey = new Map([
+      ['name', 0],
+      ['ini_path', 1],
+      ['frame_time_seconds', 2],
+      ['type', 3],
+      ['resource_type', 4],
+      ['pcx_file', 5],
+      ['pcx_index', 6],
+      ['terrain_types', 7],
+      ['adjacent_to', 8],
+      ['direction', 9],
+      ['x_offset', 10],
+      ['y_offset', 11],
+      ['show_in_day_night_hours', 12],
+      ['show_in_seasons', 13]
+    ]);
   } else {
     return fields;
   }
@@ -11647,8 +11688,12 @@ function shouldShowAnimationFieldForType(fieldKey, typeValue) {
 }
 
 function resolveAnimationDirectionIndex(section) {
-  const direction = normalizeConfigToken(getFieldValue(section, 'direction')).toLowerCase();
-  if (!direction) return null;
+  return resolveAnimationDirectionIndexFromValue(getFieldValue(section, 'direction'));
+}
+
+function resolveAnimationDirectionIndexFromValue(value) {
+  const direction = normalizeConfigToken(value).toLowerCase();
+  if (!direction) return 0;
   const map = {
     northeast: 4,
     east: 3,
@@ -12247,7 +12292,10 @@ function getFilePickerOptionsForSectionField(schemaField, currentValue = '') {
   const key = String(schemaField && schemaField.key || '').toLowerCase();
   const normalizedValue = String(currentValue || '').trim();
   const picker = {};
-  if (normalizedValue) {
+  if (key.includes('ini')) {
+    const defaultPath = getAnimationIniPickerDefaultPath(normalizedValue);
+    if (defaultPath) picker.defaultPath = defaultPath;
+  } else if (normalizedValue) {
     picker.defaultPath = normalizedValue;
   } else if (state.settings && state.settings.c3xPath) {
     picker.defaultPath = String(state.settings.c3xPath);
@@ -12331,11 +12379,64 @@ function normalizeScenarioArtRelativePath(value) {
   return parts[parts.length - 1] || '';
 }
 
+function getAnimationArtRootCandidates() {
+  const roots = [];
+  const addRoot = (value) => {
+    const root = toSlashPath(value).trim().replace(/\/+$/, '');
+    if (!root) return;
+    const artRoot = `${root}/Art/Animations`;
+    if (!roots.includes(artRoot)) roots.push(artRoot);
+  };
+  addRoot(getActiveScenarioDir());
+  if (Array.isArray(state.bundle && state.bundle.scenarioSearchPaths)) {
+    state.bundle.scenarioSearchPaths.forEach(addRoot);
+  }
+  addRoot(state.settings && state.settings.c3xPath);
+  return roots;
+}
+
+function normalizeAnimationIniRelativePath(value) {
+  const raw = toSlashPath(String(value || '').trim()).replace(/^["']|["']$/g, '').replace(/\/+/g, '/');
+  if (!raw) return '';
+  const withoutArtPrefix = raw.replace(/^\.?\/*Art\/Animations\//i, '');
+  if (!isAbsoluteAssetPath(withoutArtPrefix)) {
+    return withoutArtPrefix.replace(/^\.?\/*/, '');
+  }
+  const full = raw.replace(/\/+$/, '');
+  const fullLower = full.toLowerCase();
+  for (const root of getAnimationArtRootCandidates()) {
+    const cleanRoot = toSlashPath(root).replace(/\/+$/, '');
+    const rootLower = cleanRoot.toLowerCase();
+    if (fullLower.startsWith(`${rootLower}/`)) {
+      return full.slice(cleanRoot.length + 1).replace(/^\.?\/*/, '');
+    }
+  }
+  const anywhere = full.match(/(?:^|\/)Art\/Animations\/(.+)$/i);
+  if (anywhere && anywhere[1]) return String(anywhere[1]).replace(/^\.?\/*/, '');
+  return full;
+}
+
+function getAnimationIniPickerDefaultPath(currentValue = '') {
+  const raw = toSlashPath(String(currentValue || '').trim()).replace(/^["']|["']$/g, '');
+  if (raw && isAbsoluteAssetPath(raw)) return raw;
+  const rel = normalizeAnimationIniRelativePath(raw);
+  const roots = getAnimationArtRootCandidates();
+  const base = roots[0] || (state.settings && state.settings.c3xPath ? `${toSlashPath(state.settings.c3xPath).replace(/\/+$/, '')}/Art/Animations` : '');
+  if (!base) return raw || '';
+  return rel ? `${base.replace(/\/+$/, '')}/${rel}` : base;
+}
+
 function isSectionArtImagePathField(tabKey, fieldKey) {
   const tab = String(tabKey || '');
   const key = String(fieldKey || '').trim().toLowerCase();
   return (tab === 'districts' && key === 'img_paths')
     || ((tab === 'wonders' || tab === 'naturalWonders') && key === 'img_path');
+}
+
+function isAnimationIniPathField(tabKey, fieldKey) {
+  const tab = String(tabKey || '');
+  const key = String(fieldKey || '').trim().toLowerCase();
+  return key === 'ini_path' && (tab === 'animations' || tab === 'naturalWonders');
 }
 
 function getParentPath(rawPath) {
@@ -32138,7 +32239,7 @@ function renderReferenceTab(tab, tabKey) {
     const maxToLoad = Math.max(1, Number(limit) || 24);
     if (maxToLoad <= 0 || !listPane.isConnected) return;
     const paneRect = listPane.getBoundingClientRect();
-    const maxConcurrentLoads = 8;
+    const maxConcurrentLoads = tabKey === 'animations' ? 3 : 8;
     const availableSlots = Math.max(0, maxConcurrentLoads - listThumbsInFlight.size);
     let remaining = Math.min(maxToLoad, availableSlots);
     let visiblePending = 0;
@@ -47383,6 +47484,13 @@ function createFieldInput(schemaField, value, onChange, options = {}) {
         input.value = normalized;
         onChange(normalized);
       });
+    } else if (isAnimationIniPathField(state.activeTab, schemaField.key)) {
+      input.addEventListener('blur', () => {
+        const normalized = normalizeAnimationIniRelativePath(input.value);
+        if (!normalized || normalized === input.value) return;
+        input.value = normalized;
+        onChange(normalized);
+      });
     }
     const browse = document.createElement('button');
     browse.type = 'button';
@@ -47391,9 +47499,12 @@ function createFieldInput(schemaField, value, onChange, options = {}) {
       const pickerOptions = getFilePickerOptionsForSectionField(schemaField, input.value);
       const filePath = await window.c3xManager.pickFile(pickerOptions);
       if (!filePath) return;
-      const nextPath = isSectionArtImagePathField(state.activeTab, schemaField.key)
-        ? normalizeScenarioArtRelativePath(filePath)
-        : filePath;
+      let nextPath = filePath;
+      if (isSectionArtImagePathField(state.activeTab, schemaField.key)) {
+        nextPath = normalizeScenarioArtRelativePath(filePath);
+      } else if (isAnimationIniPathField(state.activeTab, schemaField.key)) {
+        nextPath = normalizeAnimationIniRelativePath(filePath);
+      }
       input.value = nextPath;
       onChange(nextPath);
     });
@@ -47457,6 +47568,7 @@ function makeSegmentedSingleValueEditor(options, value, onValueChange, fieldKey 
   const iconRenderer = typeof config.iconRenderer === 'function' ? config.iconRenderer : null;
   const includeEmpty = config.includeEmpty !== false;
   const emptyLabel = String(config.emptyLabel || '(not set)');
+  const getLabel = typeof config.getLabel === 'function' ? config.getLabel : ((opt) => String(opt || '').trim());
   const selected = String(value || '').trim();
   const optionSet = new Set((Array.isArray(options) ? options : []).map((opt) => String(opt || '').trim()).filter(Boolean));
   if (selected) optionSet.add(selected);
@@ -47467,7 +47579,7 @@ function makeSegmentedSingleValueEditor(options, value, onValueChange, fieldKey 
     btn.type = 'button';
     btn.className = 'segmented-multi-btn';
     const text = document.createElement('span');
-    text.textContent = opt || emptyLabel;
+    text.textContent = opt ? getLabel(opt) : emptyLabel;
     if (opt) {
       let usedCustomIcon = false;
       if (iconRenderer) {
@@ -47576,6 +47688,14 @@ function makeDistrictImagePathPreview(pathValue) {
     holder.disabled = true;
   });
   return holder;
+}
+
+function formatAnimationTypeLabel(value) {
+  return String(value || '')
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
 }
 
 function getTokenColor(token, fieldKey = '') {
@@ -48245,6 +48365,48 @@ function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
     crop: { row, col, w: crop.w, h: crop.h },
     scenarioPath: state.settings.scenarioPath,
     scenarioPaths: getScenarioPreviewPaths()
+  }).then((res) => {
+    if (!res || !res.ok) return false;
+    setPreviewCache(cacheKey, res);
+    return paint(res);
+  }).catch(() => false);
+}
+
+function loadAnimationThumbnail(section, holder, canvasSize = 35) {
+  if (!holder) return Promise.resolve(false);
+  holder.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
+  canvas.className = 'entry-thumb-canvas';
+  holder.appendChild(canvas);
+  if (!state.settings || !state.settings.c3xPath) return Promise.resolve(false);
+  const iniPath = normalizeAnimationIniRelativePath(getFieldValue(section, 'ini_path'));
+  if (!iniPath) return Promise.resolve(false);
+  const directionIndex = resolveAnimationDirectionIndex(section);
+  const cacheKey = JSON.stringify({
+    kind: 'animation-list-thumb',
+    c3xPath: state.settings.c3xPath,
+    iniPath,
+    directionIndex,
+    frameOffset: 'middle',
+    maxFrames: 1
+  });
+  const paint = (preview) => {
+    if (!preview) return false;
+    drawPreviewFrameToCanvas(preview, canvas, { frameIndex: 0, transparentMagenta: true });
+    return true;
+  };
+  if (state.previewCache.has(cacheKey)) {
+    return Promise.resolve(paint(state.previewCache.get(cacheKey)));
+  }
+  return window.c3xManager.getPreview({
+    kind: 'animationIni',
+    c3xPath: state.settings.c3xPath,
+    iniPath,
+    directionIndex,
+    frameOffset: 'middle',
+    maxFrames: 1
   }).then((res) => {
     if (!res || !res.ok) return false;
     setPreviewCache(cacheKey, res);
@@ -48937,7 +49099,7 @@ function serializeAnimationAdjacentToToken(entry) {
 
 function renderAnimationAdjacentToEditor(section, onValueChange) {
   const wrap = document.createElement('div');
-  wrap.className = 'structured-list';
+  wrap.className = 'structured-list animation-adjacent-list';
   const terrainBase = [...TERRAIN_OPTIONS, 'land', 'river', 'lake', 'coast', 'sea', 'ocean'];
   const rawTokens = tokenizeListPreservingQuotes(getFieldValue(section, 'adjacent_to'));
   const rows = rawTokens.map((token) => parseAnimationAdjacentToToken(token)).filter((entry) => !!entry.terrain);
@@ -48956,46 +49118,58 @@ function renderAnimationAdjacentToEditor(section, onValueChange) {
     wrap.innerHTML = '';
     rows.forEach((entry, idx) => {
       const line = document.createElement('div');
-      line.className = 'kv-row compact';
+      line.className = 'animation-adjacent-rule';
 
-      const terrainSelect = document.createElement('select');
       const terrainOpts = Array.from(new Set([...terrainBase, ...rows.map((item) => normalizeConfigToken(item.terrain)).filter(Boolean)]));
-      const terrainEmpty = document.createElement('option');
-      terrainEmpty.value = '';
-      terrainEmpty.textContent = 'Terrain...';
-      terrainSelect.appendChild(terrainEmpty);
-      terrainOpts.forEach((opt) => {
-        const node = document.createElement('option');
-        node.value = opt;
-        node.textContent = opt;
-        terrainSelect.appendChild(node);
-      });
-      terrainSelect.value = normalizeConfigToken(entry.terrain);
-      terrainSelect.addEventListener('change', () => {
-        rows[idx].terrain = terrainSelect.value;
-        commit();
-      });
-      line.appendChild(terrainSelect);
+      const terrainGroup = document.createElement('div');
+      terrainGroup.className = 'animation-adjacent-chip-group';
+      const terrainLabel = document.createElement('div');
+      terrainLabel.className = 'animation-adjacent-chip-label';
+      terrainLabel.textContent = 'Terrain';
+      terrainGroup.appendChild(terrainLabel);
+      terrainGroup.appendChild(makeSegmentedSingleValueEditor(
+        terrainOpts,
+        normalizeConfigToken(entry.terrain),
+        (nextValue) => {
+          rows[idx].terrain = String(nextValue || '').trim();
+          commit();
+          renderRows();
+        },
+        'adjacent_to',
+        {
+          includeEmpty: true,
+          emptyLabel: 'Terrain...',
+          iconRenderer: (optionName) => makeTerrainOptionPreviewIcon(optionName)
+        }
+      ));
+      line.appendChild(terrainGroup);
 
-      const dirSelect = document.createElement('select');
-      const dirEmpty = document.createElement('option');
-      dirEmpty.value = '';
-      dirEmpty.textContent = '(any direction)';
-      dirSelect.appendChild(dirEmpty);
       const dirOptions = Array.from(new Set([...DIRECTION_OPTIONS, ...rows.map((item) => normalizeConfigToken(item.direction).toLowerCase()).filter(Boolean)]));
-      dirOptions.forEach((opt) => {
-        const node = document.createElement('option');
-        node.value = opt;
-        node.textContent = opt;
-        dirSelect.appendChild(node);
-      });
-      dirSelect.value = normalizeConfigToken(entry.direction).toLowerCase();
-      dirSelect.addEventListener('change', () => {
-        rows[idx].direction = dirSelect.value;
-        commit();
-      });
-      line.appendChild(dirSelect);
+      const directionGroup = document.createElement('div');
+      directionGroup.className = 'animation-adjacent-chip-group';
+      const directionLabel = document.createElement('div');
+      directionLabel.className = 'animation-adjacent-chip-label';
+      directionLabel.textContent = 'Direction';
+      directionGroup.appendChild(directionLabel);
+      directionGroup.appendChild(makeSegmentedSingleValueEditor(
+        dirOptions,
+        normalizeConfigToken(entry.direction).toLowerCase(),
+        (nextValue) => {
+          rows[idx].direction = String(nextValue || '').trim().toLowerCase();
+          commit();
+          renderRows();
+        },
+        'adjacent_to_direction',
+        {
+          includeEmpty: true,
+          emptyLabel: '(any direction)',
+          showTokenIcon: false
+        }
+      ));
+      line.appendChild(directionGroup);
 
+      const actions = document.createElement('div');
+      actions.className = 'animation-adjacent-rule-actions';
       const del = document.createElement('button');
       del.type = 'button';
       withRemoveIcon(del, ' Remove');
@@ -49005,7 +49179,8 @@ function renderAnimationAdjacentToEditor(section, onValueChange) {
         commit();
         renderRows();
       });
-      line.appendChild(del);
+      actions.appendChild(del);
+      line.appendChild(actions);
       wrap.appendChild(line);
     });
 
@@ -49028,6 +49203,10 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
   wrap.className = 'natural-animation-spec-list';
   const rawSpecs = getFieldValuesRaw(section, 'animation');
   const specs = rawSpecs.map((raw) => parseNaturalWonderAnimationSpec(raw));
+  specs.forEach((entry) => {
+    const normalizedIni = normalizeAnimationIniRelativePath(entry.ini);
+    if (normalizedIni) entry.ini = normalizedIni;
+  });
   const animationUndoKey = getSectionItemUndoKey(section);
   const wireAnimationGroupedUndo = (input, keySuffix, getValue = null) => {
     wireGroupedUndoSession(input, {
@@ -49036,20 +49215,9 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
       getValue: typeof getValue === 'function' ? getValue : (() => String(input && input.value || ''))
     });
   };
-  const adjacencyDirection = String(getFieldValue(section, 'adjacency_dir') || '').trim();
-  if (adjacencyDirection) {
-    specs.forEach((entry) => {
-      entry.direction = adjacencyDirection;
-    });
-  }
 
   const commit = (config = null) => {
     const shouldNotify = !(config && config.notify === false);
-    if (adjacencyDirection) {
-      specs.forEach((entry) => {
-        entry.direction = adjacencyDirection;
-      });
-    }
     const serialized = specs
       .map((entry) => serializeNaturalWonderAnimationSpec(entry))
       .map((entry) => String(entry || '').trim())
@@ -49058,45 +49226,6 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
       captureUndo: !(config && config.captureUndo === false)
     });
     if (shouldNotify && onValueChange) onValueChange('animation', serialized.join('\n'));
-  };
-
-  const addExtraRow = (entry, extrasWrap, valueChangeHook) => {
-    const extra = { key: '', value: '' };
-    entry.extras.push(extra);
-    valueChangeHook();
-    const row = document.createElement('div');
-    row.className = 'kv-row compact';
-    const keyInput = document.createElement('input');
-    keyInput.type = 'text';
-    keyInput.placeholder = 'key';
-    keyInput.value = '';
-    wireAnimationGroupedUndo(keyInput, `new-extra-key:${entry.extras.length}`);
-    keyInput.addEventListener('input', () => {
-      extra.key = keyInput.value;
-      valueChangeHook({ captureUndo: false });
-    });
-    const valueInput = document.createElement('input');
-    valueInput.type = 'text';
-    valueInput.placeholder = 'value';
-    valueInput.value = '';
-    wireAnimationGroupedUndo(valueInput, `new-extra-value:${entry.extras.length}`);
-    valueInput.addEventListener('input', () => {
-      extra.value = valueInput.value;
-      valueChangeHook({ captureUndo: false });
-    });
-    const del = document.createElement('button');
-    del.type = 'button';
-    withRemoveIcon(del, ' Remove');
-    del.addEventListener('click', () => {
-      const idx = entry.extras.indexOf(extra);
-      if (idx >= 0) entry.extras.splice(idx, 1);
-      valueChangeHook();
-      row.remove();
-    });
-    row.appendChild(keyInput);
-    row.appendChild(valueInput);
-    row.appendChild(del);
-    extrasWrap.appendChild(row);
   };
 
   if (specs.length === 0) {
@@ -49112,8 +49241,11 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
 
     const top = document.createElement('div');
     top.className = 'section-top';
-    top.innerHTML = `<strong>Animation ${idx + 1}</strong><span class="hint">Rendered from this natural wonder tile</span>`;
+    top.innerHTML = `<strong>Animation ${idx + 1}</strong>`;
     card.appendChild(top);
+
+    const topControls = document.createElement('div');
+    topControls.className = 'natural-animation-top-controls';
 
     const iniWrap = document.createElement('div');
     iniWrap.className = 'path-input-with-btn';
@@ -49126,31 +49258,35 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
       entry.ini = iniInput.value;
       commit({ captureUndo: false });
     });
+    iniInput.addEventListener('blur', () => {
+      const nextPath = normalizeAnimationIniRelativePath(iniInput.value);
+      if (!nextPath || nextPath === iniInput.value) return;
+      iniInput.value = nextPath;
+      entry.ini = nextPath;
+      commit();
+    });
     const iniBrowse = document.createElement('button');
     iniBrowse.type = 'button';
     iniBrowse.textContent = 'Browse';
     iniBrowse.addEventListener('click', async () => {
       const filePath = await window.c3xManager.pickFile(getFilePickerOptionsForSectionField({ key: 'ini_path' }, iniInput.value));
       if (!filePath) return;
-      iniInput.value = filePath;
-      entry.ini = filePath;
+      const nextPath = normalizeAnimationIniRelativePath(filePath);
+      iniInput.value = nextPath;
+      entry.ini = nextPath;
       commit();
     });
     iniWrap.appendChild(iniInput);
     iniWrap.appendChild(iniBrowse);
-    card.appendChild(iniWrap);
 
     const grid = document.createElement('div');
     grid.className = 'kv-grid natural-animation-spec-grid';
 
     const frameWrap = document.createElement('label');
-    frameWrap.className = 'hint';
+    frameWrap.className = 'hint natural-animation-frame-inline';
     frameWrap.textContent = 'Frame Time (seconds)';
     const frameRow = document.createElement('div');
-    frameRow.style.display = 'grid';
-    frameRow.style.gridTemplateColumns = 'minmax(0, 1fr) auto';
-    frameRow.style.gap = '8px';
-    frameRow.style.alignItems = 'center';
+    frameRow.className = 'natural-animation-frame-row';
     const frameInput = document.createElement('input');
     frameInput.type = 'range';
     frameInput.min = '0.02';
@@ -49177,7 +49313,12 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     frameRow.appendChild(frameInput);
     frameRow.appendChild(frameValueText);
     frameWrap.appendChild(frameRow);
-    grid.appendChild(frameWrap);
+    topControls.appendChild(iniWrap);
+    topControls.appendChild(frameWrap);
+    card.appendChild(topControls);
+
+    const offsetsRow = document.createElement('div');
+    offsetsRow.className = 'natural-animation-offset-row';
 
     const xWrap = document.createElement('label');
     xWrap.className = 'hint';
@@ -49191,7 +49332,7 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
       commit({ captureUndo: false });
     });
     xWrap.appendChild(xInput);
-    grid.appendChild(xWrap);
+    offsetsRow.appendChild(xWrap);
 
     const yWrap = document.createElement('label');
     yWrap.className = 'hint';
@@ -49205,75 +49346,25 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
       commit({ captureUndo: false });
     });
     yWrap.appendChild(yInput);
-    grid.appendChild(yWrap);
+    offsetsRow.appendChild(yWrap);
+    grid.appendChild(offsetsRow);
 
     const dirWrap = document.createElement('div');
     dirWrap.className = 'hint';
-    dirWrap.textContent = 'Direction (from Adjacency Direction)';
+    dirWrap.textContent = 'Direction';
     const dirChips = makeSegmentedSingleValueEditor(
       DIRECTION_OPTIONS,
-      adjacencyDirection || entry.direction || '',
-      null,
+      entry.direction || '',
+      (nextValue) => {
+        entry.direction = nextValue;
+        commit();
+      },
       'direction',
       { includeEmpty: true, showTokenIcon: false }
     );
-    dirChips.classList.add('natural-animation-readonly-chips');
-    Array.from(dirChips.querySelectorAll('button')).forEach((btn) => {
-      btn.disabled = true;
-      btn.tabIndex = -1;
-    });
+    dirChips.classList.add('natural-animation-direction-chips');
     dirWrap.appendChild(dirChips);
     grid.appendChild(dirWrap);
-
-    const dayNightWrap = document.createElement('div');
-    dayNightWrap.className = 'hint';
-    dayNightWrap.textContent = 'Day/Night Hours';
-    const hourState = new Set(parseDayNightHoursSpec(entry.show_in_day_night_hours));
-    const quickActions = document.createElement('div');
-    quickActions.className = 'inline-btn-row';
-    const allHoursBtn = document.createElement('button');
-    allHoursBtn.type = 'button';
-    allHoursBtn.className = 'ghost';
-    allHoursBtn.textContent = 'All';
-    allHoursBtn.addEventListener('click', () => {
-      hourState.clear();
-      for (let h = 0; h < 24; h += 1) hourState.add(h);
-      entry.show_in_day_night_hours = serializeDayNightHoursSpec(Array.from(hourState));
-      commit();
-      renderActiveTab({ preserveTabScroll: true });
-    });
-    const clearHoursBtn = document.createElement('button');
-    clearHoursBtn.type = 'button';
-    clearHoursBtn.className = 'ghost';
-    clearHoursBtn.textContent = 'None';
-    clearHoursBtn.addEventListener('click', () => {
-      hourState.clear();
-      entry.show_in_day_night_hours = '';
-      commit();
-      renderActiveTab({ preserveTabScroll: true });
-    });
-    quickActions.appendChild(allHoursBtn);
-    quickActions.appendChild(clearHoursBtn);
-    dayNightWrap.appendChild(quickActions);
-    const hoursGrid = document.createElement('div');
-    hoursGrid.className = 'natural-animation-hours-grid';
-    for (let h = 0; h < 24; h += 1) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'segmented-multi-btn';
-      btn.textContent = String(h);
-      btn.classList.toggle('active', hourState.has(h));
-      btn.addEventListener('click', () => {
-        if (hourState.has(h)) hourState.delete(h);
-        else hourState.add(h);
-        btn.classList.toggle('active', hourState.has(h));
-        entry.show_in_day_night_hours = serializeDayNightHoursSpec(Array.from(hourState));
-        commit();
-      });
-      hoursGrid.appendChild(btn);
-    }
-    dayNightWrap.appendChild(hoursGrid);
-    grid.appendChild(dayNightWrap);
 
     const seasonsWrap = document.createElement('div');
     seasonsWrap.className = 'hint';
@@ -49287,68 +49378,28 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     });
     seasonsWrap.appendChild(seasonChips);
     grid.appendChild(seasonsWrap);
-    card.appendChild(grid);
 
-    const extrasBlock = document.createElement('div');
-    extrasBlock.className = 'multi-value-group';
-    const extrasTitle = document.createElement('div');
-    extrasTitle.className = 'hint';
-    extrasTitle.textContent = 'Extra Parameters';
-    extrasBlock.appendChild(extrasTitle);
-    const extrasRows = document.createElement('div');
-    extrasRows.className = 'kv-grid';
-    const refreshExtras = (config = null) => {
-      commit(config);
-    };
-    (Array.isArray(entry.extras) ? entry.extras : []).forEach((extra) => {
-      const row = document.createElement('div');
-      row.className = 'kv-row compact';
-      const keyInput = document.createElement('input');
-      keyInput.type = 'text';
-      keyInput.placeholder = 'key';
-      keyInput.value = String(extra && extra.key || '');
-      wireAnimationGroupedUndo(keyInput, `extra-key:${idx}:${String(extra && extra.key || '')}`);
-      keyInput.addEventListener('input', () => {
-        extra.key = keyInput.value;
-        refreshExtras({ captureUndo: false });
-      });
-      const valueInput = document.createElement('input');
-      valueInput.type = 'text';
-      valueInput.placeholder = 'value';
-      valueInput.value = String(extra && extra.value || '');
-      wireAnimationGroupedUndo(valueInput, `extra-value:${idx}:${String(extra && extra.key || '')}`);
-      valueInput.addEventListener('input', () => {
-        extra.value = valueInput.value;
-        refreshExtras({ captureUndo: false });
-      });
-      const del = document.createElement('button');
-      del.type = 'button';
-      withRemoveIcon(del, ' Remove');
-      del.addEventListener('click', () => {
-        const extraIdx = entry.extras.indexOf(extra);
-        if (extraIdx >= 0) entry.extras.splice(extraIdx, 1);
-        refreshExtras();
-        row.remove();
-      });
-      row.appendChild(keyInput);
-      row.appendChild(valueInput);
-      row.appendChild(del);
-      extrasRows.appendChild(row);
+    const dayNightWrap = document.createElement('div');
+    dayNightWrap.className = 'hint natural-animation-day-night-row';
+    dayNightWrap.textContent = 'Day/Night Hours';
+    const hoursInput = document.createElement('input');
+    hoursInput.type = 'text';
+    hoursInput.placeholder = 'Example: 7-17, 22';
+    hoursInput.value = entry.show_in_day_night_hours || '';
+    wireAnimationGroupedUndo(hoursInput, `hours:${idx}`);
+    hoursInput.addEventListener('input', () => {
+      entry.show_in_day_night_hours = hoursInput.value;
+      commit({ captureUndo: false });
     });
-    extrasBlock.appendChild(extrasRows);
-    const addExtra = document.createElement('button');
-    addExtra.type = 'button';
-    addExtra.textContent = 'Add Extra Param';
-    addExtra.addEventListener('click', () => {
-      addExtraRow(entry, extrasRows, refreshExtras);
-    });
-    extrasBlock.appendChild(addExtra);
-    card.appendChild(extrasBlock);
+    dayNightWrap.appendChild(hoursInput);
+    grid.appendChild(dayNightWrap);
+
+    card.appendChild(grid);
 
     const remove = document.createElement('button');
     remove.type = 'button';
-    remove.className = 'danger';
-    remove.innerHTML = '<span class="btn-icon">🗑</span>Remove Animation';
+    remove.className = 'ghost';
+    withRemoveIcon(remove, ' Remove');
     remove.addEventListener('click', () => {
       specs.splice(idx, 1);
       commit();
@@ -49809,6 +49860,27 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
     return row;
   }
 
+  if (state.activeTab === 'animations' && effectiveField.key === 'type') {
+    const chips = makeSegmentedSingleValueEditor(
+      effectiveField.options || ANIMATION_TYPE_OPTIONS,
+      values[0] || '',
+      (nextValue) => {
+        const normalized = String(nextValue || '').trim();
+        setSingleFieldValue(section, effectiveField.key, normalized);
+        if (onValueChange) onValueChange(effectiveField.key, normalized);
+      },
+      effectiveField.key,
+      {
+        includeEmpty: !effectiveField.required,
+        showTokenIcon: false,
+        getLabel: formatAnimationTypeLabel
+      }
+    );
+    controlWrap.appendChild(chips);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
   if (state.activeTab === 'animations' && effectiveField.key === 'frame_time_seconds') {
     const parsed = Number.parseFloat(String(values[0] || '').trim());
     const min = 0.02;
@@ -49836,14 +49908,25 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
       valueLabel.textContent = `${seconds.toFixed(2)}s (${ms}ms)`;
     };
     syncValueLabel(sliderValue);
+    wireGroupedUndoSession(slider, {
+      key: buildSectionFieldEditSessionKey(section, effectiveField.key),
+      undoKey: getSectionItemUndoKey(section),
+      getValue: () => String(slider.value || ''),
+      commitOnChange: true
+    });
 
     slider.addEventListener('input', () => {
       const next = Number.parseFloat(slider.value);
       const seconds = Number.isFinite(next) ? next : fallback;
+      syncValueLabel(seconds);
+    });
+
+    slider.addEventListener('change', () => {
+      const next = Number.parseFloat(slider.value);
+      const seconds = Number.isFinite(next) ? next : fallback;
       const serialized = seconds.toFixed(2).replace(/\.00$/, '');
       syncValueLabel(seconds);
-      setSingleFieldValue(section, effectiveField.key, serialized);
-      if (onValueChange) onValueChange(effectiveField.key, serialized);
+      setSingleFieldValue(section, effectiveField.key, serialized, { captureUndo: false });
     });
 
     wrap.appendChild(label);
@@ -49927,7 +50010,7 @@ function deleteSelectedSection(tab, tabKey) {
 
 function renderSectionTab(tab, tabKey) {
   const schema = SECTION_SCHEMAS[tabKey];
-  const useInlineFilterActions = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders';
+  const useInlineFilterActions = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders' || tabKey === 'animations';
   const showQualityWarnings = shouldRunQualityChecks();
   const districtCompatibility = (showQualityWarnings && tabKey === 'districts') ? collectDistrictCompatibilityIssuesForTab(tab) : null;
   const districtIssueIndexes = (showQualityWarnings && tabKey === 'districts') ? collectDistrictIssueIndexes(tab, districtCompatibility) : null;
@@ -50063,6 +50146,7 @@ function renderSectionTab(tab, tabKey) {
     if (tabKey === 'districts') return () => loadDistrictRepresentativePreview(section, thumb, 35);
     if (tabKey === 'wonders') return () => loadWonderCompletedThumbnail(section, thumb, 44);
     if (tabKey === 'naturalWonders') return () => loadNaturalWonderThumbnail(section, thumb, 44);
+    if (tabKey === 'animations') return () => loadAnimationThumbnail(section, thumb, 44);
     return () => Promise.resolve(false);
   };
 
@@ -50122,6 +50206,7 @@ function renderSectionTab(tab, tabKey) {
         renderSectionBody({
           skipListRebuild: true,
           resetDetailScroll: !!options.resetDetailScroll,
+          preserveListScroll: !!options.preserveListScroll,
           fromScheduledSelectionRender: true
         });
       }, 0);
@@ -50222,7 +50307,8 @@ function renderSectionTab(tab, tabKey) {
     const after = captureViewSnapshot();
     updateSectionListActiveState(sectionIndex);
     scheduleSectionSelectionDetailRender({
-      resetDetailScroll: !!options.resetDetailScroll
+      resetDetailScroll: !!options.resetDetailScroll,
+      preserveListScroll: !!options.preserveListScroll
     });
     if (!state.isApplyingHistory && before && after && snapshotKey(before) !== snapshotKey(after)) {
       pushNavigationSnapshot(after);
@@ -50239,6 +50325,7 @@ function renderSectionTab(tab, tabKey) {
   }
   const skipListRebuild = options.skipListRebuild === true;
   const resetDetailScroll = options.resetDetailScroll === true;
+  const preserveListScroll = options.preserveListScroll === true;
 
   const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, Math.max(0, tab.model.sections.length - 1)));
   state.sectionSelection[tabKey] = selectedIndex;
@@ -50291,9 +50378,9 @@ function renderSectionTab(tab, tabKey) {
   pendingSectionThumbs = [];
   const addSectionListButton = ({ section, sectionIndex, sectionTitle, districtDisplay }) => {
     const itemBtn = document.createElement('button');
-    const showSectionThumb = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders';
+    const showSectionThumb = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders' || tabKey === 'animations';
     itemBtn.className = showSectionThumb ? 'entry-list-item district-entry-item' : 'entry-list-item no-thumb';
-    if (tabKey === 'wonders' || tabKey === 'naturalWonders') {
+    if (tabKey === 'wonders' || tabKey === 'naturalWonders' || tabKey === 'animations') {
       itemBtn.classList.add('section-entry-item-large-thumb');
     }
     itemBtn.dataset.index = String(sectionIndex);
@@ -50326,7 +50413,7 @@ function renderSectionTab(tab, tabKey) {
         issueBadge.title = 'This district has validation warnings.';
         itemBtn.appendChild(issueBadge);
       }
-    } else if (tabKey === 'wonders' || tabKey === 'naturalWonders') {
+    } else if (tabKey === 'wonders' || tabKey === 'naturalWonders' || tabKey === 'animations') {
       const hasSectionIssue = sectionHasIssue(sectionIndex);
       if (hasSectionIssue) itemBtn.classList.add('entry-item-has-issue');
       const thumb = document.createElement('span');
@@ -50335,7 +50422,8 @@ function renderSectionTab(tab, tabKey) {
       if (sectionIndex === selectedIndex) {
         thumb.dataset.thumbPending = '0';
         if (tabKey === 'wonders') loadWonderCompletedThumbnail(section, thumb, 44);
-        else loadNaturalWonderThumbnail(section, thumb, 44);
+        else if (tabKey === 'naturalWonders') loadNaturalWonderThumbnail(section, thumb, 44);
+        else loadAnimationThumbnail(section, thumb, 44);
       } else {
         thumb.dataset.thumbPending = '1';
         pendingSectionThumbs.push({
@@ -50361,14 +50449,14 @@ function renderSectionTab(tab, tabKey) {
       state.tabContentScrollTop = el.tabContent.scrollTop;
     });
     itemBtn.addEventListener('click', () => {
-      selectSection(sectionIndex);
+      selectSection(sectionIndex, { preserveListScroll: true });
     });
     if (!skipListRebuild) listPane.appendChild(itemBtn);
   };
   if (!skipListRebuild) {
     listPane.innerHTML = '';
     sectionEntries.forEach((entry) => addSectionListButton(entry));
-    scheduleHydrateVisibleSectionThumbs(28);
+    scheduleHydrateVisibleSectionThumbs(tabKey === 'animations' ? 8 : 28);
   } else {
     rebuildPendingSectionThumbQueue(sectionEntries);
     Array.from(listPane.querySelectorAll('.entry-list-item')).forEach((itemBtn) => {
@@ -50386,9 +50474,11 @@ function renderSectionTab(tab, tabKey) {
         loadWonderCompletedThumbnail(match.section, thumb, 44);
       } else if (tabKey === 'naturalWonders') {
         loadNaturalWonderThumbnail(match.section, thumb, 44);
+      } else if (tabKey === 'animations') {
+        loadAnimationThumbnail(match.section, thumb, 44);
       }
     });
-    scheduleHydrateVisibleSectionThumbs(20);
+    scheduleHydrateVisibleSectionThumbs(tabKey === 'animations' ? 8 : 20);
   }
 
   const savedDetailTop = state.sectionDetailScrollTop[tabKey] || 0;
@@ -50399,7 +50489,7 @@ function renderSectionTab(tab, tabKey) {
     empty.className = 'section-card';
     empty.innerHTML = `<p class="hint">No ${schema.entityName.toLowerCase()} entries yet.</p>`;
     const addFirst = document.createElement('button');
-    if (useCompactEntityActions) {
+    if (useInlineFilterActions) {
       addFirst.className = 'ghost action-add';
       addFirst.textContent = '+ Add';
     } else {
@@ -50512,7 +50602,7 @@ function renderSectionTab(tab, tabKey) {
       districts: new Set(['img_paths', 'custom_width', 'custom_height', 'vary_img_by_era', 'vary_img_by_culture', 'dependent_improvs', 'render_strategy']),
       wonders: new Set(['img_path', 'img_row', 'img_column', 'img_construct_row', 'img_construct_column', 'enable_img_alt_dir', 'img_alt_dir_construct_row', 'img_alt_dir_construct_column', 'img_alt_dir_row', 'img_alt_dir_column', 'custom_width', 'custom_height']),
       naturalWonders: new Set(['img_path', 'img_row', 'img_column', 'animation', 'custom_width', 'custom_height']),
-      animations: new Set(['ini_path', 'frame_time_seconds'])
+      animations: new Set(['ini_path', 'frame_time_seconds', 'direction'])
     };
     const previewFields = previewFieldKeysByTab[tabKey] || new Set();
 
@@ -50610,7 +50700,6 @@ function renderSectionTab(tab, tabKey) {
           return;
         }
         if (tabKey === 'naturalWonders' && key === 'adjacency_dir') {
-          syncNaturalWonderAnimationDirections(section, { captureUndo: false });
           refreshPreviews();
           renderActiveTab({ preserveTabScroll: true });
           return;
@@ -50642,8 +50731,9 @@ function renderSectionTab(tab, tabKey) {
       updateScrollTopFab();
       updateStickySearchRowShadow();
     }
-    if (!skipListRebuild) listPane.scrollTop = savedListTop;
+    if (!skipListRebuild || preserveListScroll) listPane.scrollTop = savedListTop;
     detailPane.scrollTop = resetDetailScroll ? 0 : savedDetailTop;
+    if (skipListRebuild && preserveListScroll) return;
     window.requestAnimationFrame(() => {
       if (!listPane.isConnected) return;
       const activeBtn = listPane.querySelector('.entry-list-item.active');
@@ -52896,7 +52986,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
 }
 
 function applySerializedReferenceEntrySnapshotToTabs(mergedTabs, snapshot) {
-  const tabKey = String(snapshot && snapshot.tabKey || '').trim().toLowerCase();
+  const tabKey = normalizeEditableTabKey(snapshot && snapshot.tabKey);
   const identity = String(snapshot && snapshot.identity || '').trim();
   const currentTab = mergedTabs && mergedTabs[tabKey];
   const currentEntries = currentTab && Array.isArray(currentTab.entries) ? currentTab.entries : null;
@@ -53004,7 +53094,7 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   refreshActiveReferenceListDirtyBadges();
   refreshActiveBiqRecordListDirtyBadges();
   const restoredReferenceTabKey = isSerializedReferenceEntrySnapshot
-    ? String(targetSnapshot && targetSnapshot.tabKey || '').trim().toLowerCase()
+    ? normalizeEditableTabKey(targetSnapshot && targetSnapshot.tabKey)
     : '';
   const shouldDeferActiveTabRenderToTechTreeModal = (
     isSerializedReferenceEntrySnapshot

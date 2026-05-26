@@ -47,15 +47,7 @@ test('C3X base manifest extras are limited to explicit forward-compat keys', () 
   const manifestKeys = Object.keys(C3X_BASE_MANIFEST);
   const extras = manifestKeys.filter((key) => !defaultSet.has(key)).sort();
 
-  assert.deepEqual(extras, [
-    'elapsed_minutes_per_season_transition',
-    'enable_custom_animations',
-    'enabled_seasons',
-    'fixed_turns_per_season',
-    'pinned_season_for_seasonal_cycle',
-    'seasonal_cycle_mode',
-    'transition_season_on_day_night_hour'
-  ]);
+  assert.deepEqual(extras, []);
 });
 
 test('C3X base manifest type classifications match shipped default values', () => {
@@ -124,6 +116,7 @@ test('C3X base manifest string families stay explicit and audited', () => {
     resource_perfume: 'name_amount_list',
     sea_retreat_rules: 'segmented_enum',
     seasonal_cycle_mode: 'segmented_enum',
+    show_tile_destruct_animation_after: 'bitfield_list',
     special_defensive_bombard_rules: 'bitfield_list',
     special_helicopter_rules: 'bitfield_list',
     special_zone_of_control_rules: 'bitfield_list',
@@ -154,6 +147,7 @@ test('C3X base manifest enum, bitfield, and reference metadata stays source-back
   assert.deepEqual(C3X_BASE_MANIFEST.land_transport_rules.options, ['load-onto-boat', 'join-army', 'no-defense-from-inside', 'no-escape']);
   assert.deepEqual(C3X_BASE_MANIFEST.special_helicopter_rules.options, ['allow-on-carriers', 'passenger-airdrop', 'no-defense-from-inside', 'no-escape']);
   assert.deepEqual(C3X_BASE_MANIFEST.enabled_seasons.options, ['summer', 'fall', 'winter', 'spring']);
+  assert.deepEqual(C3X_BASE_MANIFEST.show_tile_destruct_animation_after.options, ['bombard', 'bomb', 'pillage']);
   assert.deepEqual(C3X_BASE_MANIFEST.override_no_ai_patrol.options, ['none', 'one', 'zero']);
   assert.deepEqual(C3X_BASE_MANIFEST.override_barbarian_activity_level_for_scenario_maps.options, ['none', 'No Barbarians', 'Sedentary', 'Roaming', 'Restless', 'Raging', 'Random']);
 

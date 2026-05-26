@@ -300,22 +300,40 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   // Civ3 FlicAnimHeader at byte 88 (reserved3): num_anims at +8, anim_length at +10.
   const civ3NumAnims = b.length >= 98 ? u16(b, 96) : 0;
   const civ3AnimLength = b.length >= 100 ? u16(b, 98) : 0;
+  const requestedDirectionIndex = Number.isFinite(Number(options.directionIndex))
+    ? Math.trunc(Number(options.directionIndex))
+    : null;
   // Clamp directionIndex to available directions so single-direction FLCs still yield a frame.
-  const safeDir = (options.directionIndex > 0 && civ3NumAnims > 1)
-    ? Math.min(options.directionIndex, civ3NumAnims - 1)
+  const safeDir = (requestedDirectionIndex != null && requestedDirectionIndex > 0 && civ3NumAnims > 1)
+    ? Math.min(requestedDirectionIndex, civ3NumAnims - 1)
     : 0;
   // Each direction block = anim_length animation frames + 1 ring frame = (anim_length + 1) total.
   // Using anim_length alone undershoots by `safeDir` frames (one ring frame per skipped direction).
   const startFrame = (safeDir > 0 && civ3AnimLength > 0)
     ? (civ3AnimLength + 1) * safeDir
     : 0;
+  const requestedFrameOffset = (() => {
+    if (String(options.frameOffset || '').trim().toLowerCase() === 'middle' && civ3AnimLength > 0) {
+      return Math.max(0, Math.floor((civ3AnimLength - 1) / 2));
+    }
+    const raw = Number(options.frameOffset);
+    if (!Number.isFinite(raw) || raw <= 0 || civ3AnimLength <= 0) return 0;
+    return Math.max(0, Math.min(civ3AnimLength - 1, Math.trunc(raw)));
+  })();
+  const firstFrame = startFrame + requestedFrameOffset;
   // FLC (0xAF12) uses milliseconds; legacy FLI (0xAF11) uses 1/70s ticks.
   const speedField = (magic === 0xAF11)
     ? Math.round((speedRaw * 1000) / 70)
     : speedRaw;
-  const frameLimit = Number.isFinite(maxFrames) && maxFrames > 0
+  const directionFrameLimit = requestedDirectionIndex != null && civ3AnimLength > 0
+    ? Math.max(1, civ3AnimLength - requestedFrameOffset)
+    : null;
+  const explicitFrameLimit = Number.isFinite(maxFrames) && maxFrames > 0
     ? Math.floor(maxFrames)
-    : Math.max(1, Math.min(240, headerFrameCount + 1));
+    : null;
+  const frameLimit = explicitFrameLimit
+    ? (directionFrameLimit ? Math.min(explicitFrameLimit, directionFrameLimit) : explicitFrameLimit)
+    : (directionFrameLimit || Math.max(1, Math.min(240, headerFrameCount + 1)));
   const palette = new Uint8Array(256 * 3);
   for (let i = 0; i < 256; i += 1) {
     palette[i * 3] = i;
@@ -374,7 +392,7 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
       }
 
       if (touched) {
-        if (frameIdx >= startFrame) {
+        if (frameIdx >= firstFrame) {
           frames.push(new Uint8Array(frame));
           if (frames.length >= frameLimit) {
             break;
@@ -444,7 +462,7 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
     frameCountHeader: headerFrameCount,
     civ3NumAnims,
     civ3AnimLength,
-    debug: { chunkCounts, maxFramesRequested: frameLimit, framesDecoded: frames.length }
+    debug: { chunkCounts, maxFramesRequested: frameLimit, framesDecoded: frames.length, directionIndex: safeDir, startFrame: firstFrame }
   };
 }
 
@@ -927,7 +945,17 @@ function getPreview(request) {
       log.warn('getPreview', `animationIni: FLC not found for INI ${log.rel(iniAbs)}`);
       return { ok: false, error: 'FLC from INI not found' };
     }
-    return { ok: true, ...decodeByPath(flc) };
+    const directionIndex = Number.isFinite(Number(request.directionIndex))
+      ? Math.trunc(Number(request.directionIndex))
+      : null;
+    const options = directionIndex == null ? {} : { directionIndex };
+    if (Number.isFinite(Number(request.maxFrames)) && Number(request.maxFrames) > 0) {
+      options.maxFrames = Math.floor(Number(request.maxFrames));
+    }
+    if (String(request.frameOffset || '').trim()) {
+      options.frameOffset = String(request.frameOffset || '').trim();
+    }
+    return { ok: true, ...decodeByPath(flc, null, options) };
   }
 
   if (kind === 'naturalWonderAnimationSpec') {

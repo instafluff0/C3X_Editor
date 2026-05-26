@@ -1,3 +1,23 @@
+* RELEASE 28.0.0
+- Added R28 base manifest coverage for tile destruction animation settings so valid shipped keys no longer show unknown C3X warnings.
+- Updated the default C3X feature-gate setting to R28 so R28-only UI such as Tile Animations is shown by default after loading settings.
+- Fixed the empty Tile Animations tab state so C3X installs without `default.tile_animations.txt` still render the editor shell instead of blanking the UI.
+- Fixed Tile Animations previews so they default to the southwest FLC direction and render at native pixel size inside a consistent preview frame.
+- Changed Tile Animations INI picking to store paths relative to `Art/Animations` and added animation list thumbnails from the middle preview frame with magenta stripped.
+- Added the destruction animation types from C3X tile animation configs, moved Frame Time directly under INI Path, and changed Animation Type to segmented controls.
+- Kept Tile Animations thumbnail loading lazy and lighter by decoding only one middle FLC frame per thumbnail with lower concurrent hydration.
+- Updated Natural Wonder animation editing to label multiple animation items, normalize INI paths relative to `Art/Animations`, and align INI, frame time, and offset controls more compactly.
+- Simplified Natural Wonder animation cards by removing redundant helper text and replacing the visual Day/Night Hours picker with a direct range/list input.
+- Made Natural Wonder animation direction independently editable, moved Day/Night Hours below Seasons, removed the extra-parameter UI, and matched the standard remove-button styling.
+- Fixed Undo for camelCase sectioned tabs such as Natural Wonders so animation edits use the fast scoped restore path, and grouped Tile Animation frame-time slider undo capture.
+- Refreshed Tile Animation previews when Direction changes and passed Natural Wonder animation Direction through to the FLC preview decoder.
+- Kept the Tile Animation FLC preview mounted while dragging Frame Time, matching Natural Wonder animation timing behavior.
+- Switched Tile Animations to the shared section Add/Delete action row used by Districts and Natural Wonders.
+- Preserved section-list scroll position when clicking between Tile Animation entries.
+- Added quality checks for Tile Animation and Natural Wonder animation Day/Night Hours syntax.
+- Restyled Tile Animation adjacency rules with terrain thumbnail chips and direction chips instead of dropdowns.
+- Fixed Tile Animation quality checks to accept decimal Frame Time values such as 0.14 seconds.
+
 * RELEASE 27.12.1
 - Fixed import/add modal field alignment so Name and Key inputs stay top-aligned even when the Key helper text is visible.
 - Fixed the main Units tab so its sort menu no longer exposes the Unit Table-only `Manual` mode, stale saved `Manual` sort state falls back to in-game order, unsaved new Units stay surfaced before Save, and no-reload saves keep synthetic era-specific unit rows behind real BIQ unit records.
