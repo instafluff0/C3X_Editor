@@ -1,3 +1,7 @@
+* RELEASE 27.12.1.0
+- Added Worker Jobs to the Techs Enables board, editing TFRM required-technology references so techs like Steam Power can show and control worker jobs such as Railroad while reusing the Terrain worker-job thumbnails.
+- Scoped the Great Wall auto-build wonder-name quality warning to active Great Wall auto-build configs, requiring districts, Great Wall districts, and auto-build to be enabled.
+
 * RELEASE 27.12.1
 - Made map resize shift or trim C3X scenario districts and named tiles alongside BIQ map entities.
 

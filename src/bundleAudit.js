@@ -399,6 +399,12 @@ function getBaseRowValue(bundle, key) {
   return match ? String(match.value || '').trim() : '';
 }
 
+function isGreatWallAutoBuildReferenceActive(bundle) {
+  return parseConfigBool(getBaseRowValue(bundle, 'enable_districts'))
+    && parseConfigBool(getBaseRowValue(bundle, 'enable_great_wall_districts'))
+    && parseConfigBool(getBaseRowValue(bundle, 'auto_build_great_wall_around_territory'));
+}
+
 function getSectionDisplayName(section, index, fallbackLabel) {
   const primary = normalizeConfigToken(getFieldValue(section, 'label'))
     || normalizeConfigToken(getFieldValue(section, 'name'));
@@ -977,6 +983,7 @@ function auditBaseReferenceCompatibility(bundle, result) {
     }
 
     if (key === 'great_wall_auto_build_wonder_name') {
+      if (!isGreatWallAutoBuildReferenceActive(bundle)) return;
       const wonderName = normalizeConfigToken(value);
       if (!wonderName) return;
       const regularLookup = normalizeReferenceLookup(wonderName);

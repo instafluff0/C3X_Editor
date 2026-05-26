@@ -57,8 +57,13 @@ function loadPreviewOptionHelpers(bundle) {
     'getCivilizationAnimationRows',
     'getTechnologyUnlockTechName',
     'getReferenceEntriesForUnlockGroup',
+    'isTechnologyUnlockBiqStructureGroup',
+    'getTechnologyUnlockDirtyTabKey',
+    'getBiqStructureRecordsForUnlockGroup',
     'getDistrictSectionsForUnlockGroup',
+    'getTechnologyUnlockEntriesForSpec',
     'getTechnologyUnlockEntryIndex',
+    'getTechnologyUnlockEntryIndexForSpec',
     'isTechnologyPrerequisiteUnlockGroup',
     'getTechnologyPrerequisiteFieldKeys',
     'getTechnologyPrerequisiteFieldsForUnlockGroup',
@@ -68,6 +73,8 @@ function loadPreviewOptionHelpers(bundle) {
     'getTechnologyUnlockOptions',
     'getDistrictAdvancePrereqTokens',
     'setDistrictAdvancePrereqTokens',
+    'getTechnologyUnlockFieldByBaseKey',
+    'ensureTechnologyUnlockFieldByBaseKey',
     'getTechnologyUnlockSelectedEntries',
     'setTechnologyUnlockMembership'
   ];
@@ -92,6 +99,14 @@ function loadPreviewOptionHelpers(bundle) {
     getFieldByBaseKey: (record, baseKey) => {
       const fields = Array.isArray(record && record.fields) ? record.fields : [];
       return fields.find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === String(baseKey || '').toLowerCase()) || null;
+    },
+    getBiqSectionFromTab: (tab, code) => {
+      const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+      return sections.find((section) => String(section && section.code || '').toUpperCase() === String(code || '').toUpperCase()) || null;
+    },
+    getDisplayBiqRecordName: (_sectionCode, record, idxFallback = 0) => {
+      const idx = Number.isFinite(Number(record && record.index)) ? Number(record.index) : Number(idxFallback) || 0;
+      return String(record && record.name || '').trim() || `${_sectionCode} ${idx + 1}`;
     },
     ensureSyntheticReferenceEntryForBiqRecord: (_tabKey, _sectionCode, rec) => ({
       name: String(rec && rec.name || ''),
@@ -152,10 +167,10 @@ function loadPreviewOptionHelpers(bundle) {
       const cleanTab = sandbox.cleanTabs && sandbox.cleanTabs[tabKey];
       const sections = currentTab && currentTab.model && Array.isArray(currentTab.model.sections)
         ? currentTab.model.sections
-        : [];
+        : (Array.isArray(currentTab && currentTab.sections) ? currentTab.sections : []);
       const cleanSections = cleanTab && cleanTab.model && Array.isArray(cleanTab.model.sections)
         ? cleanTab.model.sections
-        : [];
+        : (Array.isArray(cleanTab && cleanTab.sections) ? cleanTab.sections : []);
       let count = 0;
       sections.forEach((section, idx) => {
         if (JSON.stringify(section) !== JSON.stringify(cleanSections[idx] || null)) count += 1;

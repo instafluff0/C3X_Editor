@@ -862,7 +862,9 @@ test('auditLoadedBundle reports C3X base references that do not match loaded rul
       base: {
         rows: [
           { key: 'day_night_cycle_mode', value: 'off' },
-          { key: 'enable_districts', value: 'false' },
+          { key: 'enable_districts', value: 'true' },
+          { key: 'enable_great_wall_districts', value: 'true' },
+          { key: 'auto_build_great_wall_around_territory', value: 'true' },
           { key: 'buildings_generating_resources', value: '["Hollywood": local yields "Films"]' },
           { key: 'building_prereqs_for_units', value: '["Barracks": "Warrior" "Ghost Unit"]' },
           { key: 'production_perfume', value: '["Temple": 20, "Archer": -50%, "Missing Producer": 10]' },
@@ -915,6 +917,52 @@ test('auditLoadedBundle reports C3X base references that do not match loaded rul
   assert.ok(messages.some((msg) => /can_bombard_only_sea_tiles.+Missing Boat/.test(msg)));
   assert.ok(messages.some((msg) => /great_wall_auto_build_wonder_name.+Hollywood/.test(msg)));
   assert.equal(messages.some((msg) => /buildings_generating_resources.+Films/.test(msg)), false);
+});
+
+test('auditLoadedBundle skips Great Wall auto-build wonder reference when district features are inactive', () => {
+  const c3xRoot = mkTmpDir();
+  const baseRows = [
+    { key: 'day_night_cycle_mode', value: 'off' },
+    { key: 'great_wall_auto_build_wonder_name', value: '"Hollywood"' }
+  ];
+  const tabs = (rows) => ({
+    base: { rows },
+    civilizations: { entries: [] },
+    technologies: { entries: [] },
+    resources: { entries: [] },
+    governments: { entries: [] },
+    improvements: {
+      entries: [
+        { name: 'Great Wall', improvementKind: 'wonder' }
+      ]
+    },
+    units: { entries: [] },
+    districts: { model: { sections: [] } },
+    wonders: { model: { sections: [] } },
+    naturalWonders: { model: { sections: [] } }
+  });
+
+  [
+    [
+      { key: 'enable_districts', value: 'false' },
+      { key: 'enable_great_wall_districts', value: 'true' },
+      { key: 'auto_build_great_wall_around_territory', value: 'true' }
+    ],
+    [
+      { key: 'enable_districts', value: 'true' },
+      { key: 'enable_great_wall_districts', value: 'false' },
+      { key: 'auto_build_great_wall_around_territory', value: 'true' }
+    ],
+    [
+      { key: 'enable_districts', value: 'true' },
+      { key: 'enable_great_wall_districts', value: 'true' },
+      { key: 'auto_build_great_wall_around_territory', value: 'false' }
+    ]
+  ].forEach((featureRows) => {
+    const bundle = makeBundle(c3xRoot, { tabs: tabs([...baseRows, ...featureRows]) });
+    const messages = (((auditLoadedBundle(bundle).tabs.base || {}).general) || []).map((entry) => String(entry.message || ''));
+    assert.equal(messages.some((msg) => /great_wall_auto_build_wonder_name.+Hollywood/.test(msg)), false);
+  });
 });
 
 test('auditLoadedBundle recognizes shipped exclude_passengers_from_stealth_attack key', () => {
