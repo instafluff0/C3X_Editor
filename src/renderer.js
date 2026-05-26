@@ -919,10 +919,12 @@ const SECTION_SCHEMAS = {
       { key: 'img_paths', label: 'Image Paths', desc: 'List of district PCX files.', type: 'list' },
       { key: 'img_column_count', label: 'Image Column Count', desc: 'Override sprite columns per district image.', type: 'number', minRelease: 'R27' },
       { key: 'render_strategy', label: 'Render Strategy', desc: 'Choose whether art columns represent build count or individual buildings.', type: 'select', options: ['by-count', 'by-building'], minRelease: 'R27' },
+      { key: 'type', label: 'Type', desc: 'Choose whether this behaves as a city-range district or a worked-tile improvement.', type: 'select', options: ['district', 'tile-improvement'], minRelease: 'R28' },
       { key: 'custom_width', label: 'Custom Width', desc: 'Optional custom district sprite width.', type: 'number', minRelease: 'R27' },
       { key: 'custom_height', label: 'Custom Height', desc: 'Optional custom district sprite height.', type: 'number', minRelease: 'R27' },
       { key: 'x_offset', label: 'X Offset', desc: 'Horizontal pixel offset for district art.', type: 'number', minRelease: 'R27' },
       { key: 'y_offset', label: 'Y Offset', desc: 'Vertical pixel offset for district art.', type: 'number', minRelease: 'R27' },
+      { key: 'animation', label: 'Animation Items', desc: 'Custom FLC animations shown over completed districts.', type: 'text', multi: true, minRelease: 'R28' },
       { key: 'btn_tile_sheet_row', label: 'Button Tile Row', desc: 'Row index in district button sheet.', type: 'number' },
       { key: 'btn_tile_sheet_column', label: 'Button Tile Column', desc: 'Column index in district button sheet.', type: 'number' },
       { key: 'advance_prereqs', label: 'Tech Prerequisites', desc: 'List of required advances.', type: 'list' },
@@ -9432,7 +9434,11 @@ const NATURAL_WONDER_ANIMATION_SPEC_ALIASES = new Map([
   ['show_in_day_night_hours', 'show_in_day_night_hours'],
   ['day_night_hours', 'show_in_day_night_hours'],
   ['show_in_seasons', 'show_in_seasons'],
-  ['seasons', 'show_in_seasons']
+  ['seasons', 'show_in_seasons'],
+  ['cultures', 'show_in_cultures'],
+  ['show_in_cultures', 'show_in_cultures'],
+  ['eras', 'show_in_eras'],
+  ['show_in_eras', 'show_in_eras']
 ]);
 
 function parseNaturalWonderAnimationSpec(spec) {
@@ -9444,6 +9450,8 @@ function parseNaturalWonderAnimationSpec(spec) {
     direction: '',
     show_in_day_night_hours: '',
     show_in_seasons: '',
+    show_in_cultures: '',
+    show_in_eras: '',
     extras: []
   };
   const chunks = String(spec || '')
@@ -9483,8 +9491,11 @@ function parseNaturalWonderAnimationSpec(spec) {
   return parsed;
 }
 
-function serializeNaturalWonderAnimationSpec(spec) {
+function serializeNaturalWonderAnimationSpec(spec, options = {}) {
   const source = spec && typeof spec === 'object' ? spec : {};
+  const includeDirection = !(options && options.includeDirection === false);
+  const includeCultures = !!(options && options.includeCultures) || !!String(source.show_in_cultures || '').trim();
+  const includeEras = !!(options && options.includeEras) || !!String(source.show_in_eras || '').trim();
   const parts = [];
   const pushIf = (key, value) => {
     const clean = String(value || '').trim();
@@ -9492,12 +9503,15 @@ function serializeNaturalWonderAnimationSpec(spec) {
     parts.push(`${key}=${clean}`);
   };
   pushIf('ini', source.ini);
+  pushIf('hours', source.show_in_day_night_hours);
+  pushIf('seasons', source.show_in_seasons);
+  if (includeCultures) pushIf('cultures', source.show_in_cultures);
+  if (includeEras) pushIf('eras', source.show_in_eras);
   pushIf('frame_time_seconds', source.frame_time_seconds);
-  pushIf('x_offset', source.x_offset);
-  pushIf('y_offset', source.y_offset);
-  pushIf('direction', source.direction);
-  pushIf('show_in_day_night_hours', source.show_in_day_night_hours);
-  pushIf('show_in_seasons', source.show_in_seasons);
+  const xOffset = String(source.x_offset || '').trim();
+  const yOffset = String(source.y_offset || '').trim();
+  if (xOffset || yOffset) parts.push(`offsets=${xOffset || '0'},${yOffset || '0'}`);
+  if (includeDirection) pushIf('direction', source.direction);
   const extras = Array.isArray(source.extras) ? source.extras : [];
   extras.forEach((extra) => {
     const key = String(extra && extra.key || '').trim();
@@ -9573,6 +9587,11 @@ function getPreviewDelayMs(tabKey, section, title) {
     if (Number.isFinite(seconds) && seconds > 0) return Math.max(16, Math.round(seconds * 1000));
   }
   if (tabKey === 'naturalWonders' && title === 'Animation') {
+    const spec = getFieldValuesRaw(section, 'animation').find((item) => getNaturalWonderAnimationIniPath(item)) || '';
+    const seconds = parseFrameSecondsFromSpec(spec);
+    if (seconds) return Math.max(16, Math.round(seconds * 1000));
+  }
+  if (tabKey === 'districts' && title === 'Animation') {
     const spec = getFieldValuesRaw(section, 'animation').find((item) => getNaturalWonderAnimationIniPath(item)) || '';
     const seconds = parseFrameSecondsFromSpec(spec);
     if (seconds) return Math.max(16, Math.round(seconds * 1000));
@@ -10269,9 +10288,13 @@ function collectReferencedAnimationIniEntries() {
   const out = [];
   const tabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
   const animationsTab = tabs.animations;
+  const districtsTab = tabs.districts;
   const naturalWondersTab = tabs.naturalWonders;
   const animationSections = Array.isArray(animationsTab && animationsTab.model && animationsTab.model.sections)
     ? animationsTab.model.sections
+    : [];
+  const districtSections = Array.isArray(districtsTab && districtsTab.model && districtsTab.model.sections)
+    ? districtsTab.model.sections
     : [];
   const naturalSections = Array.isArray(naturalWondersTab && naturalWondersTab.model && naturalWondersTab.model.sections)
     ? naturalWondersTab.model.sections
@@ -10284,6 +10307,20 @@ function collectReferencedAnimationIniEntries() {
         sourceCandidates: resolveAnimationIniReferenceCandidates(rawIniPath),
         note: 'Tile animation INI source',
         animationIni: true
+      });
+    });
+  }
+  if (districtSections.length > 0) {
+    districtSections.forEach((section) => {
+      const specs = getFieldValuesRaw(section, 'animation');
+      specs.forEach((spec) => {
+        const rawIniPath = getNaturalWonderAnimationIniPath(spec);
+        if (!rawIniPath) return;
+        out.push({
+          sourceCandidates: resolveAnimationIniReferenceCandidates(rawIniPath),
+          note: 'District animation INI source',
+          animationIni: true
+        });
       });
     });
   }
@@ -11464,6 +11501,9 @@ const DISTRICT_CULTURE_OPTIONS = [
   'asian'
 ];
 
+const DISTRICT_ANIMATION_CULTURE_OPTIONS = ['AMER', 'EURO', 'ROMAN', 'MIDEAST', 'ASIAN'];
+const DISTRICT_ANIMATION_ERA_OPTIONS = ['ancient', 'middle', 'industrial', 'modern'];
+
 function getConfiguredSectionListValues(tabKeys, fieldKey) {
   const seen = new Set();
   (Array.isArray(tabKeys) ? tabKeys : []).forEach((tabKey) => {
@@ -11620,7 +11660,21 @@ function orderSectionFieldsByDocs(schemaFields, fieldDocs) {
 function applyPreferredSectionFieldOrder(tabKey, orderedFields) {
   const fields = Array.isArray(orderedFields) ? orderedFields.slice() : [];
   let priorityByKey = null;
-  if (tabKey === 'wonders') {
+  if (tabKey === 'districts') {
+    priorityByKey = new Map([
+      ['name', 0],
+      ['display_name', 1],
+      ['tooltip', 2],
+      ['img_paths', 3],
+      ['img_column_count', 4],
+      ['render_strategy', 5],
+      ['custom_width', 6],
+      ['custom_height', 7],
+      ['x_offset', 8],
+      ['y_offset', 9],
+      ['animation', 10]
+    ]);
+  } else if (tabKey === 'wonders') {
     priorityByKey = new Map([
       ['name', 0],
       ['img_path', 1],
@@ -48602,6 +48656,32 @@ function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForF
   });
 }
 
+function renderSectionAnimationPreviewCard(section, previewWrap, tabKey, isCurrent = null) {
+  if (!previewWrap) return;
+  const firstAnimationSpec = getFieldValuesRaw(section, 'animation').find((spec) => getNaturalWonderAnimationIniPath(spec));
+  if (!firstAnimationSpec) return;
+  const animationSpec = parseNaturalWonderAnimationSpec(firstAnimationSpec);
+  const iniPath = getNaturalWonderAnimationIniPath(firstAnimationSpec);
+  const directionIndex = resolveAnimationDirectionIndexFromValue(animationSpec.direction);
+  const stillCurrent = typeof isCurrent === 'function' ? isCurrent : (() => true);
+  window.c3xManager.getPreview({
+    kind: 'animationIni',
+    c3xPath: state.settings.c3xPath,
+    iniPath,
+    directionIndex
+  }).then((res) => {
+    if (!stillCurrent() || !res || !res.ok || !previewWrap.isConnected) return;
+    renderRgbaPreview(
+      previewWrap,
+      res,
+      'Animation',
+      () => getPreviewDelayMs(tabKey, section, 'Animation'),
+      Math.max(120, Math.round(state.previewSize * 0.72)),
+      { skipBlankMagentaFrames: true }
+    );
+  }).catch(() => {});
+}
+
 function normalizeOptionLookupToken(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -49137,8 +49217,7 @@ function renderAnimationAdjacentToEditor(section, onValueChange) {
         },
         'adjacent_to',
         {
-          includeEmpty: true,
-          emptyLabel: 'Terrain...',
+          includeEmpty: false,
           iconRenderer: (optionName) => makeTerrainOptionPreviewIcon(optionName)
         }
       ));
@@ -49198,9 +49277,18 @@ function renderAnimationAdjacentToEditor(section, onValueChange) {
   return wrap;
 }
 
-function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
+function renderNaturalWonderAnimationSpecsEditor(section, onValueChange, config = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'natural-animation-spec-list';
+  const includeDirection = !(config && config.includeDirection === false);
+  const includeCultures = !!(config && config.includeCultures);
+  const includeEras = !!(config && config.includeEras);
+  const emptyText = String(config && config.emptyText || 'No animation specs configured.');
+  const serializeOptions = {
+    includeDirection,
+    includeCultures,
+    includeEras
+  };
   const rawSpecs = getFieldValuesRaw(section, 'animation');
   const specs = rawSpecs.map((raw) => parseNaturalWonderAnimationSpec(raw));
   specs.forEach((entry) => {
@@ -49219,7 +49307,7 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
   const commit = (config = null) => {
     const shouldNotify = !(config && config.notify === false);
     const serialized = specs
-      .map((entry) => serializeNaturalWonderAnimationSpec(entry))
+      .map((entry) => serializeNaturalWonderAnimationSpec(entry, serializeOptions))
       .map((entry) => String(entry || '').trim())
       .filter(Boolean);
     setMultiFieldValues(section, 'animation', serialized, {
@@ -49228,10 +49316,26 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     if (shouldNotify && onValueChange) onValueChange('animation', serialized.join('\n'));
   };
 
+  const makeEmptyAnimationSpec = () => ({
+    ini: '',
+    frame_time_seconds: '',
+    x_offset: '',
+    y_offset: '',
+    direction: '',
+    show_in_day_night_hours: '',
+    show_in_seasons: '',
+    show_in_cultures: '',
+    show_in_eras: '',
+    extras: []
+  });
+
+  const renderSpecs = () => {
+  wrap.innerHTML = '';
+
   if (specs.length === 0) {
     const hint = document.createElement('div');
     hint.className = 'hint';
-    hint.textContent = 'No animation specs configured.';
+    hint.textContent = emptyText;
     wrap.appendChild(hint);
   }
 
@@ -49349,22 +49453,24 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     offsetsRow.appendChild(yWrap);
     grid.appendChild(offsetsRow);
 
-    const dirWrap = document.createElement('div');
-    dirWrap.className = 'hint';
-    dirWrap.textContent = 'Direction';
-    const dirChips = makeSegmentedSingleValueEditor(
-      DIRECTION_OPTIONS,
-      entry.direction || '',
-      (nextValue) => {
-        entry.direction = nextValue;
-        commit();
-      },
-      'direction',
-      { includeEmpty: true, showTokenIcon: false }
-    );
-    dirChips.classList.add('natural-animation-direction-chips');
-    dirWrap.appendChild(dirChips);
-    grid.appendChild(dirWrap);
+    if (includeDirection) {
+      const dirWrap = document.createElement('div');
+      dirWrap.className = 'hint';
+      dirWrap.textContent = 'Direction';
+      const dirChips = makeSegmentedSingleValueEditor(
+        DIRECTION_OPTIONS,
+        entry.direction || '',
+        (nextValue) => {
+          entry.direction = nextValue;
+          commit();
+        },
+        'direction',
+        { includeEmpty: true, showTokenIcon: false }
+      );
+      dirChips.classList.add('natural-animation-direction-chips');
+      dirWrap.appendChild(dirChips);
+      grid.appendChild(dirWrap);
+    }
 
     const seasonsWrap = document.createElement('div');
     seasonsWrap.className = 'hint';
@@ -49378,6 +49484,36 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     });
     seasonsWrap.appendChild(seasonChips);
     grid.appendChild(seasonsWrap);
+
+    if (includeCultures) {
+      const culturesWrap = document.createElement('div');
+      culturesWrap.className = 'hint';
+      culturesWrap.textContent = 'Cultures';
+      const cultureValues = tokenizeListPreservingQuotes(entry.show_in_cultures || '').map((v) => String(v || '').trim()).filter(Boolean);
+      const cultureChips = makeSegmentedMultiValueEditor(DISTRICT_ANIMATION_CULTURE_OPTIONS, cultureValues, (nextValues) => {
+        entry.show_in_cultures = nextValues.join(', ');
+        commit();
+      }, 'animation_cultures', {
+        showTokenIcon: false
+      });
+      culturesWrap.appendChild(cultureChips);
+      grid.appendChild(culturesWrap);
+    }
+
+    if (includeEras) {
+      const erasWrap = document.createElement('div');
+      erasWrap.className = 'hint';
+      erasWrap.textContent = 'Eras';
+      const eraValues = tokenizeListPreservingQuotes(entry.show_in_eras || '').map((v) => String(v || '').trim()).filter(Boolean);
+      const eraChips = makeSegmentedMultiValueEditor(DISTRICT_ANIMATION_ERA_OPTIONS, eraValues, (nextValues) => {
+        entry.show_in_eras = nextValues.join(', ');
+        commit();
+      }, 'animation_eras', {
+        showTokenIcon: false
+      });
+      erasWrap.appendChild(eraChips);
+      grid.appendChild(erasWrap);
+    }
 
     const dayNightWrap = document.createElement('div');
     dayNightWrap.className = 'hint natural-animation-day-night-row';
@@ -49403,7 +49539,7 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
     remove.addEventListener('click', () => {
       specs.splice(idx, 1);
       commit();
-      renderActiveTab({ preserveTabScroll: true });
+      renderSpecs();
     });
     card.appendChild(remove);
     wrap.appendChild(card);
@@ -49413,21 +49549,13 @@ function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
   add.type = 'button';
   add.textContent = 'Add Animation';
   add.addEventListener('click', () => {
-    specs.push({
-      ini: '',
-      frame_time_seconds: '',
-      x_offset: '',
-      y_offset: '',
-      direction: '',
-      show_in_day_night_hours: '',
-      show_in_seasons: '',
-      extras: []
-    });
-    commit();
-    renderActiveTab({ preserveTabScroll: true });
+    specs.push(makeEmptyAnimationSpec());
+    renderSpecs();
   });
   wrap.appendChild(add);
+  };
 
+  renderSpecs();
   return wrap;
 }
 
@@ -49579,6 +49707,17 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
 
   if (state.activeTab === 'naturalWonders' && effectiveField.key === 'animation') {
     controlWrap.appendChild(renderNaturalWonderAnimationSpecsEditor(section, onValueChange));
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'districts' && effectiveField.key === 'animation') {
+    controlWrap.appendChild(renderNaturalWonderAnimationSpecsEditor(section, onValueChange, {
+      includeDirection: false,
+      includeCultures: true,
+      includeEras: true,
+      emptyText: 'No district animation specs configured.'
+    }));
     row.appendChild(controlWrap);
     return row;
   }
@@ -49791,7 +49930,7 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
     return row;
   }
 
-  const districtSingleChoiceKeys = new Set(['render_strategy', 'ai_build_strategy']);
+  const districtSingleChoiceKeys = new Set(['render_strategy', 'type', 'ai_build_strategy']);
   if (state.activeTab === 'districts' && districtSingleChoiceKeys.has(effectiveField.key) && Array.isArray(effectiveField.options) && effectiveField.options.length > 0) {
     const chips = makeSegmentedSingleValueEditor(
       effectiveField.options,
@@ -50575,9 +50714,10 @@ function renderSectionTab(tab, tabKey) {
       let previewRefreshGeneration = 0;
       if (tabKey === 'districts') {
         const refreshDistrict = () => {
-          previewRefreshGeneration += 1;
+          const generation = ++previewRefreshGeneration;
           previewWrap.innerHTML = '';
           renderDistrictRepresentativePreviewCard(section, previewWrap, `${districtDisplay.primary} Art`);
+          renderSectionAnimationPreviewCard(section, previewWrap, tabKey, () => generation === previewRefreshGeneration);
         };
         refreshDistrict();
         return refreshDistrict;
@@ -50599,7 +50739,7 @@ function renderSectionTab(tab, tabKey) {
     })();
 
     const previewFieldKeysByTab = {
-      districts: new Set(['img_paths', 'custom_width', 'custom_height', 'vary_img_by_era', 'vary_img_by_culture', 'dependent_improvs', 'render_strategy']),
+      districts: new Set(['img_paths', 'custom_width', 'custom_height', 'vary_img_by_era', 'vary_img_by_culture', 'dependent_improvs', 'render_strategy', 'animation']),
       wonders: new Set(['img_path', 'img_row', 'img_column', 'img_construct_row', 'img_construct_column', 'enable_img_alt_dir', 'img_alt_dir_construct_row', 'img_alt_dir_construct_column', 'img_alt_dir_row', 'img_alt_dir_column', 'custom_width', 'custom_height']),
       naturalWonders: new Set(['img_path', 'img_row', 'img_column', 'animation', 'custom_width', 'custom_height']),
       animations: new Set(['ini_path', 'frame_time_seconds', 'direction'])

@@ -5746,7 +5746,7 @@ const SECTION_QUOTED_VALUE_KEYS_BY_KIND = {
   wonders: new Set([
     'name', 'buildable_by_civs', 'buildable_by_civ_traits', 'buildable_by_civ_govs', 'buildable_by_civ_cultures', 'img_path'
   ]),
-  naturalWonders: new Set(['name', 'img_path', 'animation'])
+  naturalWonders: new Set(['name', 'img_path'])
 };
 
 function normalizeSectionFieldValueForWrite(kind, key, value) {

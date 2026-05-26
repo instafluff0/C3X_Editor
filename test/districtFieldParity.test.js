@@ -40,6 +40,7 @@ const DISTRICT_INPUT_LINES = [
   'img_paths = "Mega District Amer.pcx", "Mega District Euro.pcx"',
   'img_column_count = 5',
   'render_strategy = by-building',
+  'type = tile-improvement',
   'custom_width = 144',
   'custom_height = 72',
   'x_offset = -3',
@@ -97,6 +98,7 @@ const DISTRICT_EXPECTED_SERIALIZED_LINES = [
   'img_paths = "Mega District Amer.pcx", "Mega District Euro.pcx"',
   'img_column_count = 5',
   'render_strategy = by-building',
+  'type = tile-improvement',
   'custom_width = 144',
   'custom_height = 72',
   'x_offset = -3',
@@ -153,6 +155,7 @@ const DISTRICT_EXPECTED_RELOADED_VALUES = new Map([
   ['img_paths', '"Mega District Amer.pcx", "Mega District Euro.pcx"'],
   ['img_column_count', '5'],
   ['render_strategy', 'by-building'],
+  ['type', 'tile-improvement'],
   ['custom_width', '144'],
   ['custom_height', '72'],
   ['x_offset', '-3'],
@@ -289,6 +292,29 @@ test('district generated_resource remains whitespace-tokenized and supports mult
   assert.match(serialized, /generated_resource\s*=\s*"Rare Earths" local yields/);
   assert.doesNotMatch(serialized, /generated_resource\s*=\s*"Rare Earths",/);
   assert.doesNotMatch(serialized, /generated_resource\s*=\s*.*,\s*local/);
+});
+
+test('district and natural wonder animation specs serialize as raw repeated fields', () => {
+  const districtModel = parseSectionedConfig([
+    '#District',
+    'name = Smoke District',
+    'animation = ini=Districts\\Smoke.INI; hours=7-17; seasons=spring,summer; cultures=AMER,EURO; eras=industrial,modern; frame_time_seconds=0.12; offsets=0,-10',
+    'animation = ini=Districts\\Smoke_Night.INI; hours=18-5; seasons=fall,winter; cultures=ASIAN; eras=3; frame_time_seconds=0.20; offsets=2,-8'
+  ].join('\n'), '#District');
+  const naturalModel = parseSectionedConfig([
+    '#Wonder',
+    'name = Angel Falls',
+    'animation = ini=NaturalWonders\\AngelFalls\\AngelFalls.INI; hours=7-17; seasons=spring,summer; offsets=0,-10; direction=southwest; frame_time_seconds=0.13'
+  ].join('\n'), '#Wonder');
+
+  const districtSerialized = serializeSectionedConfig(districtModel, '#District', { kind: 'districts' });
+  const naturalSerialized = serializeSectionedConfig(naturalModel, '#Wonder', { kind: 'naturalWonders' });
+
+  assert.match(districtSerialized, /animation\s*=\s*ini=Districts\\Smoke\.INI; hours=7-17; seasons=spring,summer; cultures=AMER,EURO; eras=industrial,modern; frame_time_seconds=0\.12; offsets=0,-10/);
+  assert.match(districtSerialized, /animation\s*=\s*ini=Districts\\Smoke_Night\.INI; hours=18-5; seasons=fall,winter; cultures=ASIAN; eras=3; frame_time_seconds=0\.20; offsets=2,-8/);
+  assert.doesNotMatch(districtSerialized, /animation\s*=\s*"/);
+  assert.match(naturalSerialized, /animation\s*=\s*ini=NaturalWonders\\AngelFalls\\AngelFalls\.INI; hours=7-17; seasons=spring,summer; offsets=0,-10; direction=southwest; frame_time_seconds=0\.13/);
+  assert.doesNotMatch(naturalSerialized, /animation\s*=\s*"/);
 });
 
 test('district resource_prereq_on_tile is quoted when needed and unquoted on reload', () => {

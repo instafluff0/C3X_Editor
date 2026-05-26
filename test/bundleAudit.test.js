@@ -1013,6 +1013,7 @@ test('auditLoadedBundle reports unknown section keys and invalid section values'
             makeSection({
               name: 'Airport Hub',
               buildable_on_rivers: 'sometimes',
+              type: 'roads-only',
               ai_build_strategy: 'roads-only',
               buildable_on: 'grassland,moon',
               mystery_flag: '1'
@@ -1046,6 +1047,7 @@ test('auditLoadedBundle reports unknown section keys and invalid section values'
 
   const result = auditLoadedBundle(bundle);
   assert.ok(result.tabs.districts.sections['0'].some((entry) => /buildable_on_rivers.+invalid boolean value "sometimes"/i.test(entry.message)));
+  assert.ok(result.tabs.districts.sections['0'].some((entry) => /type.+unknown value "roads-only"/i.test(entry.message)));
   assert.ok(result.tabs.districts.sections['0'].some((entry) => /ai_build_strategy.+unknown value "roads-only"/i.test(entry.message)));
   assert.ok(result.tabs.districts.sections['0'].some((entry) => /buildable_on.+unknown list values?: moon/i.test(entry.message)));
   assert.ok(result.tabs.districts.sections['0'].some((entry) => /Unknown field "mystery_flag"/.test(entry.message)));
@@ -1074,6 +1076,20 @@ test('auditLoadedBundle reports invalid animation day/night hour syntax', () => 
           ]
         }
       },
+      districts: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Smoke District',
+              animation: 'ini=Districts\\Smoke.INI; hours=18-5; seasons=spring,summer; cultures=AMER,EURO; eras=industrial,modern; frame_time_seconds=0.12; offsets=0,-10'
+            }),
+            makeSection({
+              name: 'Broken District',
+              animation: 'ini=Districts\\Broken.INI; hours=6-30; cultures=LUNAR; eras=future; frame_time_seconds=fast'
+            })
+          ]
+        }
+      },
       animations: {
         model: {
           sections: [
@@ -1092,6 +1108,11 @@ test('auditLoadedBundle reports invalid animation day/night hour syntax', () => 
 
   const result = auditLoadedBundle(bundle);
   assert.ok(result.tabs.naturalWonders.sections['0'].some((entry) => /Animation 1.+day\/night hours must be between 0 and 23.+7-25, dusk/i.test(entry.message)));
+  assert.equal(((result.tabs.districts.sections || {})['0'] || []).some((entry) => /Animation 1/i.test(entry.message)), false);
+  assert.ok(result.tabs.districts.sections['1'].some((entry) => /Animation 1.+day\/night hours must be between 0 and 23.+6-30/i.test(entry.message)));
+  assert.ok(result.tabs.districts.sections['1'].some((entry) => /unknown culture value.+LUNAR/i.test(entry.message)));
+  assert.ok(result.tabs.districts.sections['1'].some((entry) => /unknown era value.+future/i.test(entry.message)));
+  assert.ok(result.tabs.districts.sections['1'].some((entry) => /invalid frame_time_seconds value "fast"/i.test(entry.message)));
   assert.ok(result.tabs.animations.sections['0'].some((entry) => /show_in_day_night_hours.+day\/night hours must be between 0 and 23.+7-17, 24/i.test(entry.message)));
   assert.equal(result.tabs.animations.sections['0'].some((entry) => /frame_time_seconds/i.test(entry.message)), false);
 });

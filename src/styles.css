@@ -4223,7 +4223,11 @@ button.danger:hover {
 
 .animation-adjacent-rule-actions {
   display: flex;
-  justify-content: flex-start;
+  justify-content: stretch;
+}
+
+.animation-adjacent-rule-actions > button {
+  width: 100%;
 }
 
 .c3x-release-badge {

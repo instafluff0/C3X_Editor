@@ -17,6 +17,10 @@
 - Added quality checks for Tile Animation and Natural Wonder animation Day/Night Hours syntax.
 - Restyled Tile Animation adjacency rules with terrain thumbnail chips and direction chips instead of dropdowns.
 - Fixed Tile Animation quality checks to accept decimal Frame Time values such as 0.14 seconds.
+- Added District animation item editing, preview, serialization, and quality checks for documented hours, seasons, cultures, eras, frame time, and offsets.
+- Fixed Add Animation in embedded animation editors so a blank card appears immediately, and corrected District animation preview rendering.
+- Added R28 District `type` editing and validation for `district` versus `tile-improvement` behavior.
+- Removed the placeholder Terrain chip from Tile Animation adjacency rules and stretched each rule's Remove button to full width.
 
 * RELEASE 27.12.1
 - Fixed import/add modal field alignment so Name and Key inputs stay top-aligned even when the Key helper text is visible.

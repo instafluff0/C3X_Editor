@@ -115,6 +115,8 @@ const DIRECTION_OPTIONS = [
 
 const ANIMATION_TYPE_OPTIONS = ['terrain', 'resource', 'pcx', 'destruct-initial', 'destruct-after', 'coastal-wave'];
 const SEASON_OPTIONS = ['spring', 'summer', 'fall', 'winter'];
+const DISTRICT_ANIMATION_CULTURE_OPTIONS = ['AMER', 'EURO', 'ROMAN', 'MIDEAST', 'ASIAN'];
+const DISTRICT_ANIMATION_ERA_OPTIONS = ['ancient', 'middle', 'industrial', 'modern', '0', '1', '2', '3'];
 
 const NATURAL_WONDER_ANIMATION_SPEC_ALIASES = new Map([
   ['ini', 'ini'],
@@ -129,7 +131,11 @@ const NATURAL_WONDER_ANIMATION_SPEC_ALIASES = new Map([
   ['show_in_day_night_hours', 'show_in_day_night_hours'],
   ['day_night_hours', 'show_in_day_night_hours'],
   ['show_in_seasons', 'show_in_seasons'],
-  ['seasons', 'show_in_seasons']
+  ['seasons', 'show_in_seasons'],
+  ['cultures', 'show_in_cultures'],
+  ['show_in_cultures', 'show_in_cultures'],
+  ['eras', 'show_in_eras'],
+  ['show_in_eras', 'show_in_eras']
 ]);
 
 const DISTRICT_BUILDABLE_SQUARE_TOKENS = [
@@ -203,10 +209,12 @@ const SECTION_LINT_SPECS = {
       ['img_paths', { type: 'list' }],
       ['img_column_count', { type: 'number' }],
       ['render_strategy', { type: 'select', options: ['by-count', 'by-building'] }],
+      ['type', { type: 'select', options: ['district', 'tile-improvement'] }],
       ['custom_width', { type: 'number' }],
       ['custom_height', { type: 'number' }],
       ['x_offset', { type: 'number' }],
       ['y_offset', { type: 'number' }],
+      ['animation', { type: 'text' }],
       ['btn_tile_sheet_row', { type: 'number' }],
       ['btn_tile_sheet_column', { type: 'number' }],
       ['advance_prereqs', { type: 'list' }],
@@ -460,7 +468,9 @@ function parseNaturalWonderAnimationSpec(spec) {
     y_offset: '',
     direction: '',
     show_in_day_night_hours: '',
-    show_in_seasons: ''
+    show_in_seasons: '',
+    show_in_cultures: '',
+    show_in_eras: ''
   };
   String(spec || '')
     .split(';')
@@ -1163,11 +1173,11 @@ function lintSectionedTab(bundle, result, tabKey) {
   });
 }
 
-function lintNaturalWonderAnimationSpecs(bundle, result) {
-  const model = ((((bundle || {}).tabs || {}).naturalWonders || {}).model) || null;
+function lintEmbeddedAnimationSpecs(bundle, result, tabKey, labelPrefix, options = {}) {
+  const model = ((((bundle || {}).tabs || {})[tabKey] || {}).model) || null;
   const sections = Array.isArray(model && model.sections) ? model.sections : [];
   sections.forEach((section, index) => {
-    const label = getSectionDisplayName(section, index, 'Natural Wonder');
+    const label = getSectionDisplayName(section, index, labelPrefix);
     const fields = Array.isArray(section && section.fields) ? section.fields : [];
     const animationSpecs = fields
       .filter((field) => String(field && field.key || '').trim() === 'animation')
@@ -1176,14 +1186,55 @@ function lintNaturalWonderAnimationSpecs(bundle, result) {
     animationSpecs.forEach((spec, specIndex) => {
       const parsed = parseNaturalWonderAnimationSpec(spec);
       const issue = validateDayNightHoursSyntax(parsed.show_in_day_night_hours);
-      if (!issue) return;
-      addSectionIssue(
-        result,
-        'naturalWonders',
-        index,
-        `${label}: Animation ${specIndex + 1} has ${issue}`,
-        'natural-wonder-animation-invalid-hours'
-      );
+      if (issue) {
+        addSectionIssue(
+          result,
+          tabKey,
+          index,
+          `${label}: Animation ${specIndex + 1} has ${issue}`,
+          `${tabKey}-animation-invalid-hours`
+        );
+      }
+      const frameTime = String(parsed.frame_time_seconds || '').trim();
+      if (frameTime && !isDecimalNumberToken(frameTime)) {
+        addSectionIssue(
+          result,
+          tabKey,
+          index,
+          `${label}: Animation ${specIndex + 1} has invalid frame_time_seconds value "${frameTime}".`,
+          `${tabKey}-animation-invalid-frame-time`
+        );
+      }
+      if (options.validateCultures) {
+        const invalidCultures = tokenizeListPreservingQuotes(parsed.show_in_cultures || '')
+          .map((token) => normalizeConfigToken(token).toUpperCase())
+          .filter(Boolean)
+          .filter((token) => !DISTRICT_ANIMATION_CULTURE_OPTIONS.includes(token));
+        if (invalidCultures.length > 0) {
+          addSectionIssue(
+            result,
+            tabKey,
+            index,
+            `${label}: Animation ${specIndex + 1} has unknown culture value${invalidCultures.length === 1 ? '' : 's'}: ${invalidCultures.join(', ')}.`,
+            `${tabKey}-animation-invalid-cultures`
+          );
+        }
+      }
+      if (options.validateEras) {
+        const invalidEras = tokenizeListPreservingQuotes(parsed.show_in_eras || '')
+          .map((token) => normalizeConfigToken(token).toLowerCase())
+          .filter(Boolean)
+          .filter((token) => !DISTRICT_ANIMATION_ERA_OPTIONS.includes(token));
+        if (invalidEras.length > 0) {
+          addSectionIssue(
+            result,
+            tabKey,
+            index,
+            `${label}: Animation ${specIndex + 1} has unknown era value${invalidEras.length === 1 ? '' : 's'}: ${invalidEras.join(', ')}.`,
+            `${tabKey}-animation-invalid-eras`
+          );
+        }
+      }
     });
   });
 }
@@ -1445,7 +1496,8 @@ function auditLoadedBundle(bundle, options = {}) {
   lintSectionedTab(bundle, result, 'wonders');
   lintSectionedTab(bundle, result, 'naturalWonders');
   lintSectionedTab(bundle, result, 'animations');
-  lintNaturalWonderAnimationSpecs(bundle, result);
+  lintEmbeddedAnimationSpecs(bundle, result, 'districts', 'District', { validateCultures: true, validateEras: true });
+  lintEmbeddedAnimationSpecs(bundle, result, 'naturalWonders', 'Natural Wonder');
   auditCurrentDistrictArt(bundle, result);
   auditCurrentWonderArt(bundle, result);
   auditCurrentNaturalWonderArt(bundle, result);

@@ -356,6 +356,63 @@ test('animation direction changes refresh FLC previews', () => {
   );
 });
 
+test('District animations use the shared animation item editor and preview path', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /\{ key: 'animation', label: 'Animation Items', desc: 'Custom FLC animations shown over completed districts\.', type: 'text', multi: true, minRelease: 'R28' \}/,
+    'District schema should expose repeated animation items'
+  );
+  assert.match(
+    text,
+    /if \(state\.activeTab === 'districts' && effectiveField\.key === 'animation'\) \{[\s\S]*?renderNaturalWonderAnimationSpecsEditor\(section, onValueChange, \{[\s\S]*?includeDirection: false,[\s\S]*?includeCultures: true,[\s\S]*?includeEras: true,/,
+    'District animation items should reuse the structured animation editor with district culture and era filters'
+  );
+  assert.match(
+    text,
+    /districts:\s*new Set\(\[[^\]]*'animation'[^\]]*\]\)/,
+    'District animation edits should refresh the preview area'
+  );
+  assert.match(
+    text,
+    /renderSectionAnimationPreviewCard\(section, previewWrap, tabKey, \(\) => generation === previewRefreshGeneration\);/,
+    'District previews should include the first configured district animation FLC'
+  );
+  assert.match(
+    text,
+    /renderSectionAnimationPreviewCard[\s\S]*?\{ skipBlankMagentaFrames: true \}/,
+    'District animation previews should use explicit FLC preview options from the shared preview renderer'
+  );
+});
+
+test('Animation item Add renders a blank card before serialization', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const match = text.match(/function renderNaturalWonderAnimationSpecsEditor\(section, onValueChange, config = \{\}\) \{[\s\S]*?\nfunction renderDistrictSingleResourcePicker/);
+  assert.ok(match, 'Expected shared animation spec editor body');
+  const body = match[0];
+  const addBlock = body.match(/add\.addEventListener\('click', \(\) => \{[\s\S]*?\n\s*\}\);/);
+  assert.ok(addBlock, 'Expected Add Animation click handler');
+
+  assert.match(
+    body,
+    /const renderSpecs = \(\) => \{[\s\S]*?wrap\.innerHTML = '';[\s\S]*?specs\.forEach/,
+    'Animation spec editor should be able to locally re-render the spec cards'
+  );
+  assert.match(
+    addBlock[0],
+    /specs\.push\(makeEmptyAnimationSpec\(\)\);[\s\S]*?renderSpecs\(\);/,
+    'Add Animation should show a blank card immediately'
+  );
+  assert.doesNotMatch(
+    addBlock[0],
+    /commit\(|renderActiveTab/,
+    'Add Animation should not immediately serialize away the blank spec'
+  );
+});
+
 test('Tile Animation frame-time drags keep the current FLC preview mounted', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
@@ -408,8 +465,8 @@ test('Tile Animation adjacent rules use terrain thumbnails and direction chips',
 
   assert.match(
     body,
-    /makeSegmentedSingleValueEditor\(\s*terrainOpts[\s\S]*?iconRenderer:\s*\(optionName\) => makeTerrainOptionPreviewIcon\(optionName\)/,
-    'Tile Animation adjacent terrain choices should use segmented chips with terrain thumbnails'
+    /makeSegmentedSingleValueEditor\(\s*terrainOpts[\s\S]*?includeEmpty:\s*false[\s\S]*?iconRenderer:\s*\(optionName\) => makeTerrainOptionPreviewIcon\(optionName\)/,
+    'Tile Animation adjacent terrain choices should use segmented chips with terrain thumbnails and no placeholder terrain chip'
   );
   assert.match(
     body,
@@ -420,6 +477,14 @@ test('Tile Animation adjacent rules use terrain thumbnails and direction chips',
     body,
     /document\.createElement\('select'\)/,
     'Tile Animation adjacency rules should not fall back to dropdown selectors'
+  );
+
+  const cssPath = path.join(__dirname, '..', 'src', 'styles.css');
+  const css = fs.readFileSync(cssPath, 'utf8');
+  assert.match(
+    css,
+    /\.animation-adjacent-rule-actions\s*>\s*button\s*\{[\s\S]*?width:\s*100%;[\s\S]*?\}/,
+    'Tile Animation adjacent Remove buttons should stretch to the full rule width'
   );
 });
 
