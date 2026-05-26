@@ -1,4 +1,5 @@
 * RELEASE 27.12.1.0
+- Fixed first-save BIQ reference planning so references to newly added Civs, Techs, Resources, Improvements, Governments, and Units resolve through final saved indices even after pending entries are deleted before Save, including unit lists, civilization bitmasks, PRTO strategy-map unit indices, and BIQ structure fields.
 - Fixed automatic imported Resource and Unit icon atlas assignment so `resources.pcx` grid-only cells, BIQ-referenced high icon indexes, and deleted pending imports are handled consistently before Save.
 - Added Worker Jobs to the Techs Enables board, editing TFRM required-technology references so techs like Steam Power can show and control worker jobs such as Railroad while reusing the Terrain worker-job thumbnails.
 - Scoped the Great Wall auto-build wonder-name quality warning to active Great Wall auto-build configs, requiring districts, Great Wall districts, and auto-build to be enabled.
