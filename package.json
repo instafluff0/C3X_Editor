@@ -1,7 +1,7 @@
 {
   "name": "civ3-c3x-modern-config-manager",
   "productName": "Civ 3 C3X Modern Editor",
-  "version": "27.12.1.0",
+  "version": "27.12.1",
   "description": "Modern config manager for C3X",
   "main": "main.js",
   "scripts": {
@@ -15,7 +15,8 @@
   },
   "devDependencies": {
     "electron": "^36.0.0",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "electron-icon-maker": "^0.0.5"
   },
   "build": {
     "appId": "com.instafluff.c3xconfigmanager",
