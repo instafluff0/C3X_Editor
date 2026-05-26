@@ -1,4 +1,9 @@
 * RELEASE 27.12.1
+- Fixed import/add modal field alignment so Name and Key inputs stay top-aligned even when the Key helper text is visible.
+- Fixed the main Units tab so its sort menu no longer exposes the Unit Table-only `Manual` mode, stale saved `Manual` sort state falls back to in-game order, unsaved new Units stay surfaced before Save, and no-reload saves keep synthetic era-specific unit rows behind real BIQ unit records.
+- Fixed unsaved Resource and Unit icon atlas pickers so every active pending import is drawn in its assigned future slot before Save, not just the currently selected import.
+- Fixed no-reload saves after Resource/Unit atlas writes so pending atlas overlays are cleared and the next picker render re-reads the saved PCX instead of using stale previews.
+- Removed the duplicate Units `Animation Folder Key` editor from `Unit Art and Animations` and moved the `#ANIMNAME_PRTO_*` PediaIcons indicator onto the remaining animation-folder control.
 - Fix Windows icon to be properly sized and shown
 - Fixed first-save BIQ reference planning so references to newly added Civs, Techs, Resources, Improvements, Governments, and Units resolve through final saved indices even after pending entries are deleted before Save, including unit lists, civilization bitmasks, PRTO strategy-map unit indices, and BIQ structure fields.
 - Fixed automatic imported Resource and Unit icon atlas assignment so `resources.pcx` grid-only cells, BIQ-referenced high icon indexes, and deleted pending imports are handled consistently before Save.

@@ -59,6 +59,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     'map hover should not use the native browser/OS tooltip'
   );
   assert.match(
+    stylesText,
+    /\.entity-form-grid \{[\s\S]*?align-items: start;[\s\S]*?\}[\s\S]*?\.entity-field \{[\s\S]*?align-content: start;/,
+    'entity modal name/key fields should top-align instead of stretching when one field has helper text'
+  );
+  assert.match(
     rendererText,
     /const renderHoverTooltipForState = \(hit, clientX, clientY, reason = ''\) => \{[\s\S]*?hoverTooltip\.textContent = `x=\$\{geom\.xPos\}, y=\$\{geom\.yPos\}`;/,
     'hover tooltip should display the hovered tile grid coordinates'
@@ -193,8 +198,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /function createResourceIconIndexPicker\(currentValue, onSelect, entry = null\) \{[\s\S]*?const pending = getPendingImportedResourceIcon\(entry\);[\s\S]*?pending && pending\.targetIconIndex === idx[\s\S]*?drawPendingImportedResourceIconToCanvas\(entry, canvas\)[\s\S]*?totalIcons = \(Math\.floor\(pending\.targetIconIndex \/ cols\) \+ 1\) \* cols;/,
-    'resource icon picker should render pending imported icons in predicted target slots even before resources.pcx is saved'
+    /function createResourceIconIndexPicker\(currentValue, onSelect, entry = null\) \{[\s\S]*?let pendingIconsByTarget = new Map\(\);[\s\S]*?pendingIconsByTarget = getPendingImportedIconItemsByTarget\('resources'\);[\s\S]*?getPendingImportedIconItemForTarget\(pendingIconsByTarget, 'resources', entry, idx\)[\s\S]*?drawPendingImportedResourceIconItemToCanvas\(pendingItem, canvas\)[\s\S]*?getMaxPendingImportedIconTarget\(refreshPendingIconsByTarget\(\), 'resources', entry\)/,
+    'resource icon picker should render all pending imported icons in predicted target slots even before resources.pcx is saved'
   );
   assert.match(
     rendererText,
@@ -213,8 +218,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /function createUnitIconIndexPicker\(currentValue, onSelect, entry = null\) \{[\s\S]*?const pending = getPendingImportedUnitIcon\(entry\);[\s\S]*?pending && pending\.targetIconIndex === idx[\s\S]*?getUnits32AtlasPreview\(\{[\s\S]*?scenarioPath: pending\.importScenarioPath[\s\S]*?drawUnits32IconToCanvas\(sourcePreview, pending\.sourceIconIndex, canvas\)[\s\S]*?totalIcons = \(Math\.floor\(pending\.targetIconIndex \/ cols\) \+ 1\) \* cols;/,
-    'unit icon picker should render pending imported icons in predicted target slots even before units_32.pcx is saved'
+    /function createUnitIconIndexPicker\(currentValue, onSelect, entry = null\) \{[\s\S]*?let pendingIconsByTarget = new Map\(\);[\s\S]*?pendingIconsByTarget = getPendingImportedIconItemsByTarget\('units'\);[\s\S]*?getPendingImportedIconItemForTarget\(pendingIconsByTarget, 'units', entry, idx\)[\s\S]*?drawPendingImportedUnitIconItemToCanvas\(pendingItem, canvas, atlasPreview\)[\s\S]*?getMaxPendingImportedIconTarget\(refreshPendingIconsByTarget\(\), 'units', entry\)/,
+    'unit icon picker should render all pending imported icons in predicted target slots even before units_32.pcx is saved'
   );
   assert.match(
     rendererText,
@@ -396,8 +401,13 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?rerunQualityChecksAfterNoReloadSave\(\);[\s\S]*?setStatus\(`Saved \$\{res\.saveReport\.length\} file\(s\): \$\{paths\}`\);/,
-    'successful no-reload saves should refresh audit warnings before returning'
+    /function finalizeSavedAtlasStateAfterNoReload\(saveReport\) \{[\s\S]*?const kinds = getSavedAtlasKinds\(saveReport\);[\s\S]*?clearSavedAtlasPreviewCaches\(kinds\);[\s\S]*?clearSavedImportedAtlasPendingState\(kinds\);[\s\S]*?\}/,
+    'no-reload saves should clear saved Resource and Unit atlas preview caches and pending overlays'
+  );
+  assert.match(
+    rendererText,
+    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload\(res\.saveReport\);[\s\S]*?markCurrentBundleCleanAfterSave\([\s\S]*?\);[\s\S]*?rerunQualityChecksAfterNoReloadSave\(\);[\s\S]*?if \(rerenderAfterAtlasSave\) renderActiveTab\(\{ preserveTabScroll: true \}\);[\s\S]*?setStatus\(`Saved \$\{res\.saveReport\.length\} file\(s\): \$\{paths\}`\);/,
+    'successful no-reload saves should refresh audit warnings and re-render atlas pickers after saved Resource or Unit atlas writes'
   );
   assert.match(
     rendererText,

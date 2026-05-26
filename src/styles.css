@@ -1037,11 +1037,13 @@ button:disabled {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: start;
 }
 
 .entity-field {
   display: grid;
   gap: 6px;
+  align-content: start;
 }
 
 .entity-field label {
@@ -8964,6 +8966,17 @@ details > summary:focus-visible {
 
 .unit-animation-key-row {
   grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+}
+
+.unit-animation-key-meta {
+  display: grid;
+  gap: 5px;
+}
+
+.unit-animation-key-header {
+  width: fit-content;
+  max-width: 100%;
+  font-family: var(--font-mono);
 }
 
 .unit-animation-key-row .rule-control {

@@ -452,6 +452,16 @@ function clearPreviewCaches() {
   state.pendingPreviewRequests.clear();
 }
 
+function clearPreviewCacheEntries(predicate) {
+  if (typeof predicate !== 'function') return;
+  [state.previewCache, state.pendingPreviewRequests].forEach((cache) => {
+    if (!cache || typeof cache.keys !== 'function' || typeof cache.delete !== 'function') return;
+    for (const key of Array.from(cache.keys())) {
+      if (predicate(String(key || ''))) cache.delete(key);
+    }
+  });
+}
+
 function getOrStartPreviewRequest(cacheKey, loader, options = {}) {
   const normalizedKey = String(cacheKey || '');
   if (normalizedKey && state.previewCache.has(normalizedKey)) {
@@ -6184,6 +6194,19 @@ function shouldRunQualityChecks() {
   return !state.settings || state.settings.runQualityChecks !== false;
 }
 
+function normalizeMainUnitReferenceSort(value) {
+  const mode = String(value || 'ingame').trim().toLowerCase();
+  return mode === 'az' || mode === 'za' ? mode : 'ingame';
+}
+
+function sanitizeReferenceUnitSortMap(mapLike) {
+  const next = cloneStateMap(mapLike);
+  if (Object.prototype.hasOwnProperty.call(next, 'units')) {
+    next.units = normalizeMainUnitReferenceSort(next.units);
+  }
+  return next;
+}
+
 function sanitizeUnitTableView(view) {
   const source = view && typeof view === 'object' ? view : {};
   return {
@@ -6243,7 +6266,7 @@ function captureViewSnapshot() {
     referenceFilter: cloneStateMap(state.referenceFilter),
     referenceEraFilter: cloneStateMap(state.referenceEraFilter),
     referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
-    referenceUnitSort: cloneStateMap(state.referenceUnitSort),
+    referenceUnitSort: sanitizeReferenceUnitSortMap(state.referenceUnitSort),
     unitTableView: sanitizeUnitTableView(state.unitTableView),
     unitAvailabilityView: sanitizeUnitAvailabilityView(state.unitAvailabilityView),
     referenceContextPaneVisible: cloneStateMap(state.referenceContextPaneVisible),
@@ -6445,7 +6468,7 @@ function applyViewSnapshot(snapshot) {
   state.referenceFilter = cloneStateMap(snapshot.referenceFilter);
   state.referenceEraFilter = cloneStateMap(snapshot.referenceEraFilter);
   state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
-  state.referenceUnitSort = cloneStateMap(snapshot.referenceUnitSort);
+  state.referenceUnitSort = sanitizeReferenceUnitSortMap(snapshot.referenceUnitSort);
   state.unitTableView = sanitizeUnitTableView(snapshot.unitTableView);
   state.unitAvailabilityView = sanitizeUnitAvailabilityView(snapshot.unitAvailabilityView);
   state.referenceContextPaneVisible = cloneStateMap(snapshot.referenceContextPaneVisible);
@@ -10706,9 +10729,17 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
 
   const keyRow = document.createElement('div');
   keyRow.className = 'rule-row unit-animation-key-row';
-  const keyLabel = document.createElement('label');
-  keyLabel.className = 'field-meta';
-  keyLabel.textContent = 'Animation Folder Key';
+  const keyLabel = document.createElement('div');
+  keyLabel.className = 'field-meta unit-animation-key-meta';
+  const keyLabelText = document.createElement('span');
+  keyLabelText.textContent = 'Animation Folder Key';
+  keyLabel.appendChild(keyLabelText);
+  const displayKey = String(getEntryCivilopediaDisplayKey(entry) || entry.civilopediaKey || '').trim();
+  const keyHeader = document.createElement('span');
+  keyHeader.className = 'key-display-chip unit-animation-key-header';
+  keyHeader.textContent = `#ANIMNAME_${displayKey || 'PRTO_*'}`;
+  keyLabel.appendChild(keyHeader);
+  attachRichTooltip(keyLabel, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
   keyRow.appendChild(keyLabel);
   const keyCtrl = document.createElement('div');
   keyCtrl.className = 'rule-control';
@@ -21645,14 +21676,92 @@ function getPendingImportedResourceIcon(entry) {
   return { ...pending, sourceIconIndex, targetIconIndex };
 }
 
+function getPendingImportedIconForTabEntry(tabKey, entry) {
+  if (tabKey === 'units') return getPendingImportedUnitIcon(entry);
+  if (tabKey === 'resources') return getPendingImportedResourceIcon(entry);
+  return null;
+}
+
+function getPendingImportedIconItemsByTarget(tabKey) {
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  const byTarget = new Map();
+  if (!tab) return byTarget;
+  getActiveImportedIconOps(tab).forEach((item) => {
+    const entry = item && item.entry;
+    const pending = getPendingImportedIconForTabEntry(tabKey, entry);
+    if (!pending) return;
+    if (!byTarget.has(pending.targetIconIndex)) {
+      byTarget.set(pending.targetIconIndex, { ...item, entry, pending });
+    }
+  });
+  return byTarget;
+}
+
+function getPendingImportedIconItemForTarget(byTarget, tabKey, entry, targetIndex) {
+  const idx = Number.parseInt(String(targetIndex), 10);
+  if (!Number.isFinite(idx) || idx < 0) return null;
+  const mapped = byTarget && byTarget.get ? byTarget.get(idx) : null;
+  if (mapped) return mapped;
+  const pending = getPendingImportedIconForTabEntry(tabKey, entry);
+  if (pending && pending.targetIconIndex === idx) {
+    return { entry, pending };
+  }
+  return null;
+}
+
+function getMaxPendingImportedIconTarget(byTarget, tabKey, entry) {
+  let max = -1;
+  if (byTarget && byTarget.size > 0) {
+    byTarget.forEach((_item, targetIndex) => {
+      const idx = Number.parseInt(String(targetIndex), 10);
+      if (Number.isFinite(idx) && idx >= 0) max = Math.max(max, idx);
+    });
+  }
+  const pending = getPendingImportedIconForTabEntry(tabKey, entry);
+  if (pending) max = Math.max(max, pending.targetIconIndex);
+  return max;
+}
+
+function getPendingImportedIconSourceScenarioPath(item) {
+  const pending = item && item.pending;
+  const entry = item && item.entry;
+  return String(
+    (pending && pending.importScenarioPath)
+    || (entry && entry._importScenarioPath)
+    || ''
+  );
+}
+
+function getPendingImportedIconSourceScenarioPaths(item) {
+  const entry = item && item.entry;
+  return Array.isArray(entry && entry._importScenarioPaths) ? entry._importScenarioPaths : [];
+}
+
+async function drawPendingImportedUnitIconItemToCanvas(item, canvas, fallbackPreview = null) {
+  const pending = item && item.pending;
+  if (!pending || !canvas) return false;
+  const sourcePreview = await getUnits32AtlasPreview({
+    scenarioPath: getPendingImportedIconSourceScenarioPath(item),
+    scenarioPaths: getPendingImportedIconSourceScenarioPaths(item)
+  });
+  if (drawUnits32IconToCanvas(sourcePreview, pending.sourceIconIndex, canvas)) return true;
+  return !!(fallbackPreview && drawUnits32IconToCanvas(fallbackPreview, pending.targetIconIndex, canvas));
+}
+
+async function drawPendingImportedResourceIconItemToCanvas(item, canvas) {
+  const pending = item && item.pending;
+  if (!pending || !canvas) return false;
+  const sourcePreview = await getResourcesAtlasPreview({
+    scenarioPath: getPendingImportedIconSourceScenarioPath(item),
+    scenarioPaths: getPendingImportedIconSourceScenarioPaths(item)
+  });
+  return drawResourceIconToCanvas(sourcePreview, pending.sourceIconIndex, canvas);
+}
+
 async function drawPendingImportedResourceIconToCanvas(entry, canvas) {
   const pending = getPendingImportedResourceIcon(entry);
   if (!pending || !canvas) return false;
-  const sourcePreview = await getResourcesAtlasPreview({
-    scenarioPath: entry && entry._importScenarioPath,
-    scenarioPaths: entry && entry._importScenarioPaths
-  });
-  return drawResourceIconToCanvas(sourcePreview, pending.sourceIconIndex, canvas);
+  return drawPendingImportedResourceIconItemToCanvas({ entry, pending }, canvas);
 }
 
 async function refreshPendingImportedResourceIconAssignments(tab = null) {
@@ -21949,18 +22058,18 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
   let buildToken = 0;
   let totalIcons = 0;
   let totalRows = 0;
+  let pendingIconsByTarget = new Map();
+
+  const refreshPendingIconsByTarget = () => {
+    pendingIconsByTarget = getPendingImportedIconItemsByTarget('units');
+    return pendingIconsByTarget;
+  };
 
   const drawIconForIndex = (idx, canvas) => {
-    const pending = getPendingImportedUnitIcon(entry);
-    if (pending && pending.targetIconIndex === idx) {
-      const sourcePreviewPromise = getUnits32AtlasPreview({
-        scenarioPath: pending.importScenarioPath || entry && entry._importScenarioPath,
-        scenarioPaths: entry && entry._importScenarioPaths
-      });
-      sourcePreviewPromise.then((sourcePreview) => {
-        if (!drawUnits32IconToCanvas(sourcePreview, pending.sourceIconIndex, canvas)) {
-          drawUnits32IconToCanvas(atlasPreview, idx, canvas);
-        }
+    const pendingItem = getPendingImportedIconItemForTarget(pendingIconsByTarget, 'units', entry, idx);
+    if (pendingItem) {
+      drawPendingImportedUnitIconItemToCanvas(pendingItem, canvas, atlasPreview).then((ok) => {
+        if (!ok) drawUnits32IconToCanvas(atlasPreview, idx, canvas);
       }).catch(() => {
         drawUnits32IconToCanvas(atlasPreview, idx, canvas);
       });
@@ -22050,9 +22159,9 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
     }
     const { cols, rows } = metrics;
     totalIcons = cols * rows;
-    const pending = getPendingImportedUnitIcon(entry);
-    if (pending && pending.targetIconIndex >= totalIcons) {
-      totalIcons = (Math.floor(pending.targetIconIndex / cols) + 1) * cols;
+    const maxPendingTarget = getMaxPendingImportedIconTarget(refreshPendingIconsByTarget(), 'units', entry);
+    if (maxPendingTarget >= totalIcons) {
+      totalIcons = (Math.floor(maxPendingTarget / cols) + 1) * cols;
     }
     totalRows = Math.ceil(totalIcons / UNIT_ICON_COLS);
     grid.style.width = `${UNIT_ICON_COLS * UNIT_ICON_ITEM_SIZE}px`;
@@ -22135,6 +22244,12 @@ function createResourceIconIndexPicker(currentValue, onSelect, entry = null) {
   let buildToken = 0;
   let totalIcons = 0;
   let totalRows = 0;
+  let pendingIconsByTarget = new Map();
+
+  const refreshPendingIconsByTarget = () => {
+    pendingIconsByTarget = getPendingImportedIconItemsByTarget('resources');
+    return pendingIconsByTarget;
+  };
 
   const getPendingIcon = () => {
     const pending = getPendingImportedResourceIcon(entry);
@@ -22142,10 +22257,10 @@ function createResourceIconIndexPicker(currentValue, onSelect, entry = null) {
   };
 
   const drawIconForIndex = (idx, canvas) => {
-    const pending = getPendingImportedResourceIcon(entry);
-    if (pending && pending.targetIconIndex === idx) {
+    const pendingItem = getPendingImportedIconItemForTarget(pendingIconsByTarget, 'resources', entry, idx);
+    if (pendingItem) {
       drawMagentaResourceIconPlaceholder(canvas);
-      drawPendingImportedResourceIconToCanvas(entry, canvas).then((ok) => {
+      drawPendingImportedResourceIconItemToCanvas(pendingItem, canvas).then((ok) => {
         if (!ok) drawMagentaResourceIconPlaceholder(canvas);
       }).catch(() => {
         drawMagentaResourceIconPlaceholder(canvas);
@@ -22238,9 +22353,9 @@ function createResourceIconIndexPicker(currentValue, onSelect, entry = null) {
     }
     const { cols, rows } = metrics;
     totalIcons = cols * rows;
-    const pending = getPendingImportedResourceIcon(entry);
-    if (pending && pending.targetIconIndex >= totalIcons) {
-      totalIcons = (Math.floor(pending.targetIconIndex / cols) + 1) * cols;
+    const maxPendingTarget = getMaxPendingImportedIconTarget(refreshPendingIconsByTarget(), 'resources', entry);
+    if (maxPendingTarget >= totalIcons) {
+      totalIcons = (Math.floor(maxPendingTarget / cols) + 1) * cols;
     }
     totalRows = Math.ceil(totalIcons / RESOURCE_ICON_COLS);
     grid.style.width = `${RESOURCE_ICON_COLS * RESOURCE_ICON_ITEM_SIZE}px`;
@@ -23756,13 +23871,34 @@ function getUnitAvailabilityClassLabel(entry) {
   return 'Land';
 }
 
-function getUnitReferenceSortOptions() {
-  return [
+function getUnitReferenceSortOptions(options = {}) {
+  const out = [
     { value: 'ingame', label: 'In-game order' },
     { value: 'az', label: 'A → Z' },
-    { value: 'za', label: 'Z → A' },
-    { value: 'manual', label: 'Manual' }
+    { value: 'za', label: 'Z → A' }
   ];
+  if (options && options.includeManual) out.push({ value: 'manual', label: 'Manual' });
+  return out;
+}
+
+function getUnitReferenceInGameSortIndex(entry) {
+  const raw = entry && entry.biqIndex;
+  if (raw == null || raw === '') return null;
+  const idx = Number(raw);
+  return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
+function compareUnitReferenceInGameOrder(a, b, options = {}) {
+  if (options && options.preferUnsavedNew) {
+    const aNew = !!(a && a.isNew);
+    const bNew = !!(b && b.isNew);
+    if (aNew !== bNew) return aNew ? -1 : 1;
+  }
+  const ai = getUnitReferenceInGameSortIndex(a);
+  const bi = getUnitReferenceInGameSortIndex(b);
+  if (ai != null && bi != null && ai !== bi) return ai - bi;
+  if ((ai != null) !== (bi != null)) return ai != null ? -1 : 1;
+  return 0;
 }
 
 function getUnitClassFilterOptions() {
@@ -24484,7 +24620,7 @@ function sortUnitTableRows(rows, sortMode, options = {}) {
 
 function createUnitTablePanel({ tab, referenceEditable }) {
   const rows = getUnitTableRows(tab);
-  const sortOptions = getUnitReferenceSortOptions();
+  const sortOptions = getUnitReferenceSortOptions({ includeManual: true });
   const unitTableColumnMetaCache = new Map();
   const persistedView = sanitizeUnitTableView(state.unitTableView);
   const filters = {
@@ -24492,7 +24628,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     civ: persistedView.civ || 'all',
     era: persistedView.era || String(state.referenceEraFilter.units || 'all'),
     unitClass: persistedView.unitClass,
-    sort: persistedView.sort || String(state.referenceUnitSort.units || 'ingame'),
+    sort: persistedView.sort || 'ingame',
     manualSortColumn: persistedView.manualSortColumn || '',
     manualSortDirection: persistedView.manualSortDirection || 'asc',
     showKingUnits: !!persistedView.showKingUnits
@@ -24919,7 +25055,6 @@ function createUnitTablePanel({ tab, referenceEditable }) {
         filters.manualSortColumn = String(column.key || '');
         filters.manualSortDirection = sameColumn && filters.manualSortDirection === 'asc' ? 'desc' : 'asc';
         sortSelect.value = 'manual';
-        state.referenceUnitSort.units = 'manual';
         tableWrap.scrollTop = 0;
         syncUnitTableView();
         render();
@@ -25161,7 +25296,6 @@ function createUnitTablePanel({ tab, referenceEditable }) {
       filters.manualSortColumn = 'name';
       filters.manualSortDirection = 'asc';
     }
-    state.referenceUnitSort.units = filters.sort;
     tableWrap.scrollTop = 0;
     syncUnitTableView();
     render();
@@ -28190,7 +28324,6 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
 
   const displayKey = String(getEntryCivilopediaDisplayKey(entry) || entry.civilopediaKey || '').trim();
   const iconHeader = `#ICON_${displayKey || 'PRTO_*'}`;
-  const animHeader = `#ANIMNAME_${displayKey || 'PRTO_*'}`;
 
   const makePediaField = ({ labelText, headerText, value, placeholder, onCommit, sourceMeta }) => {
     const field = document.createElement('label');
@@ -28230,7 +28363,7 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
   };
 
   pediaCard.appendChild(makePediaField({
-    labelText: 'Civilopedia Large Path',
+    labelText: 'Civilopedia Large Image Path',
     headerText: iconHeader,
     value: String(icons[0] || ''),
     placeholder: 'Art/Civilopedia/Icons/Units/MyUnit-large.pcx',
@@ -28242,7 +28375,7 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
     sourceMeta: entry.sourceMeta && entry.sourceMeta.iconPaths
   }));
   pediaCard.appendChild(makePediaField({
-    labelText: 'Civilopedia Small Path',
+    labelText: 'Civilopedia Small Image Path',
     headerText: iconHeader,
     value: String(icons[1] || ''),
     placeholder: 'Art/Civilopedia/Icons/Units/MyUnit-small.pcx',
@@ -28252,18 +28385,6 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
       entry.iconPaths = nextIcons;
     },
     sourceMeta: entry.sourceMeta && entry.sourceMeta.iconPaths
-  }));
-  pediaCard.appendChild(makePediaField({
-    labelText: 'Animation Folder Key',
-    headerText: animHeader,
-    value: String(entry && entry.animationName || ''),
-    placeholder: 'e.g. Slinger',
-    onCommit: (next) => {
-      entry.animationName = next;
-      entry.unitAnimationEdited = true;
-      entry.unitIniEditor = null;
-    },
-    sourceMeta: entry.sourceMeta && entry.sourceMeta.animationName
   }));
   wrap.appendChild(pediaCard);
 
@@ -31522,7 +31643,9 @@ function renderReferenceTab(tab, tabKey) {
       o.textContent = opt.label;
       unitSortSelect.appendChild(o);
     });
-    unitSortSelect.value = state.referenceUnitSort[tabKey] || 'ingame';
+    const mainUnitSort = normalizeMainUnitReferenceSort(state.referenceUnitSort[tabKey]);
+    state.referenceUnitSort[tabKey] = mainUnitSort;
+    unitSortSelect.value = mainUnitSort;
     controlsRight.appendChild(unitSortSelect);
 
     unitAvailabilityBtn = document.createElement('button');
@@ -32174,12 +32297,12 @@ function renderReferenceTab(tab, tabKey) {
     });
 
   if (tabKey === 'units') {
-    const unitSort = state.referenceUnitSort[tabKey] || 'ingame';
+    const unitSort = normalizeMainUnitReferenceSort(state.referenceUnitSort[tabKey]);
+    state.referenceUnitSort[tabKey] = unitSort;
     if (unitSort === 'ingame') {
       filteredEntries.sort((a, b) => {
-        const ai = a.entry.biqIndex != null ? a.entry.biqIndex : Infinity;
-        const bi = b.entry.biqIndex != null ? b.entry.biqIndex : Infinity;
-        return ai - bi;
+        const order = compareUnitReferenceInGameOrder(a.entry, b.entry, { preferUnsavedNew: true });
+        return order || (a.baseIndex - b.baseIndex);
       });
     } else if (unitSort === 'az') {
       filteredEntries.sort((a, b) => String(a.entry.name || '').localeCompare(String(b.entry.name || '')));
@@ -32327,7 +32450,7 @@ function renderReferenceTab(tab, tabKey) {
     const hasFilter = !!String(state.referenceFilter[tabKey] || '').trim()
       || ((tabKey === 'technologies' || tabKey === 'units') && (state.referenceEraFilter[tabKey] || 'all') !== 'all')
       || (tabKey === 'improvements' && (state.referenceImprovementKind[tabKey] || 'all') !== 'all')
-      || (tabKey === 'units' && (state.referenceUnitSort[tabKey] || 'ingame') !== 'ingame');
+      || (tabKey === 'units' && normalizeMainUnitReferenceSort(state.referenceUnitSort[tabKey]) !== 'ingame');
     empty.innerHTML = hasFilter
       ? '<p class="hint">No entries match the current filters.</p>'
       : '<p class="hint">No entries found. Verify your Civilization 3 path and reload.</p>';
@@ -33282,7 +33405,8 @@ function renderReferenceTab(tab, tabKey) {
   }
   if (unitSortSelect) {
     unitSortSelect.addEventListener('change', () => {
-      state.referenceUnitSort[tabKey] = unitSortSelect.value;
+      state.referenceUnitSort[tabKey] = normalizeMainUnitReferenceSort(unitSortSelect.value);
+      unitSortSelect.value = state.referenceUnitSort[tabKey];
       state.referenceListScrollTop[tabKey] = 0;
       renderReferenceBody({ preserveDetailIfSameSelection: true });
     });
@@ -50849,7 +50973,7 @@ async function loadBundleAndRender(options = {}) {
       state.referenceFilter = cloneStateMap(persistedView.referenceFilter);
       state.referenceEraFilter = cloneStateMap(persistedView.referenceEraFilter);
       state.referenceImprovementKind = cloneStateMap(persistedView.referenceImprovementKind);
-      state.referenceUnitSort = cloneStateMap(persistedView.referenceUnitSort);
+      state.referenceUnitSort = sanitizeReferenceUnitSortMap(persistedView.referenceUnitSort);
       state.referenceContextPaneVisible = cloneStateMap(persistedView.referenceContextPaneVisible);
       state.biqSectionSelectionByTab = cloneStateMap(persistedView.biqSectionSelectionByTab);
       state.biqRecordSelection = cloneStateMap(persistedView.biqRecordSelection);
@@ -51728,6 +51852,80 @@ function shouldReloadBundleAfterSave() {
   return !!(state.settings && state.settings.reloadAfterSave);
 }
 
+function getSavedAtlasKinds(saveReport) {
+  const kinds = { resources: false, units32: false };
+  (Array.isArray(saveReport) ? saveReport : []).forEach((entry) => {
+    if (String(entry && entry.kind || '').trim().toLowerCase() !== 'atlas') return;
+    const pathText = normalizePathForCompare(entry && entry.path);
+    if (pathText.endsWith('/art/resources.pcx')) kinds.resources = true;
+    if (pathText.endsWith('/art/units/units_32.pcx')) kinds.units32 = true;
+  });
+  return kinds;
+}
+
+function clearSavedAtlasPreviewCaches(kinds) {
+  if (!kinds || (!kinds.resources && !kinds.units32)) return;
+  clearPreviewCacheEntries((key) => {
+    const lower = String(key || '').toLowerCase();
+    if (kinds.resources && (lower.includes('"kind":"resources-atlas"') || lower.includes('"assetpath":"art/resources.pcx"'))) {
+      return true;
+    }
+    if (kinds.units32 && (lower.includes('"kind":"units32-atlas"') || lower.includes('"assetpath":"art/units/units_32.pcx"'))) {
+      return true;
+    }
+    return false;
+  });
+  if (kinds.units32) invalidateUnits32AtlasMetricsCache();
+}
+
+function clearPendingAtlasCopyState(tab, atlasKey) {
+  if (!tab || !tab.pendingAtlasCopies || typeof tab.pendingAtlasCopies !== 'object') return false;
+  if (!Object.prototype.hasOwnProperty.call(tab.pendingAtlasCopies, atlasKey)) return false;
+  delete tab.pendingAtlasCopies[atlasKey];
+  if (Object.keys(tab.pendingAtlasCopies).length === 0) delete tab.pendingAtlasCopies;
+  return true;
+}
+
+function clearSavedImportedAtlasPendingState(kinds) {
+  if (!state.bundle || !state.bundle.tabs || !kinds) return false;
+  let changed = false;
+  if (kinds.resources) {
+    const tab = state.bundle.tabs.resources;
+    if (tab && Array.isArray(tab.entries)) {
+      tab.entries.forEach((entry) => {
+        if (entry && entry._pendingImportedResourceIcon) {
+          delete entry._pendingImportedResourceIcon;
+          changed = true;
+        }
+      });
+    }
+    if (clearPendingAtlasCopyState(tab, 'resources')) changed = true;
+  }
+  if (kinds.units32) {
+    const tab = state.bundle.tabs.units;
+    if (tab && Array.isArray(tab.entries)) {
+      tab.entries.forEach((entry) => {
+        if (entry && entry._pendingImportedUnitIcon) {
+          delete entry._pendingImportedUnitIcon;
+          changed = true;
+        }
+      });
+    }
+    if (clearPendingAtlasCopyState(tab, 'units32')) changed = true;
+  }
+  return changed;
+}
+
+function finalizeSavedAtlasStateAfterNoReload(saveReport) {
+  const kinds = getSavedAtlasKinds(saveReport);
+  if (!kinds.resources && !kinds.units32) return false;
+  clearSavedAtlasPreviewCaches(kinds);
+  const clearedPending = clearSavedImportedAtlasPendingState(kinds);
+  const activeTabNeedsRefresh = (kinds.resources && state.activeTab === 'resources')
+    || (kinds.units32 && state.activeTab === 'units');
+  return clearedPending || activeTabNeedsRefresh;
+}
+
 function markScenarioDistrictsAsSaved() {
   const mapTab = state.bundle && state.bundle.tabs && state.bundle.tabs.map;
   const meta = mapTab && mapTab.scenarioDistricts;
@@ -51862,6 +52060,7 @@ function reconcileReferenceTabsAfterNoReloadSave(options = {}) {
 
     const beforeOrder = entries.map((entry) => String(entry && entry.civilopediaKey || '')).join('\n');
     entries.sort((a, b) => {
+      if (tabKey === 'units') return compareUnitReferenceInGameOrder(a, b);
       const ai = Number(a && a.biqIndex);
       const bi = Number(b && b.biqIndex);
       const aFinite = Number.isFinite(ai) && ai >= 0;
@@ -52199,9 +52398,11 @@ async function saveCurrentBundle() {
         setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
         return true;
       }
+      const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload(res.saveReport);
       markCurrentBundleCleanAfterSave({ referenceOpsByTab: referenceOpsForNoReloadSave });
       _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload because Reload After Save is off');
       rerunQualityChecksAfterNoReloadSave();
+      if (rerenderAfterAtlasSave) renderActiveTab({ preserveTabScroll: true });
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
       return true;
     }
