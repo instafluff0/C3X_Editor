@@ -60,7 +60,7 @@ const DIRECT_FIELD_SPECS = [
   { uiKey: 'uniquecolor', rawKey: 'uniquecolor', defaultValue: '0' },
   { uiKey: 'defaultcolor', rawKey: 'defaultcolor', defaultValue: '0' },
   { uiKey: 'uniquecivcounter', rawKey: 'uniquecivcounter', defaultValue: '0' },
-  { uiKey: 'diplomacytextindex', rawKey: 'diplomacytextindex', defaultValue: '0' },
+  { uiKey: 'diplomacytextindex', rawKey: 'diplomacytextindex', defaultValue: '-1' },
   { uiKey: 'questionmark', rawKey: 'questionmark', defaultValue: '0' }
 ];
 

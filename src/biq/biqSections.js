@@ -3277,9 +3277,9 @@ function createDefaultRecord(code, civKey, io) {
         name, leaderTitle: '', civilopediaEntry: civKey, adjective: name, civilizationName: name, noun: name,
         forwardFilenames: Array(io.numEras).fill(''), reverseFilenames: Array(io.numEras).fill(''),
         cultureGroup: 0, leaderGender: 0, civilizationGender: 0, aggressionLevel: 0,
-        uniqueCivCounter: 0, shunnedGovernment: -1, favoriteGovernment: 0, defaultColor: 0, uniqueColor: 0,
+        uniqueCivCounter: 0, shunnedGovernment: -1, favoriteGovernment: -1, defaultColor: 0, uniqueColor: 0,
         freeTechs: [-1, -1, -1, -1], bonuses: 0, governorSettings: 0, buildNever: 0, buildOften: 0, plurality: 0,
-        kingUnit: -1, flavors: 0, questionMark: 0, diplomacyTextIndex: 0, numScientificLeaders: 0, scientificLeaderNames: []
+        kingUnit: -1, flavors: 0, questionMark: 0, diplomacyTextIndex: -1, numScientificLeaders: 0, scientificLeaderNames: []
       };
     }
     case 'PRTO': {

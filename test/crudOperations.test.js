@@ -276,6 +276,7 @@ function loadRendererImportHelpers(targetBundle) {
     'decodeAvailableToIndices',
     'encodeAvailableToFromIndices',
     'getBiqFieldByBaseKey',
+    'makeBlankReferenceFieldValue',
     'buildNewReferenceEntryFromTemplate',
     'getImportReferenceIndexMap',
     'getTargetReferenceIndexByKey',
@@ -330,6 +331,17 @@ function loadRendererImportHelpers(targetBundle) {
     + ' };';
   vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-unit-import.vm' });
   return sandbox.__helpers;
+}
+
+function makeTestBiqField(key, value) {
+  return {
+    key,
+    baseKey: key,
+    label: key,
+    value: String(value),
+    originalValue: String(value),
+    editable: true
+  };
 }
 
 function loadRendererDeleteHelpers() {
@@ -1711,6 +1723,272 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
     }
   });
 }
+
+test('Renderer blank Improvement template clears inherited reference defaults', () => {
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers({ tabs: {} });
+  const sourceEntry = {
+    name: 'Wonder Template',
+    civilopediaKey: 'BLDG_WONDER_TEMPLATE',
+    improvementKind: 'wonder',
+    thumbPath: 'Art\\Civilopedia\\Icons\\Buildings\\wonderlarge.pcx',
+    iconPaths: ['Art\\Civilopedia\\Icons\\Buildings\\wonderlarge.pcx'],
+    buildingIconKind: 'SINGLE',
+    buildingIconIndex: '42',
+    wonderSplashPath: 'Art\\Wonder Splash\\wonder.pcx',
+    biqFields: [
+      makeTestBiqField('civilopediaentry', 'BLDG_WONDER_TEMPLATE'),
+      makeTestBiqField('cost', '400'),
+      makeTestBiqField('reqresource1', '0'),
+      makeTestBiqField('reqresource2', '0'),
+      makeTestBiqField('reqgovernment', '0'),
+      makeTestBiqField('reqimprovement', '0'),
+      makeTestBiqField('doubleshappiness', '0'),
+      makeTestBiqField('gainineverycity', '0'),
+      makeTestBiqField('gainoncontinent', '0'),
+      makeTestBiqField('obsoleteby', '1'),
+      makeTestBiqField('unitproduced', '0'),
+      makeTestBiqField('spaceshippart', '0'),
+      makeTestBiqField('unitfrequency', '7'),
+      makeTestBiqField('wonder', 'true'),
+      makeTestBiqField('smallwonder', 'false'),
+      makeTestBiqField('improvement', 'false')
+    ]
+  };
+
+  const blank = buildNewReferenceEntryFromTemplate({
+    tabKey: 'improvements',
+    sourceEntry,
+    civilopediaKey: 'BLDG_BLANK_TEST',
+    mode: 'blank',
+    displayName: 'Blank Test'
+  });
+
+  for (const key of [
+    'reqresource1',
+    'reqresource2',
+    'reqgovernment',
+    'reqimprovement',
+    'doubleshappiness',
+    'gainineverycity',
+    'gainoncontinent',
+    'obsoleteby',
+    'unitproduced',
+    'spaceshippart'
+  ]) {
+    assert.equal(fieldVal(blank, key), '-1', `${key} should be unset on blank improvements`);
+  }
+  assert.equal(fieldVal(blank, 'cost'), '0');
+  assert.equal(fieldVal(blank, 'unitfrequency'), '0');
+  assert.equal(fieldVal(blank, 'wonder'), 'false');
+  assert.equal(fieldVal(blank, 'smallwonder'), 'false');
+  assert.equal(fieldVal(blank, 'improvement'), 'true');
+  assert.equal(blank.improvementKind, 'normal');
+  assert.equal(Array.isArray(blank.iconPaths), true);
+  assert.equal(blank.iconPaths.length, 0);
+  assert.equal(blank.thumbPath, '');
+  assert.equal(blank.buildingIconKind, '');
+  assert.equal(blank.buildingIconIndex, '');
+  assert.equal(blank.wonderSplashPath, '');
+});
+
+test('Renderer blank reference templates clear inherited art thumbnails for all addable tabs', () => {
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers({ tabs: {} });
+  const cases = [
+    { tabKey: 'civilizations', key: 'RACE_BLANK_ART' },
+    { tabKey: 'technologies', key: 'TECH_BLANK_ART' },
+    { tabKey: 'resources', key: 'GOOD_BLANK_ART' },
+    { tabKey: 'improvements', key: 'BLDG_BLANK_ART' },
+    { tabKey: 'governments', key: 'GOVT_BLANK_ART' },
+    { tabKey: 'units', key: 'PRTO_BLANK_ART' }
+  ];
+  for (const { tabKey, key } of cases) {
+    const blank = buildNewReferenceEntryFromTemplate({
+      tabKey,
+      sourceEntry: {
+        name: 'Source',
+        civilopediaKey: key.replace('BLANK', 'SOURCE'),
+        thumbPath: 'Art\\Civilopedia\\Icons\\Inherited\\large.pcx',
+        iconPaths: ['Art\\Civilopedia\\Icons\\Inherited\\large.pcx', 'Art\\Civilopedia\\Icons\\Inherited\\small.pcx'],
+        racePaths: ['Art\\Advisors\\Inherited.pcx', 'Art\\Flics\\Inherited.flc'],
+        buildingIconKind: 'SINGLE',
+        buildingIconIndex: '9',
+        wonderSplashPath: 'Art\\Wonder Splash\\Inherited.pcx',
+        animationName: 'Inherited Unit',
+        biqFields: [makeTestBiqField('civilopediaentry', key.replace('BLANK', 'SOURCE'))]
+      },
+      civilopediaKey: key,
+      mode: 'blank',
+      displayName: 'Blank Art'
+    });
+    assert.equal(Array.isArray(blank.iconPaths), true, `${tabKey} icon paths should be an array`);
+    assert.equal(blank.iconPaths.length, 0, `${tabKey} should not inherit icon paths`);
+    assert.equal(Array.isArray(blank.racePaths), true, `${tabKey} civ art paths should be an array`);
+    assert.equal(blank.racePaths.length, 0, `${tabKey} should not inherit civ art paths`);
+    assert.equal(blank.thumbPath, '', `${tabKey} should not inherit list thumbnail path`);
+    assert.equal(blank.animationName, '', `${tabKey} should not inherit unit animation folder`);
+    assert.equal(blank.buildingIconKind, '', `${tabKey} should not inherit building art mode`);
+    assert.equal(blank.buildingIconIndex, '', `${tabKey} should not inherit building art index`);
+    assert.equal(blank.wonderSplashPath, '', `${tabKey} should not inherit wonder splash`);
+  }
+});
+
+test('Renderer blank reference templates use unset cross-reference defaults', () => {
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers({ tabs: {} });
+  const cases = [
+    {
+      tabKey: 'civilizations',
+      key: 'RACE_BLANK_REFS',
+      fields: [
+        ['favoritegovernment', '0'],
+        ['shunnedgovernment', '0'],
+        ['kingunit', '0'],
+        ['freetech1index', '0'],
+        ['freetech2index', '1'],
+        ['culturegroup', '0'],
+        ['diplomacytextindex', '0']
+      ],
+      expected: {
+        favoritegovernment: '-1',
+        shunnedgovernment: '-1',
+        kingunit: '-1',
+        freetech1index: '-1',
+        freetech2index: '-1',
+        culturegroup: '-1',
+        diplomacytextindex: '-1'
+      }
+    },
+    {
+      tabKey: 'technologies',
+      key: 'TECH_BLANK_REFS',
+      fields: [['prerequisite1', '0'], ['prerequisite2', '1']],
+      expected: { prerequisite1: 'None', prerequisite2: 'None' }
+    },
+    {
+      tabKey: 'resources',
+      key: 'GOOD_BLANK_REFS',
+      fields: [['prerequisite', '0']],
+      expected: { prerequisite: '-1' }
+    },
+    {
+      tabKey: 'governments',
+      key: 'GOVT_BLANK_REFS',
+      fields: [['prerequisitetechnology', '0'], ['immuneto', '0']],
+      expected: { prerequisitetechnology: '-1', immuneto: '-1' }
+    },
+    {
+      tabKey: 'units',
+      key: 'PRTO_BLANK_REFS',
+      fields: [
+        ['iconindex', '0'],
+        ['requiredtech', '0'],
+        ['requiredresource1', '0'],
+        ['requiredresource2', '1'],
+        ['requiredresource3', '2'],
+        ['upgradeto', '0'],
+        ['enslaveresultsin', '0'],
+        ['stealth_target', '0,1'],
+        ['legal_building_telepad', '0']
+      ],
+      expected: {
+        iconindex: '-1',
+        requiredtech: '-1',
+        requiredresource1: '-1',
+        requiredresource2: '-1',
+        requiredresource3: '-1',
+        upgradeto: '-1',
+        enslaveresultsin: '-1',
+        stealth_target: '',
+        legal_building_telepad: ''
+      }
+    }
+  ];
+
+  for (const item of cases) {
+    const blank = buildNewReferenceEntryFromTemplate({
+      tabKey: item.tabKey,
+      sourceEntry: {
+        name: 'Source',
+        civilopediaKey: item.key.replace('BLANK', 'SOURCE'),
+        biqFields: [
+          makeTestBiqField('civilopediaentry', item.key.replace('BLANK', 'SOURCE')),
+          ...item.fields.map(([key, value]) => makeTestBiqField(key, value))
+        ]
+      },
+      civilopediaKey: item.key,
+      mode: 'blank',
+      displayName: 'Blank Refs'
+    });
+    for (const [fieldKey, expectedValue] of Object.entries(item.expected)) {
+      assert.equal(fieldVal(blank, fieldKey), expectedValue, `${item.tabKey}.${fieldKey}`);
+    }
+  }
+});
+
+test('Add blank BLDG uses blank improvement defaults for serialized fields', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Source BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const newKey = makeShortTestRef('BLDG_', 'BLANK');
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      improvements: { recordOps: [{ op: 'add', newRecordRef: newKey }] }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const added = getEntry(after, 'improvements', newKey);
+  assert.ok(added, `expected added improvement ${newKey}`);
+  for (const key of [
+    'reqresource1',
+    'reqresource2',
+    'reqgovernment',
+    'reqimprovement',
+    'doubleshappiness',
+    'gainineverycity',
+    'gainoncontinent',
+    'obsoleteby',
+    'unitproduced',
+    'spaceshippart'
+  ]) {
+    assert.equal(getRawRecordInt({ fields: added.biqFields }, key), -1, `${key} should serialize as unset`);
+  }
+  assert.equal(fieldVal(added, 'wonder'), 'false');
+  assert.equal(fieldVal(added, 'smallwonder'), 'false');
+  assert.equal(fieldVal(added, 'improvement'), 'true');
+  assert.equal(added.improvementKind, 'normal');
+});
+
+test('Add blank RACE uses unset government, monarch, and diplomacy defaults', (t) => {
+  const ctx = setupScenario(TIDES_BIQ);
+  if (!ctx) return t.skip(`Source BIQ not found: ${TIDES_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const newKey = makeShortTestRef('RACE_', 'BLANK');
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: { recordOps: [{ op: 'add', newRecordRef: newKey }] }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const added = getEntry(after, 'civilizations', newKey);
+  assert.ok(added, `expected added civilization ${newKey}`);
+  for (const key of ['favoritegovernment', 'shunnedgovernment', 'kingunit']) {
+    assert.equal(fieldVal(added, key), 'None', `${key} should display as unset`);
+  }
+  assert.equal(fieldVal(added, 'diplomacytextindex'), '-1', 'diplomacytextindex should serialize as unset');
+});
 
 test('Add blank PRTO uses Quint-style new-unit defaults for serialized fields', (t) => {
   const ctx = setupScenario(BASE_BIQ);

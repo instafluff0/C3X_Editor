@@ -30246,8 +30246,51 @@ function makeDefaultReferenceFieldValue(field, name) {
   return '';
 }
 
-function makeBlankReferenceFieldValue(field) {
+function makeBlankReferenceFieldValue(field, tabKey = '') {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  if (tabKey === 'civilizations') {
+    if (/^freetech\d+index$/.test(base)) return '-1';
+    if (base === 'favoritegovernment' || base === 'shunnedgovernment' || base === 'kingunit') return '-1';
+    if (base === 'culturegroup' || base === 'diplomacytextindex') return '-1';
+  }
+  if (tabKey === 'technologies') {
+    if (/^prerequisite\d*$/.test(base)) return 'None';
+  }
+  if (tabKey === 'resources') {
+    if (base === 'prerequisite') return '-1';
+  }
+  if (tabKey === 'governments') {
+    if (base === 'prerequisitetechnology' || base === 'immuneto') return '-1';
+    if (/^performanceofthisgovernmentversusgovernment\d+$/.test(base.replace(/[^a-z0-9]/g, ''))) return '0';
+  }
+  if (tabKey === 'improvements') {
+    const blankImprovementReferenceFields = new Set([
+      'doubleshappiness',
+      'gainineverycity',
+      'gainoncontinent',
+      'reqimprovement',
+      'reqgovernment',
+      'spaceshippart',
+      'reqadvance',
+      'obsoleteby',
+      'reqresource1',
+      'reqresource2',
+      'unitproduced'
+    ]);
+    if (blankImprovementReferenceFields.has(base)) return '-1';
+    if (base === 'wonder' || base === 'smallwonder') return 'false';
+    if (base === 'improvement') return 'true';
+  }
+  if (tabKey === 'units') {
+    if (base === 'iconindex') return '-1';
+    if (base === 'requiredtech' || base === 'upgradeto' || base === 'enslaveresultsin') return '-1';
+    if (/^requiredresource\d+$/.test(base)) return '-1';
+    if (base === 'stealth_target' || base === 'stealthtarget' || base === 'stealthtargets'
+      || base === 'legal_unit_telepad' || base === 'legalunittelepad' || base === 'legalunittelepads'
+      || base === 'legal_building_telepad' || base === 'legalbuildingtelepad' || base === 'legalbuildingtelepads') {
+      return '';
+    }
+  }
   // Clear all tech/prereq reference fields for new blank entries
   if (/^(freetech|prerequisite|reqadvance|requiredtech)/.test(base)) return '';
   // Keep name/description as they'll be set by the template
@@ -30288,15 +30331,17 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     entry.civilopediaSection2 = '';
     entry.iconPaths = [];
     entry.racePaths = [];
+    entry.thumbPath = '';
     entry.buildingIconKind = '';
     entry.buildingIconIndex = '';
     entry.wonderSplashPath = '';
     entry.animationName = '';
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
-      value: makeBlankReferenceFieldValue(field),
+      value: makeBlankReferenceFieldValue(field, tabKey),
       originalValue: ''
     }));
+    if (tabKey === 'improvements') entry.improvementKind = 'normal';
   } else if (mode === 'import') {
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
