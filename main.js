@@ -8,6 +8,7 @@ const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
 const APP_NAME = 'Civ 3 C3X Modern Editor';
+const SUPPORTED_C3X_RELEASE = 'R27';
 const DEV_APP_ICON_PATH = path.join(__dirname, 'build', 'icon.png');
 app.setName(APP_NAME);
 app.name = APP_NAME;
@@ -195,6 +196,19 @@ function normalizeTextFileEncoding(value) {
     cp949: 'euc-kr'
   };
   return aliases[raw] || 'auto';
+}
+
+function parseReleaseNum(value) {
+  const n = parseInt(String(value || '').replace(/^R/i, ''), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function normalizeC3xVersion(value) {
+  const raw = String(value || SUPPORTED_C3X_RELEASE).trim() || SUPPORTED_C3X_RELEASE;
+  const supported = parseReleaseNum(SUPPORTED_C3X_RELEASE);
+  const parsed = parseReleaseNum(raw);
+  if (supported > 0 && parsed !== supported) return SUPPORTED_C3X_RELEASE;
+  return raw;
 }
 
 const startupPerformanceMode = readStartupPerformanceMode();
@@ -914,7 +928,7 @@ ipcMain.handle('manager:get-settings', async () => {
     logFolder: getDefaultLogFolderUnsafe(),
     uiFontScale: 1,
     uiStateByContext: {},
-    c3xVersion: 'R27'
+    c3xVersion: SUPPORTED_C3X_RELEASE
   };
   const saved = readJsonIfExists(getSettingsPath(), defaults);
   const merged = { ...defaults, ...(saved || {}) };
@@ -927,8 +941,7 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(merged.mapAutoDockTileInfoLeft);
   merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
   merged.logFolder = normalizeLogFolder(merged.logFolder);
-  const parseReleaseNum = (v) => { const n = parseInt(String(v || '').replace(/^R/i, ''), 10); return isNaN(n) ? 0 : n; };
-  if (parseReleaseNum(merged.c3xVersion) < parseReleaseNum(defaults.c3xVersion)) merged.c3xVersion = defaults.c3xVersion;
+  merged.c3xVersion = normalizeC3xVersion(merged.c3xVersion);
   const inferred = inferDefaultPaths(merged);
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
@@ -978,6 +991,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     autoAddImportedResourceIcons: normalizeAutoAddImportedResourceIcons(settings && settings.autoAddImportedResourceIcons),
     autoAddImportedUnitIcons: normalizeAutoAddImportedUnitIcons(settings && settings.autoAddImportedUnitIcons),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
+    c3xVersion: normalizeC3xVersion(settings && settings.c3xVersion),
     mapAutoDockTileInfoLeft: normalizeMapAutoDockTileInfoLeft(settings && settings.mapAutoDockTileInfoLeft),
     writeLogFiles: normalizeWriteLogFiles(settings && settings.writeLogFiles),
     logFolder: normalizeLogFolder(settings && settings.logFolder)

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const vm = require('node:vm');
 
 const C3X_BASE_MANIFEST = require('../src/c3xBaseManifest');
 const { loadBundle } = require('../src/configCore');
@@ -30,6 +31,40 @@ function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-base-manifest-'));
 }
 
+function extractFunctionSource(sourceText, name) {
+  const needle = `function ${name}(`;
+  const start = sourceText.indexOf(needle);
+  if (start < 0) throw new Error(`Could not find function ${name}`);
+  let paramDepth = 0;
+  let signatureEnd = -1;
+  for (let i = start + needle.length - 1; i < sourceText.length; i += 1) {
+    const ch = sourceText[i];
+    if (ch === '(') paramDepth += 1;
+    if (ch === ')') {
+      paramDepth -= 1;
+      if (paramDepth === 0) {
+        signatureEnd = i;
+        break;
+      }
+    }
+  }
+  const bodyStart = sourceText.indexOf('{', signatureEnd);
+  let depth = 0;
+  let end = -1;
+  for (let i = bodyStart; i < sourceText.length; i += 1) {
+    const ch = sourceText[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+  }
+  return sourceText.slice(start, end);
+}
+
 test('C3X base manifest explicitly covers every shipped default key', () => {
   const { keys } = parseDefaultBaseKeysAndValues();
   const manifestKeys = Object.keys(C3X_BASE_MANIFEST);
@@ -54,6 +89,8 @@ test('C3X base manifest extras are limited to explicit forward-compat keys', () 
     'fixed_turns_per_season',
     'pinned_season_for_seasonal_cycle',
     'seasonal_cycle_mode',
+    'show_tile_destruct_animation_after',
+    'show_tile_destruction_animation_for_turns',
     'transition_season_on_day_night_hour'
   ]);
 });
@@ -124,6 +161,7 @@ test('C3X base manifest string families stay explicit and audited', () => {
     resource_perfume: 'name_amount_list',
     sea_retreat_rules: 'segmented_enum',
     seasonal_cycle_mode: 'segmented_enum',
+    show_tile_destruct_animation_after: 'bitfield_list',
     special_defensive_bombard_rules: 'bitfield_list',
     special_helicopter_rules: 'bitfield_list',
     special_zone_of_control_rules: 'bitfield_list',
@@ -154,9 +192,12 @@ test('C3X base manifest enum, bitfield, and reference metadata stays source-back
   assert.deepEqual(C3X_BASE_MANIFEST.land_transport_rules.options, ['load-onto-boat', 'join-army', 'no-defense-from-inside', 'no-escape']);
   assert.deepEqual(C3X_BASE_MANIFEST.special_helicopter_rules.options, ['allow-on-carriers', 'passenger-airdrop', 'no-defense-from-inside', 'no-escape']);
   assert.deepEqual(C3X_BASE_MANIFEST.enabled_seasons.options, ['summer', 'fall', 'winter', 'spring']);
+  assert.deepEqual(C3X_BASE_MANIFEST.show_tile_destruct_animation_after.options, ['bombard', 'bomb', 'pillage']);
   assert.deepEqual(C3X_BASE_MANIFEST.override_no_ai_patrol.options, ['none', 'one', 'zero']);
   assert.deepEqual(C3X_BASE_MANIFEST.override_barbarian_activity_level_for_scenario_maps.options, ['none', 'No Barbarians', 'Sedentary', 'Roaming', 'Restless', 'Raging', 'Random']);
 
+  assert.equal(C3X_BASE_MANIFEST.show_tile_destruct_animation_after.release, 'R28');
+  assert.equal(C3X_BASE_MANIFEST.show_tile_destruction_animation_for_turns.release, 'R28');
   assert.equal(C3X_BASE_MANIFEST.can_bombard_only_sea_tiles.referenceTab, 'units');
   assert.equal(C3X_BASE_MANIFEST.exclude_types_from_units_per_tile_limit.referenceTab, 'units');
   assert.equal(C3X_BASE_MANIFEST.limit_defensive_retreat_on_water_to_types.referenceTab, 'units');
@@ -200,6 +241,43 @@ test('C3X base manifest assigns every key to an explicit audit tier', () => {
   assert.ok(tierCounts['string-codec'] > 0, 'Expected simple string audit tier coverage');
   assert.ok(tierCounts['special-syntax-codec'] > 0, 'Expected special syntax codec tier coverage');
   assert.ok(tierCounts['special-syntax-source-backed'] > 0, 'Expected source-backed special syntax tier coverage');
+});
+
+test('renderer C3X version gating caps future saved versions at the supported release', () => {
+  const rendererSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const sandbox = {
+    state: { settings: { c3xVersion: 'R28' } },
+    SUPPORTED_C3X_RELEASE: 'R27',
+    TAB_MIN_RELEASE: Object.freeze({ animations: 'R28' }),
+    C3X_RELEASE_BY_KEY: Object.freeze({
+      enable_districts: 'R26',
+      seasonal_cycle_mode: 'R28',
+      show_tile_destruct_animation_after: 'R28',
+      show_tile_destruction_animation_for_turns: 'R28'
+    }),
+    exports: {}
+  };
+  vm.createContext(sandbox);
+  vm.runInContext([
+    extractFunctionSource(rendererSource, 'parseReleaseNumber'),
+    extractFunctionSource(rendererSource, 'getEffectiveC3xVersion'),
+    extractFunctionSource(rendererSource, 'isTabVersionAllowed'),
+    extractFunctionSource(rendererSource, 'isSectionFieldVersionAllowed'),
+    extractFunctionSource(rendererSource, 'isBaseRowVersionAllowed'),
+    'exports.getEffectiveC3xVersion = getEffectiveC3xVersion;',
+    'exports.isTabVersionAllowed = isTabVersionAllowed;',
+    'exports.isSectionFieldVersionAllowed = isSectionFieldVersionAllowed;',
+    'exports.isBaseRowVersionAllowed = isBaseRowVersionAllowed;'
+  ].join('\n'), sandbox);
+
+  assert.equal(sandbox.exports.getEffectiveC3xVersion(), 'R27');
+  assert.equal(sandbox.exports.isBaseRowVersionAllowed('enable_districts'), true);
+  assert.equal(sandbox.exports.isBaseRowVersionAllowed('seasonal_cycle_mode'), false);
+  assert.equal(sandbox.exports.isBaseRowVersionAllowed('show_tile_destruct_animation_after'), false);
+  assert.equal(sandbox.exports.isBaseRowVersionAllowed('show_tile_destruction_animation_for_turns'), false);
+  assert.equal(sandbox.exports.isTabVersionAllowed('animations'), false);
+  assert.equal(sandbox.exports.isSectionFieldVersionAllowed({ minRelease: 'R28' }), false);
+  assert.equal(sandbox.exports.isSectionFieldVersionAllowed({ minRelease: 'R27' }), true);
 });
 
 test('C3X base rows use manifest-driven types for shipped keys', () => {

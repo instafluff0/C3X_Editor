@@ -42,9 +42,11 @@ Playback rules:
 
 ## C3X Version Gating
 
-Some UI features require a minimum C3X release. The mechanism is driven by the `c3xVersion` setting (`settings.json`), which stores the user's installed C3X release as a string like `'R28'`. An empty string means no filtering — all features are shown.
+Some UI features require a minimum C3X release. The mechanism is driven by the `c3xVersion` setting (`settings.json`), which stores the user's installed C3X release as a string like `'R27'`.
 
 The default value is defined in the `defaults` object inside the `manager:get-settings` handler in `main.js`. Change it there to shift the baseline for users who have no saved setting yet.
+
+The app also defines `SUPPORTED_C3X_RELEASE` in `main.js` and `src/renderer.js`. Saved versions newer than that release are clamped back to the supported release, so forward-compatibility metadata can exist without exposing unfinished fields.
 
 ### Gating a whole tab
 
@@ -70,7 +72,8 @@ Add `minRelease` to the field object in `SECTION_SCHEMAS`:
 `isSectionFieldVersionAllowed(field)` is applied to every field in the `orderedSchemaFields` pipeline before rendering.
 
 ### Rules
-- `c3xVersion` empty → all gated features are shown (safe default).
+- Settings normalization should keep `c3xVersion` at `SUPPORTED_C3X_RELEASE` until newer C3X support is ready.
+- Renderer helpers treat an empty `c3xVersion` as "show all", but app settings should not persist an empty value.
 - Both helpers reuse `parseReleaseNumber()`, which strips the leading `'R'` and compares integers.
 - Gate the smallest unit possible: prefer field-level gating over tab-level gating unless the entire tab is new.
 

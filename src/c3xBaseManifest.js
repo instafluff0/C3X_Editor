@@ -121,6 +121,8 @@
     elapsed_minutes_per_season_transition: 'R28',
     fixed_turns_per_season: 'R28',
     transition_season_on_day_night_hour: 'R28',
+    show_tile_destruct_animation_after: 'R28',
+    show_tile_destruction_animation_for_turns: 'R28',
     add_natural_wonders_to_scenarios_if_none: 'R27',
     show_natural_wonder_name_on_map: 'R26',
     enable_neighborhood_districts: 'R26',
@@ -402,6 +404,7 @@
     "tiles_per_non_luxury_resource",
     "tourism_time_scale_percent",
     "transition_season_on_day_night_hour",
+    "show_tile_destruction_animation_for_turns",
     "years_to_double_building_culture"
   ]);
 
@@ -435,6 +438,7 @@
     "resource_perfume",
     "sea_retreat_rules",
     "seasonal_cycle_mode",
+    "show_tile_destruct_animation_after",
     "special_defensive_bombard_rules",
     "special_helicopter_rules",
     "special_zone_of_control_rules",
@@ -475,6 +479,7 @@
     resource_perfume: 'name_amount_list',
     sea_retreat_rules: 'segmented_enum',
     seasonal_cycle_mode: 'segmented_enum',
+    show_tile_destruct_animation_after: 'bitfield_list',
     special_defensive_bombard_rules: 'bitfield_list',
     special_helicopter_rules: 'bitfield_list',
     special_zone_of_control_rules: 'bitfield_list',
@@ -500,6 +505,7 @@
     override_no_ai_patrol: Object.freeze(['none', 'one', 'zero']),
     sea_retreat_rules: Object.freeze(['standard', 'none', 'all-units', 'if-faster', 'if-not-slower', 'if-fast-and-not-slower']),
     seasonal_cycle_mode: Object.freeze(['off', 'timer', 'user-season', 'every-turn', 'on-day-night-hour', 'specified']),
+    show_tile_destruct_animation_after: Object.freeze(['bombard', 'bomb', 'pillage']),
     special_defensive_bombard_rules: Object.freeze(['lethal', 'aerial', 'not-invisible', 'blitz', 'docked-vs-land', 'all']),
     special_helicopter_rules: Object.freeze(['allow-on-carriers', 'passenger-airdrop', 'no-defense-from-inside', 'no-escape']),
     special_zone_of_control_rules: Object.freeze(['amphibious', 'lethal', 'aerial', 'not-from-inside', 'all']),

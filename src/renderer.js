@@ -704,6 +704,7 @@ const TAB_GROUPS = [
 ];
 // Minimum C3X release required for each tab key. Tabs not listed here are always shown.
 // Use 'R<N>' strings to match the C3X_RELEASE_BY_KEY convention.
+const SUPPORTED_C3X_RELEASE = 'R27';
 const TAB_MIN_RELEASE = Object.freeze({
   animations: 'R28'
 });
@@ -7284,10 +7285,19 @@ function parseReleaseNumber(label) {
   return isNaN(n) ? 0 : n;
 }
 
+function getEffectiveC3xVersion() {
+  const configured = String((state.settings && state.settings.c3xVersion) || '').trim();
+  if (!configured) return '';
+  const configuredNumber = parseReleaseNumber(configured);
+  const supportedNumber = parseReleaseNumber(SUPPORTED_C3X_RELEASE);
+  if (supportedNumber > 0 && configuredNumber > supportedNumber) return SUPPORTED_C3X_RELEASE;
+  return configured;
+}
+
 function isTabVersionAllowed(tabKey) {
   const minRelease = TAB_MIN_RELEASE[tabKey];
   if (!minRelease) return true;
-  const configured = String((state.settings && state.settings.c3xVersion) || '').trim();
+  const configured = getEffectiveC3xVersion();
   if (!configured) return true; // no version set → show everything
   return parseReleaseNumber(configured) >= parseReleaseNumber(minRelease);
 }
@@ -7298,7 +7308,7 @@ function isTabVersionAllowed(tabKey) {
 function isSectionFieldVersionAllowed(field) {
   const minRelease = field && field.minRelease;
   if (!minRelease) return true;
-  const configured = String((state.settings && state.settings.c3xVersion) || '').trim();
+  const configured = getEffectiveC3xVersion();
   if (!configured) return true;
   return parseReleaseNumber(configured) >= parseReleaseNumber(minRelease);
 }
@@ -7309,7 +7319,7 @@ function isSectionFieldVersionAllowed(field) {
 function isBaseRowVersionAllowed(key) {
   const minRelease = C3X_RELEASE_BY_KEY[String(key || '').trim().toLowerCase()];
   if (!minRelease) return true;
-  const configured = String((state.settings && state.settings.c3xVersion) || '').trim();
+  const configured = getEffectiveC3xVersion();
   if (!configured) return true;
   return parseReleaseNumber(configured) >= parseReleaseNumber(minRelease);
 }

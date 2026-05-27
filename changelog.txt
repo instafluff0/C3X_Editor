@@ -1,4 +1,5 @@
 * RELEASE 27.12.1
+- Hid unreleased R28 C3X fields while the editor supports R27, including tile destruction animation settings now marked with R28 release metadata.
 - Fixed blank Add templates for Civs, Techs, Resources, Improvements, Governments, and Units so new entries no longer inherit thumbnail/art paths or live reference defaults from the selected entry, and blank Civs now start with no favorite/shunned government, monarch unit, or diplomacy text slot.
 - Fixed import/add modal field alignment so Name and Key inputs stay top-aligned even when the Key helper text is visible.
 - Fixed the main Units tab so its sort menu no longer exposes the Unit Table-only `Manual` mode, stale saved `Manual` sort state falls back to in-game order, unsaved new Units stay surfaced before Save, and no-reload saves keep synthetic era-specific unit rows behind real BIQ unit records.
