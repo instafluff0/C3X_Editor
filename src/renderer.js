@@ -21591,6 +21591,93 @@ function drawResourceIconToCanvas(preview, spriteIndex, canvas) {
   return true;
 }
 
+function getBuildingCityAtlasGeometry(size = 'large') {
+  return String(size || '').trim().toLowerCase() === 'small'
+    ? { origin: 32, cellW: 33, cellH: 33, drawW: 32, drawH: 32 }
+    : { origin: 32, cellW: 51, cellH: 41, drawW: 50, drawH: 40 };
+}
+
+function getBuildingCityAtlasMetrics(preview, size = 'large') {
+  const atlas = rgbaToCanvas(preview);
+  if (!atlas || !atlas.width || !atlas.height) return null;
+  const geometry = getBuildingCityAtlasGeometry(size);
+  const cols = Math.max(1, Math.floor((atlas.width - geometry.origin) / geometry.cellW));
+  const rows = Math.max(1, Math.floor((atlas.height - geometry.origin) / geometry.cellH));
+  return { atlas, cols, rows, ...geometry };
+}
+
+function drawBuildingCityIconToCanvas(preview, iconIndex, canvas, { size = 'large', col = 0 } = {}) {
+  const idx = Number.parseInt(String(iconIndex), 10);
+  const column = Math.max(0, Number.parseInt(String(col), 10) || 0);
+  if (!preview || !canvas || !Number.isFinite(idx) || idx < 0) return false;
+  const metrics = getBuildingCityAtlasMetrics(preview, size);
+  if (!metrics) return false;
+  const { atlas, cols, rows, origin, cellW, cellH, drawW, drawH } = metrics;
+  if (idx >= rows || column >= cols) return false;
+  const sx = origin + column * cellW + 1;
+  const sy = origin + idx * cellH + 1;
+  if (sx + drawW > atlas.width || sy + drawH > atlas.height) return false;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(atlas, sx, sy, drawW, drawH, 0, 0, canvas.width, canvas.height);
+  return true;
+}
+
+function getBuildingCityAtlasIndices(preview) {
+  if (!preview || !preview.indicesBase64) return null;
+  if (!preview._cachedIndexBytes) preview._cachedIndexBytes = fromBase64ToUint8(preview.indicesBase64);
+  return preview._cachedIndexBytes;
+}
+
+function getBuildingCityAtlasPalette(preview) {
+  if (!preview || !preview.paletteBase64) return null;
+  if (!preview._cachedPaletteBytes) preview._cachedPaletteBytes = fromBase64ToUint8(preview.paletteBase64);
+  return preview._cachedPaletteBytes;
+}
+
+function isBuildingCityPaletteGuideOrBackground(palette, index) {
+  if (!palette || index < 0 || index > 255) return false;
+  const off = index * 3;
+  const r = palette[off];
+  const g = palette[off + 1];
+  const b = palette[off + 2];
+  return (r === 255 && g === 0 && b === 255) || (r === 0 && g === 255 && b === 0);
+}
+
+function isBuildingCityPreviewRowEmpty(preview, rowIndex, size = 'large') {
+  const idx = Number.parseInt(String(rowIndex), 10);
+  if (!preview || !Number.isFinite(idx) || idx < 0) return false;
+  const metrics = getBuildingCityAtlasMetrics(preview, size);
+  if (!metrics || idx >= metrics.rows) return false;
+  const indices = getBuildingCityAtlasIndices(preview);
+  const palette = getBuildingCityAtlasPalette(preview);
+  if (!indices || !palette) return false;
+  const { cols, origin, cellW, cellH } = metrics;
+  const y0 = origin + idx * cellH;
+  for (let col = 0; col < cols; col += 1) {
+    const x0 = origin + col * cellW;
+    for (let y = 1; y < cellH; y += 1) {
+      const rowOff = (y0 + y) * preview.width + x0;
+      for (let x = 1; x < cellW; x += 1) {
+        if (!isBuildingCityPaletteGuideOrBackground(palette, indices[rowOff + x])) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function findNextBuildingCityPreviewRow(preview, size = 'large') {
+  const metrics = getBuildingCityAtlasMetrics(preview, size);
+  if (!metrics) return null;
+  let lastOccupied = -1;
+  for (let idx = 0; idx < metrics.rows; idx += 1) {
+    if (!isBuildingCityPreviewRowEmpty(preview, idx, size)) lastOccupied = idx;
+  }
+  return lastOccupied + 1;
+}
+
 function drawMagentaResourceIconPlaceholder(canvas) {
   const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
   if (!ctx) return false;
@@ -21686,9 +21773,14 @@ function getPendingImportedResourceIcon(entry) {
   return { ...pending, sourceIconIndex, targetIconIndex };
 }
 
+function hasPendingImportedResourceIconMeta(entry) {
+  return !!(entry && entry._pendingImportedResourceIcon && typeof entry._pendingImportedResourceIcon === 'object');
+}
+
 function getPendingImportedIconForTabEntry(tabKey, entry) {
   if (tabKey === 'units') return getPendingImportedUnitIcon(entry);
   if (tabKey === 'resources') return getPendingImportedResourceIcon(entry);
+  if (tabKey === 'improvements') return getPendingImportedBuildingCityIcon(entry);
   return null;
 }
 
@@ -21772,6 +21864,117 @@ async function drawPendingImportedResourceIconToCanvas(entry, canvas) {
   const pending = getPendingImportedResourceIcon(entry);
   if (!pending || !canvas) return false;
   return drawPendingImportedResourceIconItemToCanvas({ entry, pending }, canvas);
+}
+
+function getPendingImportedBuildingCityIconMeta(entry) {
+  return entry && entry._pendingImportedBuildingCityIcon && typeof entry._pendingImportedBuildingCityIcon === 'object'
+    ? entry._pendingImportedBuildingCityIcon
+    : null;
+}
+
+function getPendingImportedBuildingCityIcon(entry) {
+  const pending = getPendingImportedBuildingCityIconMeta(entry);
+  if (!pending || pending.requiresManualAssignment) return null;
+  const sourceIconIndex = Number.parseInt(String(pending.sourceIconIndex), 10);
+  const targetIconIndex = Number.parseInt(String(pending.targetIconIndex), 10);
+  if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) return null;
+  if (!Number.isFinite(targetIconIndex) || targetIconIndex < 0) return null;
+  return { ...pending, sourceIconIndex, targetIconIndex };
+}
+
+function getBuildingCityIconColumnCountForEntry(entry) {
+  const kind = normalizeImprovementBuildingArtKind(entry);
+  if (kind === 'ERA') return 4;
+  if (kind === 'CULTURE') return 5;
+  return 1;
+}
+
+function getBuildingCityIconIndexAllocationFloor(tab, excludedRefs = new Set()) {
+  let maxIndex = -1;
+  (Array.isArray(tab && tab.entries) ? tab.entries : []).forEach((entry) => {
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (ref && excludedRefs.has(ref)) return;
+    const idx = parseIntLoose(entry && entry.buildingIconIndex, NaN);
+    if (Number.isFinite(idx) && idx >= 0) maxIndex = Math.max(maxIndex, idx);
+  });
+  return maxIndex + 1;
+}
+
+function getNextBuildingCityPreviewAssignmentRow(largePreview, smallPreview, improvementsTab, importOps = null) {
+  const largeSlot = findNextBuildingCityPreviewRow(largePreview, 'large');
+  const smallSlot = findNextBuildingCityPreviewRow(smallPreview, 'small');
+  if (!Number.isFinite(largeSlot) || !Number.isFinite(smallSlot)) return null;
+  const activeOps = Array.isArray(importOps) ? importOps : getActiveImportedIconOps(improvementsTab);
+  const referenceFloor = getBuildingCityIconIndexAllocationFloor(improvementsTab, getImportedIconOpRefs(activeOps));
+  return Math.max(largeSlot, smallSlot, referenceFloor);
+}
+
+async function drawPendingImportedBuildingCityIconItemToCanvas(item, canvas, fallbackPreview = null) {
+  const pending = item && item.pending;
+  if (!pending || !canvas) return false;
+  const size = String(item && item.size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const col = Math.max(0, Number.parseInt(String(item && item.col), 10) || 0);
+  const sourcePreview = await getBuildingCityAtlasPreview({
+    size,
+    scenarioPath: getPendingImportedIconSourceScenarioPath(item),
+    scenarioPaths: getPendingImportedIconSourceScenarioPaths(item)
+  });
+  if (drawBuildingCityIconToCanvas(sourcePreview, pending.sourceIconIndex, canvas, { size, col })) return true;
+  return !!(fallbackPreview && drawBuildingCityIconToCanvas(fallbackPreview, pending.targetIconIndex, canvas, { size, col }));
+}
+
+async function refreshPendingImportedBuildingCityIconAssignments(tab = null) {
+  const improvementsTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.improvements);
+  if (!improvementsTab || !Array.isArray(improvementsTab.recordOps) || !Array.isArray(improvementsTab.entries)) return false;
+  const ops = getActiveImportedIconOps(improvementsTab);
+  if (ops.length === 0) return false;
+  if (state.settings && state.settings.autoAddImportedBuildingCityIcons === false) {
+    let changed = false;
+    ops.forEach((importItem) => {
+      const entry = importItem && importItem.entry;
+      const pending = getPendingImportedBuildingCityIconMeta(entry);
+      if (!entry || !pending) return;
+      pending.requiresManualAssignment = true;
+      if (String(entry.buildingIconIndex || '') !== String(pending.sourceIconIndex)) {
+        entry.buildingIconIndex = String(pending.sourceIconIndex);
+        changed = true;
+      }
+    });
+    return changed;
+  }
+  const largePreview = await getBuildingCityAtlasPreview({ size: 'large' });
+  const smallPreview = await getBuildingCityAtlasPreview({ size: 'small' });
+  const firstSlot = getNextBuildingCityPreviewAssignmentRow(largePreview, smallPreview, improvementsTab, ops);
+  if (!Number.isFinite(firstSlot) || firstSlot < 0) return false;
+  let changed = false;
+  let offset = 0;
+  for (const importItem of ops) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
+    if (!newRef) continue;
+    const entry = importItem.entry;
+    if (!entry) continue;
+    const pending = getPendingImportedBuildingCityIconMeta(entry);
+    if (!pending) continue;
+    let sourceIconIndex = Number.parseInt(String(pending.sourceIconIndex), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      sourceIconIndex = Number.parseInt(String(entry.buildingIconIndex || ''), 10);
+    }
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) continue;
+    const targetIconIndex = firstSlot + offset;
+    offset += 1;
+    entry._pendingImportedBuildingCityIcon = {
+      sourceIconIndex,
+      targetIconIndex,
+      kind: normalizeImprovementBuildingArtKind(entry),
+      importScenarioPath: String(op.importArtFrom || '')
+    };
+    if (String(entry.buildingIconIndex || '') !== String(targetIconIndex)) {
+      entry.buildingIconIndex = String(targetIconIndex);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 async function refreshPendingImportedResourceIconAssignments(tab = null) {
@@ -21890,6 +22093,33 @@ async function getResourcesAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
   return null;
 }
 
+async function getBuildingCityAtlasPreview({ size = 'large', scenarioPath, scenarioPaths } = {}) {
+  const atlasSize = String(size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const assetPath = atlasSize === 'small'
+    ? 'Art/city screen/buildings-small.pcx'
+    : 'Art/city screen/buildings-large.pcx';
+  const resolvedScenarioPath = String(
+    typeof scenarioPath === 'string' ? scenarioPath : getActiveScenarioPreviewPath()
+  );
+  const resolvedScenarioPaths = Array.isArray(scenarioPaths) ? scenarioPaths : getScenarioPreviewPaths();
+  const cacheKey = JSON.stringify({
+    kind: 'building-city-atlas',
+    size: atlasSize,
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths.join('|')
+  });
+  const res = await getOrStartPreviewRequest(cacheKey, () => window.c3xManager.getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths,
+    assetPath,
+    options: { returnIndexed: true }
+  }));
+  return res && res.ok ? res : null;
+}
+
 async function getWonderAtlasPreview(section) {
   const fileName = normalizeConfigToken(getFieldValue(section, 'img_path')) || 'Wonders.pcx';
   const cacheKey = JSON.stringify({
@@ -21978,9 +22208,25 @@ function sourceIsScenarioLocal(sourcePath) {
   return getScenarioPreviewPaths().some((root) => pathIsSameOrChild(source, root));
 }
 
-function createScenarioAtlasCopyNotice({ tabKey, atlasKey, relativePath, label, previewPromise, onChanged }) {
+function shouldHideScenarioAtlasCopyNoticeForPendingImport(tabKey, entry) {
+  if (tabKey === 'resources') {
+    return state.settings
+      && state.settings.autoAddImportedResourceIcons !== false
+      && hasPendingImportedResourceIconMeta(entry);
+  }
+  if (tabKey === 'units') {
+    return state.settings
+      && state.settings.autoAddImportedUnitIcons !== false
+      && !!getPendingImportedUnitIconMeta(entry);
+  }
+  return false;
+}
+
+function createScenarioAtlasCopyNotice({ tabKey, atlasKey, relativePath, label, previewPromise, onChanged, entry = null }) {
   const notice = document.createElement('div');
   notice.className = 'scenario-atlas-copy-notice hidden';
+  if (shouldHideScenarioAtlasCopyNoticeForPendingImport(tabKey, entry)) return notice;
+
   const text = document.createElement('span');
   text.className = 'scenario-atlas-copy-text';
   notice.appendChild(text);
@@ -22021,6 +22267,98 @@ function createScenarioAtlasCopyNotice({ tabKey, atlasKey, relativePath, label, 
       btn.disabled = true;
       btn.textContent = 'Staged';
       setStatus(`Staged ${label} for this scenario.`);
+      if (typeof onChanged === 'function') onChanged();
+    }, { once: true });
+    notice.classList.remove('hidden');
+  }).catch(() => {});
+
+  return notice;
+}
+
+function createBuildingCityAtlasCopyNotice({ entry = null, onChanged } = {}) {
+  const notice = document.createElement('div');
+  notice.className = 'scenario-atlas-copy-notice hidden';
+  if (getPendingImportedBuildingCityIconMeta(entry)) return notice;
+
+  const text = document.createElement('span');
+  text.className = 'scenario-atlas-copy-text';
+  notice.appendChild(text);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost scenario-atlas-copy-button';
+  btn.textContent = 'Make buildings PCX Copies for Scenario';
+  notice.appendChild(btn);
+
+  const specs = [
+    {
+      tabKey: 'improvements',
+      atlasKey: 'buildingCityLarge',
+      relativePath: 'Art/city screen/buildings-large.pcx',
+      label: 'buildings-large.pcx',
+      previewPromise: getBuildingCityAtlasPreview({ size: 'large' })
+    },
+    {
+      tabKey: 'improvements',
+      atlasKey: 'buildingCitySmall',
+      relativePath: 'Art/city screen/buildings-small.pcx',
+      label: 'buildings-small.pcx',
+      previewPromise: getBuildingCityAtlasPreview({ size: 'small' })
+    }
+  ];
+
+  const stagedCount = specs.filter((spec) => {
+    const pending = getPendingAtlasCopy(spec.tabKey, spec.atlasKey);
+    return pending && pending.staged;
+  }).length;
+  if (stagedCount === specs.length) {
+    text.textContent = 'Building city icon PCX files will be copied into this scenario on save.';
+    btn.disabled = true;
+    btn.textContent = 'Staged';
+    notice.classList.remove('hidden');
+    return notice;
+  }
+
+  if (state.settings && state.settings.mode !== 'scenario') return notice;
+  if (!window.c3xManager || typeof window.c3xManager.pathExists !== 'function') return notice;
+
+  Promise.all(specs.map((spec) => Promise.all([
+    spec.previewPromise,
+    window.c3xManager.pathExists(getScenarioAtlasTargetPath(spec.relativePath)).catch(() => false)
+  ]).then(([preview, targetExists]) => ({ ...spec, preview, targetExists })))).then((resolvedSpecs) => {
+    if (!notice.isConnected) return;
+    const copySpecs = resolvedSpecs.filter((spec) => {
+      if (spec.targetExists) return false;
+      const sourcePath = String(spec.preview && spec.preview.sourcePath || '').trim();
+      return !!sourcePath && !sourceIsScenarioLocal(sourcePath);
+    });
+    if (copySpecs.length === 0) return;
+    text.textContent = copySpecs.length === specs.length
+      ? 'This scenario is using the default building city icon PCX files.'
+      : `This scenario is missing ${copySpecs.map((spec) => spec.label).join(' and ')}.`;
+    btn.disabled = false;
+    btn.addEventListener('click', () => {
+      let staged = 0;
+      copySpecs.forEach((spec) => {
+        const sourcePath = String(spec.preview && spec.preview.sourcePath || '').trim();
+        if (stageScenarioAtlasCopy({
+          tabKey: spec.tabKey,
+          atlasKey: spec.atlasKey,
+          relativePath: spec.relativePath,
+          sourcePath
+        })) {
+          staged += 1;
+        }
+      });
+      if (staged === 0) {
+        setStatus('Could not stage building city icon PCX files for this scenario.', true);
+        return;
+      }
+      text.textContent = staged === specs.length
+        ? 'Building city icon PCX files will be copied into this scenario on save.'
+        : 'Missing building city icon PCX file will be copied into this scenario on save.';
+      btn.disabled = true;
+      btn.textContent = 'Staged';
+      setStatus('Staged building city icon PCX files for this scenario.');
       if (typeof onChanged === 'function') onChanged();
     }, { once: true });
     notice.classList.remove('hidden');
@@ -22372,6 +22710,222 @@ function createResourceIconIndexPicker(currentValue, onSelect, entry = null) {
     grid.style.height = `${totalRows * RESOURCE_ICON_ITEM_SIZE}px`;
     gridBuilt = true;
     status.textContent = `${totalIcons} icons`;
+    renderVisibleIcons();
+  };
+
+  valueInput.addEventListener('input', () => {
+    current = Math.max(0, parseIntLoose(valueInput.value, 0));
+    if (typeof onSelect === 'function') onSelect(String(current));
+    syncPreview();
+    renderVisibleIcons();
+  });
+  let renderQueued = false;
+  scroller.addEventListener('scroll', () => {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      renderVisibleIcons();
+    });
+  });
+  openBtn.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden');
+    if (opening && !gridBuilt) await buildGrid();
+    if (opening) renderVisibleIcons();
+  });
+  registerOutsideClickDismiss(wrap, () => {
+    menu.classList.add('hidden');
+  });
+
+  wrap.appendChild(previewHost);
+  wrap.appendChild(valueInput);
+  wrap.appendChild(openBtn);
+  wrap.appendChild(menu);
+  syncPreview();
+  return wrap;
+}
+
+function createBuildingCityIconIndexPicker(currentValue, onSelect, entry = null) {
+  const ROW_HEIGHT = 54;
+  const OVERSCAN_ROWS = 2;
+  const wrap = document.createElement('div');
+  wrap.className = 'path-input-with-btn unit-icon-index-picker building-city-icon-index-picker';
+  const valueInput = document.createElement('input');
+  valueInput.type = 'number';
+  valueInput.min = '0';
+  const parsed = parseIntFromDisplayValue(currentValue);
+  let current = parsed == null ? 0 : Math.max(0, parsed);
+  valueInput.value = String(current);
+  const previewHost = document.createElement('span');
+  previewHost.className = 'building-city-selected-previews';
+  const makePreview = (labelText, width, height) => {
+    const item = document.createElement('span');
+    item.className = 'building-city-selected-preview';
+    const label = document.createElement('span');
+    label.className = 'building-city-selected-preview-label';
+    label.textContent = labelText;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.className = 'entry-thumb-canvas';
+    item.appendChild(label);
+    item.appendChild(canvas);
+    return { item, canvas };
+  };
+  const smallPreview = makePreview('Small', 32, 32);
+  const largePreview = makePreview('Large', 50, 40);
+  previewHost.appendChild(smallPreview.item);
+  previewHost.appendChild(largePreview.item);
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.textContent = 'Select Icon';
+  const menu = document.createElement('div');
+  menu.className = 'color-slot-picker-menu unit-icon-picker-menu hidden';
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.textContent = 'Loading buildings-small.pcx icons...';
+  const scroller = document.createElement('div');
+  scroller.className = 'unit-icon-picker-scroller';
+  const grid = document.createElement('div');
+  grid.className = 'unit-icon-picker-grid';
+  scroller.appendChild(grid);
+  menu.appendChild(status);
+  menu.appendChild(scroller);
+  let smallAtlasPreview = null;
+  let largeAtlasPreview = null;
+  let gridBuilt = false;
+  let buildToken = 0;
+  let totalRows = 0;
+  let pendingIconsByTarget = new Map();
+  let pickerColumnCount = Math.max(1, getBuildingCityIconColumnCountForEntry(entry));
+  let rowItemWidth = 96;
+
+  const refreshPendingIconsByTarget = () => {
+    pendingIconsByTarget = getPendingImportedIconItemsByTarget('improvements');
+    return pendingIconsByTarget;
+  };
+
+  const drawIconForIndex = (idx, col, canvas, size = 'small') => {
+    const pendingItem = getPendingImportedIconItemForTarget(pendingIconsByTarget, 'improvements', entry, idx);
+    const fallbackPreview = size === 'small' ? smallAtlasPreview : largeAtlasPreview;
+    if (pendingItem) {
+      drawPendingImportedBuildingCityIconItemToCanvas({ ...pendingItem, size, col }, canvas, fallbackPreview).then((ok) => {
+        if (!ok) drawBuildingCityIconToCanvas(fallbackPreview, idx, canvas, { size, col });
+      }).catch(() => {
+        drawBuildingCityIconToCanvas(fallbackPreview, idx, canvas, { size, col });
+      });
+      return true;
+    }
+    return drawBuildingCityIconToCanvas(fallbackPreview, idx, canvas, { size, col });
+  };
+
+  const syncPreview = async () => {
+    const pending = getPendingImportedBuildingCityIcon(entry);
+    if (pending) {
+      const okSmall = await drawPendingImportedBuildingCityIconItemToCanvas({ entry, pending, size: 'small', col: 0 }, smallPreview.canvas, smallAtlasPreview);
+      const okLarge = await drawPendingImportedBuildingCityIconItemToCanvas({ entry, pending, size: 'large', col: 0 }, largePreview.canvas, largeAtlasPreview);
+      if (!okSmall && !okLarge) {
+        previewHost.innerHTML = '';
+        previewHost.textContent = '#';
+        return;
+      }
+    } else {
+      const [small, large] = await Promise.all([
+        getBuildingCityAtlasPreview({ size: 'small' }),
+        getBuildingCityAtlasPreview({ size: 'large' })
+      ]);
+      if (!smallAtlasPreview) smallAtlasPreview = small;
+      if (!largeAtlasPreview) largeAtlasPreview = large;
+      const okSmall = small && drawBuildingCityIconToCanvas(small, current, smallPreview.canvas, { size: 'small', col: 0 });
+      const okLarge = large && drawBuildingCityIconToCanvas(large, current, largePreview.canvas, { size: 'large', col: 0 });
+      if (!okSmall && !okLarge) {
+        previewHost.innerHTML = '';
+        previewHost.textContent = '#';
+        return;
+      }
+    }
+    if (!previewHost.contains(smallPreview.item)) {
+      previewHost.innerHTML = '';
+      previewHost.appendChild(smallPreview.item);
+      previewHost.appendChild(largePreview.item);
+    }
+  };
+
+  const renderVisibleIcons = () => {
+    if (!smallAtlasPreview || !gridBuilt) return;
+    const token = buildToken;
+    const scrollTop = scroller.scrollTop || 0;
+    const viewportHeight = scroller.clientHeight || 280;
+    const firstRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
+    const lastRow = Math.max(firstRow, Math.min(totalRows - 1, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN_ROWS));
+    const fragment = document.createDocumentFragment();
+    grid.innerHTML = '';
+    for (let idx = firstRow; idx <= lastRow; idx += 1) {
+      if (token !== buildToken) return;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'unit-icon-picker-item building-city-icon-picker-item';
+      item.title = `City icon row ${idx}`;
+      item.setAttribute('aria-label', `City icon row ${idx}`);
+      item.classList.toggle('active', idx === current);
+      item.style.left = '0px';
+      item.style.top = `${idx * ROW_HEIGHT}px`;
+      item.style.width = `${rowItemWidth}px`;
+      const label = document.createElement('span');
+      label.className = 'unit-icon-picker-label';
+      label.textContent = String(idx);
+      item.appendChild(label);
+      const rowIcons = document.createElement('span');
+      rowIcons.className = 'building-city-icon-picker-row-icons';
+      for (let col = 0; col < pickerColumnCount; col += 1) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 32;
+        canvas.height = 32;
+        canvas.className = 'entry-thumb-canvas';
+        drawIconForIndex(idx, col, canvas, 'small');
+        rowIcons.appendChild(canvas);
+      }
+      item.appendChild(rowIcons);
+      item.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        current = idx;
+        valueInput.value = String(idx);
+        menu.classList.add('hidden');
+        if (typeof onSelect === 'function') onSelect(String(idx));
+        syncPreview();
+      });
+      fragment.appendChild(item);
+    }
+    grid.appendChild(fragment);
+  };
+
+  const buildGrid = async () => {
+    if (!smallAtlasPreview) smallAtlasPreview = await getBuildingCityAtlasPreview({ size: 'small' });
+    ++buildToken;
+    grid.innerHTML = '';
+    scroller.scrollTop = 0;
+    gridBuilt = false;
+    if (!smallAtlasPreview || !smallAtlasPreview.width || !smallAtlasPreview.height) {
+      status.textContent = 'Could not load buildings-small.pcx';
+      return;
+    }
+    const metrics = getBuildingCityAtlasMetrics(smallAtlasPreview, 'small');
+    if (!metrics) {
+      status.textContent = 'Could not parse buildings-small.pcx';
+      return;
+    }
+    pickerColumnCount = Math.max(1, metrics.cols || pickerColumnCount);
+    rowItemWidth = 16 + 32 + 10 + (pickerColumnCount * 32) + (Math.max(0, pickerColumnCount - 1) * 6);
+    totalRows = metrics.rows;
+    const maxPendingTarget = getMaxPendingImportedIconTarget(refreshPendingIconsByTarget(), 'improvements', entry);
+    if (maxPendingTarget >= totalRows) totalRows = maxPendingTarget + 1;
+    scroller.style.width = `min(${rowItemWidth + 14}px, calc(100vw - 64px))`;
+    grid.style.width = `${rowItemWidth}px`;
+    grid.style.height = `${totalRows * ROW_HEIGHT}px`;
+    gridBuilt = true;
+    status.textContent = `${totalRows} rows`;
     renderVisibleIcons();
   };
 
@@ -28208,20 +28762,25 @@ function renderImprovementBuildingArtEditor(entry, referenceEditable, onChanged)
   const indexLabel = document.createElement('span');
   indexLabel.textContent = 'City icon index';
   indexCell.appendChild(indexLabel);
-  const indexInput = document.createElement('input');
-  indexInput.type = 'number';
-  indexInput.min = '0';
-  indexInput.step = '1';
-  indexInput.value = String(entry && entry.buildingIconIndex || '');
-  indexInput.disabled = !referenceEditable;
-  indexInput.addEventListener('change', () => {
+  const indexPicker = createBuildingCityIconIndexPicker(entry && entry.buildingIconIndex, (value) => {
     rememberUndoSnapshotForKey(entryUndoKey);
-    entry.buildingIconIndex = String(indexInput.value || '').trim();
+    entry.buildingIconIndex = String(value || '').trim();
+    if (entry && entry._pendingImportedBuildingCityIcon) delete entry._pendingImportedBuildingCityIcon;
     setDirty(true);
-  });
-  indexCell.appendChild(indexInput);
+  }, entry);
+  if (!referenceEditable) {
+    indexPicker.querySelectorAll('input, button').forEach((node) => {
+      node.disabled = true;
+    });
+  }
+  indexCell.appendChild(indexPicker);
   controls.appendChild(indexCell);
+
+  const copyNotices = document.createElement('div');
+  copyNotices.className = 'improvement-building-city-copy-notices';
+  copyNotices.appendChild(createBuildingCityAtlasCopyNotice({ entry, onChanged }));
   wrap.appendChild(controls);
+  wrap.appendChild(copyNotices);
 
   const grid = document.createElement('div');
   grid.className = 'improvement-building-art-grid';
@@ -28440,7 +28999,8 @@ function renderUnitArtEditor(entry, referenceEditable, onChanged) {
       relativePath: 'Art/Units/units_32.pcx',
       label: 'units_32.pcx',
       previewPromise: getUnits32AtlasPreview(),
-      onChanged
+      onChanged,
+      entry
     }));
     wrap.appendChild(indexCard);
   }
@@ -28581,7 +29141,8 @@ function renderResourceArtEditor(entry, referenceEditable, onChanged) {
       relativePath: 'Art/resources.pcx',
       label: 'resources.pcx',
       previewPromise: getResourcesAtlasPreview(),
-      onChanged
+      onChanged,
+      entry
     }));
     wrap.appendChild(indexCard);
   }
@@ -31907,6 +32468,17 @@ function renderReferenceTab(tab, tabKey) {
             };
           }
         }
+        if (tabKey === 'improvements') {
+          const sourceIconIndex = parseIntLoose(result.importedEntry && result.importedEntry.buildingIconIndex, NaN);
+          if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
+            newEntry._pendingImportedBuildingCityIcon = {
+              sourceIconIndex,
+              targetIconIndex: null,
+              kind: normalizeImprovementBuildingArtKind(result.importedEntry),
+              importScenarioPath: String(result.importFilePath || '')
+            };
+          }
+        }
         if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
           const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
           const sourceSlotIndex = textIndexField ? Number(textIndexField.value) : -1;
@@ -31952,6 +32524,14 @@ function renderReferenceTab(tab, tabKey) {
         }
         if (tabKey === 'units') {
           refreshPendingImportedUnitIconAssignments(tab).then((changed) => {
+            if (!changed) return;
+            rebuildReferenceDirtyCacheForTab(tabKey, tab);
+            setDirty(true);
+            renderActiveTab({ preserveTabScroll: true });
+          }).catch(() => {});
+        }
+        if (tabKey === 'improvements') {
+          refreshPendingImportedBuildingCityIconAssignments(tab).then((changed) => {
             if (!changed) return;
             rebuildReferenceDirtyCacheForTab(tabKey, tab);
             setDirty(true);
@@ -32062,6 +32642,11 @@ function renderReferenceTab(tab, tabKey) {
         }).catch(renderDeletedState);
       } else if (tabKey === 'units') {
         refreshPendingImportedUnitIconAssignments(tab).then((changed) => {
+          if (changed) rebuildReferenceDirtyCacheForTab(tabKey, tab);
+          renderDeletedState();
+        }).catch(renderDeletedState);
+      } else if (tabKey === 'improvements') {
+        refreshPendingImportedBuildingCityIconAssignments(tab).then((changed) => {
           if (changed) rebuildReferenceDirtyCacheForTab(tabKey, tab);
           renderDeletedState();
         }).catch(renderDeletedState);
@@ -32308,6 +32893,14 @@ function renderReferenceTab(tab, tabKey) {
   }
   if (tabKey === 'resources') {
     refreshPendingImportedResourceIconAssignments(tab).then((changed) => {
+      if (!changed) return;
+      rebuildReferenceDirtyCacheForTab(tabKey, tab);
+      setDirty(true);
+      renderReferenceBody();
+    }).catch(() => {});
+  }
+  if (tabKey === 'improvements') {
+    refreshPendingImportedBuildingCityIconAssignments(tab).then((changed) => {
       if (!changed) return;
       rebuildReferenceDirtyCacheForTab(tabKey, tab);
       setDirty(true);
@@ -36178,13 +36771,24 @@ function colorFromCivSlot(slot, fallback = null) {
 
 function decodeRgbaBase64(preview) {
   if (!preview || !preview.rgbaBase64 || !preview.width || !preview.height) return null;
+  if (preview._cachedDecodedRgba
+    && preview._cachedDecodedRgba.width === preview.width
+    && preview._cachedDecodedRgba.height === preview.height) {
+    return preview._cachedDecodedRgba;
+  }
   const bin = atob(preview.rgbaBase64);
   const rgba = new Uint8ClampedArray(bin.length);
   for (let i = 0; i < bin.length; i += 1) rgba[i] = bin.charCodeAt(i);
-  return { width: preview.width, height: preview.height, rgba };
+  preview._cachedDecodedRgba = { width: preview.width, height: preview.height, rgba };
+  return preview._cachedDecodedRgba;
 }
 
 function rgbaToCanvas(preview) {
+  if (preview && preview._cachedRgbaCanvas
+    && preview._cachedRgbaCanvas.width === preview.width
+    && preview._cachedRgbaCanvas.height === preview.height) {
+    return preview._cachedRgbaCanvas;
+  }
   const decoded = decodeRgbaBase64(preview);
   if (!decoded) return null;
   const canvas = document.createElement('canvas');
@@ -36193,6 +36797,7 @@ function rgbaToCanvas(preview) {
   const ctx = canvas.getContext('2d');
   const data = new ImageData(decoded.rgba, decoded.width, decoded.height);
   ctx.putImageData(data, 0, 0);
+  if (preview) preview._cachedRgbaCanvas = canvas;
   return canvas;
 }
 
@@ -51408,6 +52013,7 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
     textFileEncoding: normalizeTextFileEncoding(state.settings.textFileEncoding),
     autoAddImportedResourceIcons: state.settings.autoAddImportedResourceIcons !== false,
     autoAddImportedUnitIcons: state.settings.autoAddImportedUnitIcons !== false,
+    autoAddImportedBuildingCityIcons: state.settings.autoAddImportedBuildingCityIcons !== false,
     dirtyTabs,
     tabs: tabsToSave
   };
@@ -51989,6 +52595,48 @@ function markScenarioDistrictsAsSaved() {
   meta.originalNamedTiles = deepCloneUiValue(Array.isArray(meta.namedTiles) ? meta.namedTiles : []);
 }
 
+function getSavedPediaIconsPath(saveReport) {
+  const hit = (Array.isArray(saveReport) ? saveReport : []).find((entry) => (
+    String(entry && entry.kind || '').trim().toLowerCase() === 'pediaicons'
+    && String(entry && entry.path || '').trim()
+  ));
+  return hit ? String(hit.path || '').trim() : '';
+}
+
+function improvementPediaIconsBlockWasWritten(entry) {
+  if (!entry) return false;
+  if (entry.isNew || entry.forcePediaIconsBlockWrite) return true;
+  const nextIconPaths = JSON.stringify(Array.isArray(entry.iconPaths) ? entry.iconPaths : []);
+  const prevIconPaths = JSON.stringify(Array.isArray(entry.originalIconPaths) ? entry.originalIconPaths : []);
+  if (nextIconPaths !== prevIconPaths) return true;
+  if (String(entry.buildingIconKind || '') !== String(entry.originalBuildingIconKind || '')) return true;
+  if (String(entry.buildingIconIndex || '') !== String(entry.originalBuildingIconIndex || '')) return true;
+  if (String(entry.wonderSplashPath || '') !== String(entry.originalWonderSplashPath || '')) return true;
+  return false;
+}
+
+function markSavedPediaIconsSourceMeta(saveReport) {
+  const pediaIconsPath = getSavedPediaIconsPath(saveReport);
+  if (!pediaIconsPath || !state.bundle || !state.bundle.tabs) return false;
+  let changed = false;
+  const improvements = state.bundle.tabs.improvements;
+  const entries = Array.isArray(improvements && improvements.entries) ? improvements.entries : [];
+  entries.forEach((entry) => {
+    if (!improvementPediaIconsBlockWasWritten(entry)) return;
+    if (!entry.sourceMeta || typeof entry.sourceMeta !== 'object') entry.sourceMeta = {};
+    if (!entry.sourceMeta.iconPaths || typeof entry.sourceMeta.iconPaths !== 'object') entry.sourceMeta.iconPaths = {};
+    if (String(entry.sourceMeta.iconPaths.readPath || '') !== pediaIconsPath) {
+      entry.sourceMeta.iconPaths.readPath = pediaIconsPath;
+      changed = true;
+    }
+    if (String(entry.sourceMeta.iconPaths.writePath || '') !== pediaIconsPath) {
+      entry.sourceMeta.iconPaths.writePath = pediaIconsPath;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 function markMapTabAsSaved(tab) {
   if (!tab || tab.type !== 'map') return;
   tab.recordOps = [];
@@ -52145,6 +52793,7 @@ function markCurrentBundleCleanAfterSave(options = {}) {
   const referenceOrderChanged = reconcileReferenceTabsAfterNoReloadSave({
     referenceOpsByTab: options.referenceOpsByTab
   });
+  const pediaSourceMetaChanged = markSavedPediaIconsSourceMeta(options.saveReport);
   markReferenceTabsAsSaved();
   markScenarioDistrictsAsSaved();
   state.cleanSnapshot = snapshotTabs();
@@ -52158,7 +52807,7 @@ function markCurrentBundleCleanAfterSave(options = {}) {
   refreshTabDirtyBadges();
   refreshActiveReferenceListDirtyBadges();
   refreshActiveBiqRecordListDirtyBadges();
-  if (referenceOrderChanged) {
+  if (referenceOrderChanged || pediaSourceMetaChanged) {
     renderTabs();
     renderActiveTab({ preserveTabScroll: true });
   }
@@ -52454,7 +53103,10 @@ async function saveCurrentBundle() {
         return true;
       }
       const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload(res.saveReport);
-      markCurrentBundleCleanAfterSave({ referenceOpsByTab: referenceOpsForNoReloadSave });
+      markCurrentBundleCleanAfterSave({
+        referenceOpsByTab: referenceOpsForNoReloadSave,
+        saveReport: res.saveReport
+      });
       _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload because Reload After Save is off');
       rerunQualityChecksAfterNoReloadSave();
       if (rerenderAfterAtlasSave) renderActiveTab({ preserveTabScroll: true });
@@ -53366,6 +54018,9 @@ async function init() {
   if (typeof state.settings.autoAddImportedUnitIcons !== 'boolean') {
     state.settings.autoAddImportedUnitIcons = true;
   }
+  if (typeof state.settings.autoAddImportedBuildingCityIcons !== 'boolean') {
+    state.settings.autoAddImportedBuildingCityIcons = true;
+  }
   if (typeof state.settings.writeLogFiles !== 'boolean') {
     state.settings.writeLogFiles = true;
   }
@@ -53582,6 +54237,23 @@ async function init() {
       if (state.unitSettingsMenuUnsubscribe) {
         state.unitSettingsMenuUnsubscribe();
         state.unitSettingsMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onImprovementSettingsMenuSelect === 'function') {
+    state.improvementSettingsMenuUnsubscribe = window.c3xManager.onImprovementSettingsMenuSelect((settings) => {
+      if (!state.settings || !settings || typeof settings !== 'object') return;
+      if (!Object.prototype.hasOwnProperty.call(settings, 'autoAddImportedBuildingCityIcons')) return;
+      state.settings.autoAddImportedBuildingCityIcons = settings.autoAddImportedBuildingCityIcons !== false;
+      void window.c3xManager.setSettings(state.settings);
+      setStatus(state.settings.autoAddImportedBuildingCityIcons
+        ? 'Automatic imported improvement city icon updates enabled.'
+        : 'Automatic imported improvement city icon updates disabled.');
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.improvementSettingsMenuUnsubscribe) {
+        state.improvementSettingsMenuUnsubscribe();
+        state.improvementSettingsMenuUnsubscribe = null;
       }
     }, { once: true });
   }

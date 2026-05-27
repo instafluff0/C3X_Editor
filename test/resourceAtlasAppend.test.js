@@ -11,7 +11,12 @@ const {
   findNextUnitAtlasSlot,
   getNextUnitAtlasAssignmentSlot,
   appendUnitIconToUnits32Pcx,
-  applyImportedUnitIconAtlasAssignments
+  applyImportedUnitIconAtlasAssignments,
+  findNextBuildingCityAtlasRow,
+  findNextBuildingCityAtlasPairRow,
+  getNextBuildingCityAtlasAssignmentRow,
+  appendBuildingCityIconRowToAtlases,
+  applyImportedBuildingCityIconAtlasAssignments
 } = require('../src/configCore');
 const { decodePcx, encodePcx } = require('../src/artPreview');
 
@@ -24,6 +29,10 @@ const UNIT_STRIDE = UNIT_SIZE + UNIT_GUTTER;
 const UNIT_COLS = 8;
 const UNIT_WIDTH = UNIT_COLS * UNIT_STRIDE + UNIT_GUTTER;
 const MAGENTA = 255;
+const GUIDE = 254;
+const BUILDING_ORIGIN = 32;
+const BUILDING_LARGE = { size: 'large', cellW: 51, cellH: 41, drawW: 50, drawH: 40, cols: 8 };
+const BUILDING_SMALL = { size: 'small', cellW: 33, cellH: 33, drawW: 32, drawH: 32, cols: 12 };
 
 function makePalette(overrides = {}) {
   const palette = new Uint8Array(256 * 3);
@@ -35,6 +44,9 @@ function makePalette(overrides = {}) {
   palette[MAGENTA * 3] = 255;
   palette[MAGENTA * 3 + 1] = 0;
   palette[MAGENTA * 3 + 2] = 255;
+  palette[GUIDE * 3] = 0;
+  palette[GUIDE * 3 + 1] = 255;
+  palette[GUIDE * 3 + 2] = 0;
   Object.entries(overrides).forEach(([rawIndex, rgb]) => {
     const idx = Number(rawIndex);
     palette[idx * 3] = rgb[0];
@@ -153,6 +165,59 @@ function unitCellHasOnlyIndex(decoded, slot, expectedIndex) {
   for (let y = 0; y < UNIT_SIZE; y += 1) {
     const rowOff = (startY + y) * decoded.width + startX;
     for (let x = 0; x < UNIT_SIZE; x += 1) {
+      if (decoded.indices[rowOff + x] !== expectedIndex) return false;
+    }
+  }
+  return true;
+}
+
+function makeBuildingAtlas(sizeSpec, rows, occupied = {}, palette = makePalette()) {
+  const width = BUILDING_ORIGIN + sizeSpec.cols * sizeSpec.cellW + 8;
+  const height = BUILDING_ORIGIN + rows * sizeSpec.cellH + 7;
+  const indices = new Uint8Array(width * height);
+  indices.fill(MAGENTA);
+  paintBuildingGuides(indices, width, height, sizeSpec);
+  Object.entries(occupied).forEach(([key, colorIndex]) => {
+    const [row, col] = String(key).split(':').map((v) => Number(v));
+    paintBuildingCell(indices, width, sizeSpec, row, col, Number(colorIndex));
+  });
+  return encodePcx(indices, palette, width, height);
+}
+
+function paintBuildingGuides(indices, width, height, sizeSpec) {
+  for (let row = 0; row <= Math.floor((height - BUILDING_ORIGIN - 1) / sizeSpec.cellH); row += 1) {
+    const y = BUILDING_ORIGIN + row * sizeSpec.cellH;
+    if (y >= height) continue;
+    for (let x = BUILDING_ORIGIN; x <= BUILDING_ORIGIN + sizeSpec.cols * sizeSpec.cellW && x < width; x += 1) {
+      indices[y * width + x] = GUIDE;
+    }
+  }
+  for (let col = 0; col <= sizeSpec.cols; col += 1) {
+    const x = BUILDING_ORIGIN + col * sizeSpec.cellW;
+    if (x >= width) continue;
+    for (let y = BUILDING_ORIGIN; y < height; y += 1) {
+      indices[y * width + x] = GUIDE;
+    }
+  }
+}
+
+function paintBuildingCell(indices, width, sizeSpec, row, col, colorIndex) {
+  const startX = BUILDING_ORIGIN + col * sizeSpec.cellW + 1;
+  const startY = BUILDING_ORIGIN + row * sizeSpec.cellH + 1;
+  for (let y = 0; y < sizeSpec.drawH; y += 1) {
+    const rowOff = (startY + y) * width + startX;
+    for (let x = 0; x < sizeSpec.drawW; x += 1) {
+      indices[rowOff + x] = colorIndex;
+    }
+  }
+}
+
+function buildingCellHasOnlyIndex(decoded, sizeSpec, row, col, expectedIndex) {
+  const startX = BUILDING_ORIGIN + col * sizeSpec.cellW + 1;
+  const startY = BUILDING_ORIGIN + row * sizeSpec.cellH + 1;
+  for (let y = 0; y < sizeSpec.drawH; y += 1) {
+    const rowOff = (startY + y) * decoded.width + startX;
+    for (let x = 0; x < sizeSpec.drawW; x += 1) {
       if (decoded.indices[rowOff + x] !== expectedIndex) return false;
     }
   }
@@ -632,4 +697,196 @@ test('applyImportedUnitIconAtlasAssignments compacts pending targets after an im
   assert.equal(unitsTab.entries.find((entry) => entry.civilopediaKey === 'PRTO_IMPORT_C').biqFields[0].value, '9');
   assert.equal(unitCellHasOnlyIndex(decoded, 8, 41), true);
   assert.equal(unitCellHasOnlyIndex(decoded, 9, 43), true);
+});
+
+test('findNextBuildingCityAtlasRow uses Civ3 city-screen row geometry and ignores guide-only rows', () => {
+  const large = makeBuildingAtlas(BUILDING_LARGE, 5, {
+    '0:0': 10,
+    '2:4': 14
+  });
+  const small = makeBuildingAtlas(BUILDING_SMALL, 7, {
+    '0:0': 10,
+    '3:4': 15
+  });
+
+  const largeSlot = findNextBuildingCityAtlasRow(large, 'large');
+  const smallSlot = findNextBuildingCityAtlasRow(small, 'small');
+  const pairSlot = findNextBuildingCityAtlasPairRow({ large, small });
+
+  assert.equal(largeSlot.lastOccupied, 2);
+  assert.equal(largeSlot.index, 3);
+  assert.equal(largeSlot.cols, 8);
+  assert.equal(smallSlot.lastOccupied, 3);
+  assert.equal(smallSlot.index, 4);
+  assert.equal(smallSlot.cols, 12);
+  assert.equal(pairSlot.index, 4);
+});
+
+test('getNextBuildingCityAtlasAssignmentRow respects existing PediaIcons row indexes beyond visible pixels', () => {
+  const large = makeBuildingAtlas(BUILDING_LARGE, 4, { '0:0': 10 });
+  const small = makeBuildingAtlas(BUILDING_SMALL, 4, { '0:0': 10 });
+  const improvementsTab = {
+    entries: [
+      { civilopediaKey: 'BLDG_EXISTING_HIGH', buildingIconIndex: '8' },
+      {
+        civilopediaKey: 'BLDG_IMPORT',
+        buildingIconIndex: '1',
+        _pendingImportedBuildingCityIcon: { sourceIconIndex: 2, targetIconIndex: 1 }
+      }
+    ],
+    recordOps: [{
+      op: 'add',
+      newRecordRef: 'BLDG_IMPORT',
+      importArtFrom: '/source/scenario.biq'
+    }]
+  };
+
+  const slot = getNextBuildingCityAtlasAssignmentRow({ large, small }, improvementsTab);
+  assert.equal(slot.scanIndex, 1);
+  assert.equal(slot.referenceFloor, 9);
+  assert.equal(slot.index, 9);
+});
+
+test('appendBuildingCityIconRowToAtlases copies the correct culture columns in both large and small PCX files', () => {
+  const targetLarge = makeBuildingAtlas(BUILDING_LARGE, 2, { '0:0': 10 });
+  const targetSmall = makeBuildingAtlas(BUILDING_SMALL, 2, { '0:0': 11 });
+  const sourceLarge = makeBuildingAtlas(BUILDING_LARGE, 4, {
+    '3:0': 40,
+    '3:1': 41,
+    '3:2': 42,
+    '3:3': 43,
+    '3:4': 44,
+    '3:5': 45
+  });
+  const sourceSmall = makeBuildingAtlas(BUILDING_SMALL, 4, {
+    '3:0': 50,
+    '3:1': 51,
+    '3:2': 52,
+    '3:3': 53,
+    '3:4': 54,
+    '3:5': 55
+  });
+
+  const result = appendBuildingCityIconRowToAtlases({
+    targetBuffers: { large: targetLarge, small: targetSmall },
+    sourceBuffers: { large: sourceLarge, small: sourceSmall },
+    sourceIconIndex: 3,
+    kind: 'CULTURE'
+  });
+  const decodedLarge = decodeIndexed(result.buffers.large);
+  const decodedSmall = decodeIndexed(result.buffers.small);
+
+  assert.equal(result.index, 1);
+  assert.equal(result.large.columnCount, 5);
+  assert.equal(result.small.columnCount, 5);
+  assert.equal(buildingCellHasOnlyIndex(decodedLarge, BUILDING_LARGE, 0, 0, 10), true, 'existing large row should be unchanged');
+  assert.equal(buildingCellHasOnlyIndex(decodedSmall, BUILDING_SMALL, 0, 0, 11), true, 'existing small row should be unchanged');
+  for (let col = 0; col < 5; col += 1) {
+    assert.equal(buildingCellHasOnlyIndex(decodedLarge, BUILDING_LARGE, 1, col, 40 + col), true, `large culture col ${col} should be copied`);
+    assert.equal(buildingCellHasOnlyIndex(decodedSmall, BUILDING_SMALL, 1, col, 50 + col), true, `small culture col ${col} should be copied`);
+  }
+  assert.equal(buildingCellHasOnlyIndex(decodedLarge, BUILDING_LARGE, 1, 5, MAGENTA), true, 'unused large culture-adjacent column should stay magenta');
+  assert.equal(buildingCellHasOnlyIndex(decodedSmall, BUILDING_SMALL, 1, 5, MAGENTA), true, 'unused small culture-adjacent column should stay magenta');
+});
+
+test('applyImportedBuildingCityIconAtlasAssignments uses pending source row and mutates imported BLDG city icon indexes', () => {
+  const targetLarge = makeBuildingAtlas(BUILDING_LARGE, 2, { '0:0': 10 });
+  const targetSmall = makeBuildingAtlas(BUILDING_SMALL, 2, { '0:0': 11 });
+  const sourceLarge = makeBuildingAtlas(BUILDING_LARGE, 4, {
+    '2:0': 42,
+    '3:0': 43
+  });
+  const sourceSmall = makeBuildingAtlas(BUILDING_SMALL, 4, {
+    '2:0': 52,
+    '3:0': 53
+  });
+  const improvementsTab = {
+    entries: [{
+      civilopediaKey: 'BLDG_TEST_IMPORT',
+      buildingIconKind: 'SINGLE',
+      buildingIconIndex: '1',
+      _pendingImportedBuildingCityIcon: {
+        sourceIconIndex: 3,
+        targetIconIndex: 1,
+        kind: 'SINGLE'
+      }
+    }],
+    recordOps: [{
+      op: 'add',
+      newRecordRef: 'BLDG_TEST_IMPORT',
+      importArtFrom: '/source/scenario.biq'
+    }]
+  };
+
+  const result = applyImportedBuildingCityIconAtlasAssignments({
+    improvementsTab,
+    targetAtlasBuffers: { large: targetLarge, small: targetSmall },
+    loadSourceAtlasBuffers: () => ({ large: sourceLarge, small: sourceSmall })
+  });
+  const decodedLarge = decodeIndexed(result.buffers.large);
+  const decodedSmall = decodeIndexed(result.buffers.small);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.assignments[0].sourceIconIndex, 3);
+  assert.equal(result.assignments[0].targetIconIndex, 1);
+  assert.equal(improvementsTab.entries[0].buildingIconIndex, '1');
+  assert.equal(buildingCellHasOnlyIndex(decodedLarge, BUILDING_LARGE, 1, 0, 43), true, 'target large row should use pending source row 3');
+  assert.equal(buildingCellHasOnlyIndex(decodedSmall, BUILDING_SMALL, 1, 0, 53), true, 'target small row should use pending source row 3');
+});
+
+test('applyImportedBuildingCityIconAtlasAssignments compacts pending city icon rows after an imported improvement is deleted before save', () => {
+  const targetLarge = makeBuildingAtlas(BUILDING_LARGE, 3, { '0:0': 10 });
+  const targetSmall = makeBuildingAtlas(BUILDING_SMALL, 3, { '0:0': 11 });
+  const sourceLarge = makeBuildingAtlas(BUILDING_LARGE, 5, {
+    '1:0': 41,
+    '2:0': 42,
+    '3:0': 43
+  });
+  const sourceSmall = makeBuildingAtlas(BUILDING_SMALL, 5, {
+    '1:0': 51,
+    '2:0': 52,
+    '3:0': 53
+  });
+  const improvementsTab = {
+    entries: [
+      { civilopediaKey: 'BLDG_EXISTING_HIGH', buildingIconIndex: '4' },
+      {
+        civilopediaKey: 'BLDG_IMPORT_A',
+        buildingIconKind: 'SINGLE',
+        buildingIconIndex: '5',
+        _pendingImportedBuildingCityIcon: { sourceIconIndex: 1, targetIconIndex: 5, kind: 'SINGLE' }
+      },
+      {
+        civilopediaKey: 'BLDG_IMPORT_C',
+        buildingIconKind: 'SINGLE',
+        buildingIconIndex: '7',
+        _pendingImportedBuildingCityIcon: { sourceIconIndex: 3, targetIconIndex: 7, kind: 'SINGLE' }
+      }
+    ],
+    recordOps: [
+      { op: 'add', newRecordRef: 'BLDG_IMPORT_A', importArtFrom: '/source/scenario.biq' },
+      { op: 'add', newRecordRef: 'BLDG_IMPORT_B', importArtFrom: '/source/scenario.biq' },
+      { op: 'add', newRecordRef: 'BLDG_IMPORT_C', importArtFrom: '/source/scenario.biq' },
+      { op: 'delete', recordRef: 'BLDG_IMPORT_B' }
+    ]
+  };
+
+  const result = applyImportedBuildingCityIconAtlasAssignments({
+    improvementsTab,
+    targetAtlasBuffers: { large: targetLarge, small: targetSmall },
+    loadSourceAtlasBuffers: () => ({ large: sourceLarge, small: sourceSmall })
+  });
+  const decodedLarge = decodeIndexed(result.buffers.large);
+  const decodedSmall = decodeIndexed(result.buffers.small);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.assignments.map((item) => item.civilopediaKey), ['BLDG_IMPORT_A', 'BLDG_IMPORT_C']);
+  assert.deepEqual(result.assignments.map((item) => item.targetIconIndex), [5, 6]);
+  assert.equal(improvementsTab.entries.find((entry) => entry.civilopediaKey === 'BLDG_IMPORT_A').buildingIconIndex, '5');
+  assert.equal(improvementsTab.entries.find((entry) => entry.civilopediaKey === 'BLDG_IMPORT_C').buildingIconIndex, '6');
+  assert.equal(buildingCellHasOnlyIndex(decodedLarge, BUILDING_LARGE, 5, 0, 41), true);
+  assert.equal(buildingCellHasOnlyIndex(decodedSmall, BUILDING_SMALL, 5, 0, 51), true);
+  assert.equal(buildingCellHasOnlyIndex(decodedLarge, BUILDING_LARGE, 6, 0, 43), true);
+  assert.equal(buildingCellHasOnlyIndex(decodedSmall, BUILDING_SMALL, 6, 0, 53), true);
 });

@@ -24,6 +24,17 @@ const UNIT_ATLAS_RELATIVE_PATH = 'Art/Units/units_32.pcx';
 const UNIT_ATLAS_SPRITE_SIZE = 32;
 const UNIT_ATLAS_GUTTER = 1;
 const UNIT_ATLAS_MAGENTA = RESOURCE_ATLAS_MAGENTA;
+const BUILDING_CITY_ATLAS_RELATIVE_PATHS = {
+  large: 'Art/city screen/buildings-large.pcx',
+  small: 'Art/city screen/buildings-small.pcx'
+};
+const BUILDING_CITY_ATLAS_ORIGIN = 32;
+const BUILDING_CITY_ATLAS_GUIDE = { r: 0, g: 255, b: 0 };
+const BUILDING_CITY_ATLAS_MAGENTA = RESOURCE_ATLAS_MAGENTA;
+const BUILDING_CITY_ATLAS_GEOMETRY = {
+  large: { cellW: 51, cellH: 41, drawW: 50, drawH: 40 },
+  small: { cellW: 33, cellH: 33, drawW: 32, drawH: 32 }
+};
 
 const FILE_SPECS = {
   base: {
@@ -7180,6 +7191,317 @@ function applyImportedUnitIconAtlasAssignments({ unitsTab, targetAtlasBuffer, lo
   };
 }
 
+function normalizeBuildingCityIconKind(value) {
+  const kind = String(value || '').trim().toUpperCase();
+  if (kind === 'ERA' || kind === 'CULTURE' || kind === 'SINGLE') return kind;
+  return 'SINGLE';
+}
+
+function getBuildingCityIconColumnCount(kind) {
+  const normalized = normalizeBuildingCityIconKind(kind);
+  if (normalized === 'ERA') return 4;
+  if (normalized === 'CULTURE') return 5;
+  return 1;
+}
+
+function getIndexedBuildingCityAtlas(buffer, size, label = 'buildings.pcx') {
+  const atlasSize = String(size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const geometry = BUILDING_CITY_ATLAS_GEOMETRY[atlasSize];
+  const decoded = decodePcx(buffer, { returnIndexed: true, transparentIndexes: [] });
+  if (!decoded || !decoded.indices || !decoded.palette) {
+    throw new Error(`${label} must be an indexed 256-color PCX file.`);
+  }
+  if (decoded.width < BUILDING_CITY_ATLAS_ORIGIN + geometry.cellW) {
+    throw new Error(`${label} is too narrow for a Civ3 city building atlas.`);
+  }
+  if (decoded.height < BUILDING_CITY_ATLAS_ORIGIN + geometry.cellH) {
+    throw new Error(`${label} does not contain any full city building icon rows.`);
+  }
+  const cols = Math.floor((decoded.width - BUILDING_CITY_ATLAS_ORIGIN) / geometry.cellW);
+  const rows = Math.floor((decoded.height - BUILDING_CITY_ATLAS_ORIGIN) / geometry.cellH);
+  if (cols < 1 || rows < 1) {
+    throw new Error(`${label} does not contain any full city building icon cells.`);
+  }
+  const magentaIndex = findPaletteColorIndex(decoded.palette, BUILDING_CITY_ATLAS_MAGENTA, 255);
+  if (magentaIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
+  }
+  const guideIndex = findPaletteColorIndex(decoded.palette, BUILDING_CITY_ATLAS_GUIDE, 254);
+  if (guideIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 city-building guide green (#00ff00).`);
+  }
+  return { ...decoded, size: atlasSize, ...geometry, cols, rows, magentaIndex, guideIndex, origin: BUILDING_CITY_ATLAS_ORIGIN };
+}
+
+function isBuildingCityAtlasGuideOrBackground(atlas, index) {
+  if (!atlas) return false;
+  return index === atlas.magentaIndex
+    || index === atlas.guideIndex
+    || paletteColorMatches(atlas.palette, index, BUILDING_CITY_ATLAS_MAGENTA)
+    || paletteColorMatches(atlas.palette, index, BUILDING_CITY_ATLAS_GUIDE);
+}
+
+function isBuildingCityAtlasRowEmpty(atlas, rowIndex) {
+  const row = Number(rowIndex) | 0;
+  if (!atlas || row < 0 || row >= atlas.rows) return false;
+  const y0 = atlas.origin + row * atlas.cellH;
+  for (let col = 0; col < atlas.cols; col += 1) {
+    const x0 = atlas.origin + col * atlas.cellW;
+    for (let y = 1; y < atlas.cellH; y += 1) {
+      const rowOff = (y0 + y) * atlas.width + x0;
+      for (let x = 1; x < atlas.cellW; x += 1) {
+        if (!isBuildingCityAtlasGuideOrBackground(atlas, atlas.indices[rowOff + x])) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function findNextBuildingCityAtlasRow(targetBuffer, size) {
+  const atlas = getIndexedBuildingCityAtlas(targetBuffer, size, `target buildings-${size}.pcx`);
+  let lastOccupied = -1;
+  for (let row = 0; row < atlas.rows; row += 1) {
+    if (!isBuildingCityAtlasRowEmpty(atlas, row)) lastOccupied = row;
+  }
+  return {
+    index: lastOccupied + 1,
+    lastOccupied,
+    rows: atlas.rows,
+    cols: atlas.cols
+  };
+}
+
+function findNextBuildingCityAtlasPairRow(targetBuffers) {
+  const large = findNextBuildingCityAtlasRow(targetBuffers && targetBuffers.large, 'large');
+  const small = findNextBuildingCityAtlasRow(targetBuffers && targetBuffers.small, 'small');
+  return {
+    index: Math.max(large.index, small.index),
+    lastOccupied: Math.max(large.lastOccupied, small.lastOccupied),
+    large,
+    small
+  };
+}
+
+function getBuildingCityIconIndexAllocationFloor(improvementsTab, excludedRefs = new Set()) {
+  let maxIndex = -1;
+  (Array.isArray(improvementsTab && improvementsTab.entries) ? improvementsTab.entries : []).forEach((entry) => {
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (ref && excludedRefs.has(ref)) return;
+    const idx = Number.parseInt(String(entry && entry.buildingIconIndex || ''), 10);
+    if (Number.isFinite(idx) && idx >= 0) maxIndex = Math.max(maxIndex, idx);
+  });
+  return maxIndex + 1;
+}
+
+function getNextBuildingCityAtlasAssignmentRow(targetBuffers, improvementsTab, activeImports = null) {
+  const scan = findNextBuildingCityAtlasPairRow(targetBuffers);
+  const imports = Array.isArray(activeImports) ? activeImports : getActiveImportedAtlasOps(improvementsTab);
+  const excludedRefs = new Set(imports.map((item) => String(item && item.newRef || '').trim().toUpperCase()).filter(Boolean));
+  const referenceFloor = getBuildingCityIconIndexAllocationFloor(improvementsTab, excludedRefs);
+  return {
+    ...scan,
+    index: Math.max(scan.index, referenceFloor),
+    scanIndex: scan.index,
+    referenceFloor
+  };
+}
+
+function drawBuildingCityAtlasGuideLines(indices, atlas, newHeight) {
+  const maxX = Math.min(atlas.width - 1, atlas.origin + atlas.cols * atlas.cellW);
+  for (let row = 0; row <= Math.floor((newHeight - atlas.origin - 1) / atlas.cellH); row += 1) {
+    const y = atlas.origin + row * atlas.cellH;
+    if (y < 0 || y >= newHeight) continue;
+    const rowOff = y * atlas.width;
+    for (let x = atlas.origin; x <= maxX; x += 1) {
+      indices[rowOff + x] = atlas.guideIndex;
+    }
+  }
+  for (let col = 0; col <= atlas.cols; col += 1) {
+    const x = atlas.origin + col * atlas.cellW;
+    if (x < 0 || x >= atlas.width) continue;
+    for (let y = atlas.origin; y < newHeight; y += 1) {
+      indices[y * atlas.width + x] = atlas.guideIndex;
+    }
+  }
+}
+
+function appendBuildingCityIconRowToAtlas({ targetBuffer, sourceBuffer, sourceIconIndex, targetIconIndex = null, size = 'large', kind = 'SINGLE' }) {
+  const atlasSize = String(size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
+    throw new Error(`Invalid source city building icon index: ${sourceIconIndex}`);
+  }
+  const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
+  const target = getIndexedBuildingCityAtlas(targetBuffer, atlasSize, `target buildings-${atlasSize}.pcx`);
+  const source = getIndexedBuildingCityAtlas(sourceBuffer, atlasSize, `source buildings-${atlasSize}.pcx`);
+  if (sourceIndex >= source.rows) {
+    throw new Error(`Source city building icon index ${sourceIndex} is outside source buildings-${atlasSize}.pcx.`);
+  }
+  const columnCount = Math.min(getBuildingCityIconColumnCount(kind), source.cols, target.cols);
+  if (columnCount < 1) {
+    throw new Error(`Could not determine city building icon columns for ${kind}.`);
+  }
+
+  const slot = findNextBuildingCityAtlasRow(targetBuffer, atlasSize);
+  const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
+    ? explicitTargetIndex
+    : slot.index;
+  const requiredHeight = target.origin + (targetIndex + 1) * target.cellH + 1;
+  const newHeight = Math.max(target.height, requiredHeight);
+  const nextIndices = new Uint8Array(target.width * newHeight);
+  nextIndices.fill(target.magentaIndex);
+  for (let y = 0; y < target.height; y += 1) {
+    nextIndices.set(
+      target.indices.subarray(y * target.width, (y + 1) * target.width),
+      y * target.width
+    );
+  }
+  drawBuildingCityAtlasGuideLines(nextIndices, target, newHeight);
+
+  const targetRowY = target.origin + targetIndex * target.cellH;
+  for (let col = 0; col < target.cols; col += 1) {
+    const targetColX = target.origin + col * target.cellW;
+    for (let y = 1; y < target.cellH; y += 1) {
+      const rowOff = (targetRowY + y) * target.width + targetColX;
+      for (let x = 1; x < target.cellW; x += 1) {
+        nextIndices[rowOff + x] = target.magentaIndex;
+      }
+    }
+  }
+
+  const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
+  const sourceRowY = source.origin + sourceIndex * source.cellH;
+  for (let col = 0; col < columnCount; col += 1) {
+    const sourceColX = source.origin + col * source.cellW;
+    const targetColX = target.origin + col * target.cellW;
+    for (let y = 1; y <= target.drawH; y += 1) {
+      const sourceRow = (sourceRowY + y) * source.width + sourceColX;
+      const targetRow = (targetRowY + y) * target.width + targetColX;
+      for (let x = 1; x <= target.drawW; x += 1) {
+        nextIndices[targetRow + x] = remap[source.indices[sourceRow + x]];
+      }
+    }
+  }
+
+  return {
+    buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
+    index: targetIndex,
+    lastOccupied: slot.lastOccupied,
+    scanIndex: slot.index,
+    oldRows: target.rows,
+    newRows: Math.floor((newHeight - target.origin) / target.cellH),
+    appendedRow: newHeight > target.height,
+    columnCount
+  };
+}
+
+function appendBuildingCityIconRowToAtlases({ targetBuffers, sourceBuffers, sourceIconIndex, targetIconIndex = null, kind = 'SINGLE' }) {
+  const large = appendBuildingCityIconRowToAtlas({
+    targetBuffer: targetBuffers && targetBuffers.large,
+    sourceBuffer: sourceBuffers && sourceBuffers.large,
+    sourceIconIndex,
+    targetIconIndex,
+    size: 'large',
+    kind
+  });
+  const small = appendBuildingCityIconRowToAtlas({
+    targetBuffer: targetBuffers && targetBuffers.small,
+    sourceBuffer: sourceBuffers && sourceBuffers.small,
+    sourceIconIndex,
+    targetIconIndex: large.index,
+    size: 'small',
+    kind
+  });
+  return {
+    buffers: { large: large.buffer, small: small.buffer },
+    index: large.index,
+    large,
+    small,
+    appendedRow: large.appendedRow || small.appendedRow
+  };
+}
+
+function applyImportedBuildingCityIconAtlasAssignments({ improvementsTab, targetAtlasBuffers, loadSourceAtlasBuffers }) {
+  if (!improvementsTab || !Array.isArray(improvementsTab.recordOps) || !Array.isArray(improvementsTab.entries)) {
+    return { ok: true, changed: false, buffers: targetAtlasBuffers, assignments: [] };
+  }
+  const importOps = getActiveImportedAtlasOps(improvementsTab);
+  if (importOps.length === 0) {
+    return { ok: true, changed: false, buffers: targetAtlasBuffers, assignments: [] };
+  }
+  if (!Buffer.isBuffer(targetAtlasBuffers && targetAtlasBuffers.large) || !Buffer.isBuffer(targetAtlasBuffers && targetAtlasBuffers.small)) {
+    return { ok: false, error: 'Could not load target city building PCX files for imported improvement icons.' };
+  }
+  let workingBuffers = { large: targetAtlasBuffers.large, small: targetAtlasBuffers.small };
+  const assignments = [];
+  const sourceBufferCache = new Map();
+  let nextTargetIndex = getNextBuildingCityAtlasAssignmentRow(workingBuffers, improvementsTab, importOps).index;
+
+  for (const importItem of importOps) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
+    const sourceBiqPath = String(op && op.importArtFrom || '').trim();
+    if (!newRef || !sourceBiqPath) continue;
+    const entry = importItem.entry;
+    if (!entry) {
+      return { ok: false, error: `Could not find imported improvement entry ${newRef} for city building atlas update.` };
+    }
+    const pendingIcon = entry && entry._pendingImportedBuildingCityIcon && typeof entry._pendingImportedBuildingCityIcon === 'object'
+      ? entry._pendingImportedBuildingCityIcon
+      : null;
+    const pendingSourceIndex = Number.parseInt(String(pendingIcon && pendingIcon.sourceIconIndex), 10);
+    const sourceIconIndex = Number.isFinite(pendingSourceIndex) && pendingSourceIndex >= 0
+      ? pendingSourceIndex
+      : Number.parseInt(String(entry.buildingIconIndex || ''), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      return { ok: false, error: `Imported improvement ${newRef} has invalid source city building icon index.` };
+    }
+    const kind = normalizeBuildingCityIconKind((pendingIcon && pendingIcon.kind) || entry.buildingIconKind);
+    if (!sourceBufferCache.has(sourceBiqPath)) {
+      let sourceBuffers = null;
+      try {
+        sourceBuffers = typeof loadSourceAtlasBuffers === 'function' ? loadSourceAtlasBuffers(sourceBiqPath) : null;
+      } catch (_err) {
+        sourceBuffers = null;
+      }
+      if (!sourceBuffers || !Buffer.isBuffer(sourceBuffers.large) || !Buffer.isBuffer(sourceBuffers.small)) {
+        return { ok: false, error: `Could not load source city building PCX files for imported improvement ${newRef}.` };
+      }
+      sourceBufferCache.set(sourceBiqPath, sourceBuffers);
+    }
+    try {
+      const result = appendBuildingCityIconRowToAtlases({
+        targetBuffers: workingBuffers,
+        sourceBuffers: sourceBufferCache.get(sourceBiqPath),
+        sourceIconIndex,
+        targetIconIndex: nextTargetIndex,
+        kind
+      });
+      workingBuffers = result.buffers;
+      entry.buildingIconIndex = String(result.index);
+      nextTargetIndex = result.index + 1;
+      assignments.push({
+        civilopediaKey: newRef,
+        kind,
+        sourceIconIndex,
+        targetIconIndex: result.index,
+        appendedRow: result.appendedRow
+      });
+    } catch (err) {
+      return { ok: false, error: `Could not append city building icon for ${newRef}: ${err.message}` };
+    }
+  }
+
+  return {
+    ok: true,
+    changed: assignments.length > 0,
+    buffers: workingBuffers,
+    assignments
+  };
+}
+
 function resolveResourcesAtlasPath({ civ3Path, targetContentRoot, scenarioRoots }) {
   const rel = RESOURCE_ATLAS_RELATIVE_PATH;
   const candidates = [];
@@ -7232,6 +7554,41 @@ function resolveUnits32AtlasPath({ civ3Path, targetContentRoot, scenarioRoots })
     }
   }
   return '';
+}
+
+function resolveBuildingCityAtlasPath({ civ3Path, targetContentRoot, scenarioRoots, size }) {
+  const atlasSize = String(size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const rel = BUILDING_CITY_ATLAS_RELATIVE_PATHS[atlasSize];
+  const candidates = [];
+  const add = (candidate) => {
+    if (!candidate) return;
+    const resolved = path.resolve(candidate);
+    if (candidates.some((entry) => normalizePathForCompare(entry) === normalizePathForCompare(resolved))) return;
+    candidates.push(resolved);
+  };
+  add(targetContentRoot ? path.join(targetContentRoot, ...rel.split('/')) : '');
+  (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => add(path.join(root, ...rel.split('/'))));
+  const civ3Root = resolveCiv3RootPath(civ3Path);
+  if (civ3Root) {
+    add(path.join(civ3Root, 'Conquests', ...rel.split('/')));
+    add(path.join(civ3Root, 'civ3PTW', ...rel.split('/')));
+    add(path.join(civ3Root, ...rel.split('/')));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch (_err) {
+      // skip unreadable candidates
+    }
+  }
+  return '';
+}
+
+function resolveBuildingCityAtlasPaths({ civ3Path, targetContentRoot, scenarioRoots }) {
+  return {
+    large: resolveBuildingCityAtlasPath({ civ3Path, targetContentRoot, scenarioRoots, size: 'large' }),
+    small: resolveBuildingCityAtlasPath({ civ3Path, targetContentRoot, scenarioRoots, size: 'small' })
+  };
 }
 
 function prepareImportedResourceIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
@@ -7380,6 +7737,92 @@ function prepareImportedUnitIconAtlasWrite({ tabs, targetContentRoot, scenarioRo
   };
 }
 
+function prepareImportedBuildingCityIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
+  const improvementsTab = tabs && tabs.improvements;
+  if (!improvementsTab || !Array.isArray(improvementsTab.recordOps)) return { ok: true, changed: false };
+  const activeImprovementImports = getActiveImportedAtlasOps(improvementsTab);
+  if (activeImprovementImports.length === 0) return { ok: true, changed: false };
+
+  const targetRoot = String(targetContentRoot || '').trim();
+  if (!targetRoot) return { ok: false, error: 'Could not determine target scenario folder for city building PCX files.' };
+  const targetPaths = {
+    large: path.join(targetRoot, ...BUILDING_CITY_ATLAS_RELATIVE_PATHS.large.split('/')),
+    small: path.join(targetRoot, ...BUILDING_CITY_ATLAS_RELATIVE_PATHS.small.split('/'))
+  };
+  const pending = improvementsTab.pendingAtlasCopies && typeof improvementsTab.pendingAtlasCopies === 'object'
+    ? improvementsTab.pendingAtlasCopies
+    : {};
+  const targetSourcePaths = {};
+  ['large', 'small'].forEach((size) => {
+    const atlasKey = size === 'large' ? 'buildingCityLarge' : 'buildingCitySmall';
+    const staged = pending && pending[atlasKey];
+    if (staged && staged.staged && isAbsoluteFilesystemPath(staged.sourcePath)) {
+      targetSourcePaths[size] = String(staged.sourcePath || '').trim();
+    }
+  });
+  const resolvedTargetSourcePaths = resolveBuildingCityAtlasPaths({
+    civ3Path,
+    targetContentRoot: targetRoot,
+    scenarioRoots
+  });
+  if (!targetSourcePaths.large) targetSourcePaths.large = resolvedTargetSourcePaths.large;
+  if (!targetSourcePaths.small) targetSourcePaths.small = resolvedTargetSourcePaths.small;
+  if (!targetSourcePaths.large || !targetSourcePaths.small) {
+    return { ok: false, error: 'Could not find target city building PCX files to copy before importing improvement city icons.' };
+  }
+
+  let targetAtlasBuffers;
+  try {
+    targetAtlasBuffers = {
+      large: fs.readFileSync(targetSourcePaths.large),
+      small: fs.readFileSync(targetSourcePaths.small)
+    };
+  } catch (err) {
+    return { ok: false, error: `Could not read target city building PCX files: ${err.message}` };
+  }
+
+  const sourceRootsCache = new Map();
+  const getSourceRoots = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceRootsCache.has(cacheKey)) return sourceRootsCache.get(cacheKey);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots]);
+    } catch (_err) {
+      roots = dedupePathList([resolveScenarioDir(sourceBiqPath)]);
+    }
+    sourceRootsCache.set(cacheKey, roots);
+    return roots;
+  };
+
+  const update = applyImportedBuildingCityIconAtlasAssignments({
+    improvementsTab,
+    targetAtlasBuffers,
+    loadSourceAtlasBuffers: (sourceBiqPath) => {
+      const sourcePaths = resolveBuildingCityAtlasPaths({
+        civ3Path,
+        targetContentRoot: '',
+        scenarioRoots: getSourceRoots(sourceBiqPath)
+      });
+      return sourcePaths.large && sourcePaths.small
+        ? { large: fs.readFileSync(sourcePaths.large), small: fs.readFileSync(sourcePaths.small) }
+        : null;
+    }
+  });
+  if (!update.ok) return update;
+  if (!update.changed) return { ok: true, changed: false };
+  return {
+    ok: true,
+    changed: true,
+    paths: targetPaths,
+    sourcePaths: targetSourcePaths,
+    data: update.buffers,
+    assignments: update.assignments
+  };
+}
+
 // Imported units always start at icon index 0. The target scenario's units_32.pcx
 // is never rewritten automatically because atlas layout is mod-specific.
 function spliceImportedUnitIconsIntoAtlas({ tabs }) {
@@ -7515,7 +7958,9 @@ function collectScenarioAtlasCopies({ tabs, targetContentRoot }) {
   const copySpecs = [];
   [
     { tabKey: 'resources', atlasKey: 'resources', relativePath: 'Art/resources.pcx' },
-    { tabKey: 'units', atlasKey: 'units32', relativePath: 'Art/Units/units_32.pcx' }
+    { tabKey: 'units', atlasKey: 'units32', relativePath: 'Art/Units/units_32.pcx' },
+    { tabKey: 'improvements', atlasKey: 'buildingCityLarge', relativePath: BUILDING_CITY_ATLAS_RELATIVE_PATHS.large },
+    { tabKey: 'improvements', atlasKey: 'buildingCitySmall', relativePath: BUILDING_CITY_ATLAS_RELATIVE_PATHS.small }
   ].forEach((spec) => {
     const tab = tabs[spec.tabKey];
     const pending = tab && tab.pendingAtlasCopies && typeof tab.pendingAtlasCopies === 'object'
@@ -7591,6 +8036,7 @@ function buildSavePlan(payload) {
   const plannedWrites = [];
   let importedResourceAtlasWrite = null;
   let importedUnitAtlasWrite = null;
+  let importedBuildingCityAtlasWrite = null;
   const dirtyTabs = new Set(
     Array.isArray(payload && payload.dirtyTabs)
       ? payload.dirtyTabs.map((tabKey) => String(tabKey || ''))
@@ -7707,6 +8153,17 @@ function buildSavePlan(payload) {
         });
         if (importedResourceAtlasWrite && !importedResourceAtlasWrite.ok) {
           return { ok: false, error: importedResourceAtlasWrite.error || 'Failed to update resources.pcx for imported resource icons.' };
+        }
+      }
+      if (payload.autoAddImportedBuildingCityIcons !== false) {
+        importedBuildingCityAtlasWrite = prepareImportedBuildingCityIconAtlasWrite({
+          tabs: payload.tabs || {},
+          targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+          scenarioRoots: scenarioContext.searchRoots,
+          civ3Path
+        });
+        if (importedBuildingCityAtlasWrite && !importedBuildingCityAtlasWrite.ok) {
+          return { ok: false, error: importedBuildingCityAtlasWrite.error || 'Failed to update city building PCX files for imported improvement icons.' };
         }
       }
 
@@ -8009,6 +8466,13 @@ function buildSavePlan(payload) {
       if (importedUnitAtlasWrite && importedUnitAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedUnitAtlasWrite.path)) {
         continue;
       }
+      if (importedBuildingCityAtlasWrite && importedBuildingCityAtlasWrite.changed) {
+        const importedPaths = importedBuildingCityAtlasWrite.paths || {};
+        if (normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedPaths.large)
+            || normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedPaths.small)) {
+          continue;
+        }
+      }
       const protectErr = failIfProtected(atlasCopy.targetPath, 'scenario atlas copy target');
       if (protectErr) return { ok: false, error: protectErr };
       if (isProtectedBaseCiv3Path(civ3Path, atlasCopy.targetPath)) {
@@ -8062,6 +8526,32 @@ function buildSavePlan(payload) {
         applied: importedUnitAtlasWrite.assignments.length,
         detail: `Added ${importedUnitAtlasWrite.assignments.length} imported unit icon${importedUnitAtlasWrite.assignments.length === 1 ? '' : 's'}`
       });
+    }
+
+    if (importedBuildingCityAtlasWrite && importedBuildingCityAtlasWrite.changed) {
+      const importedPaths = importedBuildingCityAtlasWrite.paths || {};
+      const importedSources = importedBuildingCityAtlasWrite.sourcePaths || {};
+      const importedData = importedBuildingCityAtlasWrite.data || {};
+      for (const size of ['large', 'small']) {
+        const targetPath = importedPaths[size];
+        const protectErr = failIfProtected(targetPath, `scenario buildings-${size}.pcx target`);
+        if (protectErr) return { ok: false, error: protectErr };
+        if (isProtectedBaseCiv3Path(civ3Path, targetPath)) {
+          return { ok: false, error: `Refusing to modify base Civilization III file (scenario buildings-${size}.pcx target): ${targetPath}` };
+        }
+        plannedWrites.push({
+          kind: 'atlas',
+          path: targetPath,
+          sourcePath: importedSources[size],
+          data: importedData[size]
+        });
+        saveReport.push({
+          kind: 'atlas',
+          path: targetPath,
+          applied: importedBuildingCityAtlasWrite.assignments.length,
+          detail: `Added ${importedBuildingCityAtlasWrite.assignments.length} imported improvement city icon row${importedBuildingCityAtlasWrite.assignments.length === 1 ? '' : 's'}`
+        });
+      }
     }
   }
 
@@ -9845,7 +10335,8 @@ function collectPediaIconsReferenceEdits(tabs) {
         const prevKind = String(entry && entry.originalBuildingIconKind || '').trim();
         const nextIndex = String(entry && entry.buildingIconIndex || '').trim();
         const prevIndex = String(entry && entry.originalBuildingIconIndex || '').trim();
-        if ((nextKind !== prevKind || nextIndex !== prevIndex) && JSON.stringify(nextIconPaths) === JSON.stringify(prevIconPaths)) {
+        if ((shouldForceImportedPedia || shouldForcePediaIconsBlock || nextKind !== prevKind || nextIndex !== prevIndex)
+          && JSON.stringify(nextIconPaths) === JSON.stringify(prevIconPaths)) {
           edits.push({ blockKey: `ICON_${key}`, lines: buildBuildingIconLines(entry, nextIconPaths) });
         }
         const nextSplash = normalizeAssetReferencePath(entry && entry.wonderSplashPath);
@@ -10858,6 +11349,12 @@ module.exports = {
   getNextUnitAtlasAssignmentSlot,
   appendUnitIconToUnits32Pcx,
   applyImportedUnitIconAtlasAssignments,
+  findNextBuildingCityAtlasRow,
+  findNextBuildingCityAtlasPairRow,
+  getNextBuildingCityAtlasAssignmentRow,
+  appendBuildingCityIconRowToAtlas,
+  appendBuildingCityIconRowToAtlases,
+  applyImportedBuildingCityIconAtlasAssignments,
   previewFileDiff,
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,

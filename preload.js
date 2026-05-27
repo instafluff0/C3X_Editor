@@ -101,6 +101,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:unit-settings-selected', listener);
     };
   },
+  onImprovementSettingsMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, settings) => handler(settings);
+    ipcRenderer.on('manager:improvement-settings-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:improvement-settings-selected', listener);
+    };
+  },
   onCustomRulesMenuSelect: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};

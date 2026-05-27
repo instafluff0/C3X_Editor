@@ -384,6 +384,36 @@ test('collectPediaIconsReferenceEdits can force writing an unchanged building ic
   ]);
 });
 
+test('collectPediaIconsReferenceEdits forces imported building city icon blocks without Civilopedia art paths', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_Scholars_Quarters',
+        displayCivilopediaKey: 'BLDG_Scholars_Quarters',
+        isNew: true,
+        _importScenarioPath: '/tmp/ImportedScenario.biq',
+        iconPaths: [],
+        originalIconPaths: [],
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: 'SINGLE',
+        buildingIconIndex: '89',
+        originalBuildingIconIndex: '89',
+        wonderSplashPath: '',
+        originalWonderSplashPath: ''
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, [{
+    blockKey: 'ICON_BLDG_Scholars_Quarters',
+    lines: [
+      'SINGLE',
+      '89'
+    ]
+  }]);
+});
+
 test('collectPediaIconsReferenceEdits writes complete structured building icon block when small icon changes', () => {
   const edits = collectPediaIconsReferenceEdits({
     improvements: {

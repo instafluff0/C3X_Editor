@@ -1,4 +1,9 @@
 * RELEASE 27.12.1
+- Added city-screen building icon atlas support for Improvements, including a vertical row picker from `Art/city screen/buildings-small.pcx`, selected small/large previews, combined scenario copy staging for both building PCX files, automatic imported Improvement row appends to `buildings-large.pcx` and `buildings-small.pcx`, and a Settings toggle for disabling those automatic imports.
+- Added robust building city icon atlas tests covering Civ3 row geometry, display-mode column counts, BIQ/PediaIcons index allocation floors, palette-preserving appends, and deleted pending import compaction.
+- Improved atlas picker responsiveness by caching decoded PCX preview canvases instead of rebuilding full-sheet RGBA canvases for every visible icon cell.
+- Fixed no-reload saves after imported Improvement PediaIcons writes so quality checks recognize the just-saved scenario `#ICON_BLDG_*` block instead of showing a stale missing-block warning.
+- Fixed imported Improvements with city-screen icon metadata but no loaded Civilopedia art paths so first save still writes the required scenario `#ICON_BLDG_*` block.
 - Hid unreleased R28 C3X fields while the editor supports R27, including tile destruction animation settings now marked with R28 release metadata.
 - Fixed blank Add templates for Civs, Techs, Resources, Improvements, Governments, and Units so new entries no longer inherit thumbnail/art paths or live reference defaults from the selected entry, and blank Civs now start with no favorite/shunned government, monarch unit, or diplomacy text slot.
 - Fixed import/add modal field alignment so Name and Key inputs stay top-aligned even when the Key helper text is visible.

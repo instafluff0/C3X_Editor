@@ -5111,7 +5111,7 @@ details > summary:focus-visible {
 
 .improvement-building-art-controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(110px, 150px);
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 360px);
   gap: 10px;
   align-items: end;
 }
@@ -5128,6 +5128,11 @@ details > summary:focus-visible {
 
 .improvement-building-art-control input {
   width: 100%;
+}
+
+.improvement-building-city-copy-notices {
+  display: grid;
+  gap: 6px;
 }
 
 .improvement-building-art-grid {
@@ -5227,6 +5232,79 @@ details > summary:focus-visible {
 .resource-icon-index-picker .unit-icon-picker-item {
   width: 56px;
   height: 56px;
+}
+
+.building-city-icon-index-picker {
+  grid-template-columns: auto 88px auto;
+}
+
+.building-city-icon-index-picker .unit-icon-picker-menu {
+  color: var(--ink);
+  font-weight: 400;
+  text-transform: none;
+}
+
+.building-city-selected-previews {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.building-city-selected-preview {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  font-size: 0.54rem;
+  line-height: 1;
+  color: var(--muted);
+  text-transform: none;
+}
+
+.building-city-selected-preview canvas {
+  border: 1px solid rgba(36, 25, 64, 0.18);
+  border-radius: 6px;
+  background: #f7f7fb;
+}
+
+.building-city-icon-index-picker .unit-icon-picker-scroller {
+  width: min(560px, calc(100vw - 64px));
+  max-height: 380px;
+  overflow-x: auto;
+}
+
+.building-city-icon-index-picker .unit-icon-picker-grid {
+  width: 100%;
+}
+
+.building-city-icon-index-picker .building-city-icon-picker-item {
+  width: calc(100% - 8px);
+  height: 48px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.building-city-icon-index-picker .unit-icon-picker-label {
+  width: 32px;
+  font-size: 0.62rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.building-city-icon-picker-row-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: visible;
+}
+
+.building-city-icon-picker-row-icons canvas {
+  flex: 0 0 auto;
+  border: 1px solid rgba(36, 25, 64, 0.14);
+  border-radius: 6px;
+  background: #f7f7fb;
 }
 
 .civilization-art-editor {
