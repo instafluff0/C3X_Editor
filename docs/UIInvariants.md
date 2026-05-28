@@ -29,6 +29,18 @@ Stable UI behavior contracts agents should preserve during implementation change
   - `Rolled Back`
   - `Failed`
 
+## Reference CRUD and Undo
+- Visible reference-tab state and hidden pending BIQ `recordOps` must move together.
+- Capture Undo before mutating Add/Copy/Import/Delete `recordOps`; otherwise Undo can restore the visible list while leaving hidden pending BIQ operations behind.
+- Deleting a pending unsaved entry should remove its create operation rather than creating a delete operation for a record that does not exist yet.
+- Blank Add must clear both visible art fields and hidden pending art/import metadata so new entries do not inherit thumbnails or staged assets from the selected entry.
+
+## Save Clean State and Dirty Badges
+- Dirty badges, clean snapshots, reference ordering, and no-reload reconciliation are separate responsibilities.
+- Do not fix save-state bugs with broad dirty-cache resets or full UI rebuilds unless the workflow genuinely requires it.
+- No-reload saves must reconcile final BIQ indices, clear saved pending operations, update original field values, and then refresh only the UI surfaces whose data changed.
+- VM-extracted renderer tests must include direct helper dependencies used by the extracted function; otherwise failures may reflect a harness gap rather than app behavior.
+
 ## Art Preview Contract
 Supported previews:
 - District PCX

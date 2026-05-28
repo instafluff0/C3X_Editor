@@ -1,5 +1,6 @@
 * RELEASE 27.12.1
 - Added unobtrusive active-tab item counts for BIQ reference tabs, with Units counts ignoring synthetic era rows and strategy-map duplicate PRTO records.
+- Documented the pending BIQ reference save flow, C3X/District name-reference boundary, and UI invariants for reference CRUD Undo, blank Add metadata, no-reload clean state, and dirty badges.
 - Added save/reload regression coverage for pending BIQ entries referenced from C3X base and District configs, plus empty-index pending reference planning guards.
 - Fixed blank Add templates so creating a new Civ, Tech, Resource, Improvement, Government, or Unit from an unsaved entry with staged art no longer inherits hidden pending thumbnail/import metadata.
 - Fixed reference-tab Add/Copy/Import Undo so pending BIQ create operations are not left behind after the visible entry is restored, preventing undone Civ adds from still failing Save at the 32-civ cap.

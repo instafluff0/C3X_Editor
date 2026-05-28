@@ -91,6 +91,13 @@ Pedia quirks:
 - Sectioned file format: section marker + `key = value` lines.
 - Preserve quoted token lists where present.
 
+## C3X and District References to BIQ Data
+- C3X base and District config references are serialized as names/tokens, not BIQ numeric indices.
+- These references are not vulnerable to final-BIQ-index drift when pending BIQ entries are saved.
+- They can still become stale if a referenced item is renamed or deleted; treat that as a name-integrity problem, not an index-normalization problem.
+- Save/reload coverage should include pending BIQ entries referenced by name from C3X base and District fields.
+- See `docs/biq/PendingReferenceSaveFlow.md`.
+
 ## C3X Named Tiles (Scenario Placement File)
 - C3X named tiles are parsed from `scenario.districts.txt` using `#NamedTile` sections in the same file family as pre-placed districts.
 - Required fields per named tile section:

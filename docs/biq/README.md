@@ -58,6 +58,7 @@ Current tab files:
 - `docs/biq/catalog/fields.json`: initial field catalog for high-impact BIQ fields and links.
 - `docs/biq/graph.md`: section dependency graph and optional-block gates.
 - `docs/biq/invariants.md`: mutation safety rules and invariant checklist.
+- `docs/biq/PendingReferenceSaveFlow.md`: how unsaved reference entries are planned, normalized, and tested before final BIQ indices exist.
 - `docs/biq/MapPipelineParity.md`: Quint-to-C3X map read/write pipeline mapping and current parity boundaries.
 - `docs/biq/MapSectionMutationMatrix.md`: per-section mutation/ref-cascade matrix for `TILE`, `SLOC`, `CITY`, `UNIT`, and `CLNY`.
 - `docs/biq/MapFieldProjectionMatrix.md`: raw-vs-display-vs-save source-of-truth matrix for high-risk BIQ map fields.
