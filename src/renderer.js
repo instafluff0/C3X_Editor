@@ -14818,7 +14818,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         });
         controlWrap.appendChild(colorPicker);
       } else if (useReferencePicker) {
-        const labelText = String(field.label || field.key || 'value').trim();
+        const labelText = String(displayLabel || field.label || field.key || 'value').trim();
         const isTechPrereqField = tabKey === 'technologies' && /^prerequisite/i.test(String(field.baseKey || field.key || ''));
         const targetTabKey = (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '';
         const normalizedCurrentValue = isTechPrereqField
@@ -14833,7 +14833,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           currentValue: normalizedCurrentValue,
           searchPlaceholder: `Search ${labelText}...`,
           noneLabel: '(none)',
-          showOptionThumbs: targetTabKey === 'units' || targetTabKey === 'governments',
+          showOptionThumbs: targetTabKey === 'units' || targetTabKey === 'governments' || targetTabKey === 'improvements',
           onSelect: (value, option) => {
             rememberUndoSnapshotForKey(fieldUndoKey);
             field.value = String(value);
@@ -14964,7 +14964,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         );
         controlWrap.appendChild(segmented);
       } else if (useReferencePicker) {
-        const labelText = String(field.label || field.key || 'value').trim();
+        const labelText = String(displayLabel || field.label || field.key || 'value').trim();
         const isTechPrereqField = tabKey === 'technologies' && /^prerequisite/i.test(String(field.baseKey || field.key || ''));
         const normalizedCurrentValue = isTechPrereqField
           ? (() => {

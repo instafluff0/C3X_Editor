@@ -567,3 +567,25 @@ test('improvements required districts picker wires district dropdown thumbnails'
     'Improvements required-district picker should provide the shared district thumbnail renderer so dropdown options do not collapse to empty placeholder boxes'
   );
 });
+
+test('editable BIQ reference pickers lazily hydrate improvement thumbnails', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /showOptionThumbs:\s*targetTabKey === 'units' \|\| targetTabKey === 'governments' \|\| targetTabKey === 'improvements'/,
+    'Editable BIQ reference pickers should lazily hydrate Improvement option thumbnails for fields like Gain In Every City'
+  );
+});
+
+test('BIQ reference picker search placeholders use display labels', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const labelText = String\(displayLabel \|\| field\.label \|\| field\.key \|\| 'value'\)\.trim\(\);[\s\S]*?searchPlaceholder: `Search \$\{labelText\}\.\.\.`/,
+    'BIQ reference picker search placeholders should use readable display labels instead of raw field keys like gainineverycity'
+  );
+});

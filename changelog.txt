@@ -1,3 +1,8 @@
+* RELEASE 27.13.1
+- Fixed Improvement Gain reference dropdowns so `In every city` and `In every city on this continent` lazily populate Improvement option thumbnails like the other quick reference pickers.
+- Cleaned up BIQ reference picker search placeholders so they use readable field labels instead of bunched raw keys.
+- Removed the unused one-time Electron icon generator dependency and upgraded Electron to the patched 39.8 line, clearing the npm audit vulnerability report.
+
 * RELEASE 27.13
 - Fixed Scenario Civ art saves so generated Civilopedia icon sheets cannot overwrite the primary large icon when both slots start from the same source filename, with save/reload tests covering distinct PediaIcons paths and PCX dimensions.
 - Fixed Improvement Required Government saves so a dirty Improvement tab resolves the selected Government through the full BIQ reference set and writes the BIQ instead of reporting no file changes.
