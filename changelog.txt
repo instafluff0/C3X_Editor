@@ -1,4 +1,6 @@
-* RELEASE 27.12.1
+* RELEASE 27.13
+- Fixed Scenario Civ art saves so generated Civilopedia icon sheets cannot overwrite the primary large icon when both slots start from the same source filename, with save/reload tests covering distinct PediaIcons paths and PCX dimensions.
+- Fixed Improvement Required Government saves so a dirty Improvement tab resolves the selected Government through the full BIQ reference set and writes the BIQ instead of reporting no file changes.
 - Added unobtrusive active-tab item counts for BIQ reference tabs, with Units counts ignoring synthetic era rows and strategy-map duplicate PRTO records.
 - Documented the pending BIQ reference save flow, C3X/District name-reference boundary, and UI invariants for reference CRUD Undo, blank Add metadata, no-reload clean state, and dirty badges.
 - Added save/reload regression coverage for pending BIQ entries referenced from C3X base and District configs, plus empty-index pending reference planning guards.

@@ -262,7 +262,7 @@ test('pickScenarioReferenceArtTargetRelativePath uses the civ icon folder for ci
       sourcePath: '/tmp/statue.pcx',
       targetContentRoot: '/tmp/scenario'
     }),
-    'Art/Civilopedia/Icons/Races/statue.pcx'
+    'Art/Civilopedia/Icons/Races/statue_icon3.pcx'
   );
   assert.equal(
     pickScenarioReferenceArtTargetRelativePath({
@@ -273,7 +273,7 @@ test('pickScenarioReferenceArtTargetRelativePath uses the civ icon folder for ci
       sourcePath: '/tmp/statue.pcx',
       targetContentRoot: '/tmp/scenario'
     }),
-    'Art/Civilopedia/Icons/Races/statue.pcx'
+    'Art/Civilopedia/Icons/Races/statue_icon4.pcx'
   );
 });
 

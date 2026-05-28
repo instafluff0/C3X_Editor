@@ -842,6 +842,56 @@ test('pending reference planning ignores empty or missing BIQ indexes when savin
   assert.equal(getRawRecordInt({ fields: reloadedCiv.biqFields }, 'freetech3index'), missingIndex);
 });
 
+test('dirty Improvement Required Government saves through non-dirty Government reference data', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const democracy = before.tabs.governments.entries.find((entry) =>
+    String(entry && entry.name || '').trim().toLowerCase() === 'democracy'
+  );
+  if (!democracy) return t.skip('No Democracy government found');
+  const democracyIndex = Number(democracy.biqIndex);
+  assert.equal(Number.isFinite(democracyIndex), true, 'expected Democracy BIQ index');
+
+  const improvement = before.tabs.improvements.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex))
+      && findBiqField(entry, 'reqgovernment')
+      && getRawRecordInt({ fields: entry.biqFields }, 'reqgovernment', -1) !== democracyIndex
+  );
+  if (!improvement) return t.skip('No improvement with a different Required Government found');
+
+  const field = findBiqField(improvement, 'reqgovernment');
+  field.value = String(democracyIndex);
+  field.originalValue = String(democracyIndex);
+  field.referenceTarget = {
+    tabKey: 'governments',
+    key: democracy.civilopediaKey
+  };
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['improvements'],
+    tabs: {
+      improvements: before.tabs.improvements,
+      governments: before.tabs.governments
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+  assert.ok(
+    saveResult.saveReport.some((item) => item.kind === 'biq' && Number(item.applied || 0) > 0),
+    'expected BIQ write for Required Government change'
+  );
+
+  const after = reload(c3xDir, biqPath);
+  const reloaded = getEntry(after, 'improvements', improvement.civilopediaKey);
+  assert.ok(reloaded, 'expected improvement after reload');
+  assert.equal(getRawRecordInt({ fields: reloaded.biqFields }, 'reqgovernment'), democracyIndex);
+});
+
 test('pending BIQ entries referenced from C3X base and District configs survive save and reload by name', (t) => {
   const ctx = setupScenario();
   if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);

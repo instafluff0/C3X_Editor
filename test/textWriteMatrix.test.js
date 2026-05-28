@@ -51,6 +51,17 @@ function encodeTruecolorPcx({ width, height, rgbAt }) {
   return Buffer.concat([header, Buffer.from(body)]);
 }
 
+function solidRgba(width, height, r, g, b, a = 255) {
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    rgba[i * 4] = r;
+    rgba[i * 4 + 1] = g;
+    rgba[i * 4 + 2] = b;
+    rgba[i * 4 + 3] = a;
+  }
+  return rgba;
+}
+
 function docTextByKey(doc, key) {
   const upper = String(key || '').trim().toUpperCase();
   const sec = doc.sections[upper];
@@ -1234,14 +1245,101 @@ test('scenario save localizes pending art selected from scenario work folders', 
 
   assert.equal(result.ok, true, String(result.error || 'save failed'));
   assert.equal(fs.existsSync(path.join(scenario, 'Art-dev', 'vatican.pcx')), false);
-  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican.pcx');
+  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican_icon4.pcx');
   assert.equal(fs.existsSync(pcxPath), true);
   const decoded = decodePcx(pcxPath);
   assert.equal(decoded.width, 461);
   assert.equal(decoded.height, 346);
   const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
-  assert.match(saved, /Art\\Civilopedia\\Icons\\Races\\vatican\.pcx/);
-  assert.equal(tabs.civilizations.entries[0].iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican.pcx');
+  assert.match(saved, /Art\\Civilopedia\\Icons\\Races\\vatican_icon4\.pcx/);
+  assert.equal(tabs.civilizations.entries[0].iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican_icon4.pcx');
+});
+
+test('scenario save keeps same-basename civilization icon slots distinct across save and reload', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const workDir = path.join(scenario, 'Art-dev');
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(workDir, { recursive: true });
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const sourcePath = path.join(workDir, 'vatican.png');
+  fs.writeFileSync(sourcePath, 'source placeholder');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      },
+      entries: [{
+        civilopediaKey: 'RACE_VATICAN',
+        iconPaths: [
+          'Art/Civilopedia/Icons/Races/vatican.pcx',
+          'Art/Civilopedia/Icons/Races/vatican_small.pcx',
+          'Art/Leaderheads/vatican.pcx',
+          'Art/Civilopedia/Icons/Races/vatican.pcx'
+        ],
+        originalIconPaths: [],
+        pendingArtConversions: {
+          'iconPaths:0': {
+            sourcePath,
+            width: 128,
+            height: 128,
+            rgbaBase64: solidRgba(128, 128, 20, 40, 60).toString('base64')
+          },
+          'iconPaths:3': {
+            sourcePath,
+            width: 461,
+            height: 346,
+            rgbaBase64: solidRgba(461, 346, 200, 170, 90).toString('base64')
+          }
+        },
+        racePaths: ['Art/Leaderheads/vatican.pcx', 'Art/Advisors/vatican.pcx'],
+        originalRacePaths: ['Art/Leaderheads/vatican.pcx', 'Art/Advisors/vatican.pcx'],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(tabs.civilizations.entries[0].iconPaths[0], 'Art/Civilopedia/Icons/Races/vatican.pcx');
+  assert.equal(tabs.civilizations.entries[0].iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican_icon4.pcx');
+
+  const largePath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican.pcx');
+  const sheetPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican_icon4.pcx');
+  const largeDecoded = decodePcx(largePath);
+  const sheetDecoded = decodePcx(sheetPath);
+  assert.equal(largeDecoded.width, 128);
+  assert.equal(largeDecoded.height, 128);
+  assert.equal(sheetDecoded.width, 461);
+  assert.equal(sheetDecoded.height, 346);
+
+  const pediaDoc = parsePediaIconsDocumentWithOrder(fs.readFileSync(pediaIconsPath).toString('latin1'));
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_RACE_VATICAN), [
+    'Art/Civilopedia/Icons/Races/vatican.pcx',
+    'Art/Civilopedia/Icons/Races/vatican_small.pcx',
+    'Art/Leaderheads/vatican.pcx',
+    'Art/Civilopedia/Icons/Races/vatican_icon4.pcx'
+  ]);
+
+  const reloaded = buildReferenceTabs(root, { mode: 'scenario', civ3Path: root, scenarioPath: scenario });
+  const entry = reloaded.civilizations.entries.find((item) => item.civilopediaKey === 'RACE_VATICAN');
+  assert.ok(entry, 'expected saved civilization to reload from PediaIcons');
+  assert.equal(entry.iconPaths[0], 'Art/Civilopedia/Icons/Races/vatican.pcx');
+  assert.equal(entry.iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican_icon4.pcx');
 });
 
 test('scenario save converts pending truecolor PCX art to indexed Civ3 PCX', () => {

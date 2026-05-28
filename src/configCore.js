@@ -4420,6 +4420,42 @@ function normalizeRaceIconPaths(values) {
   return out.slice(0, 4);
 }
 
+function appendFileNameStemSuffix(fileName, suffix) {
+  const base = String(fileName || '').trim();
+  const safeSuffix = String(suffix || '').trim();
+  if (!base || !safeSuffix) return base;
+  const ext = path.extname(base) || '.pcx';
+  const stem = path.basename(base, ext) || 'art';
+  if (stem.toLowerCase().endsWith(safeSuffix.toLowerCase())) return `${stem}${ext}`;
+  return `${stem}${safeSuffix}${ext}`;
+}
+
+function getReferenceArtCollisionSuffix(tabKey, group, index) {
+  const normalizedTab = String(tabKey || '').trim();
+  const normalizedGroup = String(group || '').trim();
+  const idx = Number(index);
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'iconPaths') {
+    if (idx === 0) return '_large';
+    if (idx === 1) return '_small';
+    if (Number.isFinite(idx) && idx >= 2) return `_icon${idx + 1}`;
+  }
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'racePaths') {
+    if (idx === 0) return '_leaderhead';
+    if (idx === 1) return '_advisor';
+  }
+  return Number.isFinite(idx) ? `_slot${idx + 1}` : '_slot';
+}
+
+function applyReferenceArtDefaultFileNameSuffix(fileName, tabKey, group, index) {
+  const normalizedTab = String(tabKey || '').trim();
+  const normalizedGroup = String(group || '').trim();
+  const idx = Number(index);
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'iconPaths' && Number.isFinite(idx) && idx >= 2) {
+    return appendFileNameStemSuffix(fileName, `_icon${idx + 1}`);
+  }
+  return fileName;
+}
+
 function findFirstPathLine(lines) {
   const rawLines = Array.isArray(lines) ? lines : [];
   const line = rawLines.find((value) => {
@@ -8173,6 +8209,7 @@ function buildSavePlan(payload) {
       });
       normalizePendingReferenceTargetsForSave({
         tabs: biqTabsForCollection,
+        indexTabs: payload.tabs || {},
         biqTab
       });
       const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
@@ -8190,7 +8227,7 @@ function buildSavePlan(payload) {
       const biqStructureRecordOps = collectBiqStructureRecordOps(biqTabsForCollection);
       const biqMapStructureOps = collectBiqMapStructureOps(biqTabsForCollection);
       const biqMapRecordOps = collectBiqMapRecordOps(biqTabsForCollection);
-      const biqEdits = collectBiqReferenceEdits(biqTabsForCollection);
+      const biqEdits = collectBiqReferenceEdits(biqTabsForCollection, { biqTab });
       const structureEdits = collectBiqStructureEdits(biqTabsForCollection);
       const mapEdits = collectBiqMapEdits(biqTabsForCollection);
       const autoSearchField = !pendingSearchFolderOverride || pendingSearchFolderOverride.length === 0
@@ -9147,9 +9184,9 @@ function normalizeReferenceListFieldValueForSave(field, targetTabKey, indexMaps)
   return true;
 }
 
-function normalizePendingReferenceTargetsForSave({ tabs, biqTab }) {
+function normalizePendingReferenceTargetsForSave({ tabs, indexTabs, biqTab }) {
   const sourceTabs = tabs || {};
-  const indexMaps = buildPlannedReferenceIndexMaps(sourceTabs, biqTab);
+  const indexMaps = buildPlannedReferenceIndexMaps(indexTabs || sourceTabs, biqTab);
   let changed = 0;
 
   for (const spec of REFERENCE_TAB_SPECS) {
@@ -9558,8 +9595,89 @@ function getTabsForDirtyBiqCollection(tabs, options = {}) {
   return out;
 }
 
-function collectBiqReferenceEdits(tabs) {
+function getBiqEditableRecordListForSection(biqTab, sectionCode) {
+  const target = String(sectionCode || '').trim().toUpperCase();
+  if (!biqTab || !Array.isArray(biqTab.sections) || !target) return [];
+  const section = biqTab.sections.find((entry) => String(entry && entry.code || '').trim().toUpperCase() === target);
+  if (!section) return [];
+  if (Array.isArray(section.records) && section.records.length > 0) return section.records;
+  return Array.isArray(section.fullRecords) ? section.fullRecords : [];
+}
+
+function findEditableBiqRecordForReferenceEntry(biqTab, sectionCode, entry) {
+  const records = getBiqEditableRecordListForSection(biqTab, sectionCode);
+  if (!Array.isArray(records) || records.length === 0) return null;
+  const idx = Number(entry && entry.biqIndex);
+  if (Number.isFinite(idx) && idx >= 0) {
+    const indexed = records.find((record) => Number(record && record.index) === idx);
+    if (indexed) return indexed;
+    if (records[idx]) return records[idx];
+  }
+  const civKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+  if (!civKey) return null;
+  return records.find((record) => String(getBiqRecordCivilopediaKey(record) || '').trim().toUpperCase() === civKey) || null;
+}
+
+function getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey, entry }) {
+  const record = findEditableBiqRecordForReferenceEntry(biqTab, sectionCode, entry);
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  if (fields.length === 0) return null;
+  if (tabKey === 'improvements') {
+    const flavorCount = Number.isFinite(Number(entry && entry.improvementFlavorCount))
+      ? Number(entry.improvementFlavorCount)
+      : 0;
+    return collapseImprovementBiqFields(fields, flavorCount, 'value');
+  }
+  if (tabKey === 'technologies') {
+    const flavorCount = Number.isFinite(Number(entry && entry.technologyFlavorCount))
+      ? Number(entry.technologyFlavorCount)
+      : 0;
+    return collapseTechnologyBiqFields(fields, flavorCount, 'value');
+  }
+  if (tabKey === 'resources') return collapseResourceBiqFields(fields, 'value');
+  if (tabKey === 'governments') return collapseGovernmentBiqFields(fields, 'value');
+  if (tabKey === 'civilizations') {
+    const flavorCount = Number.isFinite(Number(entry && entry.civilizationFlavorCount))
+      ? Number(entry.civilizationFlavorCount)
+      : 0;
+    return collapseCivilizationBiqFields(fields, flavorCount, 'value');
+  }
+  if (tabKey === 'units') return collapseUnitBiqFields(fields, 'value');
+  return null;
+}
+
+function hasReferenceTargetMetaForRawKey(entry, rawKey) {
+  const targetCanon = canonicalFieldKey(rawKey);
+  if (!targetCanon || !Array.isArray(entry && entry.biqFields)) return false;
+  return entry.biqFields.some((field) => {
+    if (!field || canonicalFieldKey(field.baseKey || field.key) !== targetCanon) return false;
+    return !!getFieldReferenceTarget(field) || getFieldReferenceTargets(field).length > 0;
+  });
+}
+
+function collectCollapsedReferenceRawEdits({ edits, sectionCode, recordRef, entry, currentRaw, originalRaw, diskRaw }) {
+  Object.keys(currentRaw || {}).forEach((rawKey) => {
+    const value = cleanDisplayText(currentRaw[rawKey]);
+    let originalValue = cleanDisplayText(originalRaw && originalRaw[rawKey]);
+    if (value === originalValue
+      && hasReferenceTargetMetaForRawKey(entry, rawKey)
+      && diskRaw
+      && Object.prototype.hasOwnProperty.call(diskRaw, rawKey)) {
+      originalValue = cleanDisplayText(diskRaw[rawKey]);
+    }
+    if (value === originalValue) return;
+    edits.push({
+      sectionCode,
+      recordRef,
+      fieldKey: rawKey,
+      value
+    });
+  });
+}
+
+function collectBiqReferenceEdits(tabs, options = {}) {
   const edits = [];
+  const biqTab = options && options.biqTab;
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = tabs[spec.key];
     if (!tab || !Array.isArray(tab.entries)) continue;
@@ -9578,16 +9696,14 @@ function collectBiqReferenceEdits(tabs) {
           : 0;
         const currentRaw = collapseImprovementBiqFields(entry.biqFields, flavorCount, 'value');
         const originalRaw = collapseImprovementBiqFields(entry.biqFields, flavorCount, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
@@ -9597,48 +9713,42 @@ function collectBiqReferenceEdits(tabs) {
           : 0;
         const currentRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'value');
         const originalRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
       if (spec.key === 'resources') {
         const currentRaw = collapseResourceBiqFields(entry.biqFields, 'value');
         const originalRaw = collapseResourceBiqFields(entry.biqFields, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
       if (spec.key === 'governments') {
         const currentRaw = collapseGovernmentBiqFields(entry.biqFields, 'value');
         const originalRaw = collapseGovernmentBiqFields(entry.biqFields, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
@@ -9648,27 +9758,33 @@ function collectBiqReferenceEdits(tabs) {
           : 0;
         const currentRaw = collapseCivilizationBiqFields(entry.biqFields, flavorCount, 'value');
         const originalRaw = collapseCivilizationBiqFields(entry.biqFields, flavorCount, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
       if (spec.key === 'units') {
         const currentRaw = collapseUnitBiqFields(entry.biqFields, 'value');
         const originalRaw = collapseUnitBiqFields(entry.biqFields, 'originalValue');
+        const diskRaw = getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry });
         Object.keys(currentRaw).forEach((rawKey) => {
           const value = currentRaw[rawKey];
           const originalValue = originalRaw[rawKey];
           const valueText = Array.isArray(value) ? value.join(',') : cleanDisplayText(value);
-          const originalText = Array.isArray(originalValue) ? originalValue.join(',') : cleanDisplayText(originalValue);
+          let originalText = Array.isArray(originalValue) ? originalValue.join(',') : cleanDisplayText(originalValue);
+          if (valueText === originalText
+            && hasReferenceTargetMetaForRawKey(entry, rawKey)
+            && diskRaw
+            && Object.prototype.hasOwnProperty.call(diskRaw, rawKey)) {
+            const diskValue = diskRaw[rawKey];
+            originalText = Array.isArray(diskValue) ? diskValue.join(',') : cleanDisplayText(diskValue);
+          }
           if (valueText === originalText) return;
           edits.push({
             sectionCode,
@@ -10393,7 +10509,12 @@ function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1,
   const normalizedOriginal = normalizeAssetReferencePath(originalPath);
   const absSource = String(sourcePath || '').trim();
   const rawBaseName = path.basename(absSource || normalizedOriginal || '');
-  const baseName = forcePcx ? rawBaseName.replace(/\.[^.\\/]+$/i, '.pcx') : rawBaseName;
+  const baseName = applyReferenceArtDefaultFileNameSuffix(
+    forcePcx ? rawBaseName.replace(/\.[^.\\/]+$/i, '.pcx') : rawBaseName,
+    tabKey,
+    group,
+    index
+  );
   if (!baseName) return '';
   if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
     const originalDir = normalizeRelativePath(path.posix.dirname(normalizedOriginal));
@@ -10642,6 +10763,39 @@ function buildLocalizedArtBufferFromSource(sourcePath, targetSize = null) {
 function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWrites, saveReport }) {
   if (!targetContentRoot || !tabs) return { ok: true };
   const queued = new Map();
+  const queuedKeys = new Map();
+  const canonicalTargetKey = (targetPath) => path.resolve(String(targetPath || '')).toLowerCase();
+  const buffersEqual = (a, b) => {
+    const left = Buffer.isBuffer(a) ? a : Buffer.from(a || []);
+    const right = Buffer.isBuffer(b) ? b : Buffer.from(b || []);
+    return left.length === right.length && Buffer.compare(left, right) === 0;
+  };
+  const appendRelativePathSuffix = (relTarget, suffix, attempt) => {
+    const normalized = normalizeRelativePath(relTarget);
+    const ext = path.posix.extname(normalized) || '.pcx';
+    const dir = path.posix.dirname(normalized);
+    const stem = path.posix.basename(normalized, ext);
+    const numberedSuffix = attempt > 0 ? `${suffix}_${attempt + 1}` : suffix;
+    const nextBase = appendFileNameStemSuffix(`${stem}${ext}`, numberedSuffix);
+    return normalizeRelativePath(dir && dir !== '.' ? path.posix.join(dir, nextBase) : nextBase);
+  };
+  const reserveRelativeArtTarget = (relTarget, data, context = {}) => {
+    let candidate = normalizeRelativePath(relTarget);
+    if (!candidate) return '';
+    const suffix = getReferenceArtCollisionSuffix(context.tabKey, context.group, context.index);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const targetPath = path.join(targetContentRoot, candidate.replace(/\//g, path.sep));
+      const key = canonicalTargetKey(targetPath);
+      const existingPath = queuedKeys.get(key);
+      if (!existingPath) {
+        queuedKeys.set(key, targetPath);
+        return candidate;
+      }
+      if (buffersEqual(queued.get(existingPath), data)) return candidate;
+      candidate = appendRelativePathSuffix(relTarget, suffix, attempt);
+    }
+    throw new Error(`Multiple referenced art files resolved to the same target path: ${relTarget}`);
+  };
   const queueFileWrite = (targetPath, data) => {
     const key = String(targetPath || '');
     if (!key) return;
@@ -10694,10 +10848,15 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             if (!relTarget || !data) {
               throw new Error(`Could not convert referenced art file: ${String(pendingConversion.sourcePath || pendingSource || rawValue)}`);
             }
-            const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+            const actualRelTarget = reserveRelativeArtTarget(relTarget, data, {
+              tabKey: spec.key,
+              group: fieldKey,
+              index
+            });
+            const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
             queueFileWrite(targetPath, data);
-            if (sourceValues[index] !== relTarget) {
-              sourceValues[index] = relTarget;
+            if (sourceValues[index] !== actualRelTarget) {
+              sourceValues[index] = actualRelTarget;
               changed = true;
             }
             return;
@@ -10730,15 +10889,21 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             if (!relTarget) {
               throw new Error(`Could not determine scenario-relative target for art file: ${pendingSource}`);
             }
-            const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
-            queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(pendingSource, getReferenceArtTargetSizeForSave({
+            const data = buildLocalizedArtBufferFromSource(pendingSource, getReferenceArtTargetSizeForSave({
               tabKey: spec.key,
               group: fieldKey,
               index,
               entry
-            })));
-            if (sourceValues[index] !== relTarget) {
-              sourceValues[index] = relTarget;
+            }));
+            const actualRelTarget = reserveRelativeArtTarget(relTarget, data, {
+              tabKey: spec.key,
+              group: fieldKey,
+              index
+            });
+            const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
+            queueFileWrite(targetPath, data);
+            if (sourceValues[index] !== actualRelTarget) {
+              sourceValues[index] = actualRelTarget;
               changed = true;
             }
             return;
@@ -10771,14 +10936,20 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
           if (!relTarget) {
             throw new Error(`Could not determine scenario-relative target for art file: ${normalized}`);
           }
-          const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
-          queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(normalized, getReferenceArtTargetSizeForSave({
+          const data = buildLocalizedArtBufferFromSource(normalized, getReferenceArtTargetSizeForSave({
             tabKey: spec.key,
             group: fieldKey,
             index,
             entry
-          })));
-          sourceValues[index] = relTarget;
+          }));
+          const actualRelTarget = reserveRelativeArtTarget(relTarget, data, {
+            tabKey: spec.key,
+            group: fieldKey,
+            index
+          });
+          const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
+          queueFileWrite(targetPath, data);
+          sourceValues[index] = actualRelTarget;
           changed = true;
         });
         while (sourceValues.length > 0 && !String(sourceValues[sourceValues.length - 1] || '').trim()) {

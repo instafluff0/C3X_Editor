@@ -29300,7 +29300,13 @@ function isSmallArtSlot(tabKey, slot, entry) {
 function pcxFileNameForArtSlot(baseName, tabKey, slot, entry) {
   const rawBase = String(baseName || '').replace(/\.[^.\\/]+$/i, '') || 'art';
   const group = String(slot && slot.group || '');
+  const index = Number(slot && slot.index);
   if (group === 'wonderSplashPath') return `${rawBase}.pcx`;
+  if (tabKey === 'civilizations' && group === 'iconPaths' && Number.isFinite(index) && index >= 2) {
+    const suffix = `_icon${index + 1}`;
+    const stem = rawBase.toLowerCase().endsWith(suffix.toLowerCase()) ? rawBase : `${rawBase}${suffix}`;
+    return `${stem}.pcx`;
+  }
   let stem = rawBase;
   if (isSmallArtSlot(tabKey, slot, entry)) {
     stem = stem
