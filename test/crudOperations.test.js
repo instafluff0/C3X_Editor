@@ -441,6 +441,9 @@ function loadRendererNoReloadCleanHelpers(targetBundle) {
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
   const functionNames = [
     'markScenarioDistrictsAsSaved',
+    'getSavedPediaIconsPath',
+    'improvementPediaIconsBlockWasWritten',
+    'markSavedPediaIconsSourceMeta',
     'markMapTabAsSaved',
     'markReferenceTabEntryOriginals',
     'markReferenceTabsAsSaved',
@@ -610,6 +613,32 @@ function makeShortTestRef(prefix, label = 'T') {
   return `${prefix}${token}`.slice(0, 31);
 }
 
+function setBaseConfigRow(bundle, key, value) {
+  const baseTab = bundle && bundle.tabs && bundle.tabs.base;
+  assert.ok(baseTab && Array.isArray(baseTab.rows), 'expected base tab rows');
+  let row = baseTab.rows.find((item) => String(item && item.key || '') === String(key || ''));
+  if (!row) {
+    row = {
+      key: String(key || ''),
+      defaultValue: '',
+      effectiveValue: '',
+      value: '',
+      type: 'string'
+    };
+    baseTab.rows.push(row);
+  }
+  row.value = String(value || '');
+  return row;
+}
+
+function sectionFieldValue(section, key) {
+  const target = String(key || '').trim().toLowerCase();
+  const field = (Array.isArray(section && section.fields) ? section.fields : []).find((item) =>
+    String(item && item.key || '').trim().toLowerCase() === target
+  );
+  return field ? String(field.value || '') : '';
+}
+
 test('reference top-name editor targets civilizationName for Civs', () => {
   const { getReferenceTopNameBiqFieldKey } = loadRendererTopNameHelpers();
   assert.equal(getReferenceTopNameBiqFieldKey('civilizations'), 'civilizationname');
@@ -761,6 +790,144 @@ test('new pending tech assigned as civilization free tech saves by final BIQ ind
   const reloadedCiv = getEntry(after, 'civilizations', civ.civilopediaKey);
   assert.ok(reloadedCiv, 'expected civilization after reload');
   assert.equal(getRawRecordInt({ fields: reloadedCiv.biqFields }, 'freetech3index'), savedTechIndex);
+});
+
+test('pending reference planning ignores empty or missing BIQ indexes when saving references', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const baseTechCount = countSection(before, 'TECH');
+  const civ = before.tabs.civilizations.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'freetech3index')
+  );
+  if (!civ) return t.skip('No civilization free tech field found');
+
+  const emptyIndexKey = makeShortTestRef('TECH_', 'EMPTYIDX');
+  const missingIndexKey = makeShortTestRef('TECH_', 'MISSIDX');
+  setReferenceField(findBiqField(civ, 'freetech3index'), 'technologies', missingIndexKey, baseTechCount + 1);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['civilizations', 'technologies'],
+    tabs: {
+      civilizations: {
+        entries: [civ]
+      },
+      technologies: {
+        entries: [
+          { civilopediaKey: emptyIndexKey, name: 'Empty Index Tech', biqIndex: '', isNew: true },
+          { civilopediaKey: missingIndexKey, name: 'Missing Index Tech', isNew: true }
+        ],
+        recordOps: [
+          { op: 'add', newRecordRef: emptyIndexKey },
+          { op: 'add', newRecordRef: missingIndexKey }
+        ]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const emptyIndex = getEntryIndex(after, 'technologies', emptyIndexKey);
+  const missingIndex = getEntryIndex(after, 'technologies', missingIndexKey);
+  assert.equal(emptyIndex, baseTechCount);
+  assert.equal(missingIndex, baseTechCount + 1);
+  assert.notEqual(missingIndex, 0);
+  const reloadedCiv = getEntry(after, 'civilizations', civ.civilopediaKey);
+  assert.ok(reloadedCiv, 'expected civilization after reload');
+  assert.equal(getRawRecordInt({ fields: reloadedCiv.biqFields }, 'freetech3index'), missingIndex);
+});
+
+test('pending BIQ entries referenced from C3X base and District configs survive save and reload by name', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const bundle = reload(c3xDir, biqPath);
+
+  const techKey = makeShortTestRef('TECH_', 'C3X_REF');
+  const resourceKey = makeShortTestRef('GOOD_', 'C3X_REF');
+  const improvementKey = makeShortTestRef('BLDG_', 'C3X_REF');
+  const unitKey = makeShortTestRef('PRTO_', 'C3X_REF');
+  const techName = 'C3X Pending Tech';
+  const resourceName = 'C3X Pending Resource';
+  const improvementName = 'C3X Pending Building';
+  const unitName = 'C3X Pending Unit';
+
+  setBaseConfigRow(bundle, 'technology_perfume', `["${techName}": 12]`);
+  setBaseConfigRow(bundle, 'resource_perfume', `["${resourceName}": 20]`);
+  setBaseConfigRow(bundle, 'building_prereqs_for_units', `["${improvementName}": "${unitName}"]`);
+  setBaseConfigRow(bundle, 'buildings_generating_resources', `["${improvementName}": local yields "${resourceName}"]`);
+
+  bundle.tabs.districts.model = {
+    sections: [{
+      marker: '#District',
+      fields: [
+        { key: 'name', value: 'Pending Reference District' },
+        { key: 'advance_prereqs', value: `"${techName}"` },
+        { key: 'dependent_improvs', value: `"${improvementName}"` },
+        { key: 'resource_prereqs', value: `"${resourceName}"` },
+        { key: 'resource_prereq_on_tile', value: resourceName },
+        { key: 'generated_resource', value: `"${resourceName}" local yields` }
+      ],
+      comments: []
+    }],
+    headerComments: []
+  };
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['base', 'districts', 'technologies', 'resources', 'improvements', 'units'],
+    tabs: {
+      base: bundle.tabs.base,
+      districts: bundle.tabs.districts,
+      technologies: {
+        entries: [{ civilopediaKey: techKey, name: techName, biqIndex: null, isNew: true }],
+        recordOps: [{ op: 'add', newRecordRef: techKey }]
+      },
+      resources: {
+        entries: [{ civilopediaKey: resourceKey, name: resourceName, biqIndex: null, isNew: true }],
+        recordOps: [{ op: 'add', newRecordRef: resourceKey }]
+      },
+      improvements: {
+        entries: [{ civilopediaKey: improvementKey, name: improvementName, biqIndex: null, isNew: true }],
+        recordOps: [{ op: 'add', newRecordRef: improvementKey }]
+      },
+      units: {
+        entries: [{ civilopediaKey: unitKey, name: unitName, biqIndex: null, isNew: true }],
+        recordOps: [{ op: 'add', newRecordRef: unitKey }]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.ok(getEntry(after, 'technologies', techKey), 'expected pending tech to be saved to BIQ');
+  assert.ok(getEntry(after, 'resources', resourceKey), 'expected pending resource to be saved to BIQ');
+  assert.ok(getEntry(after, 'improvements', improvementKey), 'expected pending improvement to be saved to BIQ');
+  assert.ok(getEntry(after, 'units', unitKey), 'expected pending unit to be saved to BIQ');
+
+  const baseRows = after.tabs.base.rows;
+  assert.equal(baseRows.find((row) => row.key === 'technology_perfume').value, `["${techName}": 12]`);
+  assert.equal(baseRows.find((row) => row.key === 'resource_perfume').value, `["${resourceName}": 20]`);
+  assert.equal(baseRows.find((row) => row.key === 'building_prereqs_for_units').value, `["${improvementName}": "${unitName}"]`);
+  assert.equal(baseRows.find((row) => row.key === 'buildings_generating_resources').value, `["${improvementName}": local yields "${resourceName}"]`);
+
+  const district = after.tabs.districts.model.sections.find((section) =>
+    sectionFieldValue(section, 'name') === 'Pending Reference District'
+  );
+  assert.ok(district, 'expected district config section after reload');
+  assert.equal(sectionFieldValue(district, 'advance_prereqs'), techName);
+  assert.equal(sectionFieldValue(district, 'dependent_improvs'), improvementName);
+  assert.equal(sectionFieldValue(district, 'resource_prereqs'), resourceName);
+  assert.equal(sectionFieldValue(district, 'resource_prereq_on_tile'), resourceName);
+  assert.equal(sectionFieldValue(district, 'generated_resource'), `"${resourceName}" local yields`);
 });
 
 test('copying from an unsaved edited tech preserves inherited prereqs after save', (t) => {
