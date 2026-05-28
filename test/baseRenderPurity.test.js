@@ -327,6 +327,51 @@ test('C3X base undo snapshots are scoped to the base tab and restore supports pa
   );
 });
 
+test('reference CRUD captures undo before pending BIQ record ops mutate', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const sliceBetween = (source, startNeedle, endNeedle) => {
+    const start = source.indexOf(startNeedle);
+    assert.notEqual(start, -1, `Expected start marker: ${startNeedle}`);
+    const end = source.indexOf(endNeedle, start + startNeedle.length);
+    assert.notEqual(end, -1, `Expected end marker: ${endNeedle}`);
+    return source.slice(start, end);
+  };
+  const assertBefore = (source, firstNeedle, secondNeedle, label) => {
+    const first = source.indexOf(firstNeedle);
+    const second = source.indexOf(secondNeedle);
+    assert.ok(first >= 0, `${label}: missing ${firstNeedle}`);
+    assert.ok(second >= 0, `${label}: missing ${secondNeedle}`);
+    assert.ok(first < second, `${label}: ${firstNeedle} should appear before ${secondNeedle}`);
+  };
+
+  const referenceCrud = sliceBetween(
+    text,
+    "if (referenceEditable && REFERENCE_MUTABLE_ENTITY_TABS.has(tabKey)) {",
+    "actionRow.appendChild(addBtn);"
+  );
+  const addHandler = sliceBetween(
+    referenceCrud,
+    "addBtn.addEventListener('click', () => {",
+    "copyBtn.addEventListener('click', () => {"
+  );
+  const copyHandler = sliceBetween(
+    referenceCrud,
+    "copyBtn.addEventListener('click', () => {",
+    "importBtn.addEventListener('click', async () => {"
+  );
+  const importHandler = sliceBetween(
+    referenceCrud,
+    "importBtn.addEventListener('click', async () => {",
+    "});\n\n    deleteBtn.addEventListener('click', async () => {"
+  );
+
+  assertBefore(addHandler, 'rememberUndoSnapshot();', 'ops.push({', 'reference add');
+  assertBefore(copyHandler, 'rememberUndoSnapshot();', 'ops.push({', 'reference copy');
+  assertBefore(importHandler, 'rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);', 'tab.diplomacySlots.push({', 'reference import diplomacy');
+  assertBefore(importHandler, 'rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);', 'ops.push({', 'reference import');
+});
+
 test('long-list C3X base editors avoid full local rerenders on add/remove', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

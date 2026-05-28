@@ -720,6 +720,49 @@ test('pending added references predict appended BIQ index instead of using list 
   });
 });
 
+test('new pending tech assigned as civilization free tech saves by final BIQ index, not zero', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const baseTechCount = countSection(before, 'TECH');
+  const civ = before.tabs.civilizations.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'freetech3index')
+  );
+  if (!civ) return t.skip('No civilization free tech field found');
+
+  const newTechKey = makeShortTestRef('TECH_', 'CIV_FREE');
+  setReferenceField(findBiqField(civ, 'freetech3index'), 'technologies', newTechKey, baseTechCount);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['civilizations', 'technologies'],
+    tabs: {
+      civilizations: {
+        entries: [civ]
+      },
+      technologies: {
+        entries: [
+          { civilopediaKey: newTechKey, name: 'Civ Free Tech', biqIndex: null, isNew: true }
+        ],
+        recordOps: [{ op: 'add', newRecordRef: newTechKey }]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const savedTechIndex = getEntryIndex(after, 'technologies', newTechKey);
+  assert.equal(savedTechIndex, baseTechCount);
+  assert.notEqual(savedTechIndex, 0);
+  const reloadedCiv = getEntry(after, 'civilizations', civ.civilopediaKey);
+  assert.ok(reloadedCiv, 'expected civilization after reload');
+  assert.equal(getRawRecordInt({ fields: reloadedCiv.biqFields }, 'freetech3index'), savedTechIndex);
+});
+
 test('copying from an unsaved edited tech preserves inherited prereqs after save', (t) => {
   const ctx = setupScenario();
   if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
@@ -1814,6 +1857,19 @@ test('Renderer blank reference templates clear inherited art thumbnails for all 
         buildingIconIndex: '9',
         wonderSplashPath: 'Art\\Wonder Splash\\Inherited.pcx',
         animationName: 'Inherited Unit',
+        pendingArtSources: { 'iconPaths:0': 'Art-dev\\InheritedLarge.pcx' },
+        pendingArtConversions: {
+          'iconPaths:0': {
+            width: 128,
+            height: 128,
+            rgbaBase64: 'AAAA'
+          }
+        },
+        _importScenarioPath: '/tmp/source.biq',
+        _importScenarioPaths: ['/tmp/source'],
+        _pendingImportedResourceIcon: { sourceIconIndex: 1, targetIconIndex: 2 },
+        _pendingImportedUnitIcon: { sourceIconIndex: 1, targetIconIndex: 2 },
+        _pendingImportedBuildingCityIcon: { sourceIconIndex: 1, targetIconIndex: 2 },
         biqFields: [makeTestBiqField('civilopediaentry', key.replace('BLANK', 'SOURCE'))]
       },
       civilopediaKey: key,
@@ -1829,6 +1885,13 @@ test('Renderer blank reference templates clear inherited art thumbnails for all 
     assert.equal(blank.buildingIconKind, '', `${tabKey} should not inherit building art mode`);
     assert.equal(blank.buildingIconIndex, '', `${tabKey} should not inherit building art index`);
     assert.equal(blank.wonderSplashPath, '', `${tabKey} should not inherit wonder splash`);
+    assert.equal(blank.pendingArtSources, undefined, `${tabKey} should not inherit pending art sources`);
+    assert.equal(blank.pendingArtConversions, undefined, `${tabKey} should not inherit pending art conversions`);
+    assert.equal(blank._importScenarioPath, undefined, `${tabKey} should not inherit import preview roots`);
+    assert.equal(blank._importScenarioPaths, undefined, `${tabKey} should not inherit import preview roots`);
+    assert.equal(blank._pendingImportedResourceIcon, undefined, `${tabKey} should not inherit resource atlas imports`);
+    assert.equal(blank._pendingImportedUnitIcon, undefined, `${tabKey} should not inherit unit atlas imports`);
+    assert.equal(blank._pendingImportedBuildingCityIcon, undefined, `${tabKey} should not inherit building atlas imports`);
   }
 });
 

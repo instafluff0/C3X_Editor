@@ -30907,6 +30907,13 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     entry.buildingIconIndex = '';
     entry.wonderSplashPath = '';
     entry.animationName = '';
+    delete entry.pendingArtSources;
+    delete entry.pendingArtConversions;
+    delete entry._importScenarioPath;
+    delete entry._importScenarioPaths;
+    delete entry._pendingImportedResourceIcon;
+    delete entry._pendingImportedUnitIcon;
+    delete entry._pendingImportedBuildingCityIcon;
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
       value: makeBlankReferenceFieldValue(field, tabKey),
@@ -32342,13 +32349,13 @@ function renderReferenceTab(tab, tabKey) {
         mode: 'blank',
         displayName
       });
+      rememberUndoSnapshot();
       const ops = ensureReferenceRecordOps(tab);
       ops.push({
         op: 'add',
         newRecordRef: key
       });
       _dbgLog('INF', 'BiqCRUD', `reference add: tabKey=${tabKey} newRef=${key}`);
-      rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
       state.isDirty = true;
@@ -32370,6 +32377,7 @@ function renderReferenceTab(tab, tabKey) {
         mode: 'copy',
         displayName: copyName
       });
+      rememberUndoSnapshot();
       const ops = ensureReferenceRecordOps(tab);
       ops.push({
         op: 'copy',
@@ -32377,7 +32385,6 @@ function renderReferenceTab(tab, tabKey) {
         newRecordRef: key
       });
       _dbgLog('INF', 'BiqCRUD', `reference copy: tabKey=${tabKey} source=${String(selectedEntry.civilopediaKey || '').toUpperCase()} -> newRef=${key}`);
-      rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
       state.isDirty = true;
@@ -32479,6 +32486,7 @@ function renderReferenceTab(tab, tabKey) {
             };
           }
         }
+        rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);
         if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
           const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
           const sourceSlotIndex = textIndexField ? Number(textIndexField.value) : -1;
@@ -32512,7 +32520,6 @@ function renderReferenceTab(tab, tabKey) {
           targetKey: key,
           opCount: Array.isArray(tab && tab.recordOps) ? tab.recordOps.length : -1
         });
-        rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);
         tab.entries.unshift(newEntry);
         if (tabKey === 'resources') {
           refreshPendingImportedResourceIconAssignments(tab).then((changed) => {

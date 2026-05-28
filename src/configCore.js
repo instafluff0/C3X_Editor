@@ -9026,8 +9026,16 @@ function getPlannedReferenceIndex(indexMaps, targetTabKey, target) {
 function getBiqRecordPlanningRef(record) {
   const key = String(getBiqRecordCivilopediaKey(record) || '').trim().toUpperCase();
   if (key) return key;
-  const idx = Number(record && record.index);
+  const idx = parseAssignedBiqIndex(record && record.index);
   return Number.isFinite(idx) && idx >= 0 ? `@INDEX:${idx}` : '';
+}
+
+function parseAssignedBiqIndex(raw) {
+  if (raw == null) return NaN;
+  if (typeof raw === 'string' && raw.trim() === '') return NaN;
+  if (typeof raw === 'boolean') return NaN;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : NaN;
 }
 
 function findPlannedRecordIndex(records, recordRef) {
@@ -9036,7 +9044,7 @@ function findPlannedRecordIndex(records, recordRef) {
   if (ref.startsWith('@INDEX:')) {
     const idx = Number.parseInt(ref.slice(7), 10);
     if (!Number.isFinite(idx)) return -1;
-    return records.findIndex((record) => Number(record && record.index) === idx);
+    return records.findIndex((record) => parseAssignedBiqIndex(record && record.index) === idx);
   }
   return records.findIndex((record) => (
     String(record && record.key || '').trim().toUpperCase() === ref
@@ -9059,11 +9067,14 @@ function buildPlannedReferenceIndexMaps(tabs, biqTab) {
   const out = {};
   Object.entries(BIQ_SAVE_SECTION_TO_REFERENCE_TAB).forEach(([sectionCode, tabKey]) => {
     const originalRecords = getReferencePlanningRecordsForSection(biqTab, sectionCode);
-    const planned = (Array.isArray(originalRecords) ? originalRecords : []).map((record, idx) => ({
-      key: getBiqRecordPlanningRef(record),
-      index: Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx,
-      originalIndex: Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx
-    }));
+    const planned = (Array.isArray(originalRecords) ? originalRecords : []).map((record, idx) => {
+      const recordIndex = parseAssignedBiqIndex(record && record.index);
+      return {
+        key: getBiqRecordPlanningRef(record),
+        index: Number.isFinite(recordIndex) ? recordIndex : idx,
+        originalIndex: Number.isFinite(recordIndex) ? recordIndex : idx
+      };
+    });
     getReferenceRecordOpsForPlanning(tabs, tabKey).forEach((op) => {
       const kind = String(op && op.op || '').trim().toLowerCase();
       if (kind === 'add' || kind === 'copy') {
@@ -9093,14 +9104,14 @@ function buildPlannedReferenceIndexMaps(tabs, biqTab) {
       if (key) byKey.set(key, idx);
       const newRef = String(record && record.newRecordRef || '').trim().toUpperCase();
       if (newRef) byKey.set(newRef, idx);
-      const originalIndex = Number(record && record.originalIndex);
+      const originalIndex = parseAssignedBiqIndex(record && record.originalIndex);
       if (Number.isFinite(originalIndex) && originalIndex >= 0) byKey.set(`@INDEX:${originalIndex}`, idx);
       else byKey.set(`@INDEX:${idx}`, idx);
     });
     const tabEntries = tabs && tabs[tabKey] && Array.isArray(tabs[tabKey].entries) ? tabs[tabKey].entries : [];
     tabEntries.forEach((entry) => {
       const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-      const originalIndex = Number(entry && entry.biqIndex);
+      const originalIndex = parseAssignedBiqIndex(entry && entry.biqIndex);
       if (!key || !Number.isFinite(originalIndex) || originalIndex < 0) return;
       const plannedIndex = byKey.get(`@INDEX:${originalIndex}`);
       if (Number.isFinite(plannedIndex) && plannedIndex >= 0) byKey.set(key, plannedIndex);
