@@ -217,8 +217,10 @@ test('Conquests movement/action FLC references match known baseline', () => {
 
   const snapshot = collectResolutionSnapshot(CONQUESTS_ROOT);
 
-  // These folders under Scenarios/Tides of Crimson are helper/audio folders, not unit definitions.
+  // These scenario folders are helper/art folders, not unit definitions.
   assert.deepEqual(uniqueNormalizedEntries(snapshot.missingIniFolders), [
+    'Scenarios/CCM3/Palettes',
+    'Scenarios/CCM3/m42',
     'Scenarios/Tides of Crimson/Corel Auto-Preserve',
     'Scenarios/Tides of Crimson/Cyrstal Dragon',
     'Scenarios/Tides of Crimson/Dragon Sounds',
@@ -234,6 +236,22 @@ test('Conquests movement/action FLC references match known baseline', () => {
 
   // Unit folders that have an INI, but not UnitFolderName.ini.
   assert.deepEqual(uniqueNormalizedEntries(snapshot.missingNamedIni), [
+    'Scenarios/CCM3/AsianLine Infantry1',
+    'Scenarios/CCM3/German Inf.Div.mot',
+    'Scenarios/CCM3/Hull (Capitalship)-CA',
+    'Scenarios/CCM3/Hull (Capitalship)-orig',
+    'Scenarios/CCM3/Nuclear Jetbomber-Tu-16',
+    'Scenarios/CCM3/Panzergrenadiere-grau',
+    'Scenarios/CCM3/Portugese Mot.Inf',
+    'Scenarios/CCM3/Rumanian Mot.Inf',
+    'Scenarios/CCM3/Scharnhorst (WW I)-small',
+    'Scenarios/CCM3/Spanish Mot.Inf',
+    'Scenarios/CCM3/Suffren B',
+    'Scenarios/CCM3/Tlecuahuitl-alternative',
+    'Scenarios/CCM3/USS New Mexico Class1',
+    'Scenarios/CCM3/Uboat-Type VII-Delta',
+    'Scenarios/CCM3/shinden',
+    'Scenarios/CCM3/tatra',
     'Scenarios/Tides of Crimson/FrigateAlt',
     'Scenarios/Tides of Crimson/Ninja (from Version 1.6)',
     'Scenarios/Tides of Crimson/Phoenix Guard (from Version 1.6)',
@@ -242,9 +260,26 @@ test('Conquests movement/action FLC references match known baseline', () => {
 
   // Known missing FLC references in current local Conquests content.
   assert.deepEqual(uniqueNormalizedEntries(snapshot.missingActionFlc), [
+    'Scenarios/CCM3/Asian Su76M#RUN',
+    'Scenarios/CCM3/Elvis#DEATH',
+    'Scenarios/CCM3/Elvis#DEFAULT',
+    'Scenarios/CCM3/Elvis#FORTIFY',
+    'Scenarios/CCM3/Elvis#RUN',
+    'Scenarios/CCM3/Elvis#VICTORY',
+    'Scenarios/CCM3/Fighter#VICTORY',
+    'Scenarios/CCM3/French Helldiver#VICTORY',
+    'Scenarios/CCM3/Furutaka Class#VICTORY',
+    'Scenarios/CCM3/Morane#VICTORY',
+    'Scenarios/CCM3/SE5a#VICTORY',
+    'Scenarios/CCM3/Soviet Paratrooper#DEFEND',
+    'Scenarios/CCM3/T-72 (Desert)#DEFEND',
     'Scenarios/Tides of Crimson/Sooside Bomma#DEATH'
   ].sort());
 
   // Known missing movement defaults/run references in current local Conquests content.
-  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingMovementFlc), [].sort());
+  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingMovementFlc), [
+    'Scenarios/CCM3/Asian Su76M#RUN',
+    'Scenarios/CCM3/Elvis#DEFAULT',
+    'Scenarios/CCM3/Elvis#RUN'
+  ].sort());
 });
