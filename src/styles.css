@@ -9897,6 +9897,14 @@ button.unit-ini-delete-btn:disabled {
   min-width: 0;
 }
 
+.reference-count-text {
+  color: #5d6275;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
 .next-warning-btn {
   min-height: 30px;
   padding: 5px 10px;

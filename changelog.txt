@@ -1,4 +1,5 @@
 * RELEASE 27.12.1
+- Added unobtrusive active-tab item counts for BIQ reference tabs, with Units counts ignoring synthetic era rows and strategy-map duplicate PRTO records.
 - Fixed blank Add templates so creating a new Civ, Tech, Resource, Improvement, Government, or Unit from an unsaved entry with staged art no longer inherits hidden pending thumbnail/import metadata.
 - Fixed reference-tab Add/Copy/Import Undo so pending BIQ create operations are not left behind after the visible entry is restored, preventing undone Civ adds from still failing Save at the 32-civ cap.
 - Fixed BIQ save planning for newly added Tech references so unsaved `biqIndex: null` entries cannot be mistaken for index 0, preserving Civilization free-tech assignments and similar pending references after reload.

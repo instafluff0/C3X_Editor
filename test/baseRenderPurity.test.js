@@ -372,6 +372,37 @@ test('reference CRUD captures undo before pending BIQ record ops mutate', () => 
   assertBefore(importHandler, 'rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);', 'ops.push({', 'reference import');
 });
 
+test('BIQ reference tab count text uses filtered counts and countable unit rows', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const stylePath = path.join(__dirname, '..', 'src', 'styles.css');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const styles = fs.readFileSync(stylePath, 'utf8');
+
+  assert.match(
+    text,
+    /function isCountableReferenceEntry\(tabKey, entry\) \{[\s\S]*?!== 'units'[\s\S]*?return !isUnitEraVariantReferenceEntry\(entry\) && !isUnitStrategyMapDuplicateReferenceEntry\(entry\);[\s\S]*?\}/,
+    'Units counts should skip synthetic era rows and strategy-map duplicate PRTO records'
+  );
+
+  assert.match(
+    text,
+    /const totalEntryCount = countReferenceEntriesForDisplay\(tabKey, allEntries\);[\s\S]*?const visibleEntryCount = countReferenceEntriesForDisplay\(tabKey, filteredEntries\);[\s\S]*?countText\.textContent = formatReferenceCountText\(tabKey, tab, visibleEntryCount, totalEntryCount\);/,
+    'Reference tabs should render total and filtered item counts in the toolbar'
+  );
+
+  assert.match(
+    text,
+    /if \(visibleCount !== totalCount\) return `\$\{visibleCount\} of \$\{totalCount\} total`;[\s\S]*?return `\$\{totalCount\} total`;/,
+    'Reference count text should use generic total wording instead of repeating the tab name'
+  );
+
+  assert.match(
+    styles,
+    /\.reference-count-text \{[\s\S]*?font-size: 0\.78rem;[\s\S]*?font-weight: 700;[\s\S]*?white-space: nowrap;[\s\S]*?\}/,
+    'Reference count text should match tab-label scale and weight while staying compact'
+  );
+});
+
 test('long-list C3X base editors avoid full local rerenders on add/remove', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

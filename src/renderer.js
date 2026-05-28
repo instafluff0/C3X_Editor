@@ -24490,6 +24490,36 @@ function isGenuineUnitReferenceEntry(entry) {
   return !isUnitEraVariantReferenceEntry(entry);
 }
 
+function isUnitStrategyMapDuplicateReferenceEntry(entry) {
+  const rawIndex = entry && entry.biqIndex;
+  const idx = rawIndex === '' || rawIndex == null ? NaN : Number(rawIndex);
+  if (!Number.isFinite(idx) || idx < 0) return false;
+  const prtoSection = getBiqSectionByCode('PRTO');
+  const records = Array.isArray(prtoSection && prtoSection.records) ? prtoSection.records : [];
+  const record = records.find((candidate) => Number(candidate && candidate.index) === idx);
+  const otherStrategyField = getFieldByBaseKey(record, 'otherStrategy');
+  const otherStrategy = Number.parseInt(String(otherStrategyField && otherStrategyField.value || ''), 10);
+  return Number.isFinite(otherStrategy) && otherStrategy >= 0;
+}
+
+function isCountableReferenceEntry(tabKey, entry) {
+  if (String(tabKey || '').trim().toLowerCase() !== 'units') return true;
+  return !isUnitEraVariantReferenceEntry(entry) && !isUnitStrategyMapDuplicateReferenceEntry(entry);
+}
+
+function countReferenceEntriesForDisplay(tabKey, entriesOrItems) {
+  const list = Array.isArray(entriesOrItems) ? entriesOrItems : [];
+  return list.reduce((count, item) => {
+    const entry = item && item.entry ? item.entry : item;
+    return count + (isCountableReferenceEntry(tabKey, entry) ? 1 : 0);
+  }, 0);
+}
+
+function formatReferenceCountText(tabKey, tab, visibleCount, totalCount) {
+  if (visibleCount !== totalCount) return `${visibleCount} of ${totalCount} total`;
+  return `${totalCount} total`;
+}
+
 function getUnitModalEraIndex(entry) {
   const rawEraIndex = getReferenceEntryEraIndex('units', entry);
   if (Number.isFinite(rawEraIndex) && rawEraIndex >= 0) return rawEraIndex;
@@ -32214,6 +32244,10 @@ function renderReferenceTab(tab, tabKey) {
   const controlsRight = document.createElement('div');
   controlsRight.className = 'reference-filter-right';
   controls.appendChild(controlsRight);
+  const countText = document.createElement('span');
+  countText.className = 'reference-count-text';
+  countText.setAttribute('aria-live', 'polite');
+  controlsRight.appendChild(countText);
   const isReferenceContextPaneVisible = () => {
     const explicit = state.referenceContextPaneVisible[tabKey];
     if (typeof explicit === 'boolean') return explicit;
@@ -32967,6 +33001,12 @@ function renderReferenceTab(tab, tabKey) {
   }
 
   const currentBaseIndex = state.referenceSelection[tabKey] || 0;
+  const totalEntryCount = countReferenceEntriesForDisplay(tabKey, allEntries);
+  const visibleEntryCount = countReferenceEntriesForDisplay(tabKey, filteredEntries);
+  countText.textContent = formatReferenceCountText(tabKey, tab, visibleEntryCount, totalEntryCount);
+  countText.title = visibleEntryCount === totalEntryCount
+    ? `${totalEntryCount} ${tab.title || 'items'} in this BIQ tab`
+    : `${visibleEntryCount} shown by current filters out of ${totalEntryCount} ${tab.title || 'items'}`;
   const filterText = String(state.referenceFilter[tabKey] || '').trim();
   const hasFilterText = !!filterText;
   let selectedFilteredIndex = filteredEntries.findIndex((x) => x.baseIndex === currentBaseIndex);
