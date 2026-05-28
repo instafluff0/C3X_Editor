@@ -122,7 +122,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.ok(
     rendererText.includes("function isBridgeDistrictSection(section) {")
-      && rendererText.includes("const tileHasBridgeDistrictAt = (xPos, yPos) => {")
+      && rendererText.includes("function tileHasBridgeDistrictAt(xPos, yPos) {")
       && rendererText.includes("function getBridgeImageIndex(record, geom) {")
       && rendererText.includes("if ((c3cOverlays & 0x00000002) === 0x00000002) {")
       && rendererText.includes("if (swNeCount === 2) return swNe;")
@@ -150,7 +150,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.ok(
     rendererText.includes("function isGreatWallDistrictSection(section) {")
-      && rendererText.includes("const tileHasGreatWallDistrictAtWithOwnerId = (xPos, yPos, ownerId) => {")
+      && rendererText.includes("function tileHasGreatWallDistrictAtWithOwnerId(xPos, yPos, ownerId) {")
       && rendererText.includes("function getGreatWallDistrictConnections(record, geom) {")
       && rendererText.includes("parseIntLoose(ownerInfo.ownerId, -1) === parseIntLoose(ownerId, -1)")
       && rendererText.includes("function requestBiqMapGreatWallAtlasCanvas(section, options = {}) {")
@@ -228,8 +228,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const mapOwnerPickerValueForPlayer = \(playerId\) => `player:\$\{playerId\}`;[\s\S]*?const mapOwnerPickerValueForCivilization = \(civId\) => `civ:\$\{civId\}`;[\s\S]*?const getMapOwnerPickerOptions = \(\) => \{[\s\S]*?leadRecordsForOwner\.length > 0[\s\S]*?: civilizationEntriesForOwner[\s\S]*?ownerType:\s*2,[\s\S]*?const resolveMapOwnerSelection = \(value\) => \{[\s\S]*?const playerMatch = text\.match\(\/\^player:\(\\d\+\)\$\/\);[\s\S]*?const civMatch = text\.match\(\/\^civ:\(\\d\+\)\$\/\);[\s\S]*?return leadRecordsForOwner\.length > 0 \? \{ ownerType: 3, owner \} : \{ ownerType: 2, owner \};/,
-    'city and unit owner pickers should fall back to civilization-owned options when no LEAD player records are available'
+    /const mapOwnerPickerValueForPlayer = \(playerId\) => `player:\$\{playerId\}`;[\s\S]*?const mapOwnerPickerValueForCivilization = \(civId\) => `civ:\$\{civId\}`;[\s\S]*?const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?if \(ownerType === 1\) \{[\s\S]*?return barbarianOption \? \[barbarianOption\] : \[\];[\s\S]*?if \(ownerType === 3\) \{[\s\S]*?return leadRecordsForOwner\.map[\s\S]*?ownerType:\s*3,[\s\S]*?if \(ownerType === 2 \|\| !Number\.isFinite\(ownerType\)\) \{[\s\S]*?return civilizationEntriesForOwner[\s\S]*?civIndex: getReferenceEntryIndexForOption[\s\S]*?\.filter\(\(\{ entry, civIndex \}\) => civIndex !== 0 && !isBarbarianCivilizationEntry\(entry\)\)[\s\S]*?ownerType:\s*2,[\s\S]*?const resolveMapOwnerSelection = \(value, ownerTypeHint = null\) => \{[\s\S]*?if \(isBarbarianOwnerPickerValue\(value\)\) return \{ ownerType: 1, owner: 0 \};[\s\S]*?if \(playerMatch\) return \{ ownerType: 3, owner: parseIntLoose\(playerMatch\[1\], 0\) \};[\s\S]*?if \(civMatch\) return \{ ownerType: 2, owner: parseIntLoose\(civMatch\[1\], 0\) \};/,
+    'city and unit owner pickers should scope direct barbarians, players, and civilizations by selected owner type'
   );
   assert.match(
     rendererText,
@@ -451,7 +451,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const BARBARIAN_OWNER_PICKER_VALUE = 'barbarian-civ';[\s\S]*?const getMapOwnerPickerOptions = \(\) => \{[\s\S]*?const barbarianOption = getBarbarianOwnerPickerOption\(\);[\s\S]*?if \(barbarianOption\) options\.push\(barbarianOption\);[\s\S]*?const addCityOwnerPicker = \(\) => \{[\s\S]*?const options = getMapOwnerPickerOptions\(\);[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value\);[\s\S]*?setMapFieldValue\(cityRecord, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(cityRecord, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?colocatedUnits\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?scheduleMapEditRerender\(0, \{[\s\S]*?territoryChanged:\s*true/,
+    /const BARBARIAN_OWNER_PICKER_VALUE = 'barbarian-civ';[\s\S]*?const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?return barbarianOption \? \[barbarianOption\] : \[\];[\s\S]*?const applyCityOwnerSelection = \(value, options = \{\}\) => \{[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value, getCityOwnerType\(\)\);[\s\S]*?setMapFieldValue\(cityRecord, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(cityRecord, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?colocatedUnits\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?scheduleMapEditRerender\(0, \{[\s\S]*?territoryChanged:\s*true/,
     'changing a city owner in tile info should also transfer any units on that same tile to the new owner and force an immediate territory-aware map rerender'
   );
   assert.match(
@@ -471,13 +471,13 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const ownerPicker = createReferencePicker\({[\s\S]*?onSelect: \(value\) => \{[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value\);[\s\S]*?units\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?const colocatedCity = getCityRecordForTile\(tile, geom\);[\s\S]*?if \(colocatedCity\) \{[\s\S]*?setMapFieldValue\(colocatedCity, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(colocatedCity, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}[\s\S]*?fullMapRerender:\s*!!colocatedCity/,
+    /const applyUnitOwnerSelection = \(value, options = \{\}\) => \{[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value, activeOwnerType\);[\s\S]*?units\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?const colocatedCity = getCityRecordForTile\(tile, geom\);[\s\S]*?if \(colocatedCity\) \{[\s\S]*?setMapFieldValue\(colocatedCity, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(colocatedCity, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}[\s\S]*?fullMapRerender:\s*!!colocatedCity/,
     'changing unit owners in tile info should also transfer any city on that tile and trigger a full map rerender when territory ownership changes'
   );
   assert.match(
     rendererText,
     /const getBarbarianOwnerPickerOption = \(\) => \{[\s\S]*?const entry = getBarbarianCivilizationPickerEntry\(\);[\s\S]*?return \{[\s\S]*?value: BARBARIAN_OWNER_PICKER_VALUE,[\s\S]*?ownerType: 1,[\s\S]*?owner: 0/,
-    'city and unit owner pickers should expose the barbarian civilization as a structured option that writes civ ownership'
+    'city and unit owner pickers should expose barbarians only through direct barbarian assignment'
   );
   assert.match(
     rendererText,
@@ -601,12 +601,37 @@ test('barbarian unit overlays use barbarian owner color mapping on the map', () 
   );
 });
 
+test('civilization-owned map colors honor matching custom player data', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const getCustomPlayerColorForCivilization = \(civIdRaw\) => \{[\s\S]*?if \(!hasCustomPlayerData[\s\S]*?return NaN;[\s\S]*?parseIntLoose\(playerCivById\[p\], -1\) !== civId[\s\S]*?parseIntLoose\(playerCustomDataById\[p\], 0\) !== 1[\s\S]*?parseIntLoose\(playerColorById\[p\], NaN\)[\s\S]*?return customColor;/,
+    'map color resolution should find custom LEAD colors for civ-owned records when custom player data is enabled'
+  );
+  assert.match(
+    rendererText,
+    /const getMapCivilizationColorSlot = \(civIdRaw\) => \{[\s\S]*?const customColor = getCustomPlayerColorForCivilization\(civId\);[\s\S]*?if \(Number\.isFinite\(customColor\)\) return customColor;[\s\S]*?return parseIntLoose\(raceDefaultColorById\[civId\], NaN\);/,
+    'civilization color slots should prefer matching custom player color before falling back to RACE default color'
+  );
+  assert.match(
+    rendererText,
+    /const civMatch = text\.match\([\s\S]{0,80}\);[\s\S]*?if \(civMatch\) return getMapCivilizationColorSlot/,
+    'civilization owner picker swatches should use the same custom-player-aware color slot'
+  );
+  assert.match(
+    rendererText,
+    /const civColorSlot = getMapCivilizationColorSlot\(civId\);/,
+    'city labels and unit overlays should use the shared custom-player-aware civilization color fallback'
+  );
+});
+
 test('barbarian cities contribute territory borders through city influence ownership metadata', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
   assert.match(
     rendererText,
-    /const cityMetaList = \(citySection\?\.records \|\| \[\]\)\.map\(\(cityRecord, cityPos\) => \{[\s\S]*?let ownerId = -1;[\s\S]*?if \(ownerType === 1\) ownerId = 0;[\s\S]*?const civId = parseIntLoose\(resolveCivIdFromOwnership\(ownerTypeRaw, ownerRaw\), -1\);[\s\S]*?let borderColorId = NaN;[\s\S]*?if \(ownerType === 1 && civId >= 0\) \{[\s\S]*?borderColorId = parseIntLoose\(raceDefaultColorById\[civId\], NaN\);[\s\S]*?\}[\s\S]*?if \(!cityMeta \|\| cityMeta\.ownerId < 0\) \{/,
+    /const cityMetaList = \(citySection\?\.records \|\| \[\]\)\.map\(\(cityRecord, cityPos\) => \{[\s\S]*?let ownerId = -1;[\s\S]*?if \(ownerType === 1\) ownerId = 0;[\s\S]*?const civId = parseIntLoose\(resolveCivIdFromOwnership\(ownerTypeRaw, ownerRaw\), -1\);[\s\S]*?let borderColorId = NaN;[\s\S]*?if \(ownerType === 1 && civId >= 0\) \{[\s\S]*?borderColorId = getMapCivilizationColorSlot\(civId\);[\s\S]*?\}[\s\S]*?if \(!cityMeta \|\| cityMeta\.ownerId < 0\) \{/,
     'barbarian-owned cities should carry valid owner and border-color metadata into the city-influence territory pass so their borders render on the map'
   );
 });

@@ -1,4 +1,14 @@
 * RELEASE 27.13.1
+- Fixed Map city ownership reloads so Player 1-owned cities no longer display as ownerless, restoring borders, civ-color, and culture-specific city art after reopening scenarios.
+- Added BIQ map regression coverage so barbarian owner zero and Player 1 owner zero cannot be conflated for city or unit records.
+- Aligned Map owner pickers with Quint ownership semantics by switching the owner list by owner type instead of unioning Player and Civilization choices.
+- Matched Quint's direct-Barbarians map owner UI by hiding the Owner picker for Barbarian assignment and preserving map scroll when changing city or unit assignment.
+- Removed RACE 0 Barbarians from Map Civilization assignment owner lists; Barbarian ownership is now selected only through the Barbarians assignment.
+- Fixed civ-owned Map color rendering with custom player data so matching LEAD custom colors apply consistently to borders, city labels, unit overlays, and owner swatches.
+- Made Map Tile Info Assignment controls full-width for cities, units, and starting locations.
+- Refreshed open Map views when Scenario Player records or custom-player-data state change, keeping owner dropdowns, labels, colors, and culture art in sync.
+- Refreshed open Map views when Civilization color or culture group fields change, so borders and culture-specific art update without closing and reopening the Map tab.
+- Fixed Map modal startup on scenarios with Bridge districts by hoisting district-neighbor helpers used during the first canvas draw.
 - Fixed Improvement Gain reference dropdowns so `In every city` and `In every city on this continent` lazily populate Improvement option thumbnails like the other quick reference pickers.
 - Cleaned up BIQ reference picker search placeholders so they use readable field labels instead of bunched raw keys.
 - Removed the unused one-time Electron icon generator dependency and upgraded Electron to the patched 39.8 line, clearing the npm audit vulnerability report.

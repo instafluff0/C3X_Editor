@@ -871,7 +871,7 @@ function enrichBridgeSections(sections) {
   const formatOwnerField = (record, rawValue) => {
     const ownerType = ownerTypeForRecord(record);
     if (ownerType === 2) return maybeFormatIdReference(raceIndex, rawValue);
-    if (ownerType === 3) return maybeFormatIdReferenceOneBased(leadIndex, rawValue);
+    if (ownerType === 3) return maybeFormatIdReference(leadIndex, rawValue);
     return rawValue;
   };
 

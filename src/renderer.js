@@ -5186,6 +5186,7 @@ function toggleScenarioCustomPlayerData() {
   if (!nextEnabled && state.activeTab === 'players') {
     state.activeTab = 'scenarioSettings';
   }
+  refreshMapAfterOwnerSupportChange('scenarioSettings', 'customPlayerData');
   updateScenarioUiAfterOptionChange(nextEnabled
     ? 'Enabled custom player data preview. Save to write player records into this scenario BIQ.'
     : 'Disabled custom player data preview. Save to remove player records from this scenario BIQ.');
@@ -14814,6 +14815,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             rememberUndoSnapshotForKey(fieldUndoKey);
             field.value = String(value);
             setDirty(true);
+            refreshMapAfterOwnerSupportChange(tabKey, baseKey);
           }
         });
         controlWrap.appendChild(colorPicker);
@@ -14839,6 +14841,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             field.value = String(value);
             setFieldReferenceTargetMeta(field, targetTabKey, option, value, refOptions);
             setDirty(true);
+            refreshMapAfterOwnerSupportChange(tabKey, baseKey);
           }
         });
         controlWrap.appendChild(picker);
@@ -14899,6 +14902,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             setFieldReferenceTargetMeta(field, targetTabKey, selectedOpt, field.value, refOptions);
           }
           setDirty(true);
+          refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         controlWrap.appendChild(select);
       } else if (desiredControl === 'bool' || isLikelyBooleanField(field)) {
@@ -14914,6 +14918,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           field.value = check.checked ? 'true' : 'false';
           t.textContent = check.checked ? 'Enabled' : 'Disabled';
           setDirty(true);
+          refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         checkWrap.appendChild(check);
         checkWrap.appendChild(t);
@@ -14933,6 +14938,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         num.addEventListener('input', () => {
           field.value = num.value;
           setDirty(true);
+          refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         controlWrap.appendChild(num);
       } else {
@@ -14946,6 +14952,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         input.addEventListener('input', () => {
           field.value = input.value;
           setDirty(true);
+          refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         controlWrap.appendChild(input);
       }
@@ -34505,6 +34512,7 @@ function renderBiqTab(tab) {
         ? Math.max(0, selected.records.length - 1)
         : 0;
       setDirty(true);
+      if (selected.code === 'LEAD') refreshMapAfterOwnerSupportChange('players', 'records');
       setStatus(`Added new ${selected.code} record.`);
       renderActiveTab({ preserveTabScroll: true });
     });
@@ -34617,6 +34625,7 @@ function renderBiqTab(tab) {
       }
       state.biqRecordSelection[selected.id] = 0;
       setDirty(true);
+      if (selected.code === 'LEAD') refreshMapAfterOwnerSupportChange('players', 'records');
       setStatus(`Deleted ${selected.code} record.`);
       renderActiveTab({ preserveTabScroll: true });
     });
@@ -35654,6 +35663,10 @@ function renderBiqTab(tab) {
           const enumCategoryKey = (selected && BIQ_SECTION_ENUM_CATEGORY[String(selected.code || '').toUpperCase()]) || activeTabKey;
           const enumOptions = getCachedBiqEnumOptions(enumCategoryKey, field);
           const useColorSlotPicker = selected.code === 'LEAD' && baseKey === 'color';
+          const refreshMapForBiqStructureOwnerSupportField = () => {
+            if (selected.code === 'LEAD') refreshMapAfterOwnerSupportChange('players', baseKey);
+            else if (selected.code === 'GAME') refreshMapAfterOwnerSupportChange('scenarioSettings', baseKey);
+          };
 
           if (editable) {
             if (useColorSlotPicker) {
@@ -35664,6 +35677,7 @@ function renderBiqTab(tab) {
                   rememberUndoSnapshot();
                   field.value = String(value);
                   setDirty(true);
+                  refreshMapForBiqStructureOwnerSupportField();
                 }
               });
               controlWrap.appendChild(colorPicker);
@@ -35692,6 +35706,7 @@ function renderBiqTab(tab) {
                     }
                   }
                   setDirty(true);
+                  refreshMapForBiqStructureOwnerSupportField();
                 }
               });
               controlWrap.appendChild(picker);
@@ -35709,6 +35724,7 @@ function renderBiqTab(tab) {
                   const count = syncNumberOfPlayableCivsField(record);
                   syncLeadRecordCountToTarget(count);
                   setDirty(true);
+                  refreshMapAfterOwnerSupportChange('players', 'records');
                   renderActiveTab({ preserveTabScroll: true });
                 });
                 controlWrap.appendChild(removeBtn);
@@ -35734,6 +35750,7 @@ function renderBiqTab(tab) {
                 rememberUndoSnapshot();
                 field.value = String(select.value);
                 setDirty(true);
+                refreshMapForBiqStructureOwnerSupportField();
               });
               controlWrap.appendChild(select);
             } else if (desiredControl === 'mission_performed_by') {
@@ -35782,6 +35799,7 @@ function renderBiqTab(tab) {
                 field.value = check.checked ? 'true' : 'false';
                 text.textContent = check.checked ? 'Enabled' : 'Disabled';
                 setDirty(true);
+                refreshMapForBiqStructureOwnerSupportField();
               });
               toggle.appendChild(check);
               toggle.appendChild(text);
@@ -35804,12 +35822,14 @@ function renderBiqTab(tab) {
                 if (selected.code === 'GAME' && baseKey === 'startyear' && typeof refreshTimeProgressionYearRanges === 'function') {
                   refreshTimeProgressionYearRanges();
                 }
+                refreshMapForBiqStructureOwnerSupportField();
               });
               if (selected.code === 'GAME' && baseKey === 'numberofplayablecivs') {
                 input.addEventListener('change', () => {
                   const changed = syncLeadRecordCountToTarget(input.value);
                   if (changed) {
                     setDirty(true);
+                    refreshMapAfterOwnerSupportChange('players', 'records');
                     setStatus('Player list count synced to Number of Players.');
                   }
                 });
@@ -35825,6 +35845,7 @@ function renderBiqTab(tab) {
               input.addEventListener('input', () => {
                 field.value = input.value;
                 setDirty(true);
+                refreshMapForBiqStructureOwnerSupportField();
               });
               controlWrap.appendChild(input);
             } else {
@@ -35840,6 +35861,7 @@ function renderBiqTab(tab) {
                 field.value = input.value;
                 maybeSyncRecordNameFromField(field, input.value);
                 setDirty(true);
+                refreshMapForBiqStructureOwnerSupportField();
               });
               if (selected.code === 'GAME' && isScenarioSearchFolderField(baseKey)) {
                 input.addEventListener('change', async () => {
@@ -36930,6 +36952,39 @@ function biqMapArtRerender(meta = null) {
   }, 80);
 }
 
+function isMapOwnerSupportReferenceField(tabKey, baseKey) {
+  const tab = String(tabKey || '').trim().toLowerCase();
+  const base = normalizeRuleLookupKey(baseKey);
+  if (tab === 'civilizations') {
+    return base === 'name'
+      || base === 'noun'
+      || base === 'civilizationname'
+      || base === 'defaultcolor'
+      || base === 'uniquecolor'
+      || base === 'culturegroup';
+  }
+  if (tab === 'players') return true;
+  if (tab === 'scenariosettings') return base === 'customplayerdata' || base === 'enabledcustomplayerdata';
+  return false;
+}
+
+function refreshMapAfterOwnerSupportChange(tabKey, baseKey) {
+  if (!isMapOwnerSupportReferenceField(tabKey, baseKey)) return;
+  if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs.map) return;
+  appendDebugLog('biq-map:owner-support-refresh', {
+    tabKey: String(tabKey || ''),
+    baseKey: String(baseKey || '')
+  });
+  const mapOverlay = ensureMapModalNode();
+  if (mapModal.tab && mapModal.tileSection && !mapOverlay.classList.contains('hidden')) {
+    renderMapModalBody();
+    return;
+  }
+  if (state.activeTab === 'map') {
+    renderActiveTab({ preserveTabScroll: true });
+  }
+}
+
 function decodeBase64ToUint8(b64) {
   const bin = atob(b64);
   const arr = new Uint8Array(bin.length);
@@ -37962,7 +38017,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     ownerSelect.innerHTML = '';
     spec.records.forEach((record, idx) => {
       const o = document.createElement('option');
-      o.value = String(idx);
+      const optionValue = Number.isFinite(record && record.civIndex) ? record.civIndex : idx;
+      o.value = String(optionValue);
       o.textContent = String(record && record.name || `${spec.fallbackPrefix} ${idx + 1}`);
       ownerSelect.appendChild(o);
     });
@@ -37973,8 +38029,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ownerSelect.appendChild(o);
     }
     const nextOwner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
-    const max = Math.max(0, ownerSelect.options.length - 1);
-    const safeOwner = Math.max(0, Math.min(max, nextOwner));
+    const values = Array.from(ownerSelect.options).map((option) => parseIntLoose(option && option.value, NaN));
+    const safeOwner = values.includes(nextOwner) ? nextOwner : (Number.isFinite(values[0]) ? values[0] : 0);
     state.mapEditorTool.owner = safeOwner;
     ownerSelect.value = String(safeOwner);
   };
@@ -39315,6 +39371,25 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     };
   };
   const hasCustomPlayerData = Object.keys(playerCustomDataById).some((id) => parseIntLoose(playerCustomDataById[id], 0) === 1);
+  const getCustomPlayerColorForCivilization = (civIdRaw) => {
+    const civId = parseIntLoose(civIdRaw, NaN);
+    if (!hasCustomPlayerData || !Number.isFinite(civId) || civId < 0) return NaN;
+    let customColor = NaN;
+    for (let p = 0; p < (leadSection?.records || []).length; p += 1) {
+      if (parseIntLoose(playerCivById[p], -1) !== civId) continue;
+      if (parseIntLoose(playerCustomDataById[p], 0) !== 1) continue;
+      const nextColor = parseIntLoose(playerColorById[p], NaN);
+      if (Number.isFinite(nextColor)) customColor = nextColor;
+    }
+    return customColor;
+  };
+  const getMapCivilizationColorSlot = (civIdRaw) => {
+    const civId = parseIntLoose(civIdRaw, NaN);
+    if (!Number.isFinite(civId) || civId < 0) return NaN;
+    const customColor = getCustomPlayerColorForCivilization(civId);
+    if (Number.isFinite(customColor)) return customColor;
+    return parseIntLoose(raceDefaultColorById[civId], NaN);
+  };
   const cityMetaList = (citySection?.records || []).map((cityRecord, cityPos) => {
     const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
     const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
@@ -39326,17 +39401,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const civId = parseIntLoose(resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw), -1);
     let borderColorId = NaN;
     if (ownerType === 1 && civId >= 0) {
-      borderColorId = parseIntLoose(raceDefaultColorById[civId], NaN);
+      borderColorId = getMapCivilizationColorSlot(civId);
     } else if (ownerType === 2 && ownerId >= 0) {
-      if (hasCustomPlayerData) {
-        for (let p = 0; p < (leadSection?.records || []).length; p += 1) {
-          if (parseIntLoose(playerCivById[p], -1) !== ownerId) continue;
-          if (parseIntLoose(playerCustomDataById[p], 0) !== 1) continue;
-          const custom = parseIntLoose(playerColorById[p], NaN);
-          if (Number.isFinite(custom)) borderColorId = custom;
-        }
-      }
-      if (!Number.isFinite(borderColorId)) borderColorId = parseIntLoose(raceDefaultColorById[ownerId], NaN);
+      borderColorId = getMapCivilizationColorSlot(ownerId);
     } else if (ownerType === 3 && ownerId >= 0) {
       if (hasCustomPlayerData) {
         const civIndex = parseIntLoose(playerCivById[ownerId], -1);
@@ -39957,27 +40024,39 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       owner: 0
     };
   };
-  const getMapOwnerPickerOptions = () => {
-    const options = leadRecordsForOwner.length > 0
-      ? leadRecordsForOwner.map((record, idx) => {
+  const getMapOwnerPickerOptions = (ownerTypeRaw = null) => {
+    const ownerType = parseOwnerType(ownerTypeRaw);
+    if (ownerType === 1) {
+      const barbarianOption = getBarbarianOwnerPickerOption();
+      return barbarianOption ? [barbarianOption] : [];
+    }
+    if (ownerType === 3) {
+      return leadRecordsForOwner.map((record, idx) => {
         const leaderName = String((record && (getFieldByBaseKey(record, 'leadername')?.value || record.name)) || `Player ${idx + 1}`).trim();
         const civIndex = parseIntLoose(playerCivById[idx], NaN);
         const civEntry = civIndex >= 0 ? resolveReferenceEntryForPicker('civilizations', String(civIndex)) : null;
         const civName = String((civEntry && civEntry.name) || '').trim();
         const displayName = civName || leaderName || `Player ${idx + 1}`;
+        const pickerLabel = `Player ${idx + 1} (${displayName})`;
         return {
           value: mapOwnerPickerValueForPlayer(idx),
-          label: displayName,
-          displayLabel: displayName,
+          label: pickerLabel,
+          displayLabel: pickerLabel,
           entry: civEntry,
           ownerType: 3,
           owner: idx
         };
-      })
-      : civilizationEntriesForOwner
-        .filter((entry) => !isBarbarianCivilizationEntry(entry))
-        .map((entry, fallbackIdx) => {
-          const civIndex = getReferenceEntryIndexForOption('civilizations', entry, fallbackIdx, { allowFallback: true });
+      });
+    }
+    if (ownerType === 2 || !Number.isFinite(ownerType)) {
+      return civilizationEntriesForOwner
+        .map((entry, fallbackIdx) => ({
+          entry,
+          civIndex: getReferenceEntryIndexForOption('civilizations', entry, fallbackIdx, { allowFallback: true }),
+          fallbackIdx
+        }))
+        .filter(({ entry, civIndex }) => civIndex !== 0 && !isBarbarianCivilizationEntry(entry))
+        .map(({ entry, civIndex, fallbackIdx }) => {
           const displayName = String(entry && entry.name || `Civilization ${fallbackIdx}`).trim();
           return {
             value: mapOwnerPickerValueForCivilization(civIndex),
@@ -39988,11 +40067,26 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
             owner: civIndex
           };
         });
-    const barbarianOption = getBarbarianOwnerPickerOption();
-    if (barbarianOption) options.push(barbarianOption);
-    return options;
+    }
+    return [];
   };
-  const resolveMapOwnerSelection = (value) => {
+  const getMapOwnerTypeFromPickerValue = (value) => {
+    if (isBarbarianOwnerPickerValue(value)) return 1;
+    const text = String(value || '').trim();
+    if (/^player:\d+$/.test(text)) return 3;
+    if (/^civ:\d+$/.test(text)) return 2;
+    return NaN;
+  };
+  const getDefaultMapOwnerPickerValueForType = (ownerTypeRaw) => {
+    const ownerType = parseOwnerType(ownerTypeRaw);
+    const options = getMapOwnerPickerOptions(ownerType);
+    if (ownerType === 2) {
+      const firstNonBarbarian = options.find((opt) => parseIntLoose(opt && opt.owner, -1) > 0);
+      if (firstNonBarbarian) return String(firstNonBarbarian.value);
+    }
+    return options.length > 0 ? String(options[0].value) : '';
+  };
+  const resolveMapOwnerSelection = (value, ownerTypeHint = null) => {
     if (isBarbarianOwnerPickerValue(value)) return { ownerType: 1, owner: 0 };
     const text = String(value || '').trim();
     const playerMatch = text.match(/^player:(\d+)$/);
@@ -40001,6 +40095,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (civMatch) return { ownerType: 2, owner: parseIntLoose(civMatch[1], 0) };
     const owner = parseIntLoose(text, NaN);
     if (!Number.isFinite(owner) || owner < 0) return null;
+    const hintedOwnerType = parseOwnerType(ownerTypeHint);
+    if (hintedOwnerType === 1) return { ownerType: 1, owner: 0 };
+    if (hintedOwnerType === 2 || hintedOwnerType === 3) return { ownerType: hintedOwnerType, owner };
     return leadRecordsForOwner.length > 0 ? { ownerType: 3, owner } : { ownerType: 2, owner };
   };
   const getMapOwnerColorSlotForPickerValue = (value) => {
@@ -40009,17 +40106,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const playerMatch = text.match(/^player:(\d+)$/);
     if (playerMatch) return getMapUnitOwnerColorSlot(parseIntLoose(playerMatch[1], NaN));
     const civMatch = text.match(/^civ:(\d+)$/);
-    if (civMatch) return parseIntLoose(raceDefaultColorById[parseIntLoose(civMatch[1], -1)], NaN);
+    if (civMatch) return getMapCivilizationColorSlot(parseIntLoose(civMatch[1], -1));
     return leadRecordsForOwner.length > 0
       ? getMapUnitOwnerColorSlot(parseIntLoose(text, NaN))
-      : parseIntLoose(raceDefaultColorById[parseIntLoose(text, -1)], NaN);
+      : getMapCivilizationColorSlot(parseIntLoose(text, -1));
   };
   const getMapOwnerColorSlotFromOwnership = (ownerTypeRaw, ownerRaw, fallback = NaN) => {
     const pickerValue = getMapOwnerPickerValueFromOwnership(ownerTypeRaw, ownerRaw);
     const pickerColorSlot = getMapOwnerColorSlotForPickerValue(pickerValue);
     if (Number.isFinite(pickerColorSlot)) return pickerColorSlot;
     const civId = resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw);
-    const civColorSlot = Number.isFinite(raceDefaultColorById[civId]) ? raceDefaultColorById[civId] : NaN;
+    const civColorSlot = getMapCivilizationColorSlot(civId);
     if (Number.isFinite(civColorSlot)) return civColorSlot;
     return fallback;
   };
@@ -40028,14 +40125,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (ownerType === 1) return getBarbarianCivilizationPickerEntry() ? BARBARIAN_OWNER_PICKER_VALUE : '';
     if (ownerType === 2) {
       const civId = parseIntLoose(resolveCivIdFromRaw(ownerRaw), -1);
-      if (civId === 0 && getBarbarianCivilizationPickerEntry()) return BARBARIAN_OWNER_PICKER_VALUE;
-      if (civId >= 0) {
-        if (leadRecordsForOwner.length > 0) {
-          const matchingPlayer = Object.keys(playerCivById).find((playerId) => parseIntLoose(playerCivById[playerId], -1) === civId);
-          if (matchingPlayer != null) return mapOwnerPickerValueForPlayer(parseIntLoose(matchingPlayer, 0));
-        }
-        return mapOwnerPickerValueForCivilization(civId);
-      }
+      if (civId >= 0) return mapOwnerPickerValueForCivilization(civId);
     }
     if (ownerType === 3) {
       const playerId = parseIntLoose(resolvePlayerIdFromOwnerRaw(ownerRaw), NaN);
@@ -40048,7 +40138,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return '';
   };
-  const getMapUnitOwnerOptions = () => getMapOwnerPickerOptions();
+  const getMapUnitOwnerOptions = (ownerTypeRaw = null) => getMapOwnerPickerOptions(ownerTypeRaw);
   const getMapUnitOwnerPickerValue = (record) => {
     if (!record) return '';
     const ownerTypeRaw = String(getFieldRawValue(record, 'ownertype') || getFieldDisplayValue(record, 'ownertype') || getMapFieldValue(record, 'ownertype', '3'));
@@ -41275,9 +41365,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (variantState && variantState.snowCappedMountain) mask |= BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN;
     return sanitizeTerrainBonusMask(terrainCode, mask);
   };
-  const getMapStatsOwnerOptionMap = () => {
-    const options = getMapOwnerPickerOptions();
-    const map = new Map();
+	  const getMapStatsOwnerOptionMap = () => {
+	    const options = []
+        .concat(getMapOwnerPickerOptions(1))
+        .concat(getMapOwnerPickerOptions(2))
+        .concat(getMapOwnerPickerOptions(3));
+	    const map = new Map();
     options.forEach((option) => {
       map.set(String(option && option.value || ''), String(option && (option.displayLabel || option.label) || '').trim());
     });
@@ -42883,6 +42976,39 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   };
 
+  const DIR_NE = 1;
+  const DIR_E = 2;
+  const DIR_SE = 3;
+  const DIR_S = 4;
+  const DIR_SW = 5;
+  const DIR_W = 6;
+  const DIR_NW = 7;
+  const DIR_N = 8;
+  const CANAL_DIRECTION_ORDER = [DIR_NE, DIR_NW, DIR_SE, DIR_SW, DIR_N, DIR_E, DIR_S, DIR_W];
+  const CANAL_DIRECTION_COORD_OFFSETS = {
+    [DIR_NE]: [1, -1],
+    [DIR_E]: [2, 0],
+    [DIR_SE]: [1, 1],
+    [DIR_S]: [0, 2],
+    [DIR_SW]: [-1, 1],
+    [DIR_W]: [-2, 0],
+    [DIR_NW]: [-1, -1],
+    [DIR_N]: [0, -2]
+  };
+  const CANAL_DIRECTION_WEIGHT = {
+    [DIR_NE]: -1,
+    [DIR_E]: 0,
+    [DIR_SE]: 1,
+    [DIR_S]: 2,
+    [DIR_SW]: 1,
+    [DIR_W]: 0,
+    [DIR_NW]: -1,
+    [DIR_N]: -1
+  };
+  const CANAL_DISALLOWED_PAIRS = [
+    [DIR_N, DIR_NE], [DIR_NE, DIR_E], [DIR_E, DIR_SE], [DIR_SE, DIR_S],
+    [DIR_S, DIR_SW], [DIR_SW, DIR_W], [DIR_W, DIR_NW], [DIR_NW, DIR_N]
+  ];
   const drawDistrictOverlay = (drawCtx, record, geom, sx, sy, phase = 'all', options = {}) => {
     if (!drawCtx) return;
     const assetRefreshMode = String(options && options.assetRefreshMode || 'map');
@@ -45086,61 +45212,28 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       buildingCols: renderStrategy === 'by-building' ? presentBuildingCols : []
     };
   }
-  const DIR_NE = 1;
-  const DIR_E = 2;
-  const DIR_SE = 3;
-  const DIR_S = 4;
-  const DIR_SW = 5;
-  const DIR_W = 6;
-  const DIR_NW = 7;
-  const DIR_N = 8;
-  const CANAL_DIRECTION_ORDER = [DIR_NE, DIR_NW, DIR_SE, DIR_SW, DIR_N, DIR_E, DIR_S, DIR_W];
-  const CANAL_DIRECTION_COORD_OFFSETS = {
-    [DIR_NE]: [1, -1],
-    [DIR_E]: [2, 0],
-    [DIR_SE]: [1, 1],
-    [DIR_S]: [0, 2],
-    [DIR_SW]: [-1, 1],
-    [DIR_W]: [-2, 0],
-    [DIR_NW]: [-1, -1],
-    [DIR_N]: [0, -2]
-  };
-  const CANAL_DIRECTION_WEIGHT = {
-    [DIR_NE]: -1,
-    [DIR_E]: 0,
-    [DIR_SE]: 1,
-    [DIR_S]: 2,
-    [DIR_SW]: 1,
-    [DIR_W]: 0,
-    [DIR_NW]: -1,
-    [DIR_N]: -1
-  };
-  const CANAL_DISALLOWED_PAIRS = [
-    [DIR_N, DIR_NE], [DIR_NE, DIR_E], [DIR_E, DIR_SE], [DIR_SE, DIR_S],
-    [DIR_S, DIR_SW], [DIR_SW, DIR_W], [DIR_W, DIR_NW], [DIR_NW, DIR_N]
-  ];
-  const getCanalDirectionCoord = (xPos, yPos, dir) => {
+  function getCanalDirectionCoord(xPos, yPos, dir) {
     const offset = CANAL_DIRECTION_COORD_OFFSETS[dir];
     if (!offset) return null;
     return normalizeWrappedCoord(xPos + offset[0], yPos + offset[1]);
-  };
-  const tileHasCanalDistrictAt = (xPos, yPos) => {
+  }
+  function tileHasCanalDistrictAt(xPos, yPos) {
     const coord = normalizeWrappedCoord(xPos, yPos);
     if (!coord) return false;
     const tile = getTileAtCoord(coord.xPos, coord.yPos);
     if (!tile) return false;
     const districtMeta = getDistrictRecordMeta(tile, coord);
     return !!(districtMeta && districtMeta.districtSection && isCanalDistrictSection(districtMeta.districtSection));
-  };
-  const tileHasBridgeDistrictAt = (xPos, yPos) => {
+  }
+  function tileHasBridgeDistrictAt(xPos, yPos) {
     const coord = normalizeWrappedCoord(xPos, yPos);
     if (!coord) return false;
     const tile = getTileAtCoord(coord.xPos, coord.yPos);
     if (!tile) return false;
     const districtMeta = getDistrictRecordMeta(tile, coord);
     return !!(districtMeta && districtMeta.districtSection && isBridgeDistrictSection(districtMeta.districtSection));
-  };
-  const tileHasGreatWallDistrictAtWithOwnerId = (xPos, yPos, ownerId) => {
+  }
+  function tileHasGreatWallDistrictAtWithOwnerId(xPos, yPos, ownerId) {
     const coord = normalizeWrappedCoord(xPos, yPos);
     if (!coord) return false;
     const tile = getTileAtCoord(coord.xPos, coord.yPos);
@@ -45149,21 +45242,21 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!(districtMeta && districtMeta.districtSection && isGreatWallDistrictSection(districtMeta.districtSection))) return false;
     const ownerInfo = resolveTileTerritoryInfo(tile, coord);
     return !!ownerInfo && parseIntLoose(ownerInfo.ownerId, -1) === parseIntLoose(ownerId, -1);
-  };
-  const tileIsWaterAt = (xPos, yPos) => {
+  }
+  function tileIsWaterAt(xPos, yPos) {
     const coord = normalizeWrappedCoord(xPos, yPos);
     if (!coord) return false;
     const tile = getTileAtCoord(coord.xPos, coord.yPos);
     if (!tile) return false;
     return isWaterTerrain(terrainInfo(tile).realTerrain);
-  };
-  const tileIsLandAt = (xPos, yPos) => {
+  }
+  function tileIsLandAt(xPos, yPos) {
     const coord = normalizeWrappedCoord(xPos, yPos);
     if (!coord) return false;
     const tile = getTileAtCoord(coord.xPos, coord.yPos);
     if (!tile) return false;
     return !isWaterTerrain(terrainInfo(tile).realTerrain);
-  };
+  }
   function tileIsLandAtWithOwner(ownerId, xPos, yPos, mustBeSameOwner) {
     if (mustBeSameOwner && parseIntLoose(ownerId, -1) <= 0) return false;
     const coord = normalizeWrappedCoord(xPos, yPos);
@@ -46537,7 +46630,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     fields.className = 'map-city-fields';
 
     const ownerTypeRow = document.createElement('label');
-    ownerTypeRow.className = 'map-city-field';
+    ownerTypeRow.className = 'map-city-field map-city-field-wide';
     const ownerTypeText = document.createElement('span');
     ownerTypeText.className = 'field-meta';
     ownerTypeText.textContent = 'Assignment';
@@ -47011,52 +47104,89 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
     const fields = document.createElement('div');
     fields.className = 'map-city-fields';
-    const getCityOwnerPickerValue = () => {
-      const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || getMapFieldValue(cityRecord, 'ownertype', '3'));
-      const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || getMapFieldValue(cityRecord, 'owner', '0'));
-      return getMapOwnerPickerValueFromOwnership(ownerTypeRaw, ownerRaw);
+	  const getCityOwnerPickerValue = () => {
+	    const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || getMapFieldValue(cityRecord, 'ownertype', '3'));
+	    const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || getMapFieldValue(cityRecord, 'owner', '0'));
+	    return getMapOwnerPickerValueFromOwnership(ownerTypeRaw, ownerRaw);
+	  };
+    const getCityOwnerType = () => parseOwnerType(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || getMapFieldValue(cityRecord, 'ownertype', '3'));
+    const applyCityOwnerSelection = (value, options = {}) => {
+      if (!isScenarioMode()) return;
+      ensureCityUndoSession();
+      const ownerSpec = resolveMapOwnerSelection(value, getCityOwnerType());
+      if (!ownerSpec) return;
+      setMapFieldValue(cityRecord, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
+      setMapFieldValue(cityRecord, 'owner', String(ownerSpec.owner), 'Owner');
+      const colocatedUnits = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
+        ? listUnitsAtCoords(geom.xPos, geom.yPos)
+        : [];
+      colocatedUnits.forEach((record) => {
+        setMapFieldValue(record, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
+        setMapFieldValue(record, 'owner', String(ownerSpec.owner), 'Owner');
+      });
+      syncTileInfoCityTint();
+      setDirty(true);
+      scheduleMapEditRerender(0, {
+        source: options && options.source || 'city-owner',
+        cityRef: String(cityRef),
+        owner: String(ownerSpec.owner),
+        ownerType: ownerSpec.ownerType,
+        territoryChanged: true,
+        unitCount: colocatedUnits.length
+      });
+	      if (options && options.refreshTileInfo) scheduleTileInfoRender(0);
     };
-    const addCityOwnerPicker = () => {
-      const row = document.createElement('div');
-      row.className = 'map-city-field map-city-field-wide map-city-owner-field';
+    const addCityOwnerTypePicker = () => {
+      const row = document.createElement('label');
+      row.className = 'map-city-field map-city-field-wide';
       const text = document.createElement('span');
       text.className = 'field-meta';
-      text.textContent = 'Owner';
-      const options = getMapOwnerPickerOptions();
-      const ownerPicker = createReferencePicker({
-        currentValue: getCityOwnerPickerValue() || String(options[0] && options[0].value || '0'),
-        includeNone: false,
-        options,
-        readOnly: !isScenarioMode(),
+      text.textContent = 'Assignment';
+      const select = document.createElement('select');
+      [
+        { value: '1', label: 'Barbarians' },
+        { value: '2', label: 'Civilization' },
+        { value: '3', label: 'Player' }
+      ].forEach((opt) => {
+        const node = document.createElement('option');
+        node.value = opt.value;
+        node.textContent = opt.label;
+        if (opt.value === '3' && leadRecordsForOwner.length === 0) node.disabled = true;
+        select.appendChild(node);
+      });
+      select.value = String(getCityOwnerType());
+      select.disabled = !isScenarioMode();
+      select.addEventListener('change', () => {
+        const value = getDefaultMapOwnerPickerValueForType(select.value);
+        if (!value) return;
+	        applyCityOwnerSelection(value, { source: 'city-owner-type', refreshTileInfo: true });
+      });
+      row.appendChild(text);
+      row.appendChild(select);
+      fields.appendChild(row);
+    };
+	  const addCityOwnerPicker = () => {
+	    const row = document.createElement('div');
+	    row.className = 'map-city-field map-city-field-wide map-city-owner-field';
+	    const text = document.createElement('span');
+	    text.className = 'field-meta';
+	    text.textContent = 'Owner';
+      const ownerType = getCityOwnerType();
+      if (ownerType === 1) return;
+	      const options = getMapOwnerPickerOptions(ownerType);
+      if (options.length === 0) return;
+	    const ownerPicker = createReferencePicker({
+	      currentValue: getCityOwnerPickerValue() || String(options[0] && options[0].value || '0'),
+	      includeNone: false,
+	      options,
+	      readOnly: !isScenarioMode(),
         searchPlaceholder: 'Search owners...',
         showOptionThumbs: true,
-        targetTabKey: 'civilizations',
-        onSelect: (value) => {
-          if (!isScenarioMode()) return;
-          ensureCityUndoSession();
-          const ownerSpec = resolveMapOwnerSelection(value);
-          if (!ownerSpec) return;
-          setMapFieldValue(cityRecord, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
-          setMapFieldValue(cityRecord, 'owner', String(ownerSpec.owner), 'Owner');
-          const colocatedUnits = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
-            ? listUnitsAtCoords(geom.xPos, geom.yPos)
-            : [];
-          colocatedUnits.forEach((record) => {
-            setMapFieldValue(record, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
-            setMapFieldValue(record, 'owner', String(ownerSpec.owner), 'Owner');
-          });
-          syncTileInfoCityTint();
-          setDirty(true);
-          scheduleMapEditRerender(0, {
-            source: 'city-owner',
-            cityRef: String(cityRef),
-            owner: String(ownerSpec.owner),
-            ownerType: ownerSpec.ownerType,
-            territoryChanged: true,
-            unitCount: colocatedUnits.length
-          });
-        }
-      });
+	      targetTabKey: 'civilizations',
+	      onSelect: (value) => {
+	        applyCityOwnerSelection(value, { source: 'city-owner' });
+	      }
+	    });
       row.appendChild(text);
       row.appendChild(ownerPicker);
       fields.appendChild(row);
@@ -47143,7 +47273,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       row.appendChild(input);
       fields.appendChild(row);
     };
-    addCityOwnerPicker();
+    addCityOwnerTypePicker();
+	  addCityOwnerPicker();
     syncTileInfoCityTint();
     addCityField({ key: 'size', label: 'Population', type: 'number', min: 1, refreshMode: 'partial', live: true });
     addCityField({ key: 'culture', label: 'Culture', type: 'number', min: 0, refreshMode: 'rerender', live: false });
@@ -47280,33 +47411,132 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       applyTint(getCivSlotUiColor(ownerSlot, applyTint));
     };
 
-    const ownerOptions = getMapUnitOwnerOptions();
-    const realUnitOwnerValue = getUnifiedUnitOwnerChoice(units);
-    const storedTileInfoOwner = String((state.mapEditorTool && state.mapEditorTool.tileInfoUnitOwner) || '').trim();
-    const territoryOwnerValue = (() => {
+	    const realUnitOwnerValue = getUnifiedUnitOwnerChoice(units);
+	    const storedTileInfoOwner = String((state.mapEditorTool && state.mapEditorTool.tileInfoUnitOwner) || '').trim();
+	    const territoryOwnerValue = (() => {
       if (!tile || !geom) return '';
       const territoryInfo = resolveTileTerritoryInfo(tile, geom);
       if (!territoryInfo || !territoryInfo.hasOwner) return '';
       let ownerRaw = '';
       if (territoryInfo.ownerType === 1) ownerRaw = '0';
       else if (Number.isFinite(territoryInfo.ownerId) && territoryInfo.ownerId >= 0) ownerRaw = String(territoryInfo.ownerId);
-      else if (Number.isFinite(territoryInfo.civId) && territoryInfo.civId >= 0) ownerRaw = String(territoryInfo.civId);
-      return ownerRaw ? getMapOwnerPickerValueFromOwnership(String(territoryInfo.ownerType || ''), ownerRaw) : '';
-    })();
-    let activeOwnerValue = '';
-    if (realUnitOwnerValue !== 'mixed' && realUnitOwnerValue !== '') {
-      activeOwnerValue = String(realUnitOwnerValue);
-    } else if (!units.length && territoryOwnerValue && ownerOptions.some((opt) => String(opt.value) === territoryOwnerValue)) {
-      activeOwnerValue = territoryOwnerValue;
-    } else if (storedTileInfoOwner && ownerOptions.some((opt) => String(opt.value) === storedTileInfoOwner)) {
-      activeOwnerValue = storedTileInfoOwner;
-    } else if (ownerOptions.length > 0) {
-      activeOwnerValue = String(ownerOptions[0].value);
-    }
-    if (ownerOptions.length > 0) {
-      const ownerRow = document.createElement('div');
-      ownerRow.className = 'map-city-field map-city-field-wide map-city-owner-field';
-      const ownerText = document.createElement('span');
+	      else if (Number.isFinite(territoryInfo.civId) && territoryInfo.civId >= 0) ownerRaw = String(territoryInfo.civId);
+	      return ownerRaw ? getMapOwnerPickerValueFromOwnership(String(territoryInfo.ownerType || ''), ownerRaw) : '';
+	    })();
+      const ownerValueExists = (value) => {
+        const type = getMapOwnerTypeFromPickerValue(value);
+        return getMapUnitOwnerOptions(type).some((opt) => String(opt.value) === String(value));
+      };
+	    let activeOwnerValue = '';
+	    if (realUnitOwnerValue !== 'mixed' && realUnitOwnerValue !== '') {
+	      activeOwnerValue = String(realUnitOwnerValue);
+	    } else if (!units.length && territoryOwnerValue && ownerValueExists(territoryOwnerValue)) {
+	      activeOwnerValue = territoryOwnerValue;
+	    } else if (storedTileInfoOwner && ownerValueExists(storedTileInfoOwner)) {
+	      activeOwnerValue = storedTileInfoOwner;
+	    } else {
+        const defaultOwnerType = leadRecordsForOwner.length > 0 ? 3 : 2;
+        activeOwnerValue = getDefaultMapOwnerPickerValueForType(defaultOwnerType);
+	    }
+      const getFirstUnitOwnerType = () => {
+        const firstUnit = units[0] || null;
+        if (!firstUnit) return NaN;
+        return parseOwnerType(getFieldRawValue(firstUnit, 'ownertype') || getFieldDisplayValue(firstUnit, 'ownertype') || getMapFieldValue(firstUnit, 'ownertype', '3'));
+      };
+      let activeOwnerType = realUnitOwnerValue === 'mixed'
+        ? getFirstUnitOwnerType()
+        : getMapOwnerTypeFromPickerValue(activeOwnerValue);
+      if (!Number.isFinite(activeOwnerType)) activeOwnerType = leadRecordsForOwner.length > 0 ? 3 : 2;
+	    const ownerOptions = getMapUnitOwnerOptions(activeOwnerType);
+      const applyUnitOwnerSelection = (value, options = {}) => {
+        const unitTileIndex = state.biqMapSelectedTile;
+        const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
+          ? getUnitOverlaySignatureForStack(units, null, tile)
+          : 'unknown';
+        const startedAt = mapToolNowMs();
+        state.mapEditorTool.tileInfoUnitOwner = value;
+        const ownerSpec = resolveMapOwnerSelection(value, activeOwnerType);
+        activeOwnerValue = ownerSpec ? String(value) : '';
+        activeOwnerType = ownerSpec ? ownerSpec.ownerType : activeOwnerType;
+        state.mapEditorTool.tileInfoUnitTypeExplicit = false;
+        syncTileInfoUnitTint();
+        syncAddButton();
+        if (!isScenarioMode()) return;
+        if (!ownerSpec) return;
+        appendDebugLog('biq-map:tile-info-unit-owner-change', {
+          tileIndex: Number.isFinite(unitTileIndex) ? unitTileIndex : null,
+          tileCoords: geom ? { xPos: geom.xPos, yPos: geom.yPos } : null,
+          owner: ownerSpec.owner,
+          ownerType: ownerSpec.ownerType,
+          unitCount: units.length,
+          beforeOverlaySignature,
+          sessionKey: getMapUnitEditSessionKey(unitTileIndex)
+        });
+        ensureTrackedEditSession(
+          getMapUnitEditSessionKey(unitTileIndex),
+          getMapUnitEditSessionValue(tile, geom)
+        );
+        units.forEach((record) => {
+          setMapFieldValue(record, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
+          setMapFieldValue(record, 'owner', String(ownerSpec.owner), 'Owner');
+        });
+        const colocatedCity = getCityRecordForTile(tile, geom);
+        if (colocatedCity) {
+          setMapFieldValue(colocatedCity, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
+          setMapFieldValue(colocatedCity, 'owner', String(ownerSpec.owner), 'Owner');
+        }
+        setDirty(true);
+        refreshTileInfoUnitsAfterEdit({
+          action: options && options.action || 'owner-change',
+          tileIndex: unitTileIndex,
+          xPos: geom && geom.xPos,
+          yPos: geom && geom.yPos,
+          tileRecord: tile,
+          beforeOverlaySignature,
+          afterOverlaySignature: getUnitOverlaySignatureForStack(units, null, tile),
+          fullMapRerender: !!colocatedCity,
+          extra: {
+            owner: ownerSpec.owner,
+            ownerType: ownerSpec.ownerType,
+            unitCount: units.length,
+            cityTransferred: !!colocatedCity,
+            mutationDurationMs: Number((mapToolNowMs() - startedAt).toFixed(2))
+          }
+        });
+	        if (options && options.refreshTileInfo) scheduleTileInfoRender(0);
+      };
+      const ownerTypeRow = document.createElement('label');
+      ownerTypeRow.className = 'map-city-field map-city-field-wide';
+      const ownerTypeText = document.createElement('span');
+      ownerTypeText.className = 'field-meta';
+      ownerTypeText.textContent = 'Assignment';
+      const ownerTypeSelect = document.createElement('select');
+      [
+        { value: '1', label: 'Barbarians' },
+        { value: '2', label: 'Civilization' },
+        { value: '3', label: 'Player' }
+      ].forEach((opt) => {
+        const node = document.createElement('option');
+        node.value = opt.value;
+        node.textContent = opt.label;
+        if (opt.value === '3' && leadRecordsForOwner.length === 0) node.disabled = true;
+        ownerTypeSelect.appendChild(node);
+      });
+      ownerTypeSelect.value = String(activeOwnerType);
+      ownerTypeSelect.disabled = !isScenarioMode();
+      ownerTypeSelect.addEventListener('change', () => {
+        const value = getDefaultMapOwnerPickerValueForType(ownerTypeSelect.value);
+        if (!value) return;
+        activeOwnerType = parseOwnerType(ownerTypeSelect.value);
+	        applyUnitOwnerSelection(value, { action: 'owner-type-change', refreshTileInfo: true });
+      });
+      ownerTypeRow.appendChild(ownerTypeText);
+      ownerTypeRow.appendChild(ownerTypeSelect);
+      card.appendChild(ownerTypeRow);
+	    if (ownerOptions.length > 0 && activeOwnerType !== 1) {
+	      const ownerRow = document.createElement('div');
+	      ownerRow.className = 'map-city-field map-city-field-wide map-city-owner-field';
+	      const ownerText = document.createElement('span');
       ownerText.className = 'field-meta';
       ownerText.textContent = 'Owner';
       const pickerOptions = realUnitOwnerValue === 'mixed'
@@ -47320,63 +47550,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         searchPlaceholder: 'Search owners...',
         showOptionThumbs: true,
         targetTabKey: 'civilizations',
-        menuPortalRoot: tileInfoMenuPortalRoot,
-        onSelect: (value) => {
-          const unitTileIndex = state.biqMapSelectedTile;
-          const beforeOverlaySignature = Number.isFinite(geom && geom.xPos) && Number.isFinite(geom && geom.yPos)
-            ? getUnitOverlaySignatureForStack(units, null, tile)
-            : 'unknown';
-          const startedAt = mapToolNowMs();
-          state.mapEditorTool.tileInfoUnitOwner = value;
-          const ownerSpec = resolveMapOwnerSelection(value);
-          activeOwnerValue = ownerSpec ? String(value) : '';
-          state.mapEditorTool.tileInfoUnitTypeExplicit = false;
-          syncTileInfoUnitTint();
-          syncAddButton();
-          if (!isScenarioMode()) return;
-          if (!ownerSpec) return;
-          appendDebugLog('biq-map:tile-info-unit-owner-change', {
-            tileIndex: Number.isFinite(unitTileIndex) ? unitTileIndex : null,
-            tileCoords: geom ? { xPos: geom.xPos, yPos: geom.yPos } : null,
-            owner: ownerSpec.owner,
-            ownerType: ownerSpec.ownerType,
-            unitCount: units.length,
-            beforeOverlaySignature,
-            sessionKey: getMapUnitEditSessionKey(unitTileIndex)
-          });
-          ensureTrackedEditSession(
-            getMapUnitEditSessionKey(unitTileIndex),
-            getMapUnitEditSessionValue(tile, geom)
-          );
-          units.forEach((record) => {
-            setMapFieldValue(record, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
-            setMapFieldValue(record, 'owner', String(ownerSpec.owner), 'Owner');
-          });
-          const colocatedCity = getCityRecordForTile(tile, geom);
-          if (colocatedCity) {
-            setMapFieldValue(colocatedCity, 'ownertype', String(ownerSpec.ownerType), 'Owner Type');
-            setMapFieldValue(colocatedCity, 'owner', String(ownerSpec.owner), 'Owner');
-          }
-          setDirty(true);
-          refreshTileInfoUnitsAfterEdit({
-            action: 'owner-change',
-            tileIndex: unitTileIndex,
-            xPos: geom && geom.xPos,
-            yPos: geom && geom.yPos,
-            tileRecord: tile,
-            beforeOverlaySignature,
-            afterOverlaySignature: getUnitOverlaySignatureForStack(units, null, tile),
-            fullMapRerender: !!colocatedCity,
-            extra: {
-              owner: ownerSpec.owner,
-              ownerType: ownerSpec.ownerType,
-              unitCount: units.length,
-              cityTransferred: !!colocatedCity,
-              mutationDurationMs: Number((mapToolNowMs() - startedAt).toFixed(2))
-            }
-          });
-        }
-      });
+	        menuPortalRoot: tileInfoMenuPortalRoot,
+	        onSelect: (value) => {
+            applyUnitOwnerSelection(value, { action: 'owner-change' });
+	        }
+	      });
       ownerRow.appendChild(ownerText);
       ownerRow.appendChild(ownerPicker);
       card.appendChild(ownerRow);

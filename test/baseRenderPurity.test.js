@@ -116,6 +116,123 @@ test('civilization playable toggle is read-only for barbarians', () => {
   );
 });
 
+test('map owner picker scopes owner choices by Quint owner type', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const ownerPickerBlock = text.match(/const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?\n  \};\n  const getMapOwnerTypeFromPickerValue/);
+  assert.ok(ownerPickerBlock, 'Renderer should expose a map owner picker option builder');
+
+  assert.match(
+    ownerPickerBlock[0],
+    /if \(ownerType === 1\) \{[\s\S]*?return barbarianOption \? \[barbarianOption\] : \[\];[\s\S]*?\}/,
+    'Direct barbarian ownership should use only the direct barbarian option'
+  );
+  assert.match(
+    ownerPickerBlock[0],
+    /if \(ownerType === 3\) \{[\s\S]*?return leadRecordsForOwner\.map/,
+    'Player-owned map options should be sourced from LEAD player records'
+  );
+  assert.match(
+    ownerPickerBlock[0],
+    /if \(ownerType === 2 \|\| !Number\.isFinite\(ownerType\)\) \{[\s\S]*?return civilizationEntriesForOwner[\s\S]*?\.filter\(\(\{ entry, civIndex \}\) => civIndex !== 0 && !isBarbarianCivilizationEntry\(entry\)\)[\s\S]*?\.map/,
+    'Civilization-owned map options should be sourced from non-barbarian RACE civilization records'
+  );
+  assert.doesNotMatch(
+    ownerPickerBlock[0],
+    /options\.push/,
+    'Owner pickers must return a single owner-type model rather than accumulating a unioned list'
+  );
+  assert.match(
+    text,
+    /const getDefaultMapOwnerPickerValueForType = \(ownerTypeRaw\) => \{[\s\S]*?if \(ownerType === 2\) \{[\s\S]*?const firstNonBarbarian = options\.find/,
+    'Switching to Civilization ownership should default to the first non-barbarian civ like Quint'
+  );
+});
+
+test('map owner picker keeps direct barbarians separate from civilization assignment', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const ownerPickerBlock = text.match(/const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?\n  \};\n  const getMapOwnerTypeFromPickerValue/);
+  const pickerValueBlock = text.match(/const getMapOwnerPickerValueFromOwnership = \(ownerTypeRaw, ownerRaw\) => \{[\s\S]*?\n  \};\n  const getMapUnitOwnerOptions/);
+  assert.ok(ownerPickerBlock, 'Renderer should expose map owner picker option building');
+  assert.ok(pickerValueBlock, 'Renderer should expose map ownership-to-picker value resolution');
+
+  assert.match(
+    ownerPickerBlock[0],
+    /\.filter\(\(\{ entry, civIndex \}\) => civIndex !== 0 && !isBarbarianCivilizationEntry\(entry\)\)/,
+    'Civilization assignment owner lists should not include RACE 0 barbarians'
+  );
+  assert.match(
+    pickerValueBlock[0],
+    /if \(ownerType === 1\) return getBarbarianCivilizationPickerEntry\(\) \? BARBARIAN_OWNER_PICKER_VALUE : '';/,
+    'Direct barbarian ownership should use the direct barbarian picker value'
+  );
+  assert.match(
+    pickerValueBlock[0],
+    /if \(ownerType === 2\) \{[\s\S]*?return mapOwnerPickerValueForCivilization\(civId\);[\s\S]*?\}/,
+    'Civilization-owned records should resolve to civ:n picker values'
+  );
+  assert.doesNotMatch(
+    pickerValueBlock[0],
+    /ownerType === 2[\s\S]*?matchingPlayer/,
+    'Civilization-owned records must not be converted to a matching player owner in the picker'
+  );
+});
+
+test('map city and unit Tile Info owner editors switch owner list by owner type', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const addCityOwnerTypePicker = \(\) => \{[\s\S]*?row\.className = 'map-city-field map-city-field-wide';[\s\S]*?text\.textContent = 'Assignment';[\s\S]*?\{ value: '1', label: 'Barbarians' \},[\s\S]*?\{ value: '2', label: 'Civilization' \},[\s\S]*?\{ value: '3', label: 'Player' \}[\s\S]*?getDefaultMapOwnerPickerValueForType\(select\.value\)[\s\S]*?applyCityOwnerSelection\(value, \{ source: 'city-owner-type', refreshTileInfo: true \}\)/,
+    'City Tile Info should expose a Quint-style owner-type control that swaps to the matching owner list'
+  );
+  assert.match(
+    text,
+    /const addCityOwnerPicker = \(\) => \{[\s\S]*?const ownerType = getCityOwnerType\(\);[\s\S]*?if \(ownerType === 1\) return;[\s\S]*?const options = getMapOwnerPickerOptions\(ownerType\);/,
+    'City owner picker should hide direct Barbarians and request only the owner list for the current city owner type'
+  );
+  assert.match(
+    text,
+    /ownerTypeRow\.className = 'map-city-field map-city-field-wide';[\s\S]*?const ownerTypeSelect = document\.createElement\('select'\);[\s\S]*?\{ value: '1', label: 'Barbarians' \},[\s\S]*?\{ value: '2', label: 'Civilization' \},[\s\S]*?\{ value: '3', label: 'Player' \}[\s\S]*?activeOwnerType = parseOwnerType\(ownerTypeSelect\.value\);[\s\S]*?applyUnitOwnerSelection\(value, \{ action: 'owner-type-change', refreshTileInfo: true \}\)/,
+    'Unit Tile Info should expose a Quint-style owner-type control that swaps to the matching owner list'
+  );
+  assert.match(
+    text,
+    /const ownerOptions = getMapUnitOwnerOptions\(activeOwnerType\);/,
+    'Unit owner picker should request only the owner list for the current unit owner type'
+  );
+  assert.match(
+    text,
+    /if \(ownerOptions\.length > 0 && activeOwnerType !== 1\)/,
+    'Unit owner picker should hide the owner dropdown for direct Barbarians like Quint'
+  );
+  assert.match(
+    text,
+    /const applyCityOwnerSelection = \(value, options = \{\}\) => \{[\s\S]*?if \(options && options\.refreshTileInfo\) scheduleTileInfoRender\(0\);/,
+    'City assignment changes should refresh Tile Info without rebuilding the whole map modal'
+  );
+  assert.match(
+    text,
+    /const applyUnitOwnerSelection = \(value, options = \{\}\) => \{[\s\S]*?if \(options && options\.refreshTileInfo\) scheduleTileInfoRender\(0\);/,
+    'Unit assignment changes should refresh Tile Info without rebuilding the whole map modal'
+  );
+});
+
+test('map owner-support refresh includes Civs, Players, and custom player data', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const supportBlock = text.match(/function isMapOwnerSupportReferenceField\(tabKey, baseKey\) \{[\s\S]*?\n\}/);
+  assert.ok(supportBlock, 'Renderer should expose map owner-support invalidation');
+
+  assert.match(supportBlock[0], /tab === 'civilizations'/, 'Civ edits should invalidate map owner rendering');
+  assert.match(supportBlock[0], /tab === 'players'\) return true;/, 'Player edits should invalidate map owner rendering');
+  assert.match(supportBlock[0], /tab === 'scenariosettings'/, 'Scenario custom-player-data edits should invalidate map owner rendering');
+  assert.match(text, /refreshMapAfterOwnerSupportChange\('players', 'records'\)/, 'Player add/delete and count sync should refresh open Map views');
+  assert.match(text, /refreshMapAfterOwnerSupportChange\('scenarioSettings', 'customPlayerData'\)/, 'Custom player data toggles should refresh open Map views');
+});
+
 test('C3X bitfield base settings serialize with whitespace-separated bracket lists', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

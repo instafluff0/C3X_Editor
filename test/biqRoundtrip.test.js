@@ -3058,6 +3058,8 @@ test('BIQ map round-trip persists added city/unit records at a deterministic sta
       && getRecordInt(record, 'y', -1) === tileY;
   });
   assert.ok(savedCity, `expected added city at ${tileX},${tileY} to persist`);
+  assert.match(String(getRecordField(savedCity, 'ownertype') && getRecordField(savedCity, 'ownertype').value || ''), /Civilization \(2\)/);
+  assert.match(String(getRecordField(savedCity, 'owner') && getRecordField(savedCity, 'owner').value || ''), /\(1\)$/);
   const savedUnit = (reUnitSection && Array.isArray(reUnitSection.records) ? reUnitSection.records : []).find((record) => {
     return getRecordInt(record, 'x', -1) === tileX
       && getRecordInt(record, 'y', -1) === tileY
@@ -3066,6 +3068,181 @@ test('BIQ map round-trip persists added city/unit records at a deterministic sta
       && getRecordInt(record, 'prtonumber', -1) === 0;
   });
   assert.ok(savedUnit, `expected added unit at ${tileX},${tileY} to persist`);
+});
+
+test('BIQ map reload preserves Player 1 city ownership as a real owner', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  const sections = getMapSectionsOrSkip(t, mapTab, { minCityRecords: 0, minUnitRecords: 0 });
+  if (!sections) return;
+  const { tileSection, citySection } = sections;
+
+  const tile = (tileSection.records || []).find((record) => {
+    return getRecordInt(record, 'city', -1) < 0 && getRecordInt(record, 'colony', -1) < 0;
+  });
+  assert.ok(tile, 'expected stable fixture tile available for player-owned city roundtrip');
+  const tileX = getRecordInt(tile, 'xpos', -1);
+  const tileY = getRecordInt(tile, 'ypos', -1);
+
+  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
+  const cityRef = makeShortBiqTestRef('CITY', `P1${tileX}${tileY}`);
+  mapCore.addCity(citySection, tile, tileX, tileY, 0, 3, 'Player One City', cityRef);
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'CITY', newRecordRef: cityRef });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reCitySection = getSection(reloaded.tabs.map, 'CITY');
+  const savedCity = (reCitySection && Array.isArray(reCitySection.records) ? reCitySection.records : []).find((record) => {
+    return String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Player One City';
+  });
+  assert.ok(savedCity, 'expected player-owned city after reload');
+  assert.match(String(getRecordField(savedCity, 'ownertype') && getRecordField(savedCity, 'ownertype').value || ''), /Player \(3\)/);
+  assert.notEqual(String(getRecordField(savedCity, 'owner') && getRecordField(savedCity, 'owner').value || ''), 'None');
+  assert.match(String(getRecordField(savedCity, 'owner') && getRecordField(savedCity, 'owner').value || ''), /\(0\)$/);
+});
+
+test('BIQ map reload keeps barbarian owner zero distinct from Player 1 owner zero', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  const sections = getMapSectionsOrSkip(t, mapTab, { minCityRecords: 0, minUnitRecords: 0 });
+  if (!sections) return;
+  const { tileSection, citySection, unitSection } = sections;
+
+  const openTiles = (tileSection.records || []).filter((record) => {
+    return getRecordInt(record, 'city', -1) < 0 && getRecordInt(record, 'colony', -1) < 0;
+  }).slice(0, 2);
+  if (openTiles.length < 2) {
+    t.skip('Stable fixture lacks two empty tiles for owner namespace regression.');
+    return;
+  }
+
+  const barbarianTile = openTiles[0];
+  const playerTile = openTiles[1];
+  const barbarianX = getRecordInt(barbarianTile, 'xpos', -1);
+  const barbarianY = getRecordInt(barbarianTile, 'ypos', -1);
+  const playerX = getRecordInt(playerTile, 'xpos', -1);
+  const playerY = getRecordInt(playerTile, 'ypos', -1);
+
+  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
+  const barbarianCityRef = makeShortBiqTestRef('CITY', `B0${barbarianX}${barbarianY}`);
+  const playerCityRef = makeShortBiqTestRef('CITY', `P0${playerX}${playerY}`);
+  const barbarianUnitRef = makeShortBiqTestRef('UNIT', `B0${barbarianX}${barbarianY}`);
+  const playerUnitRef = makeShortBiqTestRef('UNIT', `P0${playerX}${playerY}`);
+  mapCore.addCity(citySection, barbarianTile, barbarianX, barbarianY, 0, 1, 'Barb Owner Zero City', barbarianCityRef);
+  mapCore.addCity(citySection, playerTile, playerX, playerY, 0, 3, 'Player Owner Zero City', playerCityRef);
+  mapCore.addUnit(unitSection, barbarianTile, barbarianX, barbarianY, 0, 1, 0, barbarianUnitRef);
+  mapCore.addUnit(unitSection, playerTile, playerX, playerY, 0, 3, 0, playerUnitRef);
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'CITY', newRecordRef: barbarianCityRef });
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'CITY', newRecordRef: playerCityRef });
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'UNIT', newRecordRef: barbarianUnitRef });
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'UNIT', newRecordRef: playerUnitRef });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reCitySection = getSection(reloaded.tabs.map, 'CITY');
+  const reUnitSection = getSection(reloaded.tabs.map, 'UNIT');
+  const reloadedCities = reCitySection && Array.isArray(reCitySection.records) ? reCitySection.records : [];
+  const reloadedUnits = reUnitSection && Array.isArray(reUnitSection.records) ? reUnitSection.records : [];
+  const barbarianCity = reloadedCities.find((record) => {
+    return String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Barb Owner Zero City';
+  });
+  const playerCity = reloadedCities.find((record) => {
+    return String(getRecordField(record, 'name') && getRecordField(record, 'name').value || '') === 'Player Owner Zero City';
+  });
+  const barbarianUnit = reloadedUnits.find((record) => {
+    return getRecordInt(record, 'x', -1) === barbarianX
+      && getRecordInt(record, 'y', -1) === barbarianY
+      && getRecordInt(record, 'prtonumber', -1) === 0
+      && String(getRecordField(record, 'ownertype') && getRecordField(record, 'ownertype').value || '').includes('Barbarians');
+  });
+  const playerUnit = reloadedUnits.find((record) => {
+    return getRecordInt(record, 'x', -1) === playerX
+      && getRecordInt(record, 'y', -1) === playerY
+      && getRecordInt(record, 'prtonumber', -1) === 0
+      && String(getRecordField(record, 'ownertype') && getRecordField(record, 'ownertype').value || '').includes('Player');
+  });
+  assert.ok(barbarianCity, 'expected barbarian-owned city after reload');
+  assert.ok(playerCity, 'expected Player 1-owned city after reload');
+  assert.ok(barbarianUnit, 'expected barbarian-owned unit after reload');
+  assert.ok(playerUnit, 'expected Player 1-owned unit after reload');
+
+  assert.match(String(getRecordField(barbarianCity, 'ownertype') && getRecordField(barbarianCity, 'ownertype').value || ''), /Barbarians \(1\)/);
+  assert.equal(String(getRecordField(barbarianCity, 'owner') && getRecordField(barbarianCity, 'owner').value || ''), '0');
+  assert.match(String(getRecordField(playerCity, 'ownertype') && getRecordField(playerCity, 'ownertype').value || ''), /Player \(3\)/);
+  assert.match(String(getRecordField(playerCity, 'owner') && getRecordField(playerCity, 'owner').value || ''), /\(0\)$/);
+  assert.notEqual(String(getRecordField(playerCity, 'owner') && getRecordField(playerCity, 'owner').value || ''), 'None');
+  assert.equal(String(getRecordField(barbarianUnit, 'owner') && getRecordField(barbarianUnit, 'owner').value || ''), '0');
+  assert.match(String(getRecordField(playerUnit, 'owner') && getRecordField(playerUnit, 'owner').value || ''), /\(0\)$/);
+  assert.notEqual(String(getRecordField(playerUnit, 'owner') && getRecordField(playerUnit, 'owner').value || ''), 'None');
+
+  const reparsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(reparsed.ok, true, 'expected saved BIQ parse to succeed');
+  const rawCitySection = (reparsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'CITY');
+  const rawUnitSection = (reparsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'UNIT');
+  const rawCities = rawCitySection && Array.isArray(rawCitySection.records) ? rawCitySection.records : [];
+  const rawUnits = rawUnitSection && Array.isArray(rawUnitSection.records) ? rawUnitSection.records : [];
+  const rawBarbarianCity = rawCities.find((record) => String(record && record.name || '').trim() === 'Barb Owner Zero City');
+  const rawPlayerCity = rawCities.find((record) => String(record && record.name || '').trim() === 'Player Owner Zero City');
+  const rawBarbarianUnit = rawUnits.find((record) => record
+    && record.x === barbarianX
+    && record.y === barbarianY
+    && record.pRTONumber === 0
+    && record.ownerType === 1
+    && record.owner === 0);
+  const rawPlayerUnit = rawUnits.find((record) => record
+    && record.x === playerX
+    && record.y === playerY
+    && record.pRTONumber === 0
+    && record.ownerType === 3
+    && record.owner === 0);
+  assert.ok(rawBarbarianCity, 'expected raw barbarian city record after save');
+  assert.ok(rawPlayerCity, 'expected raw Player 1 city record after save');
+  assert.ok(rawBarbarianUnit, 'expected raw barbarian unit record after save');
+  assert.ok(rawPlayerUnit, 'expected raw Player 1 unit record after save');
+  assert.equal(rawBarbarianCity.ownerType, 1, 'expected raw barbarian city ownerType to stay Barbarians');
+  assert.equal(rawBarbarianCity.owner, 0, 'expected raw barbarian city owner payload to stay zero');
+  assert.equal(rawPlayerCity.ownerType, 3, 'expected raw player city ownerType to stay Player');
+  assert.equal(rawPlayerCity.owner, 0, 'expected raw player city owner payload to stay Player 1');
 });
 
 test('scenario save writes and reloads scenario.districts.txt entries and named tiles', () => {
