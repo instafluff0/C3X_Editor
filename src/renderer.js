@@ -354,6 +354,7 @@ const mapModal = {
   node: null,
   body: null,
   title: null,
+  refreshBtn: null,
   saveBtn: null,
   undoBtn: null,
   undoAllBtn: null,
@@ -571,6 +572,7 @@ const el = {
   globalSearchResults: document.getElementById('global-search-results'),
   backBtn: document.getElementById('back-btn'),
   forwardBtn: document.getElementById('forward-btn'),
+  refreshBtn: document.getElementById('refresh-btn'),
   saveBtn: document.getElementById('save-btn'),
   saveAsBtn: document.getElementById('save-as-btn'),
   undoBtn: document.getElementById('undo-btn'),
@@ -2205,6 +2207,26 @@ function getSaveButtons() {
   return [el.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn, mapModal.saveBtn].filter((btn) => btn && btn.isConnected);
 }
 
+function getRefreshButtons() {
+  return [el.refreshBtn, mapModal.refreshBtn].filter((btn) => btn && btn.isConnected);
+}
+
+function updateRefreshButtonState() {
+  const disabled = state.isLoading || state.isSaving || !state.settings || !state.settings.c3xPath;
+  getRefreshButtons().forEach((btn) => {
+    btn.disabled = disabled;
+    if (!state.settings || !state.settings.c3xPath) {
+      btn.title = 'Set C3X Folder before refreshing.';
+    } else if (state.isSaving) {
+      btn.title = 'Wait for save to finish before refreshing.';
+    } else if (state.isLoading) {
+      btn.title = 'Refresh already in progress.';
+    } else {
+      btn.title = 'Refresh from disk';
+    }
+  });
+}
+
 function updateSaveButtonLabel() {
   getSaveButtons().forEach((btn) => {
     btn.innerHTML = state.isSaving
@@ -2313,6 +2335,9 @@ function refreshDirtyUi() {
   const saveButtonLabelStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   updateSaveButtonLabel();
   const saveButtonLabelMs = shouldLogReferencePerf ? Number((debugNowMs() - saveButtonLabelStartedAt).toFixed(2)) : 0;
+  const refreshStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
+  updateRefreshButtonState();
+  const refreshMs = shouldLogReferencePerf ? Number((debugNowMs() - refreshStartedAt).toFixed(2)) : 0;
   const saveAsStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
   updateSaveAsButtonState();
   const saveAsMs = shouldLogReferencePerf ? Number((debugNowMs() - saveAsStartedAt).toFixed(2)) : 0;
@@ -2367,6 +2392,7 @@ function refreshDirtyUi() {
       reasons: Array.isArray(state.pendingDirtyUiRefreshReasons) ? state.pendingDirtyUiRefreshReasons.slice() : [],
       validationMs,
       saveButtonLabelMs,
+      refreshMs,
       saveAsMs,
       deleteScenarioMs,
       mapUndoButtonsMs,
@@ -6068,6 +6094,7 @@ function setLoadingUi(isLoading, text = 'Loading configs...') {
     el.globalSearchBtn,
     el.backBtn,
     el.forwardBtn,
+    el.refreshBtn,
     el.saveBtn,
     el.undoBtn
   ];
@@ -26166,6 +26193,7 @@ function ensureMapModalNode() {
       <div class="map-editor-modal-header">
         <strong id="map-editor-modal-title">Map Editor</strong>
         <div class="map-editor-modal-actions">
+          <button type="button" class="ghost nav-btn refresh-btn map-editor-modal-refresh-btn" data-act="refresh" aria-label="Refresh from disk" title="Refresh from disk">⟳</button>
           <button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾</span>Save</button>
           <button type="button" class="ghost map-editor-modal-undo-btn" data-act="undo"><span class="btn-icon">↶</span>Undo</button>
           <button type="button" class="ghost map-editor-modal-undo-all-btn" data-act="undo-all"><span class="btn-icon">↺</span>Undo All</button>
@@ -26179,11 +26207,17 @@ function ensureMapModalNode() {
   mapModal.node = overlay;
   mapModal.body = overlay.querySelector('#map-editor-modal-body');
   mapModal.title = overlay.querySelector('#map-editor-modal-title');
+  mapModal.refreshBtn = overlay.querySelector('[data-act="refresh"]');
   mapModal.saveBtn = overlay.querySelector('[data-act="save"]');
   mapModal.undoBtn = overlay.querySelector('[data-act="undo"]');
   mapModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
   const closeBtn = overlay.querySelector('[data-act="close"]');
   if (closeBtn) closeBtn.addEventListener('click', () => closeMapModal());
+  if (mapModal.refreshBtn) {
+    mapModal.refreshBtn.addEventListener('click', async () => {
+      await refreshCurrentBundleFromDisk();
+    });
+  }
   if (mapModal.saveBtn) {
     mapModal.saveBtn.addEventListener('click', async () => {
       if (!state.isDirty || state.isSaving || state.isLoading || !state.bundle || !!state.sectionValidationError) return;
@@ -26219,6 +26253,7 @@ function refreshMapModalUndoButtons() {
     mapModal.saveBtn.disabled = !state.isDirty || state.isSaving || state.isLoading || !state.bundle || !!state.sectionValidationError;
     mapModal.saveBtn.title = state.sectionValidationError || '';
   }
+  updateRefreshButtonState();
   if (mapModal.undoBtn) {
     mapModal.undoBtn.disabled = !isScenarioMode() || !getLatestScopedUndoSnapshot('map') || state.isLoading;
   }
@@ -52447,6 +52482,32 @@ async function loadBundleAndRender(options = {}) {
   }
 }
 
+async function refreshCurrentBundleFromDisk() {
+  if (state.isLoading || state.isSaving) return false;
+  syncSettingsFromInputs();
+  if (!state.settings || !state.settings.c3xPath) {
+    setStatus('Set C3X Folder first.', true);
+    updateRefreshButtonState();
+    return false;
+  }
+  const currentViewSnapshot = captureViewSnapshot();
+  const allow = await confirmResolveUnsavedChanges('refreshing from disk');
+  if (!allow) {
+    updateRefreshButtonState();
+    return false;
+  }
+  invalidatePreviewStateForReload();
+  await loadBundleAndRender({
+    viewSnapshot: currentViewSnapshot,
+    loadingText: 'Refreshing...'
+  });
+  if (state.bundle) {
+    setStatus('Refreshed from disk.');
+    return true;
+  }
+  return false;
+}
+
 function getTabsForSavePayload() {
   const tabsToSave = {};
   ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'map'].forEach((key) => {
@@ -55018,6 +55079,11 @@ async function init() {
   }
 
   el.saveBtn.addEventListener('click', saveCurrentBundle);
+  if (el.refreshBtn) {
+    el.refreshBtn.addEventListener('click', () => {
+      void refreshCurrentBundleFromDisk();
+    });
+  }
   if (el.saveAsBtn) {
     el.saveAsBtn.addEventListener('click', saveCurrentScenarioAs);
   }

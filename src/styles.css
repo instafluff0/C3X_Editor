@@ -610,6 +610,12 @@ textarea {
   color: #355089;
 }
 
+.refresh-btn {
+  font-size: 1.8rem;
+  font-weight: 300;
+  padding-bottom: 6px;
+}
+
 .nav-btn:hover:not(:disabled) {
   box-shadow: none;
   border-color: rgba(66, 103, 178, 0.38);

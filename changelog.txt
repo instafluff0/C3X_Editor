@@ -1,4 +1,5 @@
 * RELEASE 27.13.1
+- Added icon-only Refresh buttons beside Save in the main toolbar and Map modal, reloading the current BIQ/config files from disk while preserving the active screen.
 - Synced Map city wall art with the Improvements picker by updating the CITY Has Walls flag when the Walls improvement is selected or cleared, reusing the existing partial city redraw path.
 - Preserved C3X District and Wonder District improvement-name references when an Improvement is renamed, including dependent improvements, wonder prerequisites, and conditional bonus entries, with async quality checks now warning on unknown conditional bonus improvement/terrain references.
 - Aligned Scenario Players with Quint semantics by exposing direct LEAD player Add/Delete controls and structured Starting Units editing in the Scenario -> Players panel, keeping playable civilizations separate from player-record count, and seeding added players with Quint-style defaults.
