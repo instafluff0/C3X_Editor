@@ -1012,6 +1012,257 @@ test('BIQ round-trip persists deterministic playable civilization list rewrites'
   assert.deepEqual(rePlayable, replacement);
 });
 
+test('BIQ round-trip keeps playable civilization rewrites separate from LEAD player count', (t) => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable LEAD no-map fixture BIQ is missing.');
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const leadSectionBefore = getSection(bundle.tabs.players, 'LEAD');
+  const leadCountBefore = Array.isArray(leadSectionBefore && leadSectionBefore.records) ? leadSectionBefore.records.length : 0;
+  if (leadCountBefore < 1) {
+    t.skip('Sample BIQ has no LEAD player records.');
+    return;
+  }
+
+  const gameRecord = getScenarioSettingsRecord(bundle);
+  if (!gameRecord) {
+    t.skip('Sample BIQ has no GAME record.');
+    return;
+  }
+  const fields = Array.isArray(gameRecord.fields) ? gameRecord.fields : [];
+  const countField = getRecordField(gameRecord, 'numberofplayablecivs') || getRecordField(gameRecord, 'number_of_playable_civs');
+  assert.ok(countField, 'expected GAME numberofplayablecivs field');
+  const playableFields = fields
+    .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
+  const playableIds = playableFields
+    .map((field) => parseDisplayIndex(field.value))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (playableIds.length < 2) {
+    t.skip('Sample BIQ does not expose enough playable civilizations.');
+    return;
+  }
+
+  const replacement = [playableIds[1]];
+  const preserved = fields.filter((field) => !/^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
+  const insertAt = Math.max(0, preserved.indexOf(countField) + 1);
+  preserved.splice(insertAt, 0, {
+    key: 'playable_civ_0',
+    baseKey: 'playable_civ_0',
+    label: 'Playable Civilization',
+    value: String(replacement[0]),
+    originalValue: '',
+    editable: true
+  });
+  gameRecord.fields = preserved;
+  countField.value = String(replacement.length);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const parsedGame = getRawParsedSectionFromDisk(scenarioBiq, 'GAME');
+  const rawPlayable = (parsedGame && parsedGame.records && parsedGame.records[0] && Array.isArray(parsedGame.records[0].playableCivIds))
+    ? parsedGame.records[0].playableCivIds.slice()
+    : [];
+  assert.deepEqual(rawPlayable, replacement);
+
+  const parsedLead = getRawParsedSectionFromDisk(scenarioBiq, 'LEAD');
+  const leadCountAfter = Array.isArray(parsedLead && parsedLead.records) ? parsedLead.records.length : 0;
+  assert.equal(leadCountAfter, leadCountBefore, 'GAME playable civ count must not resize LEAD players');
+});
+
+test('BIQ round-trip persists direct LEAD player add with Quint defaults', (t) => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable LEAD no-map fixture BIQ is missing.');
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const leadSectionBefore = getSection(bundle.tabs.players, 'LEAD');
+  const leadCountBefore = Array.isArray(leadSectionBefore && leadSectionBefore.records) ? leadSectionBefore.records.length : 0;
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      players: {
+        recordOps: [{ op: 'add', sectionCode: 'LEAD', newRecordRef: 'LEAD_QUINT_DEFAULT_TEST' }]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const parsedLead = getRawParsedSectionFromDisk(scenarioBiq, 'LEAD');
+  const records = Array.isArray(parsedLead && parsedLead.records) ? parsedLead.records : [];
+  assert.equal(records.length, leadCountBefore + 1);
+
+  const added = records[records.length - 1];
+  assert.equal(added.customCivData, 0);
+  assert.equal(added.humanPlayer, 0);
+  assert.equal(added.civ, -3, 'new players should start as Any civilization');
+  assert.equal(added.government, 1);
+  assert.equal(added.initialEra, 0);
+  assert.equal(added.difficulty, -1);
+  assert.equal(added.startCash, 10);
+  assert.equal(added.skipFirstTurn, 0);
+  assert.equal(added.startEmbassies, 0);
+  assert.deepEqual(added.startUnits, [
+    { startUnitCount: 1, startUnitIndex: 0 },
+    { startUnitCount: 1, startUnitIndex: 1 }
+  ]);
+  assert.equal(added.numStartUnits, 2);
+});
+
+test('BIQ round-trip persists LEAD starting unit list edits', (t) => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable LEAD no-map fixture BIQ is missing.');
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const leadSection = getSection(bundle.tabs.players, 'LEAD');
+  const leadRecord = leadSection && Array.isArray(leadSection.records) ? leadSection.records[0] : null;
+  if (!leadRecord) {
+    t.skip('Sample BIQ has no LEAD player record.');
+    return;
+  }
+
+  const parseStartUnitFieldIndex = (field) => {
+    const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    const match = base.match(/^starting_units_of_type_(.+)$/);
+    if (!match) return null;
+    const suffix = String(match[1] || '').trim().toLowerCase();
+    const numeric = Number.parseInt(suffix, 10);
+    if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+    if (suffix === 'settler') return 0;
+    if (suffix === 'worker') return 1;
+    return null;
+  };
+  const startUnitFields = (Array.isArray(leadRecord.fields) ? leadRecord.fields : [])
+    .map((field) => ({ field, unitIndex: parseStartUnitFieldIndex(field) }))
+    .filter((entry) => Number.isFinite(entry.unitIndex) && entry.unitIndex >= 0);
+  if (startUnitFields.length < 1) {
+    t.skip('Sample BIQ has no editable LEAD starting unit fields.');
+    return;
+  }
+
+  const removeEntry = startUnitFields[0];
+  const used = new Set(startUnitFields.map((entry) => entry.unitIndex));
+  const unitEntries = (bundle.tabs.units && Array.isArray(bundle.tabs.units.entries)) ? bundle.tabs.units.entries : [];
+  const addUnitIndex = unitEntries
+    .map((entry, idx) => Number.isFinite(Number(entry && entry.biqIndex)) ? Number(entry.biqIndex) : idx)
+    .find((idx) => Number.isFinite(idx) && idx >= 0 && !used.has(idx));
+  if (!Number.isFinite(addUnitIndex)) {
+    t.skip('Sample BIQ has no unused unit index to add as a starting unit.');
+    return;
+  }
+
+  removeEntry.field.value = '0';
+  leadRecord.fields.push({
+    key: `starting_units_of_type_${addUnitIndex}`,
+    baseKey: `starting_units_of_type_${addUnitIndex}`,
+    label: 'Starting Unit',
+    value: '3',
+    originalValue: ''
+  });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const parsedLead = getRawParsedSectionFromDisk(scenarioBiq, 'LEAD');
+  const savedLeadRecord = parsedLead && Array.isArray(parsedLead.records) ? parsedLead.records[0] : null;
+  assert.ok(savedLeadRecord, 'expected saved LEAD record');
+  const savedStartUnits = Array.isArray(savedLeadRecord.startUnits) ? savedLeadRecord.startUnits : [];
+  assert.equal(
+    savedStartUnits.some((entry) => Number(entry && entry.startUnitIndex) === removeEntry.unitIndex),
+    false,
+    'zero-count starting unit field should remove that unit from LEAD.startUnits'
+  );
+  const added = savedStartUnits.find((entry) => Number(entry && entry.startUnitIndex) === addUnitIndex);
+  assert.ok(added, 'expected newly added starting unit to persist');
+  assert.equal(Number(added.startUnitCount), 3);
+  assert.equal(Number(savedLeadRecord.numStartUnits), savedStartUnits.length);
+});
+
+test('BIQ round-trip persists direct LEAD player delete', (t) => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable LEAD no-map fixture BIQ is missing.');
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const leadSectionBefore = getSection(bundle.tabs.players, 'LEAD');
+  const leadCountBefore = Array.isArray(leadSectionBefore && leadSectionBefore.records) ? leadSectionBefore.records.length : 0;
+  if (leadCountBefore < 2) {
+    t.skip('Sample BIQ does not have enough LEAD records to delete deterministically.');
+    return;
+  }
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      players: {
+        recordOps: [{ op: 'delete', sectionCode: 'LEAD', recordRef: `@INDEX:${leadCountBefore - 1}` }]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const parsedLead = getRawParsedSectionFromDisk(scenarioBiq, 'LEAD');
+  const records = Array.isArray(parsedLead && parsedLead.records) ? parsedLead.records : [];
+  assert.equal(records.length, leadCountBefore - 1);
+});
+
 test('BIQ round-trip persists array-backed projected and synthetic BIQ fields', (t) => {
   const sampleBiq = getStablePlayableCivsFixturePath();
   if (!fs.existsSync(sampleBiq)) t.skip('Stable playable civ fixture BIQ is missing.');

@@ -5782,6 +5782,158 @@ function tokenizeSectionListPreservingQuotes(text) {
   return items;
 }
 
+function findUnquotedColon(value) {
+  const input = String(value == null ? '' : value);
+  let inQuotes = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && ch === ':') return i;
+  }
+  return -1;
+}
+
+function normalizeSectionReferenceToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  return raw.replace(/^"(.*)"$/, '$1').trim();
+}
+
+function formatRenamedSectionReferenceToken(originalToken, nextName) {
+  const next = String(nextName == null ? '' : nextName).trim();
+  if (!next) return '';
+  const raw = String(originalToken == null ? '' : originalToken).trim();
+  if (/^".*"$/.test(raw) || /[,\s:]/.test(next)) return quoteSectionToken(next);
+  return next;
+}
+
+function replaceSectionReferenceListNames(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value);
+  const tokens = tokenizeSectionListPreservingQuotes(raw);
+  let changed = false;
+  const nextTokens = tokens.map((token) => {
+    const normalized = normalizeSectionReferenceToken(token);
+    const replacement = renameByLookup.get(normalized.toLowerCase());
+    if (!replacement) return token;
+    changed = true;
+    return formatRenamedSectionReferenceToken(token, replacement);
+  });
+  return { value: changed ? nextTokens.join(', ') : raw, changed };
+}
+
+function replaceSectionBonusReferenceNames(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value);
+  const tokens = tokenizeSectionListPreservingQuotes(raw);
+  let changed = false;
+  const nextTokens = tokens.map((token, index) => {
+    if (index === 0) return token;
+    const colonIndex = findUnquotedColon(token);
+    if (colonIndex < 0) return token;
+    const rawName = token.slice(0, colonIndex).trim();
+    const replacement = renameByLookup.get(normalizeSectionReferenceToken(rawName).toLowerCase());
+    if (!replacement) return token;
+    changed = true;
+    const rhs = token.slice(colonIndex + 1).trim();
+    return `${formatRenamedSectionReferenceToken(rawName, replacement)}: ${rhs}`;
+  });
+  return { value: changed ? nextTokens.join(', ') : raw, changed };
+}
+
+function replaceSectionSingleReferenceName(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value).trim();
+  const replacement = renameByLookup.get(normalizeSectionReferenceToken(raw).toLowerCase());
+  if (!replacement) return { value: String(value == null ? '' : value), changed: false };
+  return { value: replacement, changed: true };
+}
+
+const DISTRICT_IMPROVEMENT_REFERENCE_LIST_KEYS = new Set(['dependent_improvs', 'wonder_prereqs']);
+const DISTRICT_IMPROVEMENT_BONUS_KEYS = new Set([
+  'defense_bonus_percent',
+  'culture_bonus',
+  'science_bonus',
+  'food_bonus',
+  'gold_bonus',
+  'shield_bonus',
+  'happiness_bonus'
+]);
+
+function getImprovementEntryNameField(entry) {
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  return fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name') || null;
+}
+
+function getImprovementEntryCurrentName(entry) {
+  const field = getImprovementEntryNameField(entry);
+  return normalizeSectionReferenceToken(field && field.value) || normalizeSectionReferenceToken(entry && entry.name);
+}
+
+function getImprovementEntryOriginalName(entry) {
+  const field = getImprovementEntryNameField(entry);
+  return normalizeSectionReferenceToken(field && field.originalValue) || normalizeSectionReferenceToken(entry && entry.originalName);
+}
+
+function collectImprovementNameRenames(tabs) {
+  const entries = Array.isArray(tabs && tabs.improvements && tabs.improvements.entries)
+    ? tabs.improvements.entries
+    : [];
+  const renameByLookup = new Map();
+  entries.forEach((entry) => {
+    const oldName = getImprovementEntryOriginalName(entry);
+    const newName = getImprovementEntryCurrentName(entry);
+    if (!oldName || !newName) return;
+    if (oldName.toLowerCase() === newName.toLowerCase() && oldName === newName) return;
+    renameByLookup.set(oldName.toLowerCase(), newName);
+  });
+  return renameByLookup;
+}
+
+function applyImprovementNameRenamesToSectionedTabs(tabs) {
+  const renameByLookup = collectImprovementNameRenames(tabs || {});
+  const changedTabs = new Set();
+  if (renameByLookup.size <= 0) return changedTabs;
+
+  const updateFields = (tabKey, section, updater) => {
+    const fields = Array.isArray(section && section.fields) ? section.fields : [];
+    fields.forEach((field) => {
+      const result = updater(field);
+      if (!result || !result.changed) return;
+      field.value = result.value;
+      changedTabs.add(tabKey);
+    });
+  };
+
+  const districtSections = (((tabs || {}).districts || {}).model || {}).sections;
+  (Array.isArray(districtSections) ? districtSections : []).forEach((section) => {
+    updateFields('districts', section, (field) => {
+      const key = String(field && field.key || '').trim().toLowerCase();
+      if (DISTRICT_IMPROVEMENT_REFERENCE_LIST_KEYS.has(key)) {
+        return replaceSectionReferenceListNames(field.value, renameByLookup);
+      }
+      if (DISTRICT_IMPROVEMENT_BONUS_KEYS.has(key)) {
+        return replaceSectionBonusReferenceNames(field.value, renameByLookup);
+      }
+      return null;
+    });
+  });
+
+  const wonderSections = (((tabs || {}).wonders || {}).model || {}).sections;
+  (Array.isArray(wonderSections) ? wonderSections : []).forEach((section) => {
+    updateFields('wonders', section, (field) => {
+      const key = String(field && field.key || '').trim().toLowerCase();
+      if (key !== 'name') return null;
+      return replaceSectionSingleReferenceName(field.value, renameByLookup);
+    });
+  });
+
+  return changedTabs;
+}
+
 const SECTION_QUOTED_VALUE_KEYS_BY_KIND = {
   districts: new Set([
     'name', 'display_name', 'tooltip', 'obsoleted_by',
@@ -8092,6 +8244,9 @@ function buildSavePlan(payload) {
     )
   });
   if (unitValidationError) return { ok: false, error: unitValidationError };
+
+  const sectionTabsChangedByImprovementRenames = applyImprovementNameRenamesToSectionedTabs(payload.tabs || {});
+  sectionTabsChangedByImprovementRenames.forEach((tabKey) => dirtyTabs.add(tabKey));
 
   const baseTab = payload.tabs.base;
   const shouldSaveBase = dirtyTabs.size === 0 || dirtyTabs.has('base');

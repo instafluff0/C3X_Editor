@@ -209,6 +209,44 @@ test('auditLoadedBundle skips day-night checks when cycle mode is off', () => {
   assert.equal(result.tabs.base, undefined);
 });
 
+test('auditLoadedBundle reports unknown conditional district bonus improvement references', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeBundle(c3xRoot, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Library Place',
+          biqFields: [{ key: 'name', baseKey: 'name', value: 'Library Place' }]
+        }]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Campus',
+              culture_bonus: '1, "Library Place": 2, grassland: 1',
+              science_bonus: '1, "Missing Lab": 4, river: 1'
+            })
+          ]
+        }
+      },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const messages = ((result.tabs.districts || {}).sections || {})['0'].map((issue) => issue.message);
+  assert.ok(messages.some((message) => /Science Bonus conditional reference: Missing Lab/.test(message)), messages.join('\n'));
+  assert.equal(messages.some((message) => /Library Place|grassland|river/.test(message)), false);
+});
+
 test('auditBundle uses the provided bundle snapshot for live scenario-option previews', () => {
   const c3xRoot = mkTmpDir();
   const bundle = makeBundle(c3xRoot, {

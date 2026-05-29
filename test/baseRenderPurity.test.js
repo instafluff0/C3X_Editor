@@ -220,7 +220,7 @@ test('map city and unit Tile Info owner editors switch owner list by owner type'
   );
 });
 
-test('map owner-support refresh includes Civs, Players, and custom player data', () => {
+test('map owner-support refresh includes Civs, Players, Rules, and custom player data', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
   const supportBlock = text.match(/function isMapOwnerSupportReferenceField\(tabKey, baseKey\) \{[\s\S]*?\n\}/);
@@ -228,9 +228,79 @@ test('map owner-support refresh includes Civs, Players, and custom player data',
 
   assert.match(supportBlock[0], /tab === 'civilizations'/, 'Civ edits should invalidate map owner rendering');
   assert.match(supportBlock[0], /tab === 'players'\) return true;/, 'Player edits should invalidate map owner rendering');
+  assert.match(supportBlock[0], /tab === 'rules'\) return base === 'borderfactor';/, 'Border Factor edits should invalidate map border rendering');
   assert.match(supportBlock[0], /tab === 'scenariosettings'/, 'Scenario custom-player-data edits should invalidate map owner rendering');
   assert.match(text, /refreshMapAfterOwnerSupportChange\('players', 'records'\)/, 'Player add/delete and count sync should refresh open Map views');
   assert.match(text, /refreshMapAfterOwnerSupportChange\('scenarioSettings', 'customPlayerData'\)/, 'Custom player data toggles should refresh open Map views');
+});
+
+test('Scenario Players panel mutates LEAD through the players tab like Quint', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const structureOpsTab = selected\.code === 'LEAD' \? selectedSectionTab : tab;[\s\S]*?structureOpsTab && structureOpsTab\.key === 'players'/,
+    'LEAD add/delete actions should remain enabled when Players are rendered through Scenario -> Players'
+  );
+  assert.match(
+    text,
+    /selected\.code === 'LEAD'[\s\S]*?buildQuintLeadRecord\(newRef, selected\.records\.length\)/,
+    'Adding a player should seed Quint-style LEAD defaults'
+  );
+  assert.match(
+    text,
+    /function setGamePlayableCivilizations[\s\S]*?resetLeadCivilizationsOutsidePlayableSet\(normalizedIds\);[\s\S]*?return count;/,
+    'Playable civilization edits should not resize the LEAD player list'
+  );
+});
+
+test('Scenario Players panel renders LEAD starting units as a structured list', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function parseLeadStartUnitFieldIndex\(field\)[\s\S]*?^function getBiqStructureDisplayLabel/m,
+    'Renderer should parse LEAD starting unit fields instead of exposing only the raw count field'
+  );
+  assert.match(
+    text,
+    /selected\.code === 'LEAD' && groupName === 'Starting Units'[\s\S]*?consumedSpecialFields\.add\(countField\)[\s\S]*?Add Starting Unit/,
+    'Starting Units should consume the raw count field and render Add/Remove unit rows'
+  );
+  assert.match(
+    text,
+    /entry\.field\.value = '0';[\s\S]*?markStartingUnitsDirty\(\);[\s\S]*?renderActiveTab/,
+    'Removing a starting unit should stage a zero-count field edit so save removes that unit from LEAD.startUnits'
+  );
+});
+
+test('map support rendering reads dirty BIQ field values before original load values', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const getFieldRawValue = \(record, baseKey\) => \{[\s\S]*?const current = String\(field\.value == null \? '' : field\.value\)\.trim\(\);[\s\S]*?const raw = String\(field\.originalValue == null \? '' : field\.originalValue\)\.trim\(\);[\s\S]*?if \(current && current !== raw\) return current;[\s\S]*?if \(raw\) return raw;/,
+    'Map support sections should consume dirty Rules/Civs/Players values when rerendering or reopening the map'
+  );
+});
+
+test('map civilization support preserves RACE indexes from reference entries', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const getReferenceBiqSectionFromTab = \(referenceTab, code\) => \{[\s\S]*?index: Number\.isFinite\(entry && entry\.biqIndex\) \? Number\(entry\.biqIndex\) : fallbackIdx,[\s\S]*?fields: Array\.isArray\(entry && entry\.biqFields\) \? entry\.biqFields : \[\]/,
+    'Map RACE support should be synthesized from live civilization reference entries without losing BIQ indexes'
+  );
+  assert.match(
+    text,
+    /const raceIndex = Number\.isFinite\(record && record\.index\) \? Number\(record\.index\) : idx;[\s\S]*?getFieldRawValue\(record, 'civilizationname'\)[\s\S]*?raceIdByName\[civilizationName\.toLowerCase\(\)\] = raceIndex;[\s\S]*?raceDefaultColorById\[raceIndex\] = parseFieldInt\(record, 'defaultcolor', NaN\);/,
+    'Map owner resolution should use live RACE civilization names and default colors keyed by BIQ index'
+  );
 });
 
 test('C3X bitfield base settings serialize with whitespace-separated bracket lists', () => {

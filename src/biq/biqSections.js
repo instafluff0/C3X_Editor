@@ -3313,8 +3313,11 @@ function createDefaultRecord(code, civKey, io) {
         leaderName: '',
         questionMark1: 0,
         questionMark2: 0,
-        numStartUnits: 0,
-        startUnits: [],
+        numStartUnits: 2,
+        startUnits: [
+          { startUnitCount: 1, startUnitIndex: 0 },
+          { startUnitCount: 1, startUnitIndex: 1 }
+        ],
         genderOfLeaderName: 0,
         numStartTechs: 0,
         techIndices: [],

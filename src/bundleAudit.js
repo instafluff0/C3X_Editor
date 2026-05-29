@@ -174,6 +174,39 @@ const DISTRICT_ADJACENT_OVERLAY_TOKENS = [
   'rivers'
 ];
 
+const DISTRICT_BONUS_TERRAIN_TOKENS = new Set([
+  'desert', 'deserts',
+  'plain', 'plains',
+  'grassland', 'grasslands',
+  'tundra', 'tundras',
+  'floodplain', 'floodplains',
+  'hill', 'hills',
+  'mountain', 'mountains',
+  'forest', 'forests',
+  'jungle', 'jungles',
+  'marsh', 'marshes',
+  'swamp', 'swamps',
+  'volcano', 'volcanoes',
+  'coast', 'coasts',
+  'sea', 'seas',
+  'ocean', 'oceans',
+  'river', 'rivers',
+  'snow-volcano', 'snow-volcanoes',
+  'snow-forest', 'snow-forests',
+  'snow-mountain', 'snow-mountains',
+  'any'
+]);
+
+const DISTRICT_BONUS_REFERENCE_RULES = [
+  { key: 'defense_bonus_percent', label: 'Defense Bonus' },
+  { key: 'culture_bonus', label: 'Culture Bonus' },
+  { key: 'science_bonus', label: 'Science Bonus' },
+  { key: 'food_bonus', label: 'Food Bonus' },
+  { key: 'gold_bonus', label: 'Gold Bonus' },
+  { key: 'shield_bonus', label: 'Shield Bonus' },
+  { key: 'happiness_bonus', label: 'Happiness Bonus' }
+];
+
 const SECTION_LINT_SPECS = {
   districts: {
     label: 'District',
@@ -610,6 +643,49 @@ function collectWonderDependencyIssues(section, context) {
   return issues;
 }
 
+function findUnquotedColon(value) {
+  const input = String(value == null ? '' : value);
+  let inQuotes = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && ch === ':') return i;
+  }
+  return -1;
+}
+
+function collectDistrictBonusReferenceIssues(section, context) {
+  const issues = [];
+  const improvementSet = context && context.improvements instanceof Set ? context.improvements : new Set();
+  if (improvementSet.size <= 0) return issues;
+  DISTRICT_BONUS_REFERENCE_RULES.forEach((rule) => {
+    const rawValue = getFieldValue(section, rule.key);
+    const tokens = tokenizeListPreservingQuotes(rawValue);
+    if (tokens.length <= 1) return;
+    const invalidValues = [];
+    const seen = new Set();
+    tokens.slice(1).forEach((token) => {
+      const colonIndex = findUnquotedColon(token);
+      if (colonIndex < 0) return;
+      const name = normalizeConfigToken(token.slice(0, colonIndex));
+      const lookup = normalizeReferenceLookup(name);
+      if (!lookup || seen.has(lookup) || DISTRICT_BONUS_TERRAIN_TOKENS.has(lookup) || improvementSet.has(lookup)) return;
+      seen.add(lookup);
+      invalidValues.push(name);
+    });
+    if (invalidValues.length <= 0) return;
+    issues.push({
+      key: rule.key,
+      label: rule.label,
+      invalidValues
+    });
+  });
+  return issues;
+}
+
 function auditCompatibility(bundle, result) {
   const districtSections = (((bundle || {}).tabs || {}).districts || {}).model;
   const wonderSections = (((bundle || {}).tabs || {}).wonders || {}).model;
@@ -626,6 +702,15 @@ function auditCompatibility(bundle, result) {
         index,
         `${issue.label}: ${issue.invalidValues.join(', ')}`,
         'district-dependency'
+      );
+    });
+    collectDistrictBonusReferenceIssues(section, districtContext).forEach((issue) => {
+      addSectionIssue(
+        result,
+        'districts',
+        index,
+        `${issue.label} conditional reference: ${issue.invalidValues.join(', ')}`,
+        'district-bonus-reference'
       );
     });
   });
@@ -1308,6 +1393,7 @@ function auditLoadedBundle(bundle, options = {}) {
   lintSectionedTab(bundle, result, 'districts');
   lintSectionedTab(bundle, result, 'wonders');
   lintSectionedTab(bundle, result, 'naturalWonders');
+  auditCompatibility(bundle, result);
   auditCurrentDistrictArt(bundle, result);
   auditCurrentWonderArt(bundle, result);
   auditCurrentNaturalWonderArt(bundle, result);

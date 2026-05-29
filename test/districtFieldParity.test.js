@@ -214,6 +214,66 @@ test('serializeSectionedConfig canonicalizes district field formats for C3X-comp
   assert.doesNotMatch(serialized, /generated_resource\s*=\s*.*,\s*(local|yields|no-tech-req)/);
 });
 
+test('saveBundle rewrites district and wonder district improvement-name references after improvement rename', () => {
+  const c3xPath = mkTmpDir();
+  seedMinimalC3x(c3xPath);
+  const result = saveBundle({
+    mode: 'standard',
+    c3xPath,
+    civ3Path: c3xPath,
+    dirtyTabs: ['improvements'],
+    tabs: {
+      improvements: {
+        entries: [{
+          name: 'Library Place',
+          biqFields: [
+            { key: 'name', baseKey: 'name', value: 'Library Place', originalValue: 'Library' }
+          ]
+        }]
+      },
+      districts: {
+        model: {
+          sections: [{
+            marker: '#District',
+            comments: [],
+            fields: [
+              { key: 'name', value: 'Campus' },
+              { key: 'dependent_improvs', value: 'Library, University' },
+              { key: 'wonder_prereqs', value: '"Library"' },
+              { key: 'culture_bonus', value: '1, Library: 2, grassland: 1' },
+              { key: 'science_bonus', value: '1, "Library": 4' }
+            ]
+          }],
+          headerComments: []
+        }
+      },
+      wonders: {
+        model: {
+          sections: [{
+            marker: '#Wonder',
+            comments: [],
+            fields: [
+              { key: 'name', value: 'Library' },
+              { key: 'img_row', value: '0' },
+              { key: 'img_column', value: '0' }
+            ]
+          }],
+          headerComments: []
+        }
+      }
+    }
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const districtsText = fs.readFileSync(path.join(c3xPath, 'user.districts_config.txt'), 'utf8');
+  const wondersText = fs.readFileSync(path.join(c3xPath, 'user.districts_wonders_config.txt'), 'utf8');
+  assert.match(districtsText, /dependent_improvs\s*=\s*"Library Place", "University"/);
+  assert.match(districtsText, /wonder_prereqs\s*=\s*"Library Place"/);
+  assert.match(districtsText, /culture_bonus\s*=\s*1, "Library Place": 2, grassland: 1/);
+  assert.match(districtsText, /science_bonus\s*=\s*1, "Library Place": 4/);
+  assert.match(wondersText, /name\s*=\s*"Library Place"/);
+});
+
 test('district and wonder image paths serialize as filenames instead of full file paths', () => {
   const districts = parseSectionedConfig([
     '#District',

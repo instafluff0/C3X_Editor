@@ -70,6 +70,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const borderFactor = Math\.max\(1, parseFieldInt\(ruleRecord, 'borderfactor', 10\)\);[\s\S]*?cityCulture = Math\.floor\(cityCulture \/ borderFactor\);/,
+    'map border influence should use the BIQ Border Factor instead of hard-coded culture thresholds'
+  );
+  assert.match(
+    rendererText,
     /const drawHoverBorder = \(hit\) => \{[\s\S]*?shadowColor = 'rgba\(196, 149, 255, 0\.52\)'[\s\S]*?hoverGradient\.addColorStop\(1, 'rgba\(244, 158, 255, 0\.96\)'\)[\s\S]*?drawTileDiamondPath\(hoverCtx, cx, cy, Math\.max\(3, Math\.round\(tilePx \/ 3\.8\)\)\);/,
     'hover border should draw a lighter inset purple-gradient diamond around the hovered tile'
   );
@@ -173,8 +178,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const getMapSupportSection = \(sectionCode\) => \{[\s\S]*?if \(code === 'TERR' \|\| code === 'TFRM'\) return getBiqSectionFromTab\(terrainSupportTab, code\);[\s\S]*?if \(code === 'ERAS'\) return getBiqSectionFromTab\(worldSupportTab, code\);[\s\S]*?if \(code === 'RULE'\) return getBiqSectionFromTab\(rulesSupportTab, code\);[\s\S]*?if \(code === 'LEAD'\) return getBiqSectionFromTab\(playersSupportTab, code\);[\s\S]*?return null;[\s\S]*?\};[\s\S]*?const terrainSectionForPicker = getMapSupportSection\('TERR'\);/,
-    'map toolbar pickers should fall back to the loaded Terrain/World/Rules/Players BIQ tabs when the scenario map tab lacks those sections'
+    /const getReferenceBiqSectionFromTab = \(referenceTab, code\) => \{[\s\S]*?fields: Array\.isArray\(entry && entry\.biqFields\) \? entry\.biqFields : \[\][\s\S]*?const getMapSupportSection = \(sectionCode\) => \{[\s\S]*?if \(code === 'RACE'\) return getReferenceBiqSectionFromTab\(civilizationReferenceTab, code\);[\s\S]*?if \(code === 'TERR' \|\| code === 'TFRM'\) return getBiqSectionFromTab\(terrainSupportTab, code\);[\s\S]*?if \(code === 'ERAS'\) return getBiqSectionFromTab\(worldSupportTab, code\);[\s\S]*?if \(code === 'RULE'\) return getBiqSectionFromTab\(rulesSupportTab, code\);[\s\S]*?if \(code === 'LEAD'\) return getBiqSectionFromTab\(playersSupportTab, code\);[\s\S]*?return null;[\s\S]*?\};[\s\S]*?const terrainSectionForPicker = getMapSupportSection\('TERR'\);/,
+    'map toolbar pickers should fall back to the loaded Civs/Terrain/World/Rules/Players BIQ tabs when the scenario map tab lacks those sections'
   );
   assert.match(
     rendererText,
@@ -463,6 +468,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     rendererText,
     /if \(refreshMode === 'partial'\) \{[\s\S]*?scheduleMapPartialRefresh\(\[state\.biqMapSelectedTile\], 180, \{[\s\S]*?source: 'city-field'[\s\S]*?\}\);[\s\S]*?\} else if \(refreshMode === 'canvas'\)[\s\S]*?addCityField\(\{ key: 'size', label: 'Population', type: 'number', min: 1, refreshMode: 'partial', live: true \}\);[\s\S]*?addCityField\(\{ key: 'culture', label: 'Culture', type: 'number', min: 0, refreshMode: 'rerender', live: false \}\);/,
     'city population should use the clipped partial-refresh path while culture remains on the territory-aware rerender path'
+  );
+  assert.match(
+    rendererText,
+    /const isCityWallsImprovementRecord = \(buildingRecord, improvementEntry\) => \{[\s\S]*?bldgwalls[\s\S]*?citywalls[\s\S]*?\};[\s\S]*?const syncCityWallsFlagFromBuildings = \(cityRecord, buildingSet, buildingRecords\) => \{[\s\S]*?setMapFieldValue\(cityRecord, 'haswalls', nextHasWalls, 'Has Walls'\);[\s\S]*?\};[\s\S]*?setCityBuildingSet\(cityRecord, currentSet\);[\s\S]*?const wallsChanged = syncCityWallsFlagFromBuildings\(cityRecord, currentSet, bldgRecords\);[\s\S]*?scheduleMapPartialRefresh\(refreshTileIndexes, 60, \{[\s\S]*?source: 'city-building'[\s\S]*?wallsChanged/,
+    'city Buildings edits should sync the game wall flag and use the existing partial redraw path so city wall art updates immediately'
   );
   assert.match(
     rendererText,

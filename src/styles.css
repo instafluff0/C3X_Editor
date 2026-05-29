@@ -8469,14 +8469,65 @@ details > summary:focus-visible {
   width: 72px;
 }
 
+.free-tech-control {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
 .free-tech-control .tech-picker {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
 }
 
 .free-tech-control .tech-picker-btn {
   min-width: 0;
   flex: 1;
+}
+
+.free-tech-row,
+.lead-start-unit-row {
+  grid-template-columns: minmax(120px, 210px) minmax(0, 1fr);
+}
+
+.lead-start-unit-control {
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.lead-start-unit-control .tech-picker {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.lead-start-unit-control .tech-picker-btn {
+  min-width: 0;
+  flex: 1;
+}
+
+.lead-start-unit-control input[type="number"] {
+  width: 52px;
+  min-width: 52px;
+  max-width: 52px;
+  flex: 0 0 52px;
+  padding-left: 8px;
+  padding-right: 6px;
+}
+
+.rule-control .compact-remove-btn {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: rgba(73, 69, 98, 0.2);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.rule-control .compact-remove-btn .remove-icon {
+  margin-right: 0;
 }
 
 .alliance-dnd-board {

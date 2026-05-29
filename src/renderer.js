@@ -145,6 +145,7 @@ const state = {
   biqMapArtCache: {},
   biqMapArtLoading: {},
   biqMapDistrictFallbackCache: new Map(),
+  biqMapTransparentDistrictPreviewLogKeys: new Set(),
   biqMapTerritoryEdgeCache: new Map(),
   biqMapNtpColorCache: {},
   civSlotUiColorCache: {},
@@ -7444,6 +7445,133 @@ function serializeBonusValue({ base, conditions }) {
   return parts.join(', ');
 }
 
+function findUnquotedColon(value) {
+  const input = String(value == null ? '' : value);
+  let inQuotes = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && ch === ':') return i;
+  }
+  return -1;
+}
+
+function quoteConfigReferenceToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  return `"${raw.replace(/"/g, '\\"')}"`;
+}
+
+function formatRenamedConfigReferenceToken(originalToken, nextName) {
+  const next = String(nextName == null ? '' : nextName).trim();
+  if (!next) return '';
+  const raw = String(originalToken == null ? '' : originalToken).trim();
+  if (/^".*"$/.test(raw) || /[,\s:]/.test(next)) return quoteConfigReferenceToken(next);
+  return next;
+}
+
+function buildSingleNameRenameLookup(oldName, nextName) {
+  const oldClean = normalizeConfigToken(oldName);
+  const nextClean = normalizeConfigToken(nextName);
+  if (!oldClean || !nextClean || oldClean === nextClean) return null;
+  return new Map([[oldClean.toLowerCase(), nextClean]]);
+}
+
+function replaceConfigReferenceListNames(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value);
+  const tokens = tokenizeListPreservingQuotes(raw);
+  let changed = false;
+  const nextTokens = tokens.map((token) => {
+    const replacement = renameByLookup.get(normalizeConfigToken(token).toLowerCase());
+    if (!replacement) return token;
+    changed = true;
+    return formatRenamedConfigReferenceToken(token, replacement);
+  });
+  return { value: changed ? nextTokens.join(', ') : raw, changed };
+}
+
+function replaceConfigBonusReferenceNames(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value);
+  const tokens = tokenizeListPreservingQuotes(raw);
+  let changed = false;
+  const nextTokens = tokens.map((token, index) => {
+    if (index === 0) return token;
+    const colonIndex = findUnquotedColon(token);
+    if (colonIndex < 0) return token;
+    const rawName = token.slice(0, colonIndex).trim();
+    const replacement = renameByLookup.get(normalizeConfigToken(rawName).toLowerCase());
+    if (!replacement) return token;
+    changed = true;
+    const rhs = token.slice(colonIndex + 1).trim();
+    return `${formatRenamedConfigReferenceToken(rawName, replacement)}: ${rhs}`;
+  });
+  return { value: changed ? nextTokens.join(', ') : raw, changed };
+}
+
+function replaceConfigSingleReferenceName(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value).trim();
+  const replacement = renameByLookup.get(normalizeConfigToken(raw).toLowerCase());
+  if (!replacement) return { value: String(value == null ? '' : value), changed: false };
+  return { value: replacement, changed: true };
+}
+
+const DISTRICT_IMPROVEMENT_REFERENCE_LIST_KEYS = new Set(['dependent_improvs', 'wonder_prereqs']);
+const DISTRICT_IMPROVEMENT_BONUS_KEYS = new Set([
+  'defense_bonus_percent',
+  'culture_bonus',
+  'science_bonus',
+  'food_bonus',
+  'gold_bonus',
+  'shield_bonus',
+  'happiness_bonus'
+]);
+
+function applyImprovementNameRenameToC3xReferences(oldName, nextName) {
+  const renameByLookup = buildSingleNameRenameLookup(oldName, nextName);
+  if (!renameByLookup || !state.bundle || !state.bundle.tabs) return false;
+  const changedTabs = new Set();
+  const updateFields = (tabKey, section, updater) => {
+    const fields = Array.isArray(section && section.fields) ? section.fields : [];
+    fields.forEach((field) => {
+      const result = updater(field);
+      if (!result || !result.changed) return;
+      field.value = result.value;
+      changedTabs.add(tabKey);
+    });
+  };
+
+  const districtSections = (((state.bundle.tabs.districts || {}).model || {}).sections) || [];
+  districtSections.forEach((section) => {
+    updateFields('districts', section, (field) => {
+      const key = String(field && field.key || '').trim().toLowerCase();
+      if (DISTRICT_IMPROVEMENT_REFERENCE_LIST_KEYS.has(key)) return replaceConfigReferenceListNames(field.value, renameByLookup);
+      if (DISTRICT_IMPROVEMENT_BONUS_KEYS.has(key)) return replaceConfigBonusReferenceNames(field.value, renameByLookup);
+      return null;
+    });
+  });
+
+  const wonderSections = (((state.bundle.tabs.wonders || {}).model || {}).sections) || [];
+  wonderSections.forEach((section) => {
+    updateFields('wonders', section, (field) => {
+      const key = String(field && field.key || '').trim().toLowerCase();
+      if (key !== 'name') return null;
+      return replaceConfigSingleReferenceName(field.value, renameByLookup);
+    });
+  });
+
+  if (changedTabs.size <= 0) return false;
+  state.isDirty = true;
+  changedTabs.forEach((tabKey) => recomputeDirtyCountForTab(tabKey));
+  scheduleDirtyUiRefresh('improvement-rename-references');
+  return true;
+}
+
 function parseConfigInteger(value, fallback = 0) {
   const normalized = normalizeConfigToken(value);
   const parsed = Number.parseInt(normalized, 10);
@@ -12513,7 +12641,7 @@ const FIELD_HELP_NOTES = {
       techrate: 'Research cost multiplier for this world size.'
     },
     GAME: {
-      numberofplayablecivs: 'Press Enter to set the number of players',
+      numberofplayablecivs: 'Number of playable civilizations stored in the scenario GAME section',
       cityeliminationcount: 'Elimination threshold: 1 means a civ is eliminated when it loses its last city.',
       cityelimination: 'Elimination threshold: 1 means a civ is eliminated when it loses its last city.'
     },
@@ -13091,7 +13219,7 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       scenariosearchfolders: { group: 'Scenario', control: 'text', label: 'Scenario Search Folder' },
       usedefaultrules: { group: 'Game Options', control: 'bool', label: 'Use Default Rules' },
       debugmode: { group: 'Map Options', control: 'bool' },
-      numberofplayablecivs: { group: 'Player Options', control: 'number', min: 1, max: 32, label: 'Number of Players' },
+      numberofplayablecivs: { group: 'Player Options', control: 'number', min: 1, max: 32, label: 'Number of Playable Civilizations' },
       playable_civ: { group: 'Player Options', control: 'reference', label: 'Playable Civilization' },
       defaultvictoryconditions: { group: 'Game Options', control: 'bool' },
       dominationenabled: { group: 'Victory Conditions', control: 'bool', label: 'Domination Victory' },
@@ -13536,6 +13664,78 @@ function getLeadStartUnitDisplayLabel(field) {
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (m) => m.toUpperCase());
   return unitName ? `${unitName} Units` : String(field && (field.label || field.key) || 'Starting Unit');
+}
+
+function parseLeadStartUnitFieldIndex(field) {
+  const baseKey = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const match = baseKey.match(/^starting_units_of_type_(.+)$/);
+  if (!match) return null;
+  const suffix = String(match[1] || '').trim().toLowerCase();
+  const numeric = Number.parseInt(suffix, 10);
+  if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+  if (suffix === 'settler') return 0;
+  if (suffix === 'worker') return 1;
+  return null;
+}
+
+function getLeadStartUnitCount(field) {
+  const parsed = Number.parseInt(String(field && field.value || '').trim(), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function getLeadStartUnitFields(record) {
+  return (Array.isArray(record && record.fields) ? record.fields : [])
+    .filter((field) => parseLeadStartUnitFieldIndex(field) != null);
+}
+
+function makeLeadStartUnitField(unitIndex, amount = 1) {
+  const idx = Math.max(0, Number.parseInt(String(unitIndex), 10) || 0);
+  const baseKey = `starting_units_of_type_${idx}`;
+  return {
+    key: baseKey,
+    baseKey,
+    label: getSeedLeadFieldLabel(baseKey),
+    value: String(Math.max(0, Number.parseInt(String(amount), 10) || 0)),
+    originalValue: ''
+  };
+}
+
+function ensureLeadStartUnitField(record, unitIndex, amount = 1) {
+  if (!record) return null;
+  if (!Array.isArray(record.fields)) record.fields = [];
+  const idx = Number.parseInt(String(unitIndex), 10);
+  if (!Number.isFinite(idx) || idx < 0) return null;
+  const existing = getLeadStartUnitFields(record).find((field) => parseLeadStartUnitFieldIndex(field) === idx);
+  if (existing) return existing;
+  const created = makeLeadStartUnitField(idx, amount);
+  const startFields = getLeadStartUnitFields(record);
+  let insertAt = record.fields.length;
+  if (startFields.length > 0) {
+    const lastPos = record.fields.indexOf(startFields[startFields.length - 1]);
+    if (lastPos >= 0) insertAt = lastPos + 1;
+  } else {
+    const countField = getFieldByBaseKey(record, 'numberofdifferentstartunits');
+    const countPos = record.fields.indexOf(countField);
+    if (countPos >= 0) insertAt = countPos + 1;
+  }
+  record.fields.splice(insertAt, 0, created);
+  return created;
+}
+
+function getLeadStartUnitEntries(record) {
+  const seen = new Set();
+  return getLeadStartUnitFields(record)
+    .map((field) => ({
+      field,
+      unitIndex: parseLeadStartUnitFieldIndex(field),
+      amount: getLeadStartUnitCount(field)
+    }))
+    .filter((entry) => {
+      if (!Number.isFinite(entry.unitIndex) || entry.unitIndex < 0 || entry.amount <= 0) return false;
+      if (seen.has(entry.unitIndex)) return false;
+      seen.add(entry.unitIndex);
+      return true;
+    });
 }
 
 function getBiqStructureDisplayLabel(sectionCode, field, groupFields, fieldIdx) {
@@ -30397,11 +30597,7 @@ function syncLeadRecordCountToTarget(targetCountRaw) {
   if (targetCount > current) {
     for (let i = current; i < targetCount; i += 1) {
       const newRef = makeUniqueBiqStructureRecordRef(playersTab, 'LEAD');
-      const newRecord = makeBlankBiqStructureRecord({
-        section: leadSection,
-        newRecordRef: newRef,
-        displayName: `Player ${i + 1}`
-      });
+      const newRecord = buildQuintLeadRecord(newRef, i);
       leadSection.records.push(newRecord);
       ops.push({ op: 'add', sectionCode: 'LEAD', newRecordRef: newRef });
       _dbgLog('INF', 'BiqCRUD', `LEAD add: newRef=${newRef} (syncLeadCount target=${targetCount})`);
@@ -30425,6 +30621,11 @@ function syncLeadRecordCountToTarget(targetCountRaw) {
       _dbgLog('INF', 'BiqCRUD', `LEAD delete: ref=${target} (syncLeadCount target=${targetCount})`);
     }
   }
+  leadSection.records.forEach((record, idx) => {
+    record.index = idx;
+    const name = String(record && record.name || '').trim();
+    if (!name || /^Player\s+\d+$/i.test(name)) record.name = `Player ${idx + 1}`;
+  });
   return true;
 }
 
@@ -30564,6 +30765,25 @@ function setCivilizationPlayableState(entry, nextPlayable) {
   return true;
 }
 
+function resetLeadCivilizationsOutsidePlayableSet(playableIds) {
+  const playable = new Set((Array.isArray(playableIds) ? playableIds : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0));
+  const playersTab = getBiqTabByKey('players');
+  const leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+  const records = Array.isArray(leadSection && leadSection.records) ? leadSection.records : [];
+  let changed = false;
+  records.forEach((record) => {
+    const civField = getFieldByBaseKey(record, 'civ');
+    const civIdx = parseIntFromDisplayValue(civField && civField.value);
+    if (!Number.isFinite(civIdx) || civIdx < 0 || playable.has(civIdx)) return;
+    civField.value = '-3';
+    changed = true;
+  });
+  if (changed) refreshMapAfterOwnerSupportChange('players', 'civ');
+  return changed;
+}
+
 function getGamePlayableCivFields(record) {
   const fields = Array.isArray(record && record.fields) ? record.fields : [];
   return fields.filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
@@ -30611,7 +30831,7 @@ function setGamePlayableCivilizations(record, playableIds) {
   preserved.splice(insertAt, 0, ...newPlayableFields);
   record.fields = preserved;
   const count = syncNumberOfPlayableCivsField(record);
-  syncLeadRecordCountToTarget(count);
+  resetLeadCivilizationsOutsidePlayableSet(normalizedIds);
   return count;
 }
 
@@ -33320,11 +33540,16 @@ function renderReferenceTab(tab, tabKey) {
         nameInput.value = String(entry.name || '');
         wireGroupedUndoSession(nameInput, {
           key: `REF_NAME:${tabKey}:${selectedBaseIndex}`,
-          undoKey: buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
+          undoKey: tabKey === 'improvements'
+            ? `IMPROVEMENT_NAME_WITH_C3X_REFS:${selectedBaseIndex}`
+            : buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex),
           getValue: () => nameInput.value
         });
         nameInput.addEventListener('input', () => {
           const next = String(nameInput.value || '');
+          const previousImprovementName = tabKey === 'improvements'
+            ? getReferenceEntryDisplayName(tabKey, entry)
+            : '';
           entry.name = next;
           topName.textContent = next;
           const activeName = listPane.querySelector('.entry-list-item.active strong');
@@ -33338,6 +33563,7 @@ function renderReferenceTab(tab, tabKey) {
           } else {
             const nameField = ensureBiqFieldByBaseKey(entry, getReferenceTopNameBiqFieldKey(tabKey), 'Name', next);
             if (nameField) nameField.value = next;
+            if (tabKey === 'improvements') applyImprovementNameRenameToC3xReferences(previousImprovementName, next);
             if (entry.isNew) syncInlineKeyFromName(next);
           }
           setDirty(true);
@@ -34461,7 +34687,10 @@ function renderBiqTab(tab) {
     return biqEnumOptionsCache.get(cacheKey) || [];
   };
 
-  const structureMutable = !tab.readOnly && (selected.code === 'TFRM' || (selected.code === 'LEAD' && selectionKey === 'players'));
+  const structureOpsTab = selected.code === 'LEAD' ? selectedSectionTab : tab;
+  const structureMutable = selected.code === 'LEAD'
+    ? !!(structureOpsTab && structureOpsTab.key === 'players' && !structureOpsTab.readOnly)
+    : !tab.readOnly && selected.code === 'TFRM';
   if (structureMutable) {
     const actionRow = document.createElement('div');
     actionRow.className = 'reference-entity-actions';
@@ -34489,20 +34718,16 @@ function renderBiqTab(tab) {
     deleteBtn.disabled = !selectedRecord;
 
     addBtn.addEventListener('click', () => {
-      const newRef = makeUniqueBiqStructureRecordRef(tab, selected.code);
+      const newRef = makeUniqueBiqStructureRecordRef(structureOpsTab, selected.code);
       const newRecord = selected.code === 'LEAD'
-        ? makeBlankBiqStructureRecord({
-          section: selected,
-          newRecordRef: newRef,
-          displayName: `Player ${selected.records.length + 1}`
-        })
+        ? buildQuintLeadRecord(newRef, selected.records.length)
         : buildBiqStructureRecordFromSource({
           section: selected,
           sourceRecord: selectedRecord || records[0] || null,
           mode: 'blank',
           newRecordRef: newRef
         });
-      const ops = ensureBiqStructureRecordOps(tab);
+      const ops = ensureBiqStructureRecordOps(structureOpsTab);
       rememberUndoSnapshot();
       if (selected.code === 'LEAD') selected.records.push(newRecord);
       else selected.records.unshift(newRecord);
@@ -34525,14 +34750,14 @@ function renderBiqTab(tab) {
         setStatus('Could not resolve source record for copy.', true);
         return;
       }
-      const newRef = makeUniqueBiqStructureRecordRef(tab, selected.code);
+      const newRef = makeUniqueBiqStructureRecordRef(structureOpsTab, selected.code);
       const newRecord = buildBiqStructureRecordFromSource({
         section: selected,
         sourceRecord: selectedRecord,
         mode: 'copy',
         newRecordRef: newRef
       });
-      const ops = ensureBiqStructureRecordOps(tab);
+      const ops = ensureBiqStructureRecordOps(structureOpsTab);
       rememberUndoSnapshot();
       selected.records.unshift(newRecord);
       ops.push({ op: 'copy', sectionCode: selected.code, sourceRef, newRecordRef: newRef });
@@ -34569,14 +34794,14 @@ function renderBiqTab(tab) {
         }
         const sourceIdx = Math.max(0, Math.min(selectedRecordIndex, importRecords.length - 1));
         const sourceRecord = importRecords[sourceIdx];
-        const newRef = makeUniqueBiqStructureRecordRef(tab, selected.code);
+        const newRef = makeUniqueBiqStructureRecordRef(structureOpsTab, selected.code);
         const newRecord = buildBiqStructureRecordFromSource({
           section: selected,
           sourceRecord,
           mode: 'import',
           newRecordRef: newRef
         });
-        const ops = ensureBiqStructureRecordOps(tab);
+        const ops = ensureBiqStructureRecordOps(structureOpsTab);
         rememberUndoSnapshot();
         selected.records.unshift(newRecord);
         ops.push({ op: 'add', sectionCode: selected.code, newRecordRef: newRef });
@@ -34609,19 +34834,26 @@ function renderBiqTab(tab) {
       const target = String(targetRef).trim().toUpperCase();
       rememberUndoSnapshot();
       selected.records = selected.records.filter((record) => record !== selectedRecord);
-      const ops = ensureBiqStructureRecordOps(tab);
+      const ops = ensureBiqStructureRecordOps(structureOpsTab);
       const hadCreate = ops.some((op) => String(op && op.newRecordRef || '').trim().toUpperCase() === target);
-      tab.recordOps = ops.filter((op) => {
+      structureOpsTab.recordOps = ops.filter((op) => {
         const rec = String(op && op.recordRef || '').trim().toUpperCase();
         const src = String(op && op.sourceRef || '').trim().toUpperCase();
         const next = String(op && op.newRecordRef || '').trim().toUpperCase();
         return rec !== target && src !== target && next !== target;
       });
       if (!hadCreate) {
-        ensureBiqStructureRecordOps(tab).push({ op: 'delete', sectionCode: selected.code, recordRef: target });
+        ensureBiqStructureRecordOps(structureOpsTab).push({ op: 'delete', sectionCode: selected.code, recordRef: target });
         _dbgLog('INF', 'BiqCRUD', `structure delete: section=${selected.code} ref=${target}`);
       } else {
         _dbgLog('INF', 'BiqCRUD', `structure delete (was new, reverted create op): section=${selected.code} ref=${target}`);
+      }
+      if (selected.code === 'LEAD') {
+        selected.records.forEach((playerRecord, idx) => {
+          playerRecord.index = idx;
+          const name = String(playerRecord && playerRecord.name || '').trim();
+          if (!name || /^Player\s+\d+$/i.test(name)) playerRecord.name = `Player ${idx + 1}`;
+        });
       }
       state.biqRecordSelection[selected.id] = 0;
       setDirty(true);
@@ -35345,7 +35577,7 @@ function renderBiqTab(tab) {
 
           techFields.forEach((techField, idx) => {
             const techRow = document.createElement('div');
-            techRow.className = 'rule-row';
+            techRow.className = 'rule-row free-tech-row';
             const techLabel = document.createElement('label');
             techLabel.className = 'field-meta';
             techLabel.textContent = `Free Technology ${idx + 1}`;
@@ -35370,8 +35602,8 @@ function renderBiqTab(tab) {
               controlWrap.appendChild(picker);
               const removeBtn = document.createElement('button');
               removeBtn.type = 'button';
-              removeBtn.className = 'ghost action-delete';
-              removeBtn.textContent = '×';
+              removeBtn.className = 'ghost action-delete compact-remove-btn';
+              withRemoveIcon(removeBtn, '');
               removeBtn.title = `Remove Free Technology ${idx + 1}`;
               removeBtn.addEventListener('click', () => {
                 rememberUndoSnapshot();
@@ -35544,6 +35776,145 @@ function renderBiqTab(tab) {
         }
         if (selected.code === 'TERR' && groupName === 'Terrain Values') {
           renderTerrainValuesTable(groupCard, groupFields, tab).forEach((terrainField) => consumedSpecialFields.add(terrainField));
+        }
+        if (selected.code === 'LEAD' && groupName === 'Starting Units') {
+          const countField = groupFields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === 'numberofdifferentstartunits');
+          const startUnitFields = groupFields.filter((f) => parseLeadStartUnitFieldIndex(f) != null);
+          if (countField) consumedSpecialFields.add(countField);
+          startUnitFields.forEach((f) => consumedSpecialFields.add(f));
+
+          const unitOptions = getCachedBiqSectionIndexOptions('PRTO', false);
+          const unitRefTabKey = BIQ_SECTION_TO_REFERENCE_TAB['PRTO'] || '';
+          const renderStartUnitRows = () => getLeadStartUnitEntries(record);
+          const startUnitEntries = renderStartUnitRows();
+          const usedUnitIndexes = new Set(startUnitEntries.map((entry) => entry.unitIndex));
+
+          const markStartingUnitsDirty = () => {
+            setDirty(true);
+            refreshMapAfterOwnerSupportChange('players', 'startingUnits');
+          };
+
+          if (startUnitEntries.length === 0) {
+            const emptyRow = document.createElement('div');
+            emptyRow.className = 'rule-row';
+            const emptyLabel = document.createElement('label');
+            emptyLabel.className = 'field-meta';
+            emptyLabel.textContent = 'Starting Units';
+            emptyRow.appendChild(emptyLabel);
+            const emptyWrap = document.createElement('div');
+            emptyWrap.className = 'rule-control';
+            const emptyText = document.createElement('div');
+            emptyText.className = 'field-meta';
+            emptyText.textContent = '(none)';
+            emptyWrap.appendChild(emptyText);
+            emptyRow.appendChild(emptyWrap);
+            groupCard.appendChild(emptyRow);
+          }
+
+          startUnitEntries.forEach((entry, idx) => {
+            const startRow = document.createElement('div');
+            startRow.className = 'rule-row lead-start-unit-row';
+            const startLabel = document.createElement('label');
+            startLabel.className = 'field-meta';
+            startLabel.textContent = `Starting Unit ${idx + 1}`;
+            startRow.appendChild(startLabel);
+            const controlWrap = document.createElement('div');
+            controlWrap.className = 'rule-control lead-start-unit-control';
+            const pickerOptions = unitOptions.filter((opt) => {
+              const optIdx = Number.parseInt(String(opt && opt.value || ''), 10);
+              return !Number.isFinite(optIdx) || optIdx === entry.unitIndex || !usedUnitIndexes.has(optIdx);
+            });
+            if (!tab.readOnly) {
+              const picker = createReferencePicker({
+                options: pickerOptions,
+                targetTabKey: unitRefTabKey,
+                currentValue: String(entry.unitIndex),
+                searchPlaceholder: 'Search units...',
+                noneLabel: '(none)',
+                onSelect: (value, option) => {
+                  const nextUnitIndex = Number.parseInt(String(value), 10);
+                  if (!Number.isFinite(nextUnitIndex) || nextUnitIndex < 0 || nextUnitIndex === entry.unitIndex) return;
+                  rememberUndoSnapshot();
+                  const nextField = ensureLeadStartUnitField(record, nextUnitIndex, entry.amount || 1);
+                  if (!nextField) return;
+                  nextField.value = String(Math.max(1, entry.amount || 1));
+                  setFieldReferenceTargetMeta(nextField, unitRefTabKey, option, value, unitOptions);
+                  entry.field.value = '0';
+                  markStartingUnitsDirty();
+                  renderActiveTab({ preserveTabScroll: true });
+                }
+              });
+              controlWrap.appendChild(picker);
+              const amountInput = document.createElement('input');
+              amountInput.type = 'number';
+              amountInput.min = '0';
+              amountInput.value = String(entry.amount);
+              amountInput.title = 'Amount';
+              wireGroupedUndoSession(amountInput, {
+                key: `LEAD_START_UNIT_AMOUNT:${selectedRecordIndex}:${entry.unitIndex}`,
+                getValue: () => amountInput.value,
+                commitOnChange: true
+              });
+              amountInput.addEventListener('input', () => {
+                const amount = Number.parseInt(String(amountInput.value), 10);
+                entry.field.value = String(Number.isFinite(amount) ? Math.max(0, amount) : 0);
+                markStartingUnitsDirty();
+              });
+              controlWrap.appendChild(amountInput);
+              const removeBtn = document.createElement('button');
+              removeBtn.type = 'button';
+              removeBtn.className = 'ghost action-delete compact-remove-btn';
+              withRemoveIcon(removeBtn, '');
+              removeBtn.title = `Remove Starting Unit ${idx + 1}`;
+              removeBtn.addEventListener('click', () => {
+                rememberUndoSnapshot();
+                entry.field.value = '0';
+                markStartingUnitsDirty();
+                renderActiveTab({ preserveTabScroll: true });
+              });
+              controlWrap.appendChild(removeBtn);
+            } else {
+              const match = unitOptions.find((opt) => Number.parseInt(String(opt && opt.value || ''), 10) === entry.unitIndex);
+              const text = document.createElement('div');
+              text.className = 'field-meta';
+              text.textContent = `${match ? String(match.label || match.value) : `Unit ${entry.unitIndex}`} × ${entry.amount}`;
+              controlWrap.appendChild(text);
+            }
+            startRow.appendChild(controlWrap);
+            groupCard.appendChild(startRow);
+          });
+
+          if (!tab.readOnly) {
+            const addRow = document.createElement('div');
+            addRow.className = 'rule-row';
+            addRow.appendChild(document.createElement('label')).className = 'field-meta';
+            const addWrap = document.createElement('div');
+            addWrap.className = 'rule-control';
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.className = 'ghost action-add';
+            addBtn.textContent = '＋ Add Starting Unit';
+            const nextUnit = unitOptions.find((opt) => {
+              const optIdx = Number.parseInt(String(opt && opt.value || ''), 10);
+              return Number.isFinite(optIdx) && optIdx >= 0 && !usedUnitIndexes.has(optIdx);
+            });
+            addBtn.disabled = !nextUnit;
+            addBtn.addEventListener('click', () => {
+              if (!nextUnit) return;
+              rememberUndoSnapshot();
+              const unitIndex = Number.parseInt(String(nextUnit.value), 10);
+              const field = ensureLeadStartUnitField(record, unitIndex, 1);
+              if (field) {
+                field.value = '1';
+                setFieldReferenceTargetMeta(field, unitRefTabKey, nextUnit, nextUnit.value, unitOptions);
+              }
+              markStartingUnitsDirty();
+              renderActiveTab({ preserveTabScroll: true });
+            });
+            addWrap.appendChild(addBtn);
+            addRow.appendChild(addWrap);
+            groupCard.appendChild(addRow);
+          }
         }
         groupFields.forEach((field, fieldIdx) => {
           if (consumedRichFields.has(field)) return;
@@ -35721,10 +36092,9 @@ function renderBiqTab(tab) {
                   const allFields = Array.isArray(record.fields) ? record.fields : [];
                   const pos = allFields.indexOf(field);
                   if (pos >= 0) allFields.splice(pos, 1);
-                  const count = syncNumberOfPlayableCivsField(record);
-                  syncLeadRecordCountToTarget(count);
+                  syncNumberOfPlayableCivsField(record);
+                  resetLeadCivilizationsOutsidePlayableSet(Array.from(getPlayableCivilizationIdSet()));
                   setDirty(true);
-                  refreshMapAfterOwnerSupportChange('players', 'records');
                   renderActiveTab({ preserveTabScroll: true });
                 });
                 controlWrap.appendChild(removeBtn);
@@ -35824,16 +36194,6 @@ function renderBiqTab(tab) {
                 }
                 refreshMapForBiqStructureOwnerSupportField();
               });
-              if (selected.code === 'GAME' && baseKey === 'numberofplayablecivs') {
-                input.addEventListener('change', () => {
-                  const changed = syncLeadRecordCountToTarget(input.value);
-                  if (changed) {
-                    setDirty(true);
-                    refreshMapAfterOwnerSupportChange('players', 'records');
-                    setStatus('Player list count synced to Number of Players.');
-                  }
-                });
-              }
               controlWrap.appendChild(input);
             } else if (selected.code === 'GAME' && baseKey === 'description') {
               const input = document.createElement('textarea');
@@ -36876,6 +37236,28 @@ function rgbaToCanvas(preview) {
   return canvas;
 }
 
+function rgbaPreviewHasVisiblePixels(preview) {
+  const decoded = decodeRgbaBase64(preview);
+  if (!decoded || !decoded.rgba || decoded.rgba.length < 4) return false;
+  for (let i = 3; i < decoded.rgba.length; i += 4) {
+    if (decoded.rgba[i] > 0) return true;
+  }
+  return false;
+}
+
+function rgbaPreviewToVisibleCanvas(preview, logKey = '', logMeta = null) {
+  if (!preview) return null;
+  if (!rgbaPreviewHasVisiblePixels(preview)) {
+    const normalizedLogKey = String(logKey || '');
+    if (normalizedLogKey && !state.biqMapTransparentDistrictPreviewLogKeys.has(normalizedLogKey)) {
+      state.biqMapTransparentDistrictPreviewLogKeys.add(normalizedLogKey);
+      appendDebugLog('biq-map:transparent-district-preview', logMeta || { cacheKey: normalizedLogKey });
+    }
+    return null;
+  }
+  return rgbaToCanvas(preview);
+}
+
 function biqMapArtRerender(meta = null) {
   const requestedReason = String(meta && meta.reason || 'asset-load');
   if (requestedReason !== 'hover-preview-asset-load') {
@@ -36963,6 +37345,7 @@ function isMapOwnerSupportReferenceField(tabKey, baseKey) {
       || base === 'uniquecolor'
       || base === 'culturegroup';
   }
+  if (tab === 'rules') return base === 'borderfactor';
   if (tab === 'players') return true;
   if (tab === 'scenariosettings') return base === 'customplayerdata' || base === 'enabledcustomplayerdata';
   return false;
@@ -37698,10 +38081,24 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const playersSupportTab = getBiqTabByKey('players');
   const civilizationReferenceTab = getBiqTabByKey('civilizations');
   const unitsReferenceTab = getBiqTabByKey('units');
+  const getReferenceBiqSectionFromTab = (referenceTab, code) => {
+    const sectionCode = String(code || '').trim().toUpperCase();
+    if (!referenceTab || !Array.isArray(referenceTab.entries) || !sectionCode) return null;
+    const records = referenceTab.entries
+      .map((entry, fallbackIdx) => ({
+        ...entry,
+        index: Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx,
+        name: String(entry && entry.name || '').trim(),
+        fields: Array.isArray(entry && entry.biqFields) ? entry.biqFields : []
+      }))
+      .filter((record) => record.fields.length > 0);
+    return records.length > 0 ? { code: sectionCode, records } : null;
+  };
   const getMapSupportSection = (sectionCode) => {
     const code = String(sectionCode || '').trim().toUpperCase();
     const local = getBiqSectionFromTab(tab, code);
     if (local) return local;
+    if (code === 'RACE') return getReferenceBiqSectionFromTab(civilizationReferenceTab, code);
     if (code === 'TERR' || code === 'TFRM') return getBiqSectionFromTab(terrainSupportTab, code);
     if (code === 'ERAS') return getBiqSectionFromTab(worldSupportTab, code);
     if (code === 'RULE') return getBiqSectionFromTab(rulesSupportTab, code);
@@ -39096,14 +39493,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const raceCultureById = {};
 	  const raceDefaultColorById = {};
 	  const raceIdByName = {};
-	  const getFieldRawValue = (record, baseKey) => {
-	    const field = getFieldByBaseKey(record, baseKey);
-	    if (!field) return '';
-	    if (field.mapEditorValueEdited) return String(field.value == null ? '' : field.value).trim();
-	    const raw = String(field.originalValue == null ? '' : field.originalValue).trim();
-	    if (raw) return raw;
-	    return String(field.value == null ? '' : field.value).trim();
-	  };
+  const getFieldRawValue = (record, baseKey) => {
+    const field = getFieldByBaseKey(record, baseKey);
+    if (!field) return '';
+    const current = String(field.value == null ? '' : field.value).trim();
+    const raw = String(field.originalValue == null ? '' : field.originalValue).trim();
+    if (field.mapEditorValueEdited) return current;
+    if (current && current !== raw) return current;
+    if (raw) return raw;
+    return current;
+  };
   const getFieldDisplayValue = (record, baseKey) => {
     const field = getFieldByBaseKey(record, baseKey);
     if (!field) return '';
@@ -39131,13 +39530,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return 0;
   };
   (raceSection?.records || []).forEach((record, idx) => {
+    const raceIndex = Number.isFinite(record && record.index) ? Number(record.index) : idx;
     const raceName = String(record && record.name || '').trim();
-    if (raceName) raceIdByName[raceName.toLowerCase()] = idx;
+    if (raceName) raceIdByName[raceName.toLowerCase()] = raceIndex;
+    const civilizationName = String(getFieldRawValue(record, 'civilizationname') || getFieldDisplayValue(record, 'civilizationname') || '').trim();
+    if (civilizationName) raceIdByName[civilizationName.toLowerCase()] = raceIndex;
+    const raceKey = String(getFieldRawValue(record, 'civilopediaentry') || getFieldDisplayValue(record, 'civilopediaentry') || '').trim();
+    if (raceKey) raceIdByName[raceKey.toLowerCase()] = raceIndex;
     const cultureRaw = parseFieldInt(record, 'culturegroup', NaN);
-    raceCultureById[idx] = Number.isFinite(cultureRaw)
+    raceCultureById[raceIndex] = Number.isFinite(cultureRaw)
       ? cultureRaw
       : parseCultureGroup(getFieldDisplayValue(record, 'culturegroup'));
-    raceDefaultColorById[idx] = parseFieldInt(record, 'defaultcolor', NaN);
+    raceDefaultColorById[raceIndex] = parseFieldInt(record, 'defaultcolor', NaN);
   });
   if ((!raceSection || !Array.isArray(raceSection.records) || raceSection.records.length === 0) && civilizationEntriesForOwner.length > 0) {
     civilizationEntriesForOwner.forEach((entry, fallbackIdx) => {
@@ -39163,8 +39567,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   const ruleSection = getMapSupportSection('RULE');
   const ruleRecord = ruleSection && Array.isArray(ruleSection.records) ? (ruleSection.records[0] || null) : null;
-  const maxCity1Size = parseIntLoose(getFieldByBaseKey(ruleRecord, 'maxcity1size')?.value, 6);
-  const maxCity2Size = parseIntLoose(getFieldByBaseKey(ruleRecord, 'maxcity2size')?.value, 12);
+  const maxCity1Size = parseFieldInt(ruleRecord, 'maxcity1size', 6);
+  const maxCity2Size = parseFieldInt(ruleRecord, 'maxcity2size', 12);
+  const borderFactor = Math.max(1, parseFieldInt(ruleRecord, 'borderfactor', 10));
   const playerCivById = {};
   const playerEraById = {};
   const playerCustomDataById = {};
@@ -39460,11 +39865,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     let cityCulture = parseIntLoose(cityMeta.culture, 0);
     if (cityCulture === 0) cityCulture = 1;
     const levelX = new Array(13).fill(0);
-    if (cityCulture > 0) { levelX[5] += 3; levelX[6] += 3; levelX[7] += 3; cityCulture = Math.floor(cityCulture / 10); }
-    if (cityCulture > 0) { levelX[4] += 3; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 3; cityCulture = Math.floor(cityCulture / 10); }
-    if (cityCulture > 0) { levelX[3] += 3; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 3; cityCulture = Math.floor(cityCulture / 10); }
-    if (cityCulture > 0) { levelX[2] += 3; levelX[3] += 4; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 4; levelX[10] += 3; cityCulture = Math.floor(cityCulture / 10); }
-    if (cityCulture > 0) { levelX[1] += 3; levelX[2] += 4; levelX[3] += 2; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 2; levelX[10] += 4; levelX[11] += 3; cityCulture = Math.floor(cityCulture / 10); }
+    if (cityCulture > 0) { levelX[5] += 3; levelX[6] += 3; levelX[7] += 3; cityCulture = Math.floor(cityCulture / borderFactor); }
+    if (cityCulture > 0) { levelX[4] += 3; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 3; cityCulture = Math.floor(cityCulture / borderFactor); }
+    if (cityCulture > 0) { levelX[3] += 3; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 3; cityCulture = Math.floor(cityCulture / borderFactor); }
+    if (cityCulture > 0) { levelX[2] += 3; levelX[3] += 4; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 4; levelX[10] += 3; cityCulture = Math.floor(cityCulture / borderFactor); }
+    if (cityCulture > 0) { levelX[1] += 3; levelX[2] += 4; levelX[3] += 2; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 2; levelX[10] += 4; levelX[11] += 3; cityCulture = Math.floor(cityCulture / borderFactor); }
     if (cityCulture > 0) { levelX[0] += 5; levelX[1] += 6; levelX[2] += 4; levelX[3] += 2; levelX[4] += 4; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 4; levelX[9] += 2; levelX[10] += 4; levelX[11] += 6; levelX[12] += 5; }
     for (let j = 0; j < 13; j += 1) {
       const offset = 6 - j;
@@ -45679,7 +46084,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       buildingCol: Number(context && context.buildingCol) || 0,
       buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : []
     }).then((preview) => {
-      const canvas = preview ? (rgbaToCanvas(preview) || null) : null;
+      const canvas = rgbaPreviewToVisibleCanvas(preview, cacheKey, {
+        cacheKey,
+        district: normalizeConfigToken(getFieldValue(section, 'name') || ''),
+        cultureIndex: Number(context && context.cultureIndex) || 0,
+        eraIndex: Number(context && context.eraIndex) || 0,
+        buildingCol: Number(context && context.buildingCol) || 0,
+        buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : [],
+        sourcePath: preview && preview.sourcePath ? preview.sourcePath : ''
+      });
       state.biqMapArtCache[cacheKey] = canvas;
       if (canvas) storeMapDistrictFallbackCanvas(section, context, canvas);
     }).catch(() => {
@@ -45717,7 +46130,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : [],
       fileNameOverride: fileName
     }).then((preview) => {
-      const canvas = preview ? (rgbaToCanvas(preview) || null) : null;
+      const canvas = rgbaPreviewToVisibleCanvas(preview, cacheKey, {
+        cacheKey,
+        district: normalizeConfigToken(getFieldValue(section, 'name') || ''),
+        fileName,
+        eraIndex: Number(context && context.eraIndex) || 0,
+        buildingCol: Number(context && context.buildingCol) || 0,
+        buildingCols: Array.isArray(context && context.buildingCols) ? context.buildingCols.slice() : [],
+        sourcePath: preview && preview.sourcePath ? preview.sourcePath : ''
+      });
       state.biqMapArtCache[cacheKey] = canvas;
     }).catch(() => {
       state.biqMapArtCache[cacheKey] = null;
@@ -46153,6 +46574,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	  const isCapitalizationImprovementRecord = (buildingRecord, improvementEntry, fallbackIdx) => {
 	    const names = [
 	      buildingRecord && buildingRecord.name,
+	      buildingRecord && buildingRecord.civilopediaEntry,
 	      improvementEntry && improvementEntry.name,
 	      improvementEntry && improvementEntry.civilopediaKey,
 	      improvementEntry && improvementEntry.lookupCivilopediaKey,
@@ -46166,6 +46588,37 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	      ? Number(improvementEntry.biqIndex)
 	      : fallbackIdx;
 	    return biqIndex === 0 && names.some((name) => name.includes('wealth'));
+	  };
+	  const isCityWallsImprovementRecord = (buildingRecord, improvementEntry) => {
+	    const identities = [
+	      buildingRecord && buildingRecord.name,
+	      buildingRecord && buildingRecord.civilopediaEntry,
+	      getBiqRecordFieldByBaseKey(buildingRecord, 'civilopediaentry')?.value,
+	      improvementEntry && improvementEntry.name,
+	      improvementEntry && improvementEntry.civilopediaKey,
+	      improvementEntry && improvementEntry.lookupCivilopediaKey,
+	      improvementEntry && improvementEntry.displayCivilopediaKey,
+	      getBiqRecordFieldByBaseKey(improvementEntry, 'civilopediaentry')?.value
+	    ].map((value) => normalizeConfigToken(value).toLowerCase().replace(/[^a-z0-9]/g, '')).filter(Boolean);
+	    return identities.some((name) => name === 'bldgwalls' || name === 'walls' || name === 'citywalls');
+	  };
+	  const getCityWallsImprovementIds = (buildingRecords) => {
+	    const records = Array.isArray(buildingRecords) ? buildingRecords : [];
+	    const out = new Set();
+	    records.forEach((buildingRecord, idx) => {
+	      const improvementEntry = resolveReferenceEntryForPicker('improvements', String(idx));
+	      if (isCityWallsImprovementRecord(buildingRecord, improvementEntry)) out.add(idx);
+	    });
+	    return out;
+	  };
+	  const syncCityWallsFlagFromBuildings = (cityRecord, buildingSet, buildingRecords) => {
+	    const wallIds = getCityWallsImprovementIds(buildingRecords);
+	    if (wallIds.size === 0) return false;
+	    const nextHasWalls = Array.from(buildingSet || []).some((buildingId) => wallIds.has(parseIntLoose(buildingId, -1))) ? '1' : '0';
+	    const previousHasWalls = String(getMapFieldValue(cityRecord, 'haswalls', '0'));
+	    if (nextHasWalls === previousHasWalls) return false;
+	    setMapFieldValue(cityRecord, 'haswalls', nextHasWalls, 'Has Walls');
+	    return true;
 	  };
 	  const countVisibleCityBuildings = (buildingSet, buildingRecords) => {
 	    const records = Array.isArray(buildingRecords) ? buildingRecords : [];
@@ -47334,6 +47787,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	          if (currentSet.has(idx)) currentSet.delete(idx);
 	          else currentSet.add(idx);
 	          setCityBuildingSet(cityRecord, currentSet);
+	          const wallsChanged = syncCityWallsFlagFromBuildings(cityRecord, currentSet, bldgRecords);
 	          setDirty(true);
 	          const isActive = currentSet.has(idx);
             const afterCount = countVisibleCityBuildings(currentSet, bldgRecords);
@@ -47346,7 +47800,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
               source: 'city-building',
               cityRef: String(cityRef),
               buildingId: idx,
-              buildingName: name.textContent
+              buildingName: name.textContent,
+              wallsChanged
             }, () => {
               if (cityPos >= 0 && getCityBuildingSetForCityPos._cache) {
                 getCityBuildingSetForCityPos._cache.delete(cityPos);
@@ -47360,6 +47815,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
               action: hadBuilding ? 'remove' : 'add',
               beforeCount,
               afterCount,
+              wallsChanged,
               redrawQueued: false,
               durationMs: Number((mapToolNowMs() - startedAt).toFixed(2))
             });
@@ -51902,6 +52358,7 @@ async function loadBundleAndRender(options = {}) {
     state.biqMapArtCache = {};
     state.biqMapArtLoading = {};
     state.biqMapDistrictFallbackCache = new Map();
+    state.biqMapTransparentDistrictPreviewLogKeys = new Set();
     state.biqMapTerritoryEdgeCache = new Map();
     state.biqMapNtpColorCache = {};
     state.civSlotUiColorCache = {};

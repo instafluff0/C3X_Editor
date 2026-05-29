@@ -1,4 +1,7 @@
 * RELEASE 27.13.1
+- Synced Map city wall art with the Improvements picker by updating the CITY Has Walls flag when the Walls improvement is selected or cleared, reusing the existing partial city redraw path.
+- Preserved C3X District and Wonder District improvement-name references when an Improvement is renamed, including dependent improvements, wonder prerequisites, and conditional bonus entries, with async quality checks now warning on unknown conditional bonus improvement/terrain references.
+- Aligned Scenario Players with Quint semantics by exposing direct LEAD player Add/Delete controls and structured Starting Units editing in the Scenario -> Players panel, keeping playable civilizations separate from player-record count, and seeding added players with Quint-style defaults.
 - Fixed Map city ownership reloads so Player 1-owned cities no longer display as ownerless, restoring borders, civ-color, and culture-specific city art after reopening scenarios.
 - Added BIQ map regression coverage so barbarian owner zero and Player 1 owner zero cannot be conflated for city or unit records.
 - Aligned Map owner pickers with Quint ownership semantics by switching the owner list by owner type instead of unioning Player and Civilization choices.
@@ -8,7 +11,9 @@
 - Made Map Tile Info Assignment controls full-width for cities, units, and starting locations.
 - Refreshed open Map views when Scenario Player records or custom-player-data state change, keeping owner dropdowns, labels, colors, and culture art in sync.
 - Refreshed open Map views when Civilization color or culture group fields change, so borders and culture-specific art update without closing and reopening the Map tab.
+- Fixed Map rerenders after BIQ support edits so dirty Border Factor, live Civilization defaults, player color, and player era values are used immediately, with Border Factor now driving culture border expansion thresholds.
 - Fixed Map modal startup on scenarios with Bridge districts by hoisting district-neighbor helpers used during the first canvas draw.
+- Fixed Map district previews for configured art cells that are fully transparent, so placements still show the fallback district marker and log the transparent crop instead of appearing to fail.
 - Fixed Improvement Gain reference dropdowns so `In every city` and `In every city on this continent` lazily populate Improvement option thumbnails like the other quick reference pickers.
 - Cleaned up BIQ reference picker search placeholders so they use readable field labels instead of bunched raw keys.
 - Removed the unused one-time Electron icon generator dependency and upgraded Electron to the patched 39.8 line, clearing the npm audit vulnerability report.
