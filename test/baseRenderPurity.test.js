@@ -255,6 +255,48 @@ test('Scenario Players panel mutates LEAD through the players tab like Quint', (
   );
 });
 
+test('Scenario Players panel renders the GAME playable civ checklist beside LEAD players', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function renderPlayableCivilizationsPanel\(\{ readOnly = false \} = \{\}\) \{[\s\S]*?title\.textContent = 'Playable Civs';[\s\S]*?setGamePlayableCivilizations\(record, Array\.from\(selectedIds\)\);/,
+    'Playable Civilizations should have a dedicated Players-panel checklist bound to the GAME playable civ fields'
+  );
+  assert.match(
+    text,
+    /const showPlayableCivsPanel = selected\.code === 'LEAD'[\s\S]*?selectedSectionTab\.key === 'players'[\s\S]*?selectedBaseCode === 'GAME'[\s\S]*?activeGamePanel\.id === 'players'/,
+    'The checklist should render on the effective Scenario -> Players route, not only on a hidden physical players tab'
+  );
+  assert.match(
+    text,
+    /if \(selected\.code === 'GAME' && groupName === 'Player Options'\) \{[\s\S]*?playableFields\.forEach\(\(field\) => consumedSpecialFields\.add\(field\)\);[\s\S]*?\n        \}/,
+    'Scenario -> Scenario should still consume raw GAME playable civ fields without showing the old checklist there'
+  );
+});
+
+test('Scenario Players search inputs preserve focus across filter rerenders', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function renderActiveTabPreservingInputFocus\(input, options = \{\}\) \{[\s\S]*?rememberInputFocusForRender\(input\);[\s\S]*?renderActiveTab\(options\);[\s\S]*?\}/,
+    'Renderer should provide a rerender helper that carries the active input focus through DOM replacement'
+  );
+  assert.match(
+    text,
+    /search\.dataset\.preserveFocusKey = `biq-search:\$\{filterKey\}`;[\s\S]*?state\.biqRecordFilter\[filterKey\] = search\.value;[\s\S]*?renderActiveTabPreservingInputFocus\(search, \{ preserveTabScroll: true \}\);/,
+    'Playable Civs search should rerender through the focus-preserving helper'
+  );
+  assert.match(
+    text,
+    /recordSearch\.dataset\.preserveFocusKey = `biq-record-search:\$\{recordFilterKey\}`;[\s\S]*?state\.biqRecordFilter\[recordFilterKey\] = recordSearch\.value;[\s\S]*?renderActiveTabPreservingInputFocus\(recordSearch, \{ preserveTabScroll: true \}\);/,
+    'Player list search should rerender through the focus-preserving helper'
+  );
+});
+
 test('Scenario Players panel renders LEAD starting units as a structured list', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

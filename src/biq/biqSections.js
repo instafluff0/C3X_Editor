@@ -628,6 +628,19 @@ function parseEditInt(value, fallback = NaN) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseLeadCivilizationValue(value, fallback = -3) {
+  const raw = String(value == null ? '' : value).trim();
+  if (/^any(?:\s*\(|$)/i.test(raw)) return -3;
+  if (/^random(?:\s*\(|$)/i.test(raw)) return -2;
+  return parseEditInt(raw, fallback);
+}
+
+function parseLeadDifficultyValue(value, fallback = -2) {
+  const raw = String(value == null ? '' : value).trim();
+  if (/^any(?:\s*\(|$)/i.test(raw)) return -2;
+  return parseEditInt(raw, fallback);
+}
+
 function ensureArraySize(arr, size, fillValue) {
   const next = Array.isArray(arr) ? arr.slice() : [];
   while (next.length < size) next.push(fillValue);
@@ -3203,6 +3216,17 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     }
   }
 
+  if (code === 'LEAD') {
+    if (ck === 'civ') {
+      rec.civ = parseLeadCivilizationValue(value, -3);
+      return true;
+    }
+    if (ck === 'difficulty') {
+      rec.difficulty = parseLeadDifficultyValue(value, -2);
+      return true;
+    }
+  }
+
   // Generic: set field on rec object
   // Try exact camelCase match first
   for (const key of Object.keys(rec)) {
@@ -3321,7 +3345,7 @@ function createDefaultRecord(code, civKey, io) {
         genderOfLeaderName: 0,
         numStartTechs: 0,
         techIndices: [],
-        difficulty: -1,
+        difficulty: -2,
         initialEra: 0,
         startCash: 10,
         government: 1,
@@ -3365,6 +3389,377 @@ function copyRecord(src) {
 function getSectionByCode(parsed, sectionCode) {
   const code = String(sectionCode || '').trim().toUpperCase();
   return ((parsed && parsed.sections) || []).find((section) => String(section && section.code || '').trim().toUpperCase() === code) || null;
+}
+
+const TILE_PLAYER_START_MASK = 0x00000008;
+
+function getRecordIntValue(record, key, fallback = -1) {
+  const value = record ? record[key] : undefined;
+  const n = Number.parseInt(String(value), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getTileCoordsKey(x, y) {
+  const nx = Number.parseInt(String(x), 10);
+  const ny = Number.parseInt(String(y), 10);
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return '';
+  return `${nx},${ny}`;
+}
+
+function findTileRecordByCoords(parsed, x, y) {
+  const key = getTileCoordsKey(x, y);
+  if (!key) return null;
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return null;
+  return tileSection.records.find((record) => getTileCoordsKey(record && record.xpos, record && record.ypos) === key) || null;
+}
+
+function setTileStartFlagByCoords(parsed, x, y, enabled) {
+  const tile = findTileRecordByCoords(parsed, x, y);
+  if (!tile) return false;
+  const current = getRecordIntValue(tile, 'c3cBonuses', 0) >>> 0;
+  const next = enabled ? (current | TILE_PLAYER_START_MASK) : (current & (~TILE_PLAYER_START_MASK));
+  if (next === current) return false;
+  setTileRecordFieldValue(tile, 'c3cBonuses', next);
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (tileSection) tileSection._modified = true;
+  return true;
+}
+
+function hasSlocAtCoords(section, x, y, excludeRecord = null) {
+  const key = getTileCoordsKey(x, y);
+  if (!key || !section || !Array.isArray(section.records)) return false;
+  return section.records.some((record) => record !== excludeRecord && getTileCoordsKey(record && record.x, record && record.y) === key);
+}
+
+function syncSLocRecordTileStartFlag(parsed, record) {
+  if (!record) return false;
+  return setTileStartFlagByCoords(parsed, record.x, record.y, true);
+}
+
+function normalizeSLocTileStartFlags(parsed) {
+  const slocSection = getSectionByCode(parsed, 'SLOC');
+  if (!slocSection || !Array.isArray(slocSection.records)) return 0;
+  let changed = 0;
+  slocSection.records.forEach((record) => {
+    if (syncSLocRecordTileStartFlag(parsed, record)) changed += 1;
+  });
+  return changed;
+}
+
+function syncWmapNumCivsToLeadCount(parsed) {
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (!wmapSection || !Array.isArray(wmapSection.records) || !wmapSection.records[0]) return false;
+  if (!leadSection || !Array.isArray(leadSection.records)) return false;
+  const count = leadSection.records.length;
+  if (getRecordIntValue(wmapSection.records[0], 'numCivs', 0) === count) return false;
+  wmapSection.records[0].numCivs = count;
+  wmapSection._modified = true;
+  return true;
+}
+
+function normalizeLeadDifficultySentinels(parsed) {
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (!leadSection || !Array.isArray(leadSection.records)) return 0;
+  let changed = 0;
+  leadSection.records.forEach((record) => {
+    if (getRecordIntValue(record, 'difficulty', -2) === -1) {
+      record.difficulty = -2;
+      changed += 1;
+    }
+  });
+  if (changed > 0) leadSection._modified = true;
+  return changed;
+}
+
+function getFixedLeadCivilizations(parsed) {
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const leadRecords = leadSection && Array.isArray(leadSection.records) ? leadSection.records : [];
+  return leadRecords.map((record) => getRecordIntValue(record, 'civ', -3));
+}
+
+function getFixedPlayableLeadContext(parsed) {
+  const leadCivs = getFixedLeadCivilizations(parsed);
+  if (leadCivs.length === 0 || leadCivs.some((civ) => civ < 0)) return null;
+  const playableCivIds = collectPlayableCivilizationIds(parsed);
+  if (playableCivIds.length === 0) return null;
+  const fixedSet = new Set(leadCivs);
+  if (playableCivIds.some((civ) => !fixedSet.has(civ))) return null;
+  return { leadCivs, playableCivIds, fixedSet };
+}
+
+function normalizeFixedPlayerPreplacedCityOwnership(parsed) {
+  const context = getFixedPlayableLeadContext(parsed);
+  if (!context) return 0;
+  const citySection = getSectionByCode(parsed, 'CITY');
+  if (!citySection || !Array.isArray(citySection.records) || citySection.records.length === 0) return 0;
+
+  const playerOwnedCities = citySection.records.filter((record) => getRecordIntValue(record, 'ownerType', -1) === 3);
+  if (playerOwnedCities.length === 0) return 0;
+
+  const citySlots = new Set();
+  playerOwnedCities.forEach((record) => {
+    const owner = getRecordIntValue(record, 'owner', -1);
+    if (owner >= 0 && owner < context.leadCivs.length) citySlots.add(owner);
+  });
+  if (citySlots.size < context.leadCivs.length) return 0;
+
+  let changed = 0;
+  citySection.records.forEach((record) => {
+    if (getRecordIntValue(record, 'ownerType', -1) !== 3) return;
+    const playerOwner = getRecordIntValue(record, 'owner', -1);
+    const civOwner = context.leadCivs[playerOwner];
+    if (!Number.isFinite(civOwner) || civOwner < 0) return;
+    record.ownerType = 2;
+    record.owner = civOwner;
+    changed += 1;
+  });
+  if (changed > 0) citySection._modified = true;
+  return changed;
+}
+
+function normalizePreplacedCityScenarioStartFlags(parsed) {
+  const context = getFixedPlayableLeadContext(parsed);
+  if (!context) return 0;
+  const slocSection = getSectionByCode(parsed, 'SLOC');
+  const slocRecords = slocSection && Array.isArray(slocSection.records) ? slocSection.records : [];
+  if (slocRecords.length > 0) return 0;
+
+  const citySection = getSectionByCode(parsed, 'CITY');
+  const cityRecords = citySection && Array.isArray(citySection.records) ? citySection.records : [];
+  if (cityRecords.length === 0) return 0;
+
+  const civsWithCities = new Set();
+  cityRecords.forEach((record) => {
+    const ownerType = getRecordIntValue(record, 'ownerType', -1);
+    const owner = getRecordIntValue(record, 'owner', -1);
+    if (ownerType === 2 && context.fixedSet.has(owner)) {
+      civsWithCities.add(owner);
+    } else if (ownerType === 3 && owner >= 0 && owner < context.leadCivs.length) {
+      const civ = context.leadCivs[owner];
+      if (context.fixedSet.has(civ)) civsWithCities.add(civ);
+    }
+  });
+  if (context.leadCivs.some((civ) => !civsWithCities.has(civ))) return 0;
+
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return 0;
+  let changed = 0;
+  tileSection.records.forEach((record) => {
+    const current = getRecordIntValue(record, 'c3cBonuses', 0) >>> 0;
+    if ((current & TILE_PLAYER_START_MASK) === 0) return;
+    setTileRecordFieldValue(record, 'c3cBonuses', current & (~TILE_PLAYER_START_MASK));
+    changed += 1;
+  });
+  if (changed > 0) tileSection._modified = true;
+  return changed;
+}
+
+function getRaceDisplayName(parsed, civIndex) {
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  const records = raceSection && Array.isArray(raceSection.records) ? raceSection.records : [];
+  const record = records[civIndex];
+  if (!record) return `RACE #${civIndex}`;
+  return String(record.civilizationName || record.name || record.civilopediaEntry || `RACE #${civIndex}`).trim() || `RACE #${civIndex}`;
+}
+
+function collectPlayableCivilizationIds(parsed) {
+  const gameSection = getSectionByCode(parsed, 'GAME');
+  const gameRecord = gameSection && Array.isArray(gameSection.records) ? gameSection.records[0] : null;
+  if (!gameRecord) return [];
+  const explicitIds = Array.isArray(gameRecord.playableCivIds) ? gameRecord.playableCivIds : [];
+  const cleanedExplicitIds = Array.from(new Set(explicitIds
+    .map((id) => Number.parseInt(id, 10))
+    .filter((id) => Number.isFinite(id) && id >= 0)));
+  const numPlayable = getRecordIntValue(gameRecord, 'numPlayableCivs', cleanedExplicitIds.length);
+  if (numPlayable !== 0 || cleanedExplicitIds.length > 0) return cleanedExplicitIds;
+
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  const records = raceSection && Array.isArray(raceSection.records) ? raceSection.records : [];
+  return records
+    .map((_record, idx) => idx)
+    .filter((idx) => idx > 0);
+}
+
+function collectScenarioPlayerLoadabilityIssues(parsed) {
+  const issues = [];
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (!leadSection || !Array.isArray(leadSection.records)) return issues;
+  const diffSection = getSectionByCode(parsed, 'DIFF');
+  const diffCount = diffSection && Array.isArray(diffSection.records) ? diffSection.records.length : 0;
+  leadSection.records.forEach((record, playerIndex) => {
+    const difficulty = getRecordIntValue(record, 'difficulty', -2);
+    const valid = difficulty === -2 || (difficulty >= 0 && (!diffCount || difficulty < diffCount));
+    if (!valid) {
+      issues.push({ kind: 'lead-difficulty', playerIndex, difficulty, diffCount });
+    }
+  });
+
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!wmapSection || !Array.isArray(wmapSection.records) || !wmapSection.records[0] || !tileSection || !Array.isArray(tileSection.records)) {
+    return issues;
+  }
+  const numCivs = getRecordIntValue(wmapSection.records[0], 'numCivs', leadSection.records.length);
+  if (numCivs !== leadSection.records.length) {
+    issues.push({ kind: 'wmap-lead-count', numCivs, leadCount: leadSection.records.length });
+  }
+  const playableCivIds = collectPlayableCivilizationIds(parsed);
+  if (playableCivIds.length > 0) {
+    const fixedLeadCivs = new Set();
+    let hasHumanWildcard = false;
+    leadSection.records.forEach((record) => {
+      const civ = getRecordIntValue(record, 'civ', -3);
+      if (civ >= 0) fixedLeadCivs.add(civ);
+      if (getRecordIntValue(record, 'humanPlayer', 0) === 1 && (civ === -3 || civ === -2)) {
+        hasHumanWildcard = true;
+      }
+    });
+    if (!hasHumanWildcard) {
+      const unsupportedPlayableCivs = playableCivIds.filter((civ) => !fixedLeadCivs.has(civ));
+      if (unsupportedPlayableCivs.length > 0) {
+        issues.push({
+          kind: 'playable-civ-without-lead-slot',
+          unsupportedCount: unsupportedPlayableCivs.length,
+          unsupportedCivIds: unsupportedPlayableCivs.slice(0, 12),
+          unsupportedNames: unsupportedPlayableCivs.slice(0, 6).map((civ) => getRaceDisplayName(parsed, civ)),
+          fixedCivIds: Array.from(fixedLeadCivs).sort((a, b) => a - b),
+          fixedNames: Array.from(fixedLeadCivs).sort((a, b) => a - b).map((civ) => getRaceDisplayName(parsed, civ)),
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+function collectStartingLocationCoherenceWarnings(parsed, limit = 8) {
+  const warnings = [];
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return warnings;
+  const slocSection = getSectionByCode(parsed, 'SLOC');
+  const slocCoords = new Set();
+  if (slocSection && Array.isArray(slocSection.records)) {
+    slocSection.records.forEach((record) => {
+      const key = getTileCoordsKey(record && record.x, record && record.y);
+      if (key) slocCoords.add(key);
+    });
+  }
+  for (const record of tileSection.records) {
+    if (((getRecordIntValue(record, 'c3cBonuses', 0) >>> 0) & TILE_PLAYER_START_MASK) === 0) continue;
+    const key = getTileCoordsKey(record && record.xpos, record && record.ypos);
+    if (!key || slocCoords.has(key)) continue;
+    warnings.push(`starting location ${key} has no SLOC owner record`);
+    if (warnings.length >= limit) break;
+  }
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  if (wmapRecord && leadSection && Array.isArray(leadSection.records)) {
+    const numCivs = getRecordIntValue(wmapRecord, 'numCivs', leadSection.records.length);
+    const startFlagCount = tileSection.records.filter((record) => ((getRecordIntValue(record, 'c3cBonuses', 0) >>> 0) & TILE_PLAYER_START_MASK) !== 0).length;
+    const materialPlayers = new Set();
+    ['CITY', 'UNIT'].forEach((code) => {
+      const section = getSectionByCode(parsed, code);
+      if (!section || !Array.isArray(section.records)) return;
+      section.records.forEach((record) => {
+        if (getRecordIntValue(record, 'ownerType', -1) !== 3) return;
+        const owner = getRecordIntValue(record, 'owner', -1);
+        if (owner >= 0) materialPlayers.add(owner);
+      });
+    });
+    if (startFlagCount > 0 && numCivs > startFlagCount + materialPlayers.size && warnings.length < limit) {
+      warnings.push(`map has ${numCivs} active player(s) but only ${startFlagCount} starting-position tile flag(s) and ${materialPlayers.size} player-owned placed-material owner(s)`);
+    }
+  }
+  return warnings;
+}
+
+function formatScenarioPlayerLoadabilityIssue(issue) {
+  if (!issue) return 'Scenario player data is not game-loadable.';
+  if (issue.kind === 'lead-difficulty') {
+    return `Scenario -> Players: Player ${issue.playerIndex + 1} has invalid Difficulty value ${issue.difficulty}. Set Difficulty to Any or to one of the scenario's Difficulty records, then save again.`;
+  }
+  if (issue.kind === 'wmap-lead-count') {
+    return `Scenario -> Players: the custom map expects ${issue.numCivs} active player(s), but the BIQ has ${issue.leadCount} LEAD player record(s). Adjust the player count, or reload and save again so the editor can resync WMAP.numCivs.`;
+  }
+  if (issue.kind === 'playable-civ-without-lead-slot') {
+    const firstNames = Array.isArray(issue.unsupportedNames) && issue.unsupportedNames.length > 0
+      ? issue.unsupportedNames.join(', ')
+      : 'one or more selected civilizations';
+    const fixedNames = Array.isArray(issue.fixedNames) && issue.fixedNames.length > 0
+      ? issue.fixedNames.join(', ')
+      : 'the fixed Scenario Player civilizations';
+    return `Scenario -> Players: Playable Civilizations includes ${issue.unsupportedCount} civ(s) that do not have a fixed Scenario Player slot (${firstNames}). Civ3 can freeze while configuring AI players if one is chosen. Restrict Playable Civilizations to the player-slot civs (${fixedNames}), add fixed player slots for those civs, or set a Human Player slot's Civilization to Any/Random.`;
+  }
+  return `Scenario -> Players contains unsupported player data (${issue.kind}).`;
+}
+
+function formatMapReferenceIntegrityIssue(issue) {
+  if (!issue) return 'The custom map contains broken BIQ references.';
+  const sectionLabel = String(issue.sectionCode || '').trim().toUpperCase();
+  if (issue.kind === 'tile-city-ref') {
+    return `Map tile #${issue.tileIndex} points to deleted CITY #${issue.cityRef}; only ${issue.cityCount} city record(s) remain. Open Map and remove or recreate the city on that tile.`;
+  }
+  if (issue.kind === 'tile-colony-ref') {
+    return `Map tile #${issue.tileIndex} points to deleted CLNY #${issue.colonyRef}; only ${issue.colonyCount} colony record(s) remain. Open Map and remove or recreate the colony on that tile.`;
+  }
+  if (issue.kind === 'tile-city-coords') {
+    return `Map tile #${issue.tileIndex} links CITY #${issue.cityRef}, but the tile is at ${issue.tileX},${issue.tileY} and the city record is at ${issue.cityX},${issue.cityY}. Open Map and move, delete, or recreate that city.`;
+  }
+  if (issue.kind === 'tile-colony-coords') {
+    return `Map tile #${issue.tileIndex} links CLNY #${issue.colonyRef}, but the tile is at ${issue.tileX},${issue.tileY} and the colony record is at ${issue.colonyX},${issue.colonyY}. Open Map and move, delete, or recreate that colony.`;
+  }
+  if (issue.kind === 'city-tile-backref') {
+    return `CITY #${issue.cityRef} is at ${issue.cityX},${issue.cityY}, but that tile links CITY #${issue.tileCityRef}. Open Map and recreate or move the city so the city and tile agree.`;
+  }
+  if (issue.kind === 'colony-tile-backref') {
+    return `CLNY #${issue.colonyRef} is at ${issue.colonyX},${issue.colonyY}, but that tile links CLNY #${issue.tileColonyRef}. Open Map and recreate or move the colony so the colony and tile agree.`;
+  }
+  if (issue.kind === 'city-ref-count') {
+    return `CITY #${issue.cityRef} is linked by ${issue.count} map tile(s), but exactly one tile must point to each city. Open Map and recreate or delete the duplicate/missing city placement.`;
+  }
+  if (issue.kind === 'colony-ref-count') {
+    return `CLNY #${issue.colonyRef} is linked by ${issue.count} map tile(s), but exactly one tile must point to each colony. Open Map and recreate or delete the duplicate/missing colony placement.`;
+  }
+  if (issue.kind === 'city-out-of-bounds') {
+    return `CITY #${issue.cityRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.cityX},${issue.cityY}. Open Map and move/delete the city, or undo the map resize that moved it outside the map.`;
+  }
+  if (issue.kind === 'colony-out-of-bounds') {
+    return `CLNY #${issue.colonyRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.colonyX},${issue.colonyY}. Open Map and move/delete the colony, or undo the map resize that moved it outside the map.`;
+  }
+  if (issue.kind === 'unit-out-of-bounds') {
+    return `UNIT #${issue.unitRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.unitX},${issue.unitY}. Open Map and move/delete the unit, or undo the map resize that moved it outside the map.`;
+  }
+  if (issue.kind === 'city-missing-tile') {
+    return `CITY #${issue.cityRef} points to missing tile ${issue.cityX},${issue.cityY}. Open Map and move/delete the city, or undo the resize.`;
+  }
+  if (issue.kind === 'colony-missing-tile') {
+    return `CLNY #${issue.colonyRef} points to missing tile ${issue.colonyX},${issue.colonyY}. Open Map and move/delete the colony, or undo the resize.`;
+  }
+  if (issue.kind === 'unit-missing-tile') {
+    return `UNIT #${issue.unitRef} points to missing tile ${issue.unitX},${issue.unitY}. Open Map and move/delete the unit, or undo the resize.`;
+  }
+  if (/^(city|unit|clny|sloc)-owner-ref$/.test(issue.kind)) {
+    const ownerLabel = Number(issue.ownerType) === 3 ? 'player' : 'civilization';
+    const maxLabel = Number(issue.ownerType) === 3 ? issue.playerCount : issue.raceCount;
+    return `${sectionLabel} #${issue.recordRef} has invalid ${ownerLabel} owner index ${issue.owner}; only ${maxLabel} ${ownerLabel}(s) exist. Open Map and choose a valid owner, or restore the deleted ${ownerLabel}.`;
+  }
+  if (/^(city|unit|clny|sloc)-owner-type$/.test(issue.kind)) {
+    return `${sectionLabel} #${issue.recordRef} has unsupported owner type ${issue.ownerType}. Open Map and choose Civilization, Player, or Barbarians ownership again.`;
+  }
+  if (issue.kind === 'sloc-out-of-bounds') {
+    return `Starting location #${issue.slocRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.slocX},${issue.slocY}. Open Map and move/delete that starting location.`;
+  }
+  if (issue.kind === 'sloc-missing-tile') {
+    return `Starting location #${issue.slocRef} points to missing tile ${issue.slocX},${issue.slocY}. Open Map and move/delete that starting location.`;
+  }
+  return `The custom map contains unsupported broken reference state (${issue.kind}).`;
+}
+
+function formatColonyOverlayCoherenceIssue(issue) {
+  if (!issue) return 'A colony overlay does not match its colony record.';
+  return `Map tile #${issue.tileIndex} links CLNY #${issue.colonyRef}, but the colony type (${issue.improvementType}) does not match the tile overlay (${issue.overlayType}). Open Map and remove/reapply that colony.`;
 }
 
 function getRecordCivilopediaRef(record) {
@@ -3923,7 +4318,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       if (raceRemap && !raceDependentSectionsAlreadyNormalized) rec.civ = remapDeletedSectionIndex(rec.civ, raceRemap, -1);
       if (techRemap) rec.techIndices = remapDeletedSectionList(Array.isArray(rec.techIndices) ? rec.techIndices : [], techRemap, -1).filter((value) => Number.isFinite(value) && value >= 0);
       if (govtRemap) rec.government = remapDeletedSectionIndex(rec.government, govtRemap, -1);
-      if (diffRemap) rec.difficulty = remapDeletedSectionIndex(rec.difficulty, diffRemap, -1);
+      if (diffRemap) rec.difficulty = remapDeletedSectionIndex(rec.difficulty, diffRemap, -2);
       if (erasRemap) rec.initialEra = remapDeletedSectionIndex(rec.initialEra, erasRemap, -1);
       if (prtoRemap) {
         rec.startUnits = (Array.isArray(rec.startUnits) ? rec.startUnits : [])
@@ -4426,7 +4821,7 @@ function removeCustomPlayerDataSectionsFromParsed(parsed) {
   parsed.sections = parsed.sections.filter((section) => String(section && section.code || '').toUpperCase() !== 'LEAD');
 }
 
-function addCustomPlayerDataSectionToParsed(parsed) {
+function addCustomPlayerDataSectionToParsed(parsed, options = {}) {
   removeCustomPlayerDataSectionsFromParsed(parsed);
   const leadSection = {
     code: 'LEAD',
@@ -4434,6 +4829,15 @@ function addCustomPlayerDataSectionToParsed(parsed) {
     records: [],
     _modified: true
   };
+  if (options.seedDefaultPlayers) {
+    for (let i = 0; i < 8; i += 1) {
+      const record = createDefaultRecord('LEAD', `LEAD_QUINT_DEFAULT_${i + 1}`, parsed && parsed.io);
+      record.index = i;
+      record.humanPlayer = i === 0 ? 1 : 0;
+      record.newRecordRef = `LEAD_QUINT_DEFAULT_${i + 1}`;
+      leadSection.records.push(record);
+    }
+  }
   const insertAt = parsed.sections.findIndex((section) => String(section && section.code || '').toUpperCase() === 'GAME');
   if (insertAt >= 0) parsed.sections.splice(insertAt + 1, 0, leadSection);
   else parsed.sections.push(leadSection);
@@ -5023,8 +5427,13 @@ function applyEdits(buf, edits, options = {}) {
       continue;
     }
     if (op === 'addcustomplayerdata') {
-      log.debug('BiqApplyEdits', 'op=addcustomplayerdata: inserting empty LEAD section');
-      addCustomPlayerDataSectionToParsed(parsed);
+      const hasLeadAddOps = edits.some((candidate) => {
+        const candidateOp = String(candidate && candidate.op || '').toLowerCase();
+        const candidateCode = String(candidate && candidate.sectionCode || '').toUpperCase();
+        return candidateCode === 'LEAD' && (candidateOp === 'add' || candidateOp === 'copy');
+      });
+      log.debug('BiqApplyEdits', `op=addcustomplayerdata: inserting ${hasLeadAddOps ? 'empty' : 'seeded'} LEAD section`);
+      addCustomPlayerDataSectionToParsed(parsed, { seedDefaultPlayers: !hasLeadAddOps });
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
       continue;
@@ -5095,6 +5504,7 @@ function applyEdits(buf, edits, options = {}) {
       newRec.newRecordRef = newRef;
       newRec.index = section.records.length;
       section.records.push(newRec);
+      if (code === 'SLOC') syncSLocRecordTileStartFlag(parsed, newRec);
       section._modified = true;
       applied++;
       continue;
@@ -5120,9 +5530,13 @@ function applyEdits(buf, edits, options = {}) {
         continue;
       }
       log.debug('BiqApplyEdits', `op=delete ${code}: removed record ${ref} (was at index ${idx})`);
+      const removedRecord = section.records[idx];
       section.records.splice(idx, 1);
       // Re-number indices
       section.records.forEach((r, i) => { r.index = i; });
+      if (code === 'SLOC' && removedRecord && !hasSlocAtCoords(section, removedRecord.x, removedRecord.y)) {
+        setTileStartFlagByCoords(parsed, removedRecord.x, removedRecord.y, false);
+      }
       section._modified = true;
       applied++;
       continue;
@@ -5145,8 +5559,19 @@ function applyEdits(buf, edits, options = {}) {
     // But in the Java path, values are base64-encoded in the TSV and decoded by Java.
     // In our JS path, configCore.js calls applyBiqEdits directly with plain strings.
 
+    const oldSlocCoords = code === 'SLOC'
+      ? { x: getRecordIntValue(rec, 'x', NaN), y: getRecordIntValue(rec, 'y', NaN) }
+      : null;
     const ok = applySetToRecord(rec, fieldKey, value, code, io);
     if (ok) {
+      if (code === 'SLOC') {
+        syncSLocRecordTileStartFlag(parsed, rec);
+        const nextX = getRecordIntValue(rec, 'x', NaN);
+        const nextY = getRecordIntValue(rec, 'y', NaN);
+        if (oldSlocCoords && (oldSlocCoords.x !== nextX || oldSlocCoords.y !== nextY) && !hasSlocAtCoords(section, oldSlocCoords.x, oldSlocCoords.y)) {
+          setTileStartFlagByCoords(parsed, oldSlocCoords.x, oldSlocCoords.y, false);
+        }
+      }
       if (code === 'PRTO' && canonicalKey(fieldKey) === 'aistrategy') {
         const primaryIndex = Number(rec && rec.index);
         const isPrimary = !Number.isFinite(Number(rec && rec.otherStrategy)) || Number(rec && rec.otherStrategy) < 0;
@@ -5166,6 +5591,26 @@ function applyEdits(buf, edits, options = {}) {
 
   log.debug('BiqApplyEdits', `loop complete: applied=${applied} skipped=${skipped}`);
 
+  const repairedLeadDifficultyCount = normalizeLeadDifficultySentinels(parsed);
+  if (repairedLeadDifficultyCount > 0) {
+    log.debug('BiqApplyEdits', `normalized ${repairedLeadDifficultyCount} LEAD Any difficulty sentinel(s) to -2`);
+  }
+  if (syncWmapNumCivsToLeadCount(parsed)) {
+    log.debug('BiqApplyEdits', 'synced WMAP civilization count to LEAD player count');
+  }
+  const repairedSlocFlagCount = normalizeSLocTileStartFlags(parsed);
+  if (repairedSlocFlagCount > 0) {
+    log.debug('BiqApplyEdits', `synced ${repairedSlocFlagCount} SLOC starting-location tile flag(s)`);
+  }
+  const normalizedFixedCityOwners = normalizeFixedPlayerPreplacedCityOwnership(parsed);
+  if (normalizedFixedCityOwners > 0) {
+    log.debug('BiqApplyEdits', `converted ${normalizedFixedCityOwners} fixed-player preplaced city owner(s) to civilization ownership`);
+  }
+  const clearedOrphanStartFlags = normalizePreplacedCityScenarioStartFlags(parsed);
+  if (clearedOrphanStartFlags > 0) {
+    log.debug('BiqApplyEdits', `cleared ${clearedOrphanStartFlags} orphan TILE starting-location flag(s) for preplaced-city scenario`);
+  }
+
   const normalizeRaceResult = normalizeRaceDependentSections(parsed, edits, originalRaceRefs);
   if (!normalizeRaceResult.ok) {
     log.error('BiqApplyEdits', `normalizeRaceDependentSections failed: ${normalizeRaceResult.error || 'unknown'}`);
@@ -5176,49 +5621,23 @@ function applyEdits(buf, edits, options = {}) {
     log.error('BiqApplyEdits', `normalizeDeletedReferenceSections failed: ${normalizeDeleteResult.error || 'unknown'}`);
     return { ok: false, error: normalizeDeleteResult.error || 'Failed to normalize deleted BIQ references.' };
   }
+  const playerLoadIssues = collectScenarioPlayerLoadabilityIssues(parsed);
+  if (playerLoadIssues.length > 0) {
+    const issue = playerLoadIssues[0];
+    const detail = formatScenarioPlayerLoadabilityIssue(issue);
+    log.error('BiqApplyEdits', `collectScenarioPlayerLoadabilityIssues failed: ${detail}`);
+    return { ok: false, error: `Save blocked to protect the BIQ. ${detail}` };
+  }
+  const startingLocationWarnings = collectStartingLocationCoherenceWarnings(parsed);
+  if (startingLocationWarnings.length > 0) {
+    log.debug('BiqApplyEdits', `starting-location coherence note(s): ${startingLocationWarnings.join('; ')}`);
+  }
   const mapReferenceIssues = collectMapReferenceIntegrityIssues(parsed);
   if (mapReferenceIssues.length > 0) {
     const issue = mapReferenceIssues[0];
-    let detail = `map integrity issue ${issue.kind}`;
-    if (issue.kind === 'tile-city-ref') {
-      detail = `tile ${issue.tileIndex} references CITY ${issue.cityRef} but only ${issue.cityCount} city record(s) remain`;
-    } else if (issue.kind === 'tile-colony-ref') {
-      detail = `tile ${issue.tileIndex} references CLNY ${issue.colonyRef} but only ${issue.colonyCount} colony record(s) remain`;
-    } else if (issue.kind === 'tile-city-coords') {
-      detail = `tile ${issue.tileIndex} points at CITY ${issue.cityRef}, but tile ${issue.tileX},${issue.tileY} does not match city ${issue.cityX},${issue.cityY}`;
-    } else if (issue.kind === 'tile-colony-coords') {
-      detail = `tile ${issue.tileIndex} points at CLNY ${issue.colonyRef}, but tile ${issue.tileX},${issue.tileY} does not match colony ${issue.colonyX},${issue.colonyY}`;
-    } else if (issue.kind === 'city-tile-backref') {
-      detail = `CITY ${issue.cityRef} at ${issue.cityX},${issue.cityY} is not linked back from its tile (tile has CITY ${issue.tileCityRef})`;
-    } else if (issue.kind === 'colony-tile-backref') {
-      detail = `CLNY ${issue.colonyRef} at ${issue.colonyX},${issue.colonyY} is not linked back from its tile (tile has CLNY ${issue.tileColonyRef})`;
-    } else if (issue.kind === 'city-ref-count') {
-      detail = `CITY ${issue.cityRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
-    } else if (issue.kind === 'colony-ref-count') {
-      detail = `CLNY ${issue.colonyRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
-    } else if (issue.kind === 'city-out-of-bounds') {
-      detail = `CITY ${issue.cityRef} is out of bounds at ${issue.cityX},${issue.cityY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'colony-out-of-bounds') {
-      detail = `CLNY ${issue.colonyRef} is out of bounds at ${issue.colonyX},${issue.colonyY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'unit-out-of-bounds') {
-      detail = `UNIT ${issue.unitRef} is out of bounds at ${issue.unitX},${issue.unitY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'city-missing-tile') {
-      detail = `CITY ${issue.cityRef} points to missing tile ${issue.cityX},${issue.cityY}`;
-    } else if (issue.kind === 'colony-missing-tile') {
-      detail = `CLNY ${issue.colonyRef} points to missing tile ${issue.colonyX},${issue.colonyY}`;
-    } else if (issue.kind === 'unit-missing-tile') {
-      detail = `UNIT ${issue.unitRef} points to missing tile ${issue.unitX},${issue.unitY}`;
-    } else if (/^(city|unit|clny|sloc)-owner-ref$/.test(issue.kind)) {
-      detail = `${issue.sectionCode} ${issue.recordRef} has invalid owner ${issue.owner} for ownerType ${issue.ownerType} (races=${issue.raceCount}, players=${issue.playerCount})`;
-    } else if (/^(city|unit|clny|sloc)-owner-type$/.test(issue.kind)) {
-      detail = `${issue.sectionCode} ${issue.recordRef} has unsupported ownerType ${issue.ownerType}`;
-    } else if (issue.kind === 'sloc-out-of-bounds') {
-      detail = `SLOC ${issue.slocRef} is out of bounds at ${issue.slocX},${issue.slocY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'sloc-missing-tile') {
-      detail = `SLOC ${issue.slocRef} points to missing tile ${issue.slocX},${issue.slocY}`;
-    }
+    const detail = formatMapReferenceIntegrityIssue(issue);
     log.error('BiqApplyEdits', `collectMapReferenceIntegrityIssues failed: ${detail}`);
-    return { ok: false, error: `Map reference integrity check failed after BIQ edits: ${detail}.` };
+    return { ok: false, error: `Save blocked to protect the BIQ. ${detail}` };
   }
   const touchedColonyLikeState = edits.some((edit) => {
     const op = String(edit && edit.op || 'set').toLowerCase();
@@ -5233,9 +5652,9 @@ function applyEdits(buf, edits, options = {}) {
     const colonyOverlayIssues = collectColonyOverlayCoherenceIssues(parsed);
     if (colonyOverlayIssues.length > 0) {
       const issue = colonyOverlayIssues[0];
-      const detail = `tile ${issue.tileIndex} links CLNY ${issue.colonyRef} with improvementType ${issue.improvementType}, but tile overlay state resolves to ${issue.overlayType}`;
+      const detail = formatColonyOverlayCoherenceIssue(issue);
       log.error('BiqApplyEdits', `collectColonyOverlayCoherenceIssues failed: ${detail}`);
-      return { ok: false, error: `Colony overlay coherence check failed after BIQ edits: ${detail}.` };
+      return { ok: false, error: `Save blocked to protect the BIQ. ${detail}` };
     }
   }
 
@@ -5290,6 +5709,11 @@ module.exports = {
   getTileRecordLength,
   normalizeRaceDependentSections,
   normalizeDeletedReferenceSections,
+  normalizeFixedPlayerPreplacedCityOwnership,
+  normalizePreplacedCityScenarioStartFlags,
   collectMapReferenceIntegrityIssues,
+  collectScenarioPlayerLoadabilityIssues,
+  collectStartingLocationCoherenceWarnings,
+  formatScenarioPlayerLoadabilityIssue,
   collectColonyOverlayCoherenceIssues,
 };

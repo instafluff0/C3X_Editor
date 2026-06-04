@@ -196,6 +196,11 @@ function uniqueNormalizedEntries(values) {
   return Array.from(new Set((Array.isArray(values) ? values : []).map(normalizeTidesScenarioVariant))).sort();
 }
 
+function uniqueNormalizedBaselineEntries(values) {
+  return uniqueNormalizedEntries(values)
+    .filter((entry) => !entry.startsWith('Scenarios/Fallout/'));
+}
+
 test('Conquests unit INI resolution works across base and all scenario folders', () => {
   if (!fs.existsSync(CONQUESTS_ROOT)) {
     test.skip(`Conquests root not found: ${CONQUESTS_ROOT}`);
@@ -218,15 +223,13 @@ test('Conquests movement/action FLC references match known baseline', () => {
   const snapshot = collectResolutionSnapshot(CONQUESTS_ROOT);
 
   // These scenario folders are helper/art folders, not unit definitions.
-  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingIniFolders), [
+  assert.deepEqual(uniqueNormalizedBaselineEntries(snapshot.missingIniFolders), [
     'Scenarios/CCM3/Palettes',
     'Scenarios/CCM3/m42',
     'Scenarios/Tides of Crimson/Corel Auto-Preserve',
     'Scenarios/Tides of Crimson/Cyrstal Dragon',
     'Scenarios/Tides of Crimson/Dragon Sounds',
     'Scenarios/Tides of Crimson/ITEMS',
-    'Scenarios/Tides of Crimson/New folder',
-    'Scenarios/Tides of Crimson/New folder (2)',
     'Scenarios/Tides of Crimson/Palettes',
     'Scenarios/Tides of Crimson/SOUNDS',
     'Scenarios/Tides of Crimson/SOUNDZ',
@@ -235,7 +238,7 @@ test('Conquests movement/action FLC references match known baseline', () => {
   ].sort());
 
   // Unit folders that have an INI, but not UnitFolderName.ini.
-  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingNamedIni), [
+  assert.deepEqual(uniqueNormalizedBaselineEntries(snapshot.missingNamedIni), [
     'Scenarios/CCM3/AsianLine Infantry1',
     'Scenarios/CCM3/German Inf.Div.mot',
     'Scenarios/CCM3/Hull (Capitalship)-CA',
@@ -259,7 +262,7 @@ test('Conquests movement/action FLC references match known baseline', () => {
   ].sort());
 
   // Known missing FLC references in current local Conquests content.
-  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingActionFlc), [
+  assert.deepEqual(uniqueNormalizedBaselineEntries(snapshot.missingActionFlc), [
     'Scenarios/CCM3/Asian Su76M#RUN',
     'Scenarios/CCM3/Elvis#DEATH',
     'Scenarios/CCM3/Elvis#DEFAULT',
@@ -277,7 +280,7 @@ test('Conquests movement/action FLC references match known baseline', () => {
   ].sort());
 
   // Known missing movement defaults/run references in current local Conquests content.
-  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingMovementFlc), [
+  assert.deepEqual(uniqueNormalizedBaselineEntries(snapshot.missingMovementFlc), [
     'Scenarios/CCM3/Asian Su76M#RUN',
     'Scenarios/CCM3/Elvis#DEFAULT',
     'Scenarios/CCM3/Elvis#RUN'

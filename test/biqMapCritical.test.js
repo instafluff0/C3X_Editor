@@ -127,6 +127,11 @@ function getParsedTileAtCoords(section, x, y) {
   )) || null;
 }
 
+function parsedTileHasStartingLocationFlag(section, x, y) {
+  const tile = getParsedTileAtCoords(section, x, y);
+  return !!(tile && (((Number(tile.c3cBonuses) || 0) >>> 0) & 0x00000008));
+}
+
 function addSeedCity(mapTab, citySection, tile, name, owner = 0, ownerType = 2) {
   if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
   const ref = `CITY_${String(name || 'seed').replace(/[^A-Z0-9]+/gi, '_').toUpperCase()}_${Date.now()}_${Math.floor(Math.random() * 10000)}`.slice(0, 28);
@@ -1242,9 +1247,26 @@ test('critical BIQ map: explicit removemap save removes all BIQ map sections end
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  const scenarioDistrictsPath = path.join(tmp, 'scenario.districts.txt');
   fs.mkdirSync(c3x, { recursive: true });
   ensureDefaultC3xFiles(c3x);
   fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.writeFileSync(
+    scenarioDistrictsPath,
+    [
+      'DISTRICTS',
+      '',
+      '#District',
+      'coordinates = 126,2',
+      'district = Neighborhood',
+      '',
+      '#NamedTile',
+      'coordinates = 126,2',
+      'name = Test Named Tile',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
 
   const before = parseBiqFileForRawSections(scenarioBiq);
   assert.equal(before.ok, true, 'expected map fixture parse before removemap save');
@@ -1273,6 +1295,10 @@ test('critical BIQ map: explicit removemap save removes all BIQ map sections end
     assert.equal(beforeSectionCodes.has(code), true, `expected original fixture to contain ${code}`);
     assert.equal(afterSectionCodes.has(code), false, `expected removemap save to remove ${code}`);
   });
+  const scenarioDistrictsText = fs.readFileSync(scenarioDistrictsPath, 'utf8');
+  assert.match(scenarioDistrictsText, /^DISTRICTS\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#District\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#NamedTile\b/);
 
   const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   assert.ok(reloaded && reloaded.tabs && reloaded.tabs.map, 'expected map tab after removemap reload');
@@ -1730,7 +1756,7 @@ test('critical BIQ map: unit owner transfer keeps colocated city coherent and on
   });
 });
 
-test('critical BIQ map: starting-location edit only changes SLOC section', () => {
+test('critical BIQ map: starting-location edit changes SLOC and matching TILE start flag only', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1750,10 +1776,12 @@ test('critical BIQ map: starting-location edit only changes SLOC section', () =>
   const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const after = parseBiqFileForRawSections(scenarioBiq);
-  assert.deepEqual(getChangedSectionCodes(before, after), ['SLOC']);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'SLOC']);
+  const afterTile = getSection({ sections: after.sections }, 'TILE');
+  assert.equal(parsedTileHasStartingLocationFlag(afterTile, 4, 4), true);
 });
 
-test('critical BIQ map: starting-location delete only changes SLOC section', () => {
+test('critical BIQ map: starting-location delete changes SLOC and matching TILE start flag only', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1785,7 +1813,9 @@ test('critical BIQ map: starting-location delete only changes SLOC section', () 
   const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const after = parseBiqFileForRawSections(scenarioBiq);
-  assert.deepEqual(getChangedSectionCodes(before, after), ['SLOC']);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'SLOC']);
+  const afterTile = getSection({ sections: after.sections }, 'TILE');
+  assert.equal(parsedTileHasStartingLocationFlag(afterTile, 4, 4), false);
 });
 
 test('critical BIQ map: colony edit only changes CLNY and TILE sections', (t) => {

@@ -7,8 +7,194 @@ const path = require('node:path');
 const {
   collectPediaIconsReferenceEdits,
   buildScenarioPediaIconsEditResult,
+  buildScenarioPediaIconsRepairResult,
+  parsePediaIconsDocumentWithOrder,
+  serializePediaIconsDocumentWithOrder,
   pickScenarioReferenceArtTargetRelativePath
 } = require('../src/configCore');
+
+const HOMELESS_BLOCK = [
+  '#HomelessIcons',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+  '#END CIVILOPEDIA ART'
+];
+
+function linesBetween(text, startHeader, endHeader) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const start = lines.findIndex((line) => line.trim().toUpperCase() === startHeader.toUpperCase());
+  const end = start >= 0 ? lines.findIndex((line, idx) => idx > start && line.trim().toUpperCase() === endHeader.toUpperCase()) : -1;
+  return start >= 0 && end >= 0 ? lines.slice(start + 1, end) : [];
+}
+
+function hasRealHeaderInHomeless(text) {
+  return linesBetween(text, '#HomelessIcons', '#END CIVILOPEDIA ART')
+    .some((line) => /^#(ICON_|WON_SPLASH_|TECH_|ANIMNAME_|RACE_)/i.test(String(line || '').trim()));
+}
+
+test('PediaIcons parse/serialize preserves HomelessIcons placeholder rows and CRLF', () => {
+  const text = [
+    '#ICON_BLDG_GRANARY',
+    'SINGLE',
+    '10',
+    'art\\civilopedia\\icons\\buildings\\granarylarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\granarysmall.pcx',
+    ...HOMELESS_BLOCK,
+    '#WON_SPLASH_BLDG_Pyramids',
+    'art\\wonder splash\\pyramid.pcx',
+    ''
+  ].join('\r\n');
+
+  const doc = parsePediaIconsDocumentWithOrder(text);
+  const saved = serializePediaIconsDocumentWithOrder(doc);
+
+  assert.equal(saved, text);
+  assert.equal(hasRealHeaderInHomeless(saved), false);
+  assert.ok(saved.includes(HOMELESS_BLOCK.join('\r\n')));
+  assert.equal((saved.match(/\r\n/g) || []).length > 0, true);
+  assert.equal((saved.match(/(?<!\r)\n/g) || []).length, 0);
+});
+
+test('buildScenarioPediaIconsEditResult preserves duplicate separators, EraSplash, and spaceship blocks', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-pediaicons-'));
+  const targetPath = path.join(dir, 'PediaIcons.txt');
+  fs.writeFileSync(targetPath, [
+    '######################################################################',
+    '#ERA_SPLASH_ERAS_Ancient_Times',
+    'art\\erasplash\\ancient.pcx',
+    '#ERA_SPLASH_ERAS_Middle_Ages',
+    'art\\erasplash\\middle.pcx',
+    '######################################################################',
+    '#ICON_SS_Planetary_Party_Lounge',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_large.pcx',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_small.pcx',
+    ...HOMELESS_BLOCK,
+    ''
+  ].join('\r\n'), 'latin1');
+
+  const result = buildScenarioPediaIconsEditResult({
+    targetPath,
+    edits: [{
+      blockKey: 'ANIMNAME_PRTO_JET_FIGHTER',
+      lines: ['Jet Fighter']
+    }]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const saved = result.buffer.toString('latin1');
+  assert.equal((saved.match(/^######################################################################$/gm) || []).length, 2);
+  assert.match(saved, /#ERA_SPLASH_ERAS_Ancient_Times\r\nart\\erasplash\\ancient\.pcx/);
+  assert.match(saved, /#ERA_SPLASH_ERAS_Middle_Ages\r\nart\\erasplash\\middle\.pcx/);
+  assert.match(saved, /#ICON_SS_Planetary_Party_Lounge\r\nart\\civilopedia\\icons\\spaceship\\party_lounge_large\.pcx\r\nart\\civilopedia\\icons\\spaceship\\party_lounge_small\.pcx/);
+  assert.ok(saved.indexOf('#ANIMNAME_PRTO_JET_FIGHTER') < saved.indexOf('#HomelessIcons'));
+  assert.equal(hasRealHeaderInHomeless(saved), false);
+  assert.ok(saved.includes(HOMELESS_BLOCK.join('\r\n')));
+});
+
+test('buildScenarioPediaIconsEditResult inserts new icon blocks before HomelessIcons and preserves placeholders', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-pediaicons-'));
+  const targetPath = path.join(dir, 'PediaIcons.txt');
+  fs.writeFileSync(targetPath, [
+    '#ICON_BLDG_GRANARY',
+    'SINGLE',
+    '10',
+    'art\\civilopedia\\icons\\buildings\\granarylarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\granarysmall.pcx',
+    ...HOMELESS_BLOCK,
+    '#WON_SPLASH_BLDG_Pyramids',
+    'art\\wonder splash\\pyramid.pcx',
+    ''
+  ].join('\r\n'), 'latin1');
+
+  const result = buildScenarioPediaIconsEditResult({
+    targetPath,
+    edits: [{
+      blockKey: 'ICON_BLDG_RESIN_SHOP',
+      lines: ['SINGLE', '243', 'Art/Civilopedia/Icons/Buildings/ResinL.pcx', 'Art/Civilopedia/Icons/Buildings/ResinS.pcx']
+    }]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const saved = result.buffer.toString('latin1');
+  assert.ok(saved.indexOf('#ICON_BLDG_RESIN_SHOP') < saved.indexOf('#HomelessIcons'));
+  assert.equal(hasRealHeaderInHomeless(saved), false);
+  assert.ok(saved.includes(HOMELESS_BLOCK.join('\r\n')));
+  assert.equal((saved.match(/(?<!\r)\n/g) || []).length, 0);
+});
+
+test('buildScenarioPediaIconsEditResult keeps new wonder splash blocks after END CIVILOPEDIA ART', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-pediaicons-'));
+  const targetPath = path.join(dir, 'PediaIcons.txt');
+  fs.writeFileSync(targetPath, [
+    '#ICON_BLDG_GRANARY',
+    'SINGLE',
+    '10',
+    'art\\civilopedia\\icons\\buildings\\granarylarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\granarysmall.pcx',
+    ...HOMELESS_BLOCK,
+    '######################################################################',
+    '#WONDER_SPLASH_ART begin',
+    '#WON_SPLASH_BLDG_Pyramids',
+    'art\\wonder splash\\pyramid.pcx',
+    ''
+  ].join('\r\n'), 'latin1');
+
+  const result = buildScenarioPediaIconsEditResult({
+    targetPath,
+    edits: [{
+      blockKey: 'WON_SPLASH_BLDG_RESIN_SHOP',
+      lines: ['Art/Wonder Splash/resin.pcx']
+    }]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const saved = result.buffer.toString('latin1');
+  assert.ok(saved.indexOf('#WON_SPLASH_BLDG_RESIN_SHOP') > saved.indexOf('#END CIVILOPEDIA ART'));
+  assert.equal(hasRealHeaderInHomeless(saved), false);
+});
+
+test('buildScenarioPediaIconsRepairResult moves app-damaged HomelessIcons blocks and restores placeholders', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-pediaicons-'));
+  const targetPath = path.join(dir, 'PediaIcons.txt');
+  fs.writeFileSync(targetPath, [
+    '#ICON_BLDG_GRANARY',
+    'SINGLE',
+    '10',
+    'art\\civilopedia\\icons\\buildings\\granarylarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\granarysmall.pcx',
+    '#HomelessIcons',
+    '#ICON_BLDG_RESIN_SHOP',
+    'SINGLE',
+    '243',
+    'Art\\Civilopedia\\Icons\\Buildings\\ResinL.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\ResinS.pcx',
+    '#WON_SPLASH_BLDG_RESIN_SHOP',
+    'Art\\Wonder Splash\\resin.pcx',
+    '#END CIVILOPEDIA ART',
+    '#WON_SPLASH_BLDG_Pyramids',
+    'art\\wonder splash\\pyramid.pcx',
+    ''
+  ].join('\n'), 'latin1');
+
+  const result = buildScenarioPediaIconsRepairResult({ targetPath });
+
+  assert.equal(result.ok, true, String(result.error || 'repair failed'));
+  assert.equal(result.applied, 1);
+  assert.equal(result.repaired, true);
+  assert.equal(result.movedHomelessBlocks, 2);
+  const saved = result.buffer.toString('latin1');
+  assert.ok(saved.indexOf('#ICON_BLDG_RESIN_SHOP') < saved.indexOf('#HomelessIcons'));
+  assert.ok(saved.indexOf('#WON_SPLASH_BLDG_RESIN_SHOP') > saved.indexOf('#END CIVILOPEDIA ART'));
+  assert.equal(hasRealHeaderInHomeless(saved), false);
+  assert.ok(saved.includes(HOMELESS_BLOCK.join('\r\n')));
+  assert.equal((saved.match(/(?<!\r)\n/g) || []).length, 0);
+});
 
 test('collectPediaIconsReferenceEdits writes civ racePaths back to the RACE block', () => {
   const edits = collectPediaIconsReferenceEdits({

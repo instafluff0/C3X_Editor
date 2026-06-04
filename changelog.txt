@@ -1,12 +1,22 @@
-* RELEASE 27.13.1
+* RELEASE 27.14
+- Fixed Scenario -> Players search inputs so typing in either the player filter or Playable Civs filter keeps focus and caret position after the filtered list rerenders.
+- Moved the Scenario Playable Civilizations checklist from Scenario -> Scenario into Scenario -> Players beside the player list, matching workflow while still saving the underlying GAME playable-civ fields.
+- Cleared `scenario.districts.txt` district and named-tile sidecar data when a scenario map is removed, preventing coordinate-bound district data from surviving after BIQ map sections are deleted.
+- Repaired scenario `PediaIcons.txt` saves so app-created files with real icon blocks inside `#HomelessIcons` are automatically normalized on the next scenario save, preserving Firaxis-safe homeless placeholders, CRLF line endings, and family-aware icon/wonder-splash block placement.
+- Hardened scenario text saves so unrelated `PediaIcons.txt` comment/separator sections, EraSplash blocks, spaceship icon blocks, and Civilopedia spaceship articles survive reference edits unchanged.
+- Fixed first-write scenario `Civilopedia.txt` and `PediaIcons.txt` saves to start from the loaded fallback text layer when the scenario-local file does not exist yet, preventing one-entry override files that drop stock references.
 - Added icon-only Refresh buttons beside Save in the main toolbar and Map modal, reloading the current BIQ/config files from disk while preserving the active screen.
 - Synced Map city wall art with the Improvements picker by updating the CITY Has Walls flag when the Walls improvement is selected or cleared, reusing the existing partial city redraw path.
 - Preserved C3X District and Wonder District improvement-name references when an Improvement is renamed, including dependent improvements, wonder prerequisites, and conditional bonus entries, with async quality checks now warning on unknown conditional bonus improvement/terrain references.
-- Aligned Scenario Players with Quint semantics by exposing direct LEAD player Add/Delete controls and structured Starting Units editing in the Scenario -> Players panel, keeping playable civilizations separate from player-record count, and seeding added players with Quint-style defaults.
+- Aligned Scenario Players by exposing direct LEAD player Add/Delete controls and structured Starting Units editing in the Scenario -> Players panel, keeping playable civilizations separate from player-record count, and seeding added players with defaults.
+- Matched Scenario Player save invariants by writing LEAD Any difficulty as `-2`, syncing WMAP civilization count to LEAD player count, and keeping SLOC/TILE starting-location state coherent.
+- Normalized fixed playable-civ scenarios with preplaced city starts so player-slot-owned cities save as civ-owned stock-style cities and orphan TILE start flags are cleared when no SLOC records exist.
+- Fixed Scenario Player saves with tile-only starting locations so harmless starting-location coherence notes no longer keep the Players tab dirty after a successful save.
+- Added Scenario Players validation for playable civilizations that do not map to fixed LEAD player slots, warning in QC and blocking saves that can make Civ3 freeze while configuring AI players.
 - Fixed Map city ownership reloads so Player 1-owned cities no longer display as ownerless, restoring borders, civ-color, and culture-specific city art after reopening scenarios.
 - Added BIQ map regression coverage so barbarian owner zero and Player 1 owner zero cannot be conflated for city or unit records.
-- Aligned Map owner pickers with Quint ownership semantics by switching the owner list by owner type instead of unioning Player and Civilization choices.
-- Matched Quint's direct-Barbarians map owner UI by hiding the Owner picker for Barbarian assignment and preserving map scroll when changing city or unit assignment.
+- Aligned Map owner pickers with ownership semantics by switching the owner list by owner type instead of unioning Player and Civilization choices.
+- Matched direct-Barbarians map owner UI by hiding the Owner picker for Barbarian assignment and preserving map scroll when changing city or unit assignment.
 - Removed RACE 0 Barbarians from Map Civilization assignment owner lists; Barbarian ownership is now selected only through the Barbarians assignment.
 - Fixed civ-owned Map color rendering with custom player data so matching LEAD custom colors apply consistently to borders, city labels, unit overlays, and owner swatches.
 - Made Map Tile Info Assignment controls full-width for cities, units, and starting locations.

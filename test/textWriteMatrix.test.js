@@ -76,6 +76,13 @@ function normPediaLines(lines) {
     .map((line) => line.replace(/\\/g, '/'));
 }
 
+function writeScenarioTextEditResult(targetPath, result, label) {
+  assert.equal(result.ok, true, String(result.error || `${label} failed`));
+  assert.ok(result.buffer, `expected ${label} to produce a buffer`);
+  fs.writeFileSync(targetPath, result.buffer);
+  return result.buffer.toString('latin1');
+}
+
 function setupScenarioTextFiles() {
   const root = mkTmpDir();
   const scenario = mkTmpDir();
@@ -542,6 +549,74 @@ test('new Civilopedia and PediaIcons entries insert before terminal markers', ()
   assert.ok(pediaSaved.indexOf('#ICON_BLDG_AFTER_END') > pediaSaved.indexOf('#END CIVILOPEDIA ART'));
 });
 
+test('new scenario-local Civilopedia and PediaIcons files start from fallback source text', () => {
+  const scenario = mkTmpDir();
+  const sourceDir = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaSourcePath = path.join(sourceDir, 'Civilopedia.txt');
+  const pediaIconsSourcePath = path.join(sourceDir, 'PediaIcons.txt');
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(civilopediaSourcePath, [
+    '#BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock article.',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock description.',
+    '#EOF',
+    ''
+  ].join('\r\n'), 'latin1');
+  fs.writeFileSync(pediaIconsSourcePath, [
+    '#ERA_SPLASH_ERAS_Middle_Ages',
+    'art\\erasplash\\middle.pcx',
+    '#ICON_SS_Planetary_Party_Lounge',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_large.pcx',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_small.pcx',
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'), 'latin1');
+  assert.equal(fs.existsSync(civilopediaPath), false);
+  assert.equal(fs.existsSync(pediaIconsPath), false);
+
+  const civSaved = writeScenarioTextEditResult(civilopediaPath, buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    sourcePath: civilopediaSourcePath,
+    edits: [{ sectionKey: 'PRTO_JET_FIGHTER', value: 'Jet Fighter article.' }]
+  }), 'fallback Civilopedia save');
+  const pediaSaved = writeScenarioTextEditResult(pediaIconsPath, buildScenarioPediaIconsEditResult({
+    targetPath: pediaIconsPath,
+    sourcePath: pediaIconsSourcePath,
+    edits: [{ blockKey: 'ANIMNAME_PRTO_JET_FIGHTER', lines: ['Jet Fighter'] }]
+  }), 'fallback PediaIcons save');
+
+  const civDoc = parseCivilopediaDocumentWithOrder(civSaved);
+  const pediaDoc = parsePediaIconsDocumentWithOrder(pediaSaved);
+  assert.equal(docTextByKey(civDoc, 'BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock article.');
+  assert.equal(docTextByKey(civDoc, 'DESC_BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock description.');
+  assert.equal(docTextByKey(civDoc, 'PRTO_JET_FIGHTER'), 'Jet Fighter article.');
+  assert.ok(civSaved.indexOf('#PRTO_JET_FIGHTER') < civSaved.indexOf('#EOF'));
+  assert.equal((civSaved.match(/(?<!\r)\n/g) || []).length, 0);
+
+  assert.deepEqual(normPediaLines(pediaDoc.blocks['ERA_SPLASH_ERAS_MIDDLE_AGES']), ['art/erasplash/middle.pcx']);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_SS_PLANETARY_PARTY_LOUNGE), [
+    'art/civilopedia/icons/spaceship/party_lounge_large.pcx',
+    'art/civilopedia/icons/spaceship/party_lounge_small.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ANIMNAME_PRTO_JET_FIGHTER), ['Jet Fighter']);
+  assert.ok(pediaSaved.indexOf('#ANIMNAME_PRTO_JET_FIGHTER') < pediaSaved.indexOf('#HomelessIcons'));
+  assert.ok(pediaSaved.includes('#HomelessIcons\r\n#\r\nart\\civilopedia\\icons\\terrain\\borderslarge.pcx'));
+  assert.equal((pediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
+});
+
 test('new mixed-case Civilopedia section keeps user-entered header and terminal EOF', () => {
   const scenario = mkTmpDir();
   const textDir = path.join(scenario, 'Text');
@@ -570,6 +645,187 @@ test('new mixed-case Civilopedia section keeps user-entered header and terminal 
   assert.equal((saved.match(/^#EOF$/gm) || []).length, 1);
   assert.ok(saved.indexOf('#BLDG_Resin_Shop') < saved.indexOf('#EOF'));
   assert.ok(saved.trimEnd().endsWith('#EOF'));
+});
+
+test('Civilopedia unit edits preserve spaceship articles', () => {
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  fs.writeFileSync(civilopediaPath, [
+    '#BLDG_SS_Planetary_Party_Lounge',
+    'The Planetary Party Lounge lets future citizens celebrate in orbit.',
+    '',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    'This spaceship component is required for launch.',
+    '',
+    '#PRTO_EXISTING_FIGHTER',
+    'Existing fighter article.',
+    '#DESC_PRTO_EXISTING_FIGHTER',
+    'Existing fighter description.',
+    '#EOF',
+    ''
+  ].join('\n'), 'latin1');
+
+  const result = buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [{
+      sectionKey: 'PRTO_JET_FIGHTER',
+      value: 'Jet Fighter article.\n^Fast attack aircraft.'
+    }]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'civilopedia edit failed'));
+  const saved = result.buffer.toString('latin1');
+  const doc = parseCivilopediaDocumentWithOrder(saved);
+  assert.equal(
+    docTextByKey(doc, 'BLDG_SS_Planetary_Party_Lounge'),
+    'The Planetary Party Lounge lets future citizens celebrate in orbit.'
+  );
+  assert.equal(
+    docTextByKey(doc, 'DESC_BLDG_SS_Planetary_Party_Lounge'),
+    'This spaceship component is required for launch.'
+  );
+  assert.equal(docTextByKey(doc, 'PRTO_JET_FIGHTER'), 'Jet Fighter article.\n^Fast attack aircraft.');
+  assert.ok(saved.indexOf('#BLDG_SS_Planetary_Party_Lounge') < saved.indexOf('#PRTO_JET_FIGHTER'));
+  assert.ok(saved.indexOf('#PRTO_JET_FIGHTER') < saved.indexOf('#EOF'));
+  assert.equal((saved.match(/^#EOF$/gm) || []).length, 1);
+});
+
+test('multi-save Civilopedia and PediaIcons workflow preserves stock and unknown sections', () => {
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  const homelessBlock = [
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART'
+  ];
+
+  fs.writeFileSync(civilopediaPath, [
+    '; Spaceship articles',
+    '#BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock article.',
+    '',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock description.',
+    '',
+    '#PRTO_OLD_ATTACKER',
+    'Old attacker article.',
+    '#DESC_PRTO_OLD_ATTACKER',
+    'Old attacker description.',
+    '#EOF',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(pediaIconsPath, [
+    '######################################################################',
+    '#ERA_SPLASH_ERAS_Ancient_Times',
+    'art\\erasplash\\ancient.pcx',
+    '#ERA_SPLASH_ERAS_Middle_Ages',
+    'art\\erasplash\\middle.pcx',
+    '######################################################################',
+    '#ICON_PRTO_OLD_ATTACKER',
+    'art\\civilopedia\\icons\\units\\old_attacker_large.pcx',
+    'art\\civilopedia\\icons\\units\\old_attacker_small.pcx',
+    '#ANIMNAME_PRTO_OLD_ATTACKER',
+    'Old Attacker',
+    '#ICON_SS_Planetary_Party_Lounge',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_large.pcx',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_small.pcx',
+    ...homelessBlock,
+    '#WON_SPLASH_BLDG_EXISTING_WONDER',
+    'art\\wonder splash\\existing.pcx',
+    ''
+  ].join('\r\n'), 'latin1');
+
+  writeScenarioTextEditResult(civilopediaPath, buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [
+      { sectionKey: 'PRTO_JET_FIGHTER', value: 'Jet Fighter article.\n^Fast attack aircraft.' },
+      { sectionKey: 'DESC_PRTO_JET_FIGHTER', value: 'Jet Fighter description.' },
+      { sectionKey: 'BLDG_ORBITAL_LOUNGE', value: 'Orbital Lounge article.' },
+      { sectionKey: 'DESC_BLDG_ORBITAL_LOUNGE', value: 'Orbital Lounge description.' }
+    ]
+  }), 'first Civilopedia save');
+  writeScenarioTextEditResult(pediaIconsPath, buildScenarioPediaIconsEditResult({
+    targetPath: pediaIconsPath,
+    edits: [
+      {
+        blockKey: 'ICON_PRTO_JET_FIGHTER',
+        lines: ['Art/Civilopedia/Icons/Units/JetFighterLarge.pcx', 'Art/Civilopedia/Icons/Units/JetFighterSmall.pcx']
+      },
+      { blockKey: 'ANIMNAME_PRTO_JET_FIGHTER', lines: ['Jet Fighter'] },
+      {
+        blockKey: 'ICON_BLDG_ORBITAL_LOUNGE',
+        lines: ['SINGLE', '245', 'Art/Civilopedia/Icons/Buildings/OrbitalLoungeLarge.pcx', 'Art/Civilopedia/Icons/Buildings/OrbitalLoungeSmall.pcx']
+      },
+      { blockKey: 'WON_SPLASH_BLDG_ORBITAL_LOUNGE', lines: ['Art/Wonder Splash/OrbitalLounge.pcx'] }
+    ]
+  }), 'first PediaIcons save');
+
+  const secondCivSaved = writeScenarioTextEditResult(civilopediaPath, buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [
+      { sectionKey: 'PRTO_JET_FIGHTER', value: 'Jet Fighter revised article.\n^Updated sortie doctrine.' },
+      { sectionKey: 'DESC_PRTO_JET_FIGHTER', value: 'Jet Fighter revised description.' },
+      { op: 'delete', sectionKey: 'PRTO_OLD_ATTACKER' },
+      { op: 'delete', sectionKey: 'DESC_PRTO_OLD_ATTACKER' }
+    ]
+  }), 'second Civilopedia save');
+  const secondPediaSaved = writeScenarioTextEditResult(pediaIconsPath, buildScenarioPediaIconsEditResult({
+    targetPath: pediaIconsPath,
+    edits: [
+      {
+        blockKey: 'ICON_PRTO_JET_FIGHTER',
+        lines: ['Art/Civilopedia/Icons/Units/JetFighterXLarge.pcx', 'Art/Civilopedia/Icons/Units/JetFighterXSmall.pcx']
+      },
+      { op: 'delete', blockKey: 'ICON_PRTO_OLD_ATTACKER' },
+      { op: 'delete', blockKey: 'ANIMNAME_PRTO_OLD_ATTACKER' }
+    ]
+  }), 'second PediaIcons save');
+
+  const civDoc = parseCivilopediaDocumentWithOrder(secondCivSaved);
+  const pediaDoc = parsePediaIconsDocumentWithOrder(secondPediaSaved);
+  assert.equal(docTextByKey(civDoc, 'BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock article.');
+  assert.equal(docTextByKey(civDoc, 'DESC_BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock description.');
+  assert.equal(docTextByKey(civDoc, 'PRTO_JET_FIGHTER'), 'Jet Fighter revised article.\n^Updated sortie doctrine.');
+  assert.equal(docTextByKey(civDoc, 'DESC_PRTO_JET_FIGHTER'), 'Jet Fighter revised description.');
+  assert.equal(docTextByKey(civDoc, 'BLDG_ORBITAL_LOUNGE'), 'Orbital Lounge article.');
+  assert.equal(docTextByKey(civDoc, 'PRTO_OLD_ATTACKER'), '');
+  assert.equal(docTextByKey(civDoc, 'DESC_PRTO_OLD_ATTACKER'), '');
+  assert.equal((secondCivSaved.match(/^#EOF$/gm) || []).length, 1);
+  assert.ok(secondCivSaved.trimEnd().endsWith('#EOF'));
+
+  assert.equal((secondPediaSaved.match(/^######################################################################$/gm) || []).length, 2);
+  assert.match(secondPediaSaved, /#ERA_SPLASH_ERAS_Ancient_Times\r\nart\\erasplash\\ancient\.pcx/);
+  assert.match(secondPediaSaved, /#ICON_SS_Planetary_Party_Lounge\r\nart\\civilopedia\\icons\\spaceship\\party_lounge_large\.pcx\r\nart\\civilopedia\\icons\\spaceship\\party_lounge_small\.pcx/);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_PRTO_JET_FIGHTER), [
+    'Art/Civilopedia/Icons/Units/JetFighterXLarge.pcx',
+    'Art/Civilopedia/Icons/Units/JetFighterXSmall.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ANIMNAME_PRTO_JET_FIGHTER), ['Jet Fighter']);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_ORBITAL_LOUNGE), [
+    'SINGLE',
+    '245',
+    'Art/Civilopedia/Icons/Buildings/OrbitalLoungeLarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/OrbitalLoungeSmall.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.WON_SPLASH_BLDG_ORBITAL_LOUNGE), ['Art/Wonder Splash/OrbitalLounge.pcx']);
+  assert.equal(Object.prototype.hasOwnProperty.call(pediaDoc.blocks, 'ICON_PRTO_OLD_ATTACKER'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(pediaDoc.blocks, 'ANIMNAME_PRTO_OLD_ATTACKER'), false);
+  assert.ok(secondPediaSaved.includes(homelessBlock.join('\r\n')));
+  assert.ok(secondPediaSaved.indexOf('#ICON_BLDG_ORBITAL_LOUNGE') < secondPediaSaved.indexOf('#HomelessIcons'));
+  assert.ok(secondPediaSaved.indexOf('#WON_SPLASH_BLDG_ORBITAL_LOUNGE') > secondPediaSaved.indexOf('#END CIVILOPEDIA ART'));
+  assert.equal((secondPediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
 });
 
 test('building PediaIcons structured blocks load metadata and save complete Resin Shop small wonder art', () => {

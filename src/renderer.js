@@ -113,6 +113,7 @@ const state = {
   biqRecordFilter: {},
   referenceSearchCaret: {},
   referenceSearchFocusedTab: null,
+  pendingInputFocus: null,
   tabSearchRenderTimer: null,
   referenceNotice: null,
   biqSectionSelectionByTab: {},
@@ -1824,6 +1825,36 @@ function scheduleTabSearchRender(tabKey, renderFn, options = {}) {
     if (typeof renderFn === 'function') renderFn();
     if (afterRender) afterRender();
   }, delayMs);
+}
+
+function rememberInputFocusForRender(input) {
+  if (!input || !input.dataset || !input.dataset.preserveFocusKey) return;
+  state.pendingInputFocus = {
+    key: String(input.dataset.preserveFocusKey || ''),
+    start: Number(input.selectionStart),
+    end: Number(input.selectionEnd)
+  };
+}
+
+function restorePendingInputFocusAfterRender() {
+  const pending = state.pendingInputFocus;
+  state.pendingInputFocus = null;
+  const key = String(pending && pending.key || '');
+  if (!key || !el || !el.tabContent) return;
+  const target = Array.from(el.tabContent.querySelectorAll('[data-preserve-focus-key]'))
+    .find((node) => String(node && node.dataset && node.dataset.preserveFocusKey || '') === key);
+  if (!target || typeof target.focus !== 'function') return;
+  target.focus({ preventScroll: true });
+  if (typeof target.setSelectionRange === 'function'
+    && Number.isFinite(pending.start)
+    && Number.isFinite(pending.end)) {
+    target.setSelectionRange(pending.start, pending.end);
+  }
+}
+
+function renderActiveTabPreservingInputFocus(input, options = {}) {
+  rememberInputFocusForRender(input);
+  renderActiveTab(options);
 }
 
 function shouldWarnForAccessIssue(entry, classification, access) {
@@ -4985,7 +5016,7 @@ function applyQuintLeadDefaults(record, playerIndex) {
   setLeadFieldValue(record, 'civ', '-3');
   setLeadFieldValue(record, 'government', formatBiqReferenceValue('GOVT', 1));
   setLeadFieldValue(record, 'initialera', formatBiqReferenceValue('ERAS', 0));
-  setLeadFieldValue(record, 'difficulty', '-1');
+  setLeadFieldValue(record, 'difficulty', '-2');
   setLeadFieldValue(record, 'startcash', '10');
   setLeadFieldValue(record, 'color', '0');
   setLeadFieldValue(record, 'genderofleadername', '0');
@@ -5020,7 +5051,7 @@ function buildQuintLeadRecord(newRecordRef, playerIndex) {
       makeQuintLeadField('civ', '-3'),
       makeQuintLeadField('government', formatBiqReferenceValue('GOVT', 1)),
       makeQuintLeadField('initialera', formatBiqReferenceValue('ERAS', 0)),
-      makeQuintLeadField('difficulty', '-1'),
+      makeQuintLeadField('difficulty', '-2'),
       makeQuintLeadField('startcash', '10'),
       makeQuintLeadField('color', '0'),
       makeQuintLeadField('genderofleadername', '0'),
@@ -12935,7 +12966,7 @@ const BIQ_FIELD_ENUMS = {
   },
   players: {
     difficulty: [
-      { value: '-1', label: 'Any' },
+      { value: '-2', label: 'Any' },
       { value: '0', label: 'Difficulty 1' },
       { value: '1', label: 'Difficulty 2' },
       { value: '2', label: 'Difficulty 3' },
@@ -20932,7 +20963,7 @@ function getEnumOptionsForBiqStructureTab(tabKey, field) {
     return getRuleSectionIndexOptions('DIFF');
   }
   if (tabKey === 'players' && canon === 'difficulty') {
-    return [{ value: 'Any', label: 'Any' }].concat(getRuleSectionIndexOptions('DIFF'));
+    return [{ value: '-2', label: 'Any' }].concat(getRuleSectionIndexOptions('DIFF'));
   }
   if (tabKey === 'world' && canon === 'worldsize') {
     return makeBiqSectionIndexOptions('WSIZ', false);
@@ -30870,6 +30901,100 @@ function setGamePlayableCivilizations(record, playableIds) {
   return count;
 }
 
+function renderPlayableCivilizationsPanel({ readOnly = false } = {}) {
+  const record = getScenarioGameRecord();
+  if (!record) return null;
+  syncNumberOfPlayableCivsField(record);
+  const playableFields = getGamePlayableCivFields(record);
+  const selectedIds = new Set(playableFields
+    .map((field) => parseIntFromDisplayValue(field.value))
+    .filter((value) => Number.isFinite(value) && value >= 0));
+  const options = makeBiqSectionIndexOptions('RACE', false)
+    .filter((opt) => {
+      const civId = Number.parseInt(String(opt && opt.value || ''), 10);
+      return Number.isFinite(civId) && civId >= 0 && !isBarbarianCivilizationOption(opt);
+    });
+
+  const panel = document.createElement('div');
+  panel.className = 'players-playable-civs-panel entry-list-pane';
+
+  const header = document.createElement('div');
+  header.className = 'players-playable-civs-header';
+  const title = document.createElement('strong');
+  title.textContent = 'Playable Civs';
+  const count = document.createElement('span');
+  count.className = 'field-meta';
+  count.textContent = `${selectedIds.size} playable`;
+  header.appendChild(title);
+  header.appendChild(count);
+  panel.appendChild(header);
+
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.classList.add('app-search-input');
+  search.placeholder = 'Search civs...';
+  const filterKey = 'players:playable-civs';
+  search.dataset.preserveFocusKey = `biq-search:${filterKey}`;
+  const needle = String(state.biqRecordFilter[filterKey] || '').trim().toLowerCase();
+  search.value = state.biqRecordFilter[filterKey] || '';
+  search.addEventListener('input', () => {
+    state.biqRecordFilter[filterKey] = search.value;
+    renderActiveTabPreservingInputFocus(search, { preserveTabScroll: true });
+  });
+  panel.appendChild(search);
+
+  const list = document.createElement('div');
+  list.className = 'players-playable-civs-list';
+  options.forEach((opt) => {
+    const civId = Number.parseInt(String(opt.value || ''), 10);
+    const labelText = String(opt.label || opt.value || '').trim();
+    if (needle && !labelText.toLowerCase().includes(needle)) return;
+    const item = document.createElement('label');
+    item.className = 'entry-list-item players-playable-civ-item';
+    item.style.cursor = readOnly ? 'default' : 'pointer';
+
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb';
+    if (opt.entry) loadReferenceListThumbnail('civilizations', opt.entry, thumb);
+    item.appendChild(thumb);
+
+    const text = document.createElement('strong');
+    text.textContent = labelText;
+    item.appendChild(text);
+
+    const toggle = document.createElement('label');
+    toggle.className = 'bool-toggle';
+    if (!readOnly) toggle.classList.add('bool-row-toggle');
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = selectedIds.has(civId);
+    check.disabled = !!readOnly;
+    const checkText = document.createElement('span');
+    checkText.textContent = 'Playable';
+    check.addEventListener('change', () => {
+      if (readOnly) return;
+      rememberUndoSnapshot();
+      if (check.checked) selectedIds.add(civId);
+      else selectedIds.delete(civId);
+      setGamePlayableCivilizations(record, Array.from(selectedIds));
+      setDirty(true);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    toggle.appendChild(check);
+    toggle.appendChild(checkText);
+    item.appendChild(toggle);
+    list.appendChild(item);
+  });
+  if (list.children.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'hint';
+    empty.textContent = 'No matching civilizations.';
+    list.appendChild(empty);
+  }
+  panel.appendChild(list);
+  return panel;
+}
+
 function getBiqRecordCivilopediaKey(record) {
   const fields = Array.isArray(record && record.fields) ? record.fields : [];
   const field = fields.find((f) => canonicalBiqFieldKey(f) === 'civilopediaentry');
@@ -34663,6 +34788,7 @@ function renderBiqTab(tab) {
   recordSearch.classList.add('app-search-input');
   recordSearch.placeholder = `Search ${getFriendlyBiqSectionTitle(selected).toLowerCase()}...`;
   const recordFilterKey = `${selectionKey}:${selected.id}`;
+  recordSearch.dataset.preserveFocusKey = `biq-record-search:${recordFilterKey}`;
   recordSearch.value = state.biqRecordFilter[recordFilterKey] || '';
   recordFilterRow.appendChild(recordSearch);
   const controlsRight = document.createElement('div');
@@ -34916,6 +35042,14 @@ function renderBiqTab(tab) {
   const layout = document.createElement('div');
   layout.className = 'entry-layout';
   if (hideRecordList) layout.style.gridTemplateColumns = '1fr';
+  const showPlayableCivsPanel = selected.code === 'LEAD'
+    && selectedSectionTab
+    && selectedSectionTab.key === 'players'
+    && selectedBaseCode === 'GAME'
+    && activeGamePanel
+    && activeGamePanel.id === 'players'
+    && !!getScenarioGameRecord();
+  if (showPlayableCivsPanel) layout.classList.add('players-with-playable-civs');
 
   const listPane = document.createElement('div');
   listPane.className = 'entry-list-pane';
@@ -34962,8 +35096,15 @@ function renderBiqTab(tab) {
     });
     recordSearch.addEventListener('input', () => {
       state.biqRecordFilter[recordFilterKey] = recordSearch.value;
-      renderActiveTab({ preserveTabScroll: true });
+      renderActiveTabPreservingInputFocus(recordSearch, { preserveTabScroll: true });
     });
+    if (showPlayableCivsPanel) {
+      const scenarioTab = getBiqTabByKey('scenarioSettings');
+      const playablePanel = renderPlayableCivilizationsPanel({
+        readOnly: !isScenarioMode() || !!(scenarioTab && scenarioTab.readOnly)
+      });
+      if (playablePanel) layout.appendChild(playablePanel);
+    }
     layout.appendChild(listPane);
   }
 
@@ -35448,76 +35589,6 @@ function renderBiqTab(tab) {
           const countField = getGamePlayableCivCountField(record);
           if (countField) consumedSpecialFields.add(countField);
           playableFields.forEach((field) => consumedSpecialFields.add(field));
-
-          const options = getCachedBiqSectionIndexOptions('RACE', false);
-          const selectedIds = new Set(playableFields
-            .map((field) => parseIntFromDisplayValue(field.value))
-            .filter((value) => Number.isFinite(value) && value >= 0));
-
-          const row = document.createElement('div');
-          row.className = 'rule-row';
-          const label = document.createElement('label');
-          label.className = 'field-meta';
-          label.textContent = 'Playable Civilizations';
-          row.appendChild(label);
-
-          const controlWrap = document.createElement('div');
-          controlWrap.className = 'rule-control';
-          const countBadge = document.createElement('div');
-          countBadge.className = 'field-meta';
-          countBadge.style.marginBottom = '8px';
-          countBadge.textContent = `${selectedIds.size} playable`;
-          controlWrap.appendChild(countBadge);
-
-          const list = document.createElement('div');
-          list.style.display = 'grid';
-          list.style.gap = '8px';
-          options.forEach((opt) => {
-            const civId = Number.parseInt(String(opt.value || ''), 10);
-            if (!Number.isFinite(civId) || civId < 0) return;
-            if (isBarbarianCivilizationOption(opt)) return;
-            const item = document.createElement('label');
-            item.className = 'entry-list-item';
-            item.style.display = 'grid';
-            item.style.gridTemplateColumns = '28px 1fr auto';
-            item.style.alignItems = 'center';
-            item.style.gap = '10px';
-            item.style.cursor = tab.readOnly ? 'default' : 'pointer';
-
-            const thumb = document.createElement('span');
-            thumb.className = 'entry-thumb';
-            if (opt.entry) loadReferenceListThumbnail('civilizations', opt.entry, thumb);
-            item.appendChild(thumb);
-
-            const text = document.createElement('span');
-            text.textContent = String(opt.label || opt.value);
-            item.appendChild(text);
-
-            const toggle = document.createElement('label');
-            toggle.className = 'bool-toggle';
-            if (!tab.readOnly) toggle.classList.add('bool-row-toggle');
-            const check = document.createElement('input');
-            check.type = 'checkbox';
-            check.checked = selectedIds.has(civId);
-            check.disabled = !!tab.readOnly;
-            const checkText = document.createElement('span');
-            checkText.textContent = 'Playable';
-            check.addEventListener('change', () => {
-              rememberUndoSnapshot();
-              if (check.checked) selectedIds.add(civId);
-              else selectedIds.delete(civId);
-              const count = setGamePlayableCivilizations(record, Array.from(selectedIds));
-              countBadge.textContent = `${count} playable`;
-              setDirty(true);
-            });
-            toggle.appendChild(check);
-            toggle.appendChild(checkText);
-            item.appendChild(toggle);
-            list.appendChild(item);
-          });
-          controlWrap.appendChild(list);
-          row.appendChild(controlWrap);
-          groupCard.appendChild(row);
         }
 
         if (selected.code === 'GAME' && /^Alliance \d+$/.test(groupName)) {
@@ -40400,6 +40471,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return sx2 === Number(xPos) && sy2 === Number(yPos);
     }) || null;
   };
+  const setTileStartingLocationFlagAtCoords = (xPos, yPos, enabled) => {
+    const tileIndex = findTileIndexByCoords(xPos, yPos);
+    const tile = tileIndex >= 0 ? tiles[tileIndex] : null;
+    if (!tile) return false;
+    const current = parseIntLoose(getMapFieldStoredValue(tile, 'c3cbonuses', '0'), 0) >>> 0;
+    const next = enabled ? (current | 0x00000008) : (current & (~0x00000008));
+    if (next === current) return false;
+    setMapFieldValue(tile, 'c3cbonuses', String(next), 'C3C Bonuses');
+    return true;
+  };
   const describeStartingLocationOwner = (ownerType, owner) => {
     const normalizedType = parseIntLoose(ownerType, 0);
     const normalizedOwner = parseIntLoose(owner, -1);
@@ -40767,12 +40848,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         result.record.newRecordRef = ref;
         pushStructureAddOp('SLOC', ref);
       }
+      if (result.changed) setTileStartingLocationFlagAtCoords(xPos, yPos, true);
       return !!result.changed;
     }
     const existing = findStartingLocationAtCoords(xPos, yPos);
     if (existing) {
       setMapFieldValue(existing, 'owner', String(owner), 'Owner');
       setMapFieldValue(existing, 'ownertype', String(ownerType), 'Owner Type');
+      setTileStartingLocationFlagAtCoords(xPos, yPos, true);
       return true;
     }
     const ref = uniqueRecordRef('SLOC');
@@ -40789,6 +40872,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     record.newRecordRef = ref;
     slocSection.records.push(record);
     pushStructureAddOp('SLOC', ref);
+    setTileStartingLocationFlagAtCoords(xPos, yPos, true);
     return true;
   };
   const removeStartingLocationAtCoords = (xPos, yPos) => {
@@ -40798,6 +40882,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const ref = getBiqStructureRecordRef(target);
     if (ref) pushStructureDeleteOp('SLOC', ref);
     slocSection.records = slocSection.records.filter((record) => record !== target);
+    if (!findStartingLocationAtCoords(xPos, yPos)) {
+      setTileStartingLocationFlagAtCoords(xPos, yPos, false);
+    }
     return true;
   };
   const addUnitAtCoords = (tileRecord, xPos, yPos, owner, prtoNumber, experienceLevel, ownerType = 3) => {
@@ -52245,6 +52332,7 @@ function renderActiveTab(options = {}) {
     state.tabContentScrollTop = targetTop;
     updateScrollTopFab();
     updateStickySearchRowShadow();
+    restorePendingInputFocusAfterRender();
   });
 }
 

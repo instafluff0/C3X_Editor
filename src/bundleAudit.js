@@ -424,6 +424,40 @@ function getFieldValue(section, key) {
   return match ? String(match.value || '').trim() : '';
 }
 
+function getBiqRecordField(record, key) {
+  const target = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  return fields.find((field) => {
+    const fieldKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return fieldKey === target;
+  }) || null;
+}
+
+function getBiqRecordFieldValue(record, key) {
+  const field = getBiqRecordField(record, key);
+  return field ? String(field.value == null ? '' : field.value).trim() : '';
+}
+
+function parseBiqReferenceIndex(value, fallback = NaN) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return fallback;
+  if (/^any$/i.test(raw)) return -3;
+  if (/^random$/i.test(raw)) return -2;
+  const parenMatch = raw.match(/\((-?\d+)\)\s*$/);
+  if (parenMatch) {
+    const parsed = Number.parseInt(parenMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getBiqSection(bundle, tabKey, sectionCode) {
+  const tab = (((bundle || {}).tabs || {})[tabKey]) || null;
+  const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+  return sections.find((section) => String(section && section.code || '').toUpperCase() === String(sectionCode || '').toUpperCase()) || null;
+}
+
 function getBaseRowValue(bundle, key) {
   const rows = (((bundle || {}).tabs || {}).base || {}).rows;
   const match = Array.isArray(rows)
@@ -1385,6 +1419,63 @@ function auditCivilopediaLinkCase(bundle, result) {
   });
 }
 
+function auditScenarioPlayableCivilizationSlots(bundle, result) {
+  const gameSection = getBiqSection(bundle, 'scenarioSettings', 'GAME');
+  const leadSection = getBiqSection(bundle, 'players', 'LEAD');
+  const gameRecord = gameSection && Array.isArray(gameSection.records) ? gameSection.records[0] : null;
+  const leadRecords = leadSection && Array.isArray(leadSection.records) ? leadSection.records : [];
+  if (!gameRecord || leadRecords.length <= 0) return;
+
+  const civEntries = Array.isArray((((bundle || {}).tabs || {}).civilizations || {}).entries)
+    ? bundle.tabs.civilizations.entries
+    : [];
+  const civNamesByIndex = new Map();
+  civEntries.forEach((entry, idx) => {
+    const biqIndex = Number.parseInt(entry && entry.biqIndex, 10);
+    const key = Number.isFinite(biqIndex) ? biqIndex : idx;
+    const name = String(entry && entry.name || '').trim();
+    if (Number.isFinite(key) && name) civNamesByIndex.set(key, name);
+  });
+  const civName = (idx) => civNamesByIndex.get(idx) || `RACE #${idx}`;
+
+  let playableIds = (Array.isArray(gameRecord.fields) ? gameRecord.fields : [])
+    .filter((field) => /^playable_civ(?:_\d+)?$/i.test(String(field && (field.baseKey || field.key) || '')))
+    .map((field) => parseBiqReferenceIndex(field && field.value, NaN))
+    .filter((idx) => Number.isFinite(idx) && idx >= 0);
+  playableIds = Array.from(new Set(playableIds));
+  const playableCount = parseBiqReferenceIndex(getBiqRecordFieldValue(gameRecord, 'numberofplayablecivs'), playableIds.length);
+  if (playableCount === 0 && playableIds.length === 0 && civEntries.length > 1) {
+    playableIds = civEntries
+      .map((entry, idx) => {
+        const biqIndex = Number.parseInt(entry && entry.biqIndex, 10);
+        return Number.isFinite(biqIndex) ? biqIndex : idx;
+      })
+      .filter((idx) => idx > 0);
+  }
+  if (playableIds.length <= 0) return;
+
+  const fixedLeadCivs = new Set();
+  let hasHumanWildcard = false;
+  leadRecords.forEach((record) => {
+    const civ = parseBiqReferenceIndex(getBiqRecordFieldValue(record, 'civ'), -3);
+    if (civ >= 0) fixedLeadCivs.add(civ);
+    const human = parseConfigBool(getBiqRecordFieldValue(record, 'humanplayer'));
+    if (human && (civ === -3 || civ === -2)) hasHumanWildcard = true;
+  });
+  if (hasHumanWildcard) return;
+
+  const unsupported = playableIds.filter((idx) => !fixedLeadCivs.has(idx));
+  if (unsupported.length <= 0) return;
+  const firstNames = unsupported.slice(0, 6).map(civName).join(', ');
+  const fixedNames = Array.from(fixedLeadCivs).sort((a, b) => a - b).map(civName).join(', ');
+  addGeneralIssue(
+    result,
+    'players',
+    `Playable Civilizations includes ${unsupported.length} civ(s) without fixed Scenario Player slots (${firstNames}). Civ3 can freeze while configuring AI players if one is chosen. Restrict Playable Civilizations to ${fixedNames || 'the fixed Scenario Player civs'}, add fixed player slots, or make a Human Player slot Any/Random.`,
+    'playable-civ-without-lead-slot'
+  );
+}
+
 function auditLoadedBundle(bundle, options = {}) {
   const result = createAuditAccumulator();
   if (!bundle || !bundle.tabs) return result;
@@ -1401,6 +1492,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditReferenceArt(bundle, result);
   auditScenarioTextCoverage(bundle, result);
   auditCivilopediaLinkCase(bundle, result);
+  auditScenarioPlayableCivilizationSlots(bundle, result);
   return result;
 }
 

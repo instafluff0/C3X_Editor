@@ -23,6 +23,24 @@ function makeSection(fields) {
   };
 }
 
+function makeBiqRecord(fields) {
+  return {
+    fields: Object.entries(fields || {}).map(([key, value]) => ({
+      key,
+      baseKey: key,
+      label: key,
+      value: String(value)
+    }))
+  };
+}
+
+function makeBiqSection(code, records) {
+  return {
+    code,
+    records: (Array.isArray(records) ? records : []).map(makeBiqRecord)
+  };
+}
+
 function makeBundle(c3xPath, overrides = {}) {
   return {
     c3xPath,
@@ -50,6 +68,84 @@ function makeBundle(c3xPath, overrides = {}) {
     ...overrides
   };
 }
+
+function makeScenarioPlayersBundle(c3xPath, { playableIds, leadRows, civNames }) {
+  const bundle = makeBundle(c3xPath);
+  bundle.tabs.civilizations = {
+    entries: (Array.isArray(civNames) ? civNames : []).map((name, biqIndex) => ({ name, biqIndex }))
+  };
+  const gameFields = {
+    number_of_playable_civs: String((Array.isArray(playableIds) ? playableIds : []).length)
+  };
+  (Array.isArray(playableIds) ? playableIds : []).forEach((id, idx) => {
+    gameFields[`playable_civ_${idx}`] = `${civNames[id] || `RACE #${id}`} (${id})`;
+  });
+  bundle.tabs.scenarioSettings = {
+    sections: [makeBiqSection('GAME', [gameFields])]
+  };
+  bundle.tabs.players = {
+    sections: [makeBiqSection('LEAD', (Array.isArray(leadRows) ? leadRows : []).map((row) => ({
+      humanplayer: row.human ? 'true' : 'false',
+      civ: row.civLabel != null
+        ? row.civLabel
+        : (row.civ >= 0 ? `${civNames[row.civ] || `RACE #${row.civ}`} (${row.civ})` : (row.civ === -2 ? 'Random' : 'Any'))
+    })))]
+  };
+  return bundle;
+}
+
+test('auditLoadedBundle reports playable civs that have no fixed Scenario Player slot', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeScenarioPlayersBundle(c3xRoot, {
+    civNames: ['Barbarians', 'Rome', 'Egypt', 'Japan'],
+    playableIds: [1, 2, 3],
+    leadRows: [
+      { human: true, civ: 3 },
+      { human: false, civ: -3 }
+    ]
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const playersMessages = ((result.tabs.players || {}).general) || [];
+  assert.equal(playersMessages.length, 1);
+  assert.equal(playersMessages[0].code, 'playable-civ-without-lead-slot');
+  assert.match(playersMessages[0].message, /Rome, Egypt/);
+  assert.match(playersMessages[0].message, /Civ3 can freeze/);
+});
+
+test('auditLoadedBundle accepts playable civs fixed to AI Scenario Player slots', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeScenarioPlayersBundle(c3xRoot, {
+    civNames: ['Barbarians', 'Rome', 'Egypt', 'Japan'],
+    playableIds: [1, 2, 3],
+    leadRows: [
+      { human: true, civ: 1 },
+      { human: false, civ: 2 },
+      { human: false, civ: 3 }
+    ]
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const playersMessages = ((result.tabs.players || {}).general) || [];
+  assert.equal(playersMessages.some((entry) => entry.code === 'playable-civ-without-lead-slot'), false);
+});
+
+test('auditLoadedBundle accepts broad playable list with an explicit human wildcard slot', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeScenarioPlayersBundle(c3xRoot, {
+    civNames: ['Barbarians', 'Rome', 'Egypt', 'Japan'],
+    playableIds: [1, 2, 3],
+    leadRows: [
+      { human: true, civ: -3 },
+      { human: false, civ: -3 }
+    ]
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const playersMessages = ((result.tabs.players || {}).general) || [];
+  assert.equal(playersMessages.some((entry) => entry.code === 'playable-civ-without-lead-slot'), false);
+});
 
 test('auditLoadedBundle reports missing current district-family art', () => {
   const c3xRoot = mkTmpDir();

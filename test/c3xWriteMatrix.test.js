@@ -88,6 +88,26 @@ function writeDefaults(c3xRoot) {
   ].join('\n'), 'utf8');
 }
 
+const FIRAXIS_HOMELESS_BLOCK = [
+  '#HomelessIcons',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+  '#END CIVILOPEDIA ART'
+];
+
+function pediaHomelessBody(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const start = lines.findIndex((line) => line.trim().toUpperCase() === '#HOMELESSICONS');
+  const end = start >= 0 ? lines.findIndex((line, idx) => idx > start && line.trim().toUpperCase() === '#END CIVILOPEDIA ART') : -1;
+  return start >= 0 && end >= 0 ? lines.slice(start + 1, end) : [];
+}
+
 function sectionField(section, key) {
   return (section.fields || []).find((f) => String(f.key || '').trim().toLowerCase() === String(key || '').trim().toLowerCase()) || null;
 }
@@ -369,6 +389,57 @@ test('C3X scenario mode writes scenario-scoped files (not global user files)', (
   assert.equal(scenarioBase.map.flag, 'false');
   const scenarioDistricts = parseSectionFile(path.join(scenarioDir, 'scenario.districts_config.txt'), '#District');
   assert.equal(sectionField(scenarioDistricts.sections[0], 'name').value, 'Scenario Encampment');
+});
+
+test('C3X scenario save repairs app-damaged PediaIcons HomelessIcons during unrelated base edit', () => {
+  const c3xRoot = mkTmpDir();
+  const scenarioDir = mkTmpDir();
+  const textDir = path.join(scenarioDir, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  writeDefaults(c3xRoot);
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, [
+    '#ICON_BLDG_GRANARY',
+    'SINGLE',
+    '10',
+    'art\\civilopedia\\icons\\buildings\\granarylarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\granarysmall.pcx',
+    '#HomelessIcons',
+    '#ICON_BLDG_RESIN_SHOP',
+    'SINGLE',
+    '243',
+    'Art\\Civilopedia\\Icons\\Buildings\\ResinL.pcx',
+    'Art\\Civilopedia\\Icons\\Buildings\\ResinS.pcx',
+    '#WON_SPLASH_BLDG_RESIN_SHOP',
+    'Art\\Wonder Splash\\resin.pcx',
+    '#END CIVILOPEDIA ART',
+    '#WON_SPLASH_BLDG_Pyramids',
+    'art\\wonder splash\\pyramid.pcx',
+    ''
+  ].join('\n'), 'latin1');
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3xRoot, scenarioPath: scenarioDir });
+  const flagRow = bundle.tabs.base.rows.find((row) => row.key === 'flag');
+  assert.ok(flagRow, 'expected base flag row');
+  flagRow.value = 'false';
+
+  const saved = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    scenarioPath: scenarioDir,
+    tabs: bundle.tabs,
+    dirtyTabs: ['base']
+  });
+  assert.equal(saved.ok, true, String(saved.error || 'save failed'));
+  assert.ok((saved.saveReport || []).some((row) => row.kind === 'pediaIcons' && row.repaired), 'expected PediaIcons repair in save report');
+
+  const repaired = fs.readFileSync(pediaIconsPath, 'latin1');
+  assert.ok(repaired.includes(FIRAXIS_HOMELESS_BLOCK.join('\r\n')));
+  assert.equal(pediaHomelessBody(repaired).some((line) => /^#(ICON_|WON_SPLASH_)/i.test(String(line || '').trim())), false);
+  assert.ok(repaired.indexOf('#ICON_BLDG_RESIN_SHOP') < repaired.indexOf('#HomelessIcons'));
+  assert.ok(repaired.indexOf('#WON_SPLASH_BLDG_RESIN_SHOP') > repaired.indexOf('#END CIVILOPEDIA ART'));
+  assert.equal((repaired.match(/(?<!\r)\n/g) || []).length, 0);
 });
 
 test('C3X scenario mode writes edited scenario base values even when custom overrides them at runtime', () => {

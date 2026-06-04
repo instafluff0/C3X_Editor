@@ -4301,6 +4301,10 @@ button.danger:hover {
   gap: 10px;
 }
 
+.entry-layout.players-with-playable-civs {
+  grid-template-columns: minmax(260px, 320px) minmax(220px, 280px) 1fr;
+}
+
 .entry-list-pane {
   background: rgba(255, 255, 255, 0.54);
   border: 1px solid rgba(73, 69, 98, 0.14);
@@ -4366,6 +4370,35 @@ button.danger:hover {
 
 .entry-list-item.no-thumb {
   grid-template-columns: 1fr;
+}
+
+.players-playable-civs-panel {
+  gap: 8px;
+}
+
+.players-playable-civs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 4px 0;
+}
+
+.players-playable-civs-header strong {
+  font-size: 0.82rem;
+}
+
+.players-playable-civs-list {
+  display: grid;
+  gap: 6px;
+}
+
+.players-playable-civ-item {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+}
+
+.players-playable-civ-item .bool-toggle {
+  justify-self: end;
 }
 
 .entry-thumb {
@@ -11167,6 +11200,10 @@ button.unit-ini-delete-btn:disabled {
   }
 
   .entry-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-layout.players-with-playable-civs {
     grid-template-columns: 1fr;
   }
 

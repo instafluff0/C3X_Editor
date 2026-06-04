@@ -374,6 +374,14 @@ function maybeFormatIdReference(indexMap, value, noneLabel = 'None') {
   return name ? `${name} (${idx})` : String(idx);
 }
 
+function formatLeadCivilizationReference(indexMap, value) {
+  const idx = parseIntMaybe(value);
+  if (idx == null) return cleanDisplayText(value);
+  if (idx === -3) return 'Any (-3)';
+  if (idx === -2) return 'Random (-2)';
+  return maybeFormatIdReference(indexMap, idx);
+}
+
 function toBoolStringFromInt(value) {
   const n = parseIntMaybe(value);
   if (n == null) return cleanDisplayText(value);
@@ -1008,7 +1016,7 @@ function enrichBridgeSections(sections) {
             field.value = toBoolStringFromInt(v);
           }
         } else if (code === 'LEAD') {
-          if (k === 'civ') field.value = maybeFormatIdReference(raceIndex, v);
+          if (k === 'civ') field.value = formatLeadCivilizationReference(raceIndex, v);
           else if (k === 'government') field.value = maybeFormatIdReference(govIndex, v);
           else if (k === 'initialera') field.value = maybeFormatIdReference(eraIndex, v);
           else if (k === 'humanplayer' || k === 'customcivdata' || k === 'startembassies' || k === 'skipfirstturn') field.value = normalizeBoolish(v);
@@ -3216,16 +3224,38 @@ function collectScenarioDistrictsEdit(tabs) {
   const mapTab = tabs && tabs.map;
   const meta = mapTab && mapTab.scenarioDistricts;
   if (!meta) return null;
+  const mapMutation = String(mapTab && mapTab.mapMutation || '').trim().toLowerCase();
   const entries = Array.isArray(meta.entries) ? meta.entries : [];
   const namedTiles = Array.isArray(meta.namedTiles) ? meta.namedTiles : [];
   const beforeEntries = Array.isArray(meta.originalEntries) ? meta.originalEntries : [];
   const beforeNamedTiles = Array.isArray(meta.originalNamedTiles) ? meta.originalNamedTiles : [];
+  const targetPath = String(meta.targetPath || '').trim();
+  const sourcePath = String(meta.sourcePath || '').trim();
+  if (mapMutation === 'remove') {
+    const hadScenarioDistricts = entries.length > 0
+      || namedTiles.length > 0
+      || beforeEntries.length > 0
+      || beforeNamedTiles.length > 0
+      || (sourcePath && fs.existsSync(sourcePath))
+      || (targetPath && fs.existsSync(targetPath));
+    if (hadScenarioDistricts) {
+      return {
+        targetPath,
+        sourcePath,
+        encoding: String(meta.encoding || ''),
+        bom: !!meta.bom,
+        entries: [],
+        namedTiles: [],
+        cleared: true
+      };
+    }
+  }
   const now = JSON.stringify({ entries, namedTiles });
   const before = JSON.stringify({ entries: beforeEntries, namedTiles: beforeNamedTiles });
   if (now === before) return null;
   return {
-    targetPath: String(meta.targetPath || '').trim(),
-    sourcePath: String(meta.sourcePath || '').trim(),
+    targetPath,
+    sourcePath,
     encoding: String(meta.encoding || ''),
     bom: !!meta.bom,
     entries,
@@ -3693,21 +3723,226 @@ function applyDiplomacySectionSlotLines(section, values) {
   return JSON.stringify(lines) !== before;
 }
 
+function detectDominantLineEnding(text) {
+  const src = String(text == null ? '' : text);
+  const crlf = (src.match(/\r\n/g) || []).length;
+  const loneLf = (src.match(/(?<!\r)\n/g) || []).length;
+  const loneCr = (src.match(/\r(?!\n)/g) || []).length;
+  if (crlf > 0 && crlf >= loneLf && crlf >= loneCr) return '\r\n';
+  if (loneLf > 0) return '\n';
+  if (loneCr > 0) return '\n';
+  return '\n';
+}
+
+const PEDIA_HOMELESS_PLACEHOLDER_LINES = [
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverssmall.pcx'
+];
+
+function normalizePediaIconsKey(key) {
+  return String(key || '').trim().toUpperCase();
+}
+
+function isPediaIconsRealDataBlockKey(key) {
+  const k = normalizePediaIconsKey(key);
+  if (!k || k === 'HOMELESSICONS' || k === 'END CIVILOPEDIA ART') return false;
+  return /^(ICON_|WON_SPLASH_|TECH_|ANIMNAME_|RACE_|HAPPY_|CULTCON_|ERA_|PRTO_|GOOD_|BLDG_|GOVT_|TERR_|TFRM_)/.test(k);
+}
+
+function isPediaIconsWonderSplashBlockKey(key) {
+  return normalizePediaIconsKey(key).startsWith('WON_SPLASH_');
+}
+
+function findPediaIconsInsertionIndex(order, blockKey) {
+  const keys = Array.isArray(order) ? order.map(normalizePediaIconsKey) : [];
+  const targetKey = normalizePediaIconsKey(blockKey);
+  const homelessIdx = keys.indexOf('HOMELESSICONS');
+  const endIdx = keys.indexOf('END CIVILOPEDIA ART');
+  if (isPediaIconsWonderSplashBlockKey(targetKey)) {
+    let lastSplashIdx = -1;
+    keys.forEach((key, idx) => {
+      if (idx > endIdx && isPediaIconsWonderSplashBlockKey(key)) lastSplashIdx = idx;
+    });
+    if (lastSplashIdx >= 0) return lastSplashIdx + 1;
+    const wonderMarkerIdx = keys.findIndex((key, idx) => (
+      idx > endIdx && key.includes('WONDER_SPLASH_ART')
+    ));
+    if (wonderMarkerIdx >= 0) return wonderMarkerIdx + 1;
+    if (endIdx >= 0) return endIdx + 1;
+    return keys.length;
+  }
+  if (homelessIdx >= 0) return homelessIdx;
+  if (endIdx >= 0) return endIdx;
+  return keys.length;
+}
+
+function getPediaIconsItemKey(item) {
+  return normalizePediaIconsKey(item && item.key);
+}
+
+function getPediaIconsItemKeys(doc) {
+  return Array.isArray(doc && doc.items)
+    ? doc.items.map(getPediaIconsItemKey)
+    : (Array.isArray(doc && doc.order) ? doc.order.map(normalizePediaIconsKey) : []);
+}
+
+function rebuildPediaIconsDocumentIndexes(doc) {
+  if (!doc) return doc;
+  const items = Array.isArray(doc.items) ? doc.items : null;
+  const blocks = {};
+  const headers = {};
+  const order = [];
+  if (items) {
+    items.forEach((item) => {
+      const key = getPediaIconsItemKey(item);
+      if (!key) return;
+      item.key = key;
+      if (!Object.prototype.hasOwnProperty.call(item, 'headerKey') || String(item.headerKey || '').length === 0) {
+        item.headerKey = key;
+      }
+      if (!Array.isArray(item.rawLines)) item.rawLines = [];
+      blocks[key] = item.rawLines;
+      headers[key] = String(item.headerKey || key);
+      if (!order.includes(key)) order.push(key);
+    });
+  } else {
+    (Array.isArray(doc.order) ? doc.order : []).forEach((rawKey) => {
+      const key = normalizePediaIconsKey(rawKey);
+      if (!key) return;
+      if (!order.includes(key)) order.push(key);
+      const rawLines = Array.isArray(doc.blocks && doc.blocks[key]) ? doc.blocks[key] : [];
+      blocks[key] = rawLines;
+      headers[key] = Object.prototype.hasOwnProperty.call(doc.headers || {}, key)
+        ? String(doc.headers[key])
+        : key;
+    });
+  }
+  doc.order = order;
+  doc.blocks = blocks;
+  doc.headers = headers;
+  return doc;
+}
+
+function findLastPediaIconsItemIndexByKey(doc, key) {
+  const target = normalizePediaIconsKey(key);
+  if (!target || !Array.isArray(doc && doc.items)) return -1;
+  for (let i = doc.items.length - 1; i >= 0; i -= 1) {
+    if (getPediaIconsItemKey(doc.items[i]) === target) return i;
+  }
+  return -1;
+}
+
+function insertPediaIconsItemsAt(doc, blockKey, itemsToInsert) {
+  if (!doc || !Array.isArray(doc.items) || !Array.isArray(itemsToInsert) || itemsToInsert.length === 0) return;
+  const itemKeys = getPediaIconsItemKeys(doc);
+  const idx = findPediaIconsInsertionIndex(itemKeys, blockKey);
+  doc.items.splice(Math.max(0, Math.min(idx, doc.items.length)), 0, ...itemsToInsert);
+}
+
+function pediaIconsLinesEqual(a, b) {
+  const left = (Array.isArray(a) ? a : []).map((line) => String(line || '').trim());
+  const right = (Array.isArray(b) ? b : []).map((line) => String(line || '').trim());
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function repairPediaIconsDocumentForFiraxis(doc) {
+  if (!doc) return { changed: false, moved: 0, restoredHomeless: false };
+  rebuildPediaIconsDocumentIndexes(doc);
+  if (!Array.isArray(doc.items)) {
+    doc.items = (Array.isArray(doc.order) ? doc.order : []).map((key) => ({
+      key: normalizePediaIconsKey(key),
+      headerKey: Object.prototype.hasOwnProperty.call(doc.headers || {}, normalizePediaIconsKey(key))
+        ? String(doc.headers[normalizePediaIconsKey(key)])
+        : normalizePediaIconsKey(key),
+      rawLines: Array.isArray(doc.blocks && doc.blocks[normalizePediaIconsKey(key)])
+        ? doc.blocks[normalizePediaIconsKey(key)].slice()
+        : []
+    })).filter((item) => item.key);
+  }
+  const keys = getPediaIconsItemKeys(doc);
+  const homelessIdx = keys.indexOf('HOMELESSICONS');
+  const endIdx = keys.indexOf('END CIVILOPEDIA ART');
+  if (homelessIdx < 0 || endIdx < 0 || endIdx <= homelessIdx) {
+    return { changed: false, moved: 0, restoredHomeless: false };
+  }
+
+  let changed = false;
+  const misplacedItems = doc.items
+    .slice(homelessIdx + 1, endIdx)
+    .filter((item) => isPediaIconsRealDataBlockKey(getPediaIconsItemKey(item)));
+  if (misplacedItems.length > 0) {
+    const misplacedSet = new Set(misplacedItems);
+    doc.items = doc.items.filter((item) => !misplacedSet.has(item));
+    const nonSplash = misplacedItems.filter((item) => !isPediaIconsWonderSplashBlockKey(getPediaIconsItemKey(item)));
+    const splash = misplacedItems.filter((item) => isPediaIconsWonderSplashBlockKey(getPediaIconsItemKey(item)));
+    if (nonSplash.length > 0) {
+      insertPediaIconsItemsAt(doc, getPediaIconsItemKey(nonSplash[0]), nonSplash);
+    }
+    if (splash.length > 0) {
+      insertPediaIconsItemsAt(doc, getPediaIconsItemKey(splash[0]), splash);
+    }
+    changed = true;
+  }
+
+  const currentHomelessIdx = findLastPediaIconsItemIndexByKey(doc, 'HOMELESSICONS');
+  const homelessItem = currentHomelessIdx >= 0 ? doc.items[currentHomelessIdx] : null;
+  const currentHomeless = Array.isArray(homelessItem && homelessItem.rawLines) ? homelessItem.rawLines : [];
+  let restoredHomeless = false;
+  if (!pediaIconsLinesEqual(currentHomeless, PEDIA_HOMELESS_PLACEHOLDER_LINES)) {
+    if (homelessItem) {
+      homelessItem.rawLines = PEDIA_HOMELESS_PLACEHOLDER_LINES.slice();
+      homelessItem.normalized = true;
+      if (!String(homelessItem.headerKey || '').trim()) homelessItem.headerKey = 'HomelessIcons';
+    }
+    restoredHomeless = true;
+    changed = true;
+  }
+
+  if (changed) doc.lineEnding = '\r\n';
+  rebuildPediaIconsDocumentIndexes(doc);
+  return { changed, moved: misplacedItems.length, restoredHomeless };
+}
+
 function parsePediaIconsDocumentWithOrder(text) {
   const src = String(text || '');
-  const doc = { order: [], blocks: {}, headers: {}, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
+  const doc = {
+    preamble: [],
+    items: [],
+    order: [],
+    blocks: {},
+    headers: {},
+    hadTrailingNewline: /\r\n$|\n$|\r$/.test(src),
+    lineEnding: detectDominantLineEnding(src)
+  };
   const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let currentKey = null;
   let currentHeader = '';
   let currentLines = [];
   const flush = () => {
     if (!currentKey) return;
+    const item = {
+      key: currentKey,
+      headerKey: currentHeader || currentKey,
+      rawLines: currentLines.slice()
+    };
+    doc.items.push(item);
     doc.blocks[currentKey] = [...currentLines];
     if (!doc.order.includes(currentKey)) doc.order.push(currentKey);
     if (!doc.headers[currentKey]) doc.headers[currentKey] = currentHeader || currentKey;
   };
   lines.forEach((raw) => {
     const line = String(raw || '');
+    if (line.trim() === '#') {
+      if (currentKey) currentLines.push(line);
+      else doc.preamble.push(line);
+      return;
+    }
     if (line.startsWith('#')) {
       flush();
       currentHeader = line.slice(1);
@@ -3721,8 +3956,10 @@ function parsePediaIconsDocumentWithOrder(text) {
       return;
     }
     if (currentKey) currentLines.push(line);
+    else doc.preamble.push(line);
   });
   flush();
+  rebuildPediaIconsDocumentIndexes(doc);
   return doc;
 }
 
@@ -3742,19 +3979,35 @@ function serializePediaIconsDocumentWithOrder(doc) {
   const order = Array.isArray(doc && doc.order) ? doc.order : [];
   const blocks = (doc && doc.blocks) || {};
   const headers = (doc && doc.headers) || {};
+  const items = Array.isArray(doc && doc.items) ? doc.items : null;
+  const preamble = Array.isArray(doc && doc.preamble) ? doc.preamble : [];
   const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
+  const lineEnding = (doc && doc.lineEnding === '\r\n') ? '\r\n' : '\n';
   const out = [];
-  order.forEach((key) => {
-    const k = String(key || '').trim().toUpperCase();
-    if (!k) return;
-    const headingRaw = Object.prototype.hasOwnProperty.call(headers, k) ? String(headers[k]) : String(k);
-    const heading = headingRaw.length > 0 ? headingRaw : String(k);
-    out.push(`#${heading}`);
-    const lines = Array.isArray(blocks[k]) ? blocks[k] : [];
-    lines.forEach((line) => out.push(toWindowsPediaIconsLine(line)));
-  });
-  const serialized = out.join('\n');
-  return hadTrailingNewline ? ensureTrailingNewline(serialized) : serialized;
+  preamble.forEach((line) => out.push(String(line || '')));
+  if (items && items.length > 0) {
+    items.forEach((item) => {
+      const k = getPediaIconsItemKey(item);
+      if (!k) return;
+      const headingRaw = Object.prototype.hasOwnProperty.call(item, 'headerKey') ? String(item.headerKey) : String(k);
+      const heading = headingRaw.length > 0 ? headingRaw : String(k);
+      out.push(`#${heading}`);
+      const lines = Array.isArray(item.rawLines) ? item.rawLines : [];
+      lines.forEach((line) => out.push(item.normalized ? toWindowsPediaIconsLine(line) : String(line || '')));
+    });
+  } else {
+    order.forEach((key) => {
+      const k = String(key || '').trim().toUpperCase();
+      if (!k) return;
+      const headingRaw = Object.prototype.hasOwnProperty.call(headers, k) ? String(headers[k]) : String(k);
+      const heading = headingRaw.length > 0 ? headingRaw : String(k);
+      out.push(`#${heading}`);
+      const lines = Array.isArray(blocks[k]) ? blocks[k] : [];
+      lines.forEach((line) => out.push(toWindowsPediaIconsLine(line)));
+    });
+  }
+  const serialized = out.join(lineEnding);
+  return (hadTrailingNewline && !serialized.endsWith(lineEnding)) ? `${serialized}${lineEnding}` : serialized;
 }
 
 function toCanonicalKeyMap(rawMap) {
@@ -5334,7 +5587,7 @@ function parseCivilopediaDocumentWithOrder(text) {
   const sections = {};
   const items = [];
   const preamble = [];
-  if (!text) return { order, sections, items, preamble, hadTrailingNewline: false };
+  if (!text) return { order, sections, items, preamble, hadTrailingNewline: false, lineEnding: '\n' };
   const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let currentKey = '';
   let currentHeader = '';
@@ -5363,7 +5616,14 @@ function parseCivilopediaDocumentWithOrder(text) {
     else preamble.push(line);
   });
   flush();
-  return { order, sections, items, preamble, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
+  return {
+    order,
+    sections,
+    items,
+    preamble,
+    hadTrailingNewline: /\r\n$|\n$|\r$/.test(src),
+    lineEnding: detectDominantLineEnding(src)
+  };
 }
 
 function serializeCivilopediaDocumentWithOrder(doc) {
@@ -5372,6 +5632,7 @@ function serializeCivilopediaDocumentWithOrder(doc) {
   const items = Array.isArray(doc && doc.items) ? doc.items : null;
   const preamble = Array.isArray(doc && doc.preamble) ? doc.preamble : [];
   const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
+  const lineEnding = (doc && doc.lineEnding === '\r\n') ? '\r\n' : '\n';
   const lines = [];
   preamble.forEach((line) => lines.push(String(line || '')));
   if (items && items.length > 0) {
@@ -5400,8 +5661,8 @@ function serializeCivilopediaDocumentWithOrder(doc) {
       rawLines.forEach((line) => lines.push(String(line || '')));
     });
   }
-  const serialized = lines.join('\n');
-  return hadTrailingNewline ? ensureTrailingNewline(serialized) : serialized;
+  const serialized = lines.join(lineEnding);
+  return (hadTrailingNewline && !serialized.endsWith(lineEnding)) ? `${serialized}${lineEnding}` : serialized;
 }
 
 function parseIniLines(text) {
@@ -6295,7 +6556,8 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
     return { ok: true, applied: 0, buffer: null };
   }
   try {
-    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    const existingInfo = readEncodedTextWithFallbackInfo(targetPath, sourcePath, preferredEncoding);
+    const existing = existingInfo ? existingInfo.text || '' : '';
     const doc = parsePediaIconsDocumentWithOrder(existing);
     let applied = 0;
     edits.forEach((edit) => {
@@ -6303,25 +6565,55 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
       if (!blockKey) return;
       const op = String(edit && edit.op || 'upsert').trim().toLowerCase();
       if (op === 'delete') {
-        delete doc.blocks[blockKey];
-        delete doc.headers[blockKey];
-        doc.order = doc.order.filter((key) => String(key || '').trim().toUpperCase() !== blockKey);
-        applied += 1;
+        if (Array.isArray(doc.items)) {
+          const before = doc.items.length;
+          doc.items = doc.items.filter((item) => getPediaIconsItemKey(item) !== blockKey);
+          if (doc.items.length !== before) {
+            rebuildPediaIconsDocumentIndexes(doc);
+            applied += 1;
+          }
+          return;
+        }
+        if (doc.blocks[blockKey]) {
+          delete doc.blocks[blockKey];
+          delete doc.headers[blockKey];
+          doc.order = doc.order.filter((key) => String(key || '').trim().toUpperCase() !== blockKey);
+          applied += 1;
+        }
         return;
       }
       const nextLines = normalizePediaIconsLines(edit.lines || []);
-      const prevLines = normalizePediaIconsLines(doc.blocks[blockKey] || []);
+      const existingItemIdx = findLastPediaIconsItemIndexByKey(doc, blockKey);
+      const existingItem = existingItemIdx >= 0 ? doc.items[existingItemIdx] : null;
+      const prevLines = normalizePediaIconsLines((existingItem && existingItem.rawLines) || doc.blocks[blockKey] || []);
       if (JSON.stringify(prevLines) === JSON.stringify(nextLines)) return;
-      doc.blocks[blockKey] = nextLines;
-      if (!doc.order.includes(blockKey)) {
-        const markerIdx = doc.order.findIndex((key) => String(key || '').trim().toUpperCase() === 'END CIVILOPEDIA ART');
-        if (markerIdx >= 0) doc.order.splice(markerIdx, 0, blockKey);
-        else doc.order.push(blockKey);
+      if (Array.isArray(doc.items)) {
+        if (existingItem) {
+          existingItem.key = blockKey;
+          if (!String(existingItem.headerKey || '').trim()) existingItem.headerKey = blockKey;
+          existingItem.rawLines = nextLines;
+          existingItem.normalized = true;
+        } else {
+          insertPediaIconsItemsAt(doc, blockKey, [{
+            key: blockKey,
+            headerKey: blockKey,
+            rawLines: nextLines,
+            normalized: true
+          }]);
+        }
+        rebuildPediaIconsDocumentIndexes(doc);
+      } else {
+        doc.blocks[blockKey] = nextLines;
+        if (!doc.order.includes(blockKey)) {
+          doc.order.splice(findPediaIconsInsertionIndex(doc.order, blockKey), 0, blockKey);
+        }
+        if (!doc.headers) doc.headers = {};
+        if (!doc.headers[blockKey]) doc.headers[blockKey] = blockKey;
       }
-      if (!doc.headers) doc.headers = {};
-      if (!doc.headers[blockKey]) doc.headers[blockKey] = blockKey;
       applied += 1;
     });
+    const repair = repairPediaIconsDocumentForFiraxis(doc);
+    if (repair.changed) applied += 1;
     if (applied === 0) return { ok: true, applied: 0, buffer: null };
     const serialized = serializePediaIconsDocumentWithOrder(doc);
     const resolvedEncoding = resolveScenarioTextWriteEncoding({
@@ -6333,6 +6625,9 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
     return {
       ok: true,
       applied,
+      repaired: !!repair.changed,
+      movedHomelessBlocks: repair.moved || 0,
+      restoredHomeless: !!repair.restoredHomeless,
       buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
       encoding: resolvedEncoding.encoding,
       bom: bom || resolvedEncoding.bom
@@ -6342,12 +6637,44 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
   }
 }
 
+function buildScenarioPediaIconsRepairResult({ targetPath, sourcePath = '', encoding = DEFAULT_TEXT_FILE_ENCODING, bom = false, preferredEncoding = DEFAULT_TEXT_FILE_ENCODING }) {
+  if (!targetPath || !fs.existsSync(targetPath)) {
+    return { ok: true, applied: 0, buffer: null };
+  }
+  try {
+    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    const doc = parsePediaIconsDocumentWithOrder(existing);
+    const repair = repairPediaIconsDocumentForFiraxis(doc);
+    if (!repair.changed) return { ok: true, applied: 0, buffer: null };
+    const serialized = serializePediaIconsDocumentWithOrder(doc);
+    const resolvedEncoding = resolveScenarioTextWriteEncoding({
+      targetPath,
+      sourcePath,
+      explicitEncoding: encoding,
+      preferredEncoding
+    });
+    return {
+      ok: true,
+      applied: 1,
+      repaired: true,
+      movedHomelessBlocks: repair.moved || 0,
+      restoredHomeless: !!repair.restoredHomeless,
+      buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
+      encoding: resolvedEncoding.encoding,
+      bom: bom || resolvedEncoding.bom
+    };
+  } catch (err) {
+    return { ok: false, error: `Failed to repair PediaIcons: ${err.message}` };
+  }
+}
+
 function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = '', encoding = DEFAULT_TEXT_FILE_ENCODING, bom = false, preferredEncoding = DEFAULT_TEXT_FILE_ENCODING }) {
   if (!targetPath || !Array.isArray(edits) || edits.length === 0) {
     return { ok: true, applied: 0, buffer: null };
   }
   try {
-    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    const existingInfo = readEncodedTextWithFallbackInfo(targetPath, sourcePath, preferredEncoding);
+    const existing = existingInfo ? existingInfo.text || '' : '';
     const doc = parseCivilopediaDocumentWithOrder(existing);
     const items = Array.isArray(doc.items) ? doc.items.slice() : [];
     let applied = 0;
@@ -8479,9 +8806,9 @@ function buildSavePlan(payload) {
     }
 
     const pediaIconsEdits = collectPediaIconsReferenceEdits(payload.tabs || {});
-    if (pediaIconsEdits.length > 0) {
+    {
       const sourceDetails = (((payload.tabs || {}).civilizations || {}).sourceDetails || {});
-      const explicitPediaTarget = (sourceDetails.pediaIconsScenarioWrite || '').trim();
+      const explicitPediaTarget = String(sourceDetails.pediaIconsScenarioWrite || sourceDetails.pediaIconsScenario || '').trim();
       const targetPath = explicitPediaTarget || path.join(scenarioContext.contentWriteRoot || scenarioDir, 'Text', 'PediaIcons.txt');
       const protectErr = failIfProtected(targetPath, 'PediaIcons target');
       if (protectErr) return { ok: false, error: protectErr };
@@ -8489,14 +8816,22 @@ function buildSavePlan(payload) {
         || String(sourceDetails.pediaIconsConquests || '').trim()
         || String(sourceDetails.pediaIconsPtw || '').trim()
         || String(sourceDetails.pediaIconsVanilla || '').trim();
-      const pediaSave = buildScenarioPediaIconsEditResult({
-        targetPath,
-        sourcePath: pediaSourcePath,
-        edits: pediaIconsEdits,
-        encoding: String(sourceDetails.pediaIconsScenarioEncoding || sourceDetails.pediaIconsActiveEncoding || ''),
-        bom: !!sourceDetails.pediaIconsScenarioBom,
-        preferredEncoding: textFileEncoding
-      });
+      const pediaSave = pediaIconsEdits.length > 0
+        ? buildScenarioPediaIconsEditResult({
+          targetPath,
+          sourcePath: pediaSourcePath,
+          edits: pediaIconsEdits,
+          encoding: String(sourceDetails.pediaIconsScenarioEncoding || sourceDetails.pediaIconsActiveEncoding || ''),
+          bom: !!sourceDetails.pediaIconsScenarioBom,
+          preferredEncoding: textFileEncoding
+        })
+        : buildScenarioPediaIconsRepairResult({
+          targetPath,
+          sourcePath: pediaSourcePath,
+          encoding: String(sourceDetails.pediaIconsScenarioEncoding || sourceDetails.pediaIconsActiveEncoding || ''),
+          bom: !!sourceDetails.pediaIconsScenarioBom,
+          preferredEncoding: textFileEncoding
+        });
       if (!pediaSave.ok) {
         return { ok: false, error: pediaSave.error || 'Failed to save PediaIcons edits.' };
       }
@@ -8508,7 +8843,14 @@ function buildSavePlan(payload) {
           encoding: pediaSave.encoding,
           bom: pediaSave.bom
         });
-        saveReport.push({ kind: 'pediaIcons', path: targetPath, applied: pediaSave.applied });
+        saveReport.push({
+          kind: 'pediaIcons',
+          path: targetPath,
+          applied: pediaSave.applied,
+          repaired: !!pediaSave.repaired,
+          movedHomelessBlocks: pediaSave.movedHomelessBlocks || 0,
+          restoredHomeless: !!pediaSave.restoredHomeless
+        });
       }
     }
 
@@ -11655,6 +11997,7 @@ module.exports = {
   parsePediaIconsDocumentWithOrder,
   serializePediaIconsDocumentWithOrder,
   buildScenarioPediaIconsEditResult,
+  buildScenarioPediaIconsRepairResult,
   buildScenarioDiplomacyEditResult,
   collectPediaIconsReferenceEdits,
   pickScenarioReferenceArtTargetRelativePath,
