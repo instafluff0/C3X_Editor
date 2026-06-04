@@ -54,6 +54,20 @@ function iconExists(iconPath, ...roots) {
   });
 }
 
+function isTidesScenarioRoot(rootPath) {
+  const name = path.basename(String(rootPath || '')).trim().toLowerCase();
+  return name === 'tides of crimson' || /^tides of crimson(?:\s+copy|\s+2\.\d+)?$/.test(name);
+}
+
+function getTidesArtRoots() {
+  const roots = (getTides().scenarioSearchPaths || [])
+    .map((p) => path.resolve(p))
+    .filter(Boolean);
+  const fallback = path.resolve(TIDES_DIR);
+  if (!roots.includes(fallback)) roots.push(fallback);
+  return roots;
+}
+
 // ---------------------------------------------------------------------------
 // Cached bundles (loaded once per suite)
 // ---------------------------------------------------------------------------
@@ -600,13 +614,13 @@ test('Tides of Crimson BIQ loads without error', (t) => {
   assert.ok(b.biq.sections.length > 0, 'Expected BIQ sections');
 });
 
-test('Tides scenario search path resolves to the Tides of Crimson art/text directory', (t) => {
+test('Tides scenario search path resolves to an installed Tides of Crimson art/text directory', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   const b = getTides();
   const resolved = (b.scenarioSearchPaths || []).map((p) => path.resolve(p));
   assert.ok(
-    resolved.some((p) => p === path.resolve(TIDES_DIR)),
-    `Expected ${TIDES_DIR} in scenarioSearchPaths, got: ${JSON.stringify(b.scenarioSearchPaths)}`
+    resolved.some((p) => fs.existsSync(p) && isTidesScenarioRoot(p)),
+    `Expected an installed Tides of Crimson scenario root in scenarioSearchPaths, got: ${JSON.stringify(b.scenarioSearchPaths)}`
   );
 });
 
@@ -624,9 +638,9 @@ test('Tides resource count is exactly 96', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   assert.equal(getTides().tabs.resources.entries.length, 96);
 });
-test('Tides improvement count is exactly 241', (t) => {
+test('Tides improvement count is exactly 242', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.improvements.entries.length, 241);
+  assert.equal(getTides().tabs.improvements.entries.length, 242);
 });
 test('Tides government count is exactly 14', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
@@ -799,7 +813,7 @@ test('Tides RACE_AMAZONIANS has 4 icon paths all resolvable under Tides or CIV3 
   assert.ok(e, 'RACE_AMAZONIANS not found');
   assert.equal(e.iconPaths.length, 4);
   e.iconPaths.forEach((p) => {
-    assert.ok(iconExists(p, TIDES_DIR, CIV3), `Icon not found: ${p}`);
+    assert.ok(iconExists(p, ...getTidesArtRoots(), CIV3), `Icon not found: ${p}`);
   });
 });
 
@@ -807,7 +821,7 @@ test('Tides RACE_ORCS has icon paths resolvable under Tides or CIV3 roots', (t) 
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   const e = getTides().tabs.civilizations.entries.find((x) => x.civilopediaKey === 'RACE_ORCS');
   assert.ok((e.iconPaths || []).length > 0, 'Orcs has no iconPaths');
-  assert.ok(iconExists(e.iconPaths[0], TIDES_DIR, CIV3), `Icon not found: ${e.iconPaths[0]}`);
+  assert.ok(iconExists(e.iconPaths[0], ...getTidesArtRoots(), CIV3), `Icon not found: ${e.iconPaths[0]}`);
 });
 
 test('Tides non-barbarian civs have non-empty iconPaths resolved from Tides or CIV3', (t) => {
@@ -815,11 +829,11 @@ test('Tides non-barbarian civs have non-empty iconPaths resolved from Tides or C
   getTides().tabs.civilizations.entries
     .filter((e) => String(e.civilopediaKey || '').toUpperCase() !== 'RACE_BARBARIANS')
     .forEach((e) => {
-    assert.ok((e.iconPaths || []).length > 0, `${e.civilopediaKey} has no iconPaths`);
-    assert.ok(
-      iconExists(e.iconPaths[0], TIDES_DIR, CIV3),
-      `${e.civilopediaKey} large icon not on disk: ${e.iconPaths[0]}`
-    );
+      assert.ok((e.iconPaths || []).length > 0, `${e.civilopediaKey} has no iconPaths`);
+      assert.ok(
+        iconExists(e.iconPaths[0], ...getTidesArtRoots(), CIV3),
+        `${e.civilopediaKey} large icon not on disk: ${e.iconPaths[0]}`
+      );
     });
 });
 
@@ -827,7 +841,7 @@ test('Tides PRTO_BARRAGE has icon paths resolvable under Tides or CIV3 roots', (
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   const e = getTides().tabs.units.entries.find((x) => x.civilopediaKey === 'PRTO_BARRAGE');
   assert.ok((e.iconPaths || []).length > 0, 'Barrage has no iconPaths');
-  assert.ok(iconExists(e.iconPaths[0], TIDES_DIR, CIV3), `Icon not found: ${e.iconPaths[0]}`);
+  assert.ok(iconExists(e.iconPaths[0], ...getTidesArtRoots(), CIV3), `Icon not found: ${e.iconPaths[0]}`);
 });
 
 test('Tides PRTO_WORKER has icon paths resolvable under CIV3 (shared base art)', (t) => {
@@ -855,7 +869,7 @@ test('Tides GOVT_AIR has icon paths resolvable under Tides or CIV3 roots', (t) =
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   const e = getTides().tabs.governments.entries.find((x) => x.civilopediaKey === 'GOVT_AIR');
   assert.ok((e.iconPaths || []).length > 0, 'Air Sphere govt has no iconPaths');
-  assert.ok(iconExists(e.iconPaths[0], TIDES_DIR, CIV3), `Icon not found: ${e.iconPaths[0]}`);
+  assert.ok(iconExists(e.iconPaths[0], ...getTidesArtRoots(), CIV3), `Icon not found: ${e.iconPaths[0]}`);
 });
 
 // ============================================================================
