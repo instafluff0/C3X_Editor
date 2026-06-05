@@ -231,6 +231,7 @@ const state = {
     terrainVariantBonusGrassland: false,
     terrainVariantPineForest: false,
     terrainVariantSnowCappedMountain: false,
+    terrainVariantDeepwaterHarbor: false,
     overlayType: 'road',
     resourceType: -1,
     fogMode: 'add',
@@ -37777,7 +37778,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   const landmarksWrap = document.createElement('label');
   landmarksWrap.className = 'bool-toggle';
-  landmarksWrap.title = 'Show Landmark markers';
+  landmarksWrap.title = 'Show special terrain markers';
   const landmarksToggle = document.createElement('input');
   landmarksToggle.type = 'checkbox';
   landmarksToggle.checked = state.biqMapShowLandmarks !== false;
@@ -37786,14 +37787,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (state.biqMapShowLandmarks === enabled && landmarksToggle.checked === enabled) return;
     state.biqMapShowLandmarks = enabled;
     landmarksToggle.checked = enabled;
-    appendDebugLog('biq-map:landmarks-toggle', { enabled: state.biqMapShowLandmarks, source });
+    appendDebugLog('biq-map:special-terrain-toggle', { enabled: state.biqMapShowLandmarks, source });
     refreshMapViewForToolChange({ redrawCanvas: true });
   };
   landmarksToggle.addEventListener('change', () => {
     setMapLandmarksVisible(landmarksToggle.checked, 'checkbox');
   });
   const landmarksText = document.createElement('span');
-  landmarksText.textContent = 'Label Landmarks';
+  landmarksText.textContent = 'Label Special Terrain';
   landmarksWrap.appendChild(landmarksToggle);
   landmarksWrap.appendChild(landmarksText);
   const displayTogglesWrap = document.createElement('div');
@@ -37821,6 +37822,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   if (typeof tool.terrainVariantBonusGrassland !== 'boolean') tool.terrainVariantBonusGrassland = false;
   if (typeof tool.terrainVariantPineForest !== 'boolean') tool.terrainVariantPineForest = false;
   if (typeof tool.terrainVariantSnowCappedMountain !== 'boolean') tool.terrainVariantSnowCappedMountain = false;
+  if (typeof tool.terrainVariantDeepwaterHarbor !== 'boolean') tool.terrainVariantDeepwaterHarbor = false;
   if (!tool.overlayType) tool.overlayType = 'road';
   if (!Number.isFinite(Number(tool.resourceType))) tool.resourceType = -1;
   if (!tool.fogMode) tool.fogMode = 'add';
@@ -38345,6 +38347,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         label: 'Snow-Capped',
         enabled: terrainSupportsSnowCappedMountain(terrainCode),
         checked: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantSnowCappedMountain)
+      },
+      {
+        key: 'terrainVariantDeepwaterHarbor',
+        label: 'Deepwater Harbor',
+        enabled: terrainSupportsDeepwaterHarbor(terrainCode),
+        checked: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantDeepwaterHarbor)
       }
     ].filter((spec) => spec.enabled);
     if (!variantSpecs.length) {
@@ -40295,6 +40303,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const westTile = getTileAtCoord(xPos - 1, yPos - 1) || coastTile;
     const northTile = getTileAtCoord(xPos, yPos - 2) || coastTile;
     const eastTile = getTileAtCoord(xPos + 1, yPos - 1) || coastTile;
+    if (isDeepwaterHarborTile(southIdx)) return;
     const southBase = terrainInfo(southTile).baseTerrain;
     const westBase = terrainInfo(westTile).baseTerrain;
     const northBase = terrainInfo(northTile).baseTerrain;
@@ -41443,6 +41452,30 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (mode === 'terrain') {
       const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
       const variantMask = terrainBonusMaskFromVariantState(terrainCode, getMapToolTerrainVariantState(terrainCode));
+      const deepwaterHarbor = terrainSupportsDeepwaterHarbor(terrainCode)
+        && !!(state.mapEditorTool && state.mapEditorTool.terrainVariantDeepwaterHarbor);
+      if (deepwaterHarbor) {
+        const changedIndexes = applyDeepwaterHarborToIndexes(indices, variantMask);
+        if (changedIndexes.length === 0) {
+          setStatus('Deepwater Harbor can only be painted onto Coast tiles.');
+          appendDebugLog('biq-map:paint-apply-result', {
+            mode,
+            terrainCode,
+            variantMask,
+            deepwaterHarbor,
+            changedSummary: summarizeTileIndexes([])
+          });
+          return [];
+        }
+        appendDebugLog('biq-map:paint-apply-result', {
+          mode,
+          terrainCode,
+          variantMask,
+          deepwaterHarbor,
+          changedSummary: summarizeTileIndexes(changedIndexes)
+        });
+        return changedIndexes;
+      }
       const changedIndexes = smartApplyTerrainToIndexes(indices, terrainCode, variantMask);
       if (changedIndexes.length === 0) {
         appendDebugLog('biq-map:paint-apply-result', {
@@ -41946,6 +41979,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const terrainSupportsBonusGrassland = (terrainCode) => terrainCode === BIQ_TERRAIN.GRASSLAND;
   const terrainSupportsPineForest = (terrainCode) => terrainCode === BIQ_TERRAIN.FOREST;
   const terrainSupportsSnowCappedMountain = (terrainCode) => terrainCode === BIQ_TERRAIN.MOUNTAIN;
+  const terrainSupportsDeepwaterHarbor = (terrainCode) => terrainCode === BIQ_TERRAIN.SEA;
 
   const sanitizeTerrainBonusMask = (terrainCode, bonusMask) => {
     const code = parseIntLoose(terrainCode, BIQ_TERRAIN.GRASSLAND);
@@ -42298,12 +42332,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       terrainCode == null ? (state.mapEditorTool && state.mapEditorTool.terrainCode) : terrainCode,
       BIQ_TERRAIN.GRASSLAND
     );
-    return terrainVariantStateFromBonusMask(code, terrainBonusMaskFromVariantState(code, {
-      landmark: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantLandmark),
-      bonusGrassland: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantBonusGrassland),
-      pineForest: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantPineForest),
-      snowCappedMountain: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantSnowCappedMountain)
-    }));
+    return {
+      ...terrainVariantStateFromBonusMask(code, terrainBonusMaskFromVariantState(code, {
+        landmark: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantLandmark),
+        bonusGrassland: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantBonusGrassland),
+        pineForest: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantPineForest),
+        snowCappedMountain: !!(state.mapEditorTool && state.mapEditorTool.terrainVariantSnowCappedMountain)
+      })),
+      deepwaterHarbor: terrainSupportsDeepwaterHarbor(code)
+        && !!(state.mapEditorTool && state.mapEditorTool.terrainVariantDeepwaterHarbor)
+    };
   };
 
   const syncMapToolTerrainVariants = (terrainCode = null) => {
@@ -42316,6 +42354,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.mapEditorTool.terrainVariantBonusGrassland = nextState.bonusGrassland;
     state.mapEditorTool.terrainVariantPineForest = nextState.pineForest;
     state.mapEditorTool.terrainVariantSnowCappedMountain = nextState.snowCappedMountain;
+    state.mapEditorTool.terrainVariantDeepwaterHarbor = nextState.deepwaterHarbor;
   };
   terrainVariantHelpersReady = true;
   refreshMapToolChrome();
@@ -42408,7 +42447,79 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     ].map(([x, y]) => getTileIndexAtCoord(x, y)).filter((idx) => idx >= 0);
   };
 
-  const normalizeCoastlineAround = (seedIndexes, changedIndexes) => {
+  const getStoredTerrainSpriteSpec = (record) => ({
+    fileIdx: parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1),
+    imageIdx: parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1)
+  });
+
+  const computeTerrainSpriteSpecFromBases = (southBase, westBase, northBase, eastBase) => {
+    const spec = mapUtilsTerrainSpec(southBase, westBase, northBase, eastBase);
+    if (!spec) return { fileIdx: -1, imageIdx: -1 };
+    return {
+      fileIdx: spec.file,
+      imageIdx: computeBiqTerrainSpriteImageIdx(southBase, westBase, northBase, eastBase, spec)
+    };
+  };
+
+  const computeSeaTerrainSpriteSpecAt = (tileIndex) => {
+    const geom = tileGeom[tileIndex];
+    if (!geom) return { fileIdx: -1, imageIdx: -1 };
+    const westBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos - 1, geom.yPos - 1)).baseTerrain;
+    const northBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos, geom.yPos - 2)).baseTerrain;
+    const eastBase = terrainInfoForTransitionNeighbor(getTileAtCoord(geom.xPos + 1, geom.yPos - 1)).baseTerrain;
+    return computeTerrainSpriteSpecFromBases(BIQ_TERRAIN.SEA, westBase, northBase, eastBase);
+  };
+
+  const tileHasPreservedDeepwaterGraphics = (tileIndex) => {
+    const tile = tiles[tileIndex];
+    if (!tile) return false;
+    const stored = getStoredTerrainSpriteSpec(tile);
+    if (stored.fileIdx < 0 || stored.imageIdx < 0) return false;
+    const expectedSea = computeSeaTerrainSpriteSpecAt(tileIndex);
+    if (expectedSea.fileIdx < 0 || expectedSea.imageIdx < 0) return false;
+    return stored.fileIdx !== expectedSea.fileIdx || stored.imageIdx !== expectedSea.imageIdx;
+  };
+
+  const isDeepwaterHarborTile = (tileIndex) => {
+    const tile = tiles[tileIndex];
+    if (!tile || !mapCore || typeof mapCore.isDeepwaterHarborTile !== 'function') return false;
+    const neighbors = mapTileNeighborIndexes(tileIndex).map((idx) => tiles[idx]).filter(Boolean);
+    return mapCore.isDeepwaterHarborTile(tile, neighbors, BIQ_TERRAIN)
+      && tileHasPreservedDeepwaterGraphics(tileIndex);
+  };
+
+  const collectDeepwaterHarborIndexesAround = (seedIndexes) => {
+    const candidates = new Set();
+    (Array.isArray(seedIndexes) ? seedIndexes : Array.from(seedIndexes || [])).forEach((idx) => {
+      if (!Number.isFinite(Number(idx)) || idx < 0) return;
+      candidates.add(idx);
+      mapTileNeighborIndexes(idx).forEach((neighborIdx) => candidates.add(neighborIdx));
+    });
+    const preserved = new Set();
+    candidates.forEach((idx) => {
+      if (isDeepwaterHarborTile(idx)) preserved.add(idx);
+    });
+    return preserved;
+  };
+
+  const applyDeepwaterHarborToIndexes = (indexes, bonusMask = null) => {
+    const seeds = Array.isArray(indexes) ? indexes : [];
+    const changedIndexes = [];
+    seeds.forEach((idx) => {
+      const tile = tiles[idx];
+      if (!tile) return;
+      if (!mapCore || typeof mapCore.applyDeepwaterHarborTerrain !== 'function') return;
+      if (!mapCore.applyDeepwaterHarborTerrain(tile, BIQ_TERRAIN, BIQ_TILE_BONUS, bonusMask)) return;
+      changedIndexes.push(idx);
+    });
+    appendDebugLog('biq-map:deepwater-harbor-apply', {
+      seedSummary: summarizeTileIndexes(seeds),
+      changedSummary: summarizeTileIndexes(changedIndexes)
+    });
+    return changedIndexes;
+  };
+
+  const normalizeCoastlineAround = (seedIndexes, changedIndexes, preserveDeepwaterIndexes = null) => {
     const candidates = new Set();
     seedIndexes.forEach((idx) => {
       if (idx < 0) return;
@@ -42420,6 +42531,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (!tile) return;
       const info = terrainInfo(tile);
       if (!isWaterTerrain(info.baseTerrain)) return;
+      if (preserveDeepwaterIndexes && preserveDeepwaterIndexes.has(idx)) return;
       const touchesLand = mapTileNeighborIndexes(idx).some((neighborIdx) => {
         const neighbor = tiles[neighborIdx];
         if (!neighbor) return false;
@@ -42506,16 +42618,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const smartApplyTerrainToIndexes = (indexes, terrainCode, bonusMask = null) => {
     const seeds = Array.isArray(indexes) ? indexes : [];
     const changedIndexes = new Set();
+    const preserveDeepwaterIndexes = collectDeepwaterHarborIndexesAround(seeds);
     appendDebugLog('biq-map:terrain-apply-start', {
       terrainCode: parseIntLoose(terrainCode, -1),
       bonusMask: parseIntLoose(bonusMask, 0) >>> 0,
-      seedSummary: summarizeTileIndexes(seeds)
+      seedSummary: summarizeTileIndexes(seeds),
+      preserveDeepwaterSummary: summarizeTileIndexes(Array.from(preserveDeepwaterIndexes))
     });
     seeds.forEach((idx) => setTileTerrainForPaint(idx, terrainCode, changedIndexes, bonusMask));
     const normalizationSeeds = new Set([...seeds, ...changedIndexes]);
     normalizeTundraTransitionsAround(normalizationSeeds, changedIndexes);
     normalizeInvalidDesertTransitionQuartetsAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes);
-    normalizeCoastlineAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes);
+    normalizeCoastlineAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes, preserveDeepwaterIndexes);
     const result = Array.from(changedIndexes);
     appendDebugLog('biq-map:terrain-apply-end', {
       terrainCode: parseIntLoose(terrainCode, -1),
@@ -43246,11 +43360,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       drawSheetSprite(sheet, 8, 4, imageIdx, sx, sy);
     };
 
-    const drawVariantBadgeCentered = (text, tone = 'rgba(73, 69, 98, 0.88)') => {
+    const drawVariantBadgeCentered = (text, tone = 'rgba(73, 69, 98, 0.88)', slot = 0, total = 1) => {
       const badgeW = Math.max(16, Math.round(tileW * 0.24));
       const badgeH = Math.max(12, Math.round(tileH * 0.18));
       const logicalCenter = tileLogicalCenter(sx, sy);
-      const markerCenterX = Math.round(logicalCenter.cx);
+      const offsetX = Math.round((Number(slot) - ((Math.max(1, Number(total) || 1) - 1) / 2)) * badgeW * 0.78);
+      const markerCenterX = Math.round(logicalCenter.cx) + offsetX;
       const markerCenterY = Math.round(logicalCenter.cy);
       const badgeX = Math.round(markerCenterX - (badgeW / 2));
       const badgeY = Math.round(markerCenterY - (badgeH / 2));
@@ -43517,8 +43632,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if ((c3cBonuses & BIQ_TILE_BONUS.BONUS_GRASSLAND) === BIQ_TILE_BONUS.BONUS_GRASSLAND) {
         drawCenteredTerrainMarkerCell(state.biqMapArtCache.tntTerrain, 128, 64, 0);
       }
-      if ((c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK && state.biqMapShowLandmarks !== false) {
-        drawVariantBadgeCentered('LM', 'rgba(122, 84, 179, 0.92)');
+      if (state.biqMapShowLandmarks !== false) {
+        const specialMarkers = [];
+        if ((c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK) {
+          specialMarkers.push({ text: 'LM', tone: 'rgba(122, 84, 179, 0.92)' });
+        }
+        const tileIndex = getTileIndexAtCoord(geom.xPos, geom.yPos);
+        if (isDeepwaterHarborTile(tileIndex)) {
+          specialMarkers.push({ text: 'DH', tone: 'rgba(26, 118, 168, 0.92)' });
+        }
+        specialMarkers.forEach((marker, idx) => {
+          drawVariantBadgeCentered(marker.text, marker.tone, idx, specialMarkers.length);
+        });
       }
     }
     if (pass === 'all' || pass === 'flat') {
@@ -44153,6 +44278,31 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return out;
   };
+  const filterTileIndexesForRects = (indexes, rects) => {
+    const candidates = Array.isArray(indexes) ? indexes : [];
+    const clips = Array.isArray(rects) && rects.length > 0 ? rects : [];
+    if (candidates.length === 0 || clips.length === 0) return [];
+    const out = [];
+    candidates.forEach((rawIdx) => {
+      const idx = parseIntLoose(rawIdx, NaN);
+      if (!Number.isFinite(idx) || idx < 0 || idx > maxIdx) return;
+      const geom = tileGeom[idx];
+      if (!geom) return;
+      const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+      const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+      let include = false;
+      for (const wrapOffset of drawWrapOffsets) {
+        const sx = basePos.sx + wrapOffset.dx;
+        const sy = basePos.sy + wrapOffset.dy;
+        if (clips.some((rect) => rectIntersects(tileClipInfluenceRect(sx, sy), rect))) {
+          include = true;
+          break;
+        }
+      }
+      if (include) out.push(idx);
+    });
+    return out;
+  };
   const getChunkCandidateIndexes = (chunk) => {
     if (!chunk || !chunk.key) return null;
     const cached = mapChunkCandidateCache.get(chunk.key);
@@ -44260,18 +44410,29 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     chunkCanvas.style.height = `${chunk.h}px`;
     return entry;
   };
-  const redrawMapChunk = (chunk) => {
+  const getClipRectsForChunk = (chunk, clipRects = null) => {
+    const clips = Array.isArray(clipRects) && clipRects.length > 0 ? clipRects : null;
+    if (!chunk || !clips) return null;
+    const chunkRect = { x: chunk.x, y: chunk.y, w: chunk.w, h: chunk.h };
+    return clips.filter((rect) => rectIntersects(rect, chunkRect));
+  };
+  const redrawMapChunk = (chunk, clipRects = null) => {
     const entry = ensureMapChunkCanvas(chunk);
     if (!entry || !entry.canvas) return false;
     const chunkCtx = entry.canvas.getContext('2d');
     if (!chunkCtx) return false;
+    const chunkClips = getClipRectsForChunk(chunk, clipRects);
+    const chunkCandidateIndexes = getChunkCandidateIndexes(chunk);
+    const candidateIndexes = chunkClips
+      ? filterTileIndexesForRects(chunkCandidateIndexes, chunkClips)
+      : chunkCandidateIndexes;
     const previousCtx = ctx;
     ctx = chunkCtx;
     chunkCtx.save();
     chunkCtx.setTransform(1, 0, 0, 1, -chunk.x, -chunk.y);
     redrawMapCanvasInPlace(
-      [{ x: chunk.x, y: chunk.y, w: chunk.w, h: chunk.h }],
-      { chunkDraw: true, chunkKey: chunk.key, candidateIndexes: getChunkCandidateIndexes(chunk) }
+      chunkClips || [{ x: chunk.x, y: chunk.y, w: chunk.w, h: chunk.h }],
+      { chunkDraw: true, chunkKey: chunk.key, candidateIndexes }
     );
     chunkCtx.restore();
     ctx = previousCtx;
@@ -44400,7 +44561,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const entry = ensureMapChunkCanvas(chunk);
       if (!entry) return;
       if (clipped || options.force || entry.dirty) {
-        if (redrawMapChunk(chunk)) rendered += 1;
+        const chunkClipRects = clipped && !entry.dirty ? clipRects : null;
+        if (redrawMapChunk(chunk, chunkClipRects)) rendered += 1;
       }
     });
     appendDebugLog('biq-map:chunk-redraw', {
@@ -44443,6 +44605,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     scheduleDeferredMiniMapRefresh({
       settleEvent,
       redrawSummary: summarizeTileIndexes(expandedIndexes),
+      minimapTileIndexes: expandedIndexes,
       redrawMs,
       tileInfoMs,
       scheduledAt: mapPerfNowMs(),
@@ -44914,6 +45077,28 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   };
 
+  const drawTerrainPreviewBadge = (drawCtx, logical, text, tone = 'rgba(26, 118, 168, 0.92)') => {
+    if (!drawCtx || !logical) return;
+    const badgeW = Math.max(18, Math.round(tileW * 0.28));
+    const badgeH = Math.max(12, Math.round(tileH * 0.18));
+    const badgeX = Math.round(logical.cx - (badgeW / 2));
+    const badgeY = Math.round(logical.cy - (badgeH / 2));
+    drawCtx.save();
+    drawCtx.fillStyle = tone;
+    drawCtx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+    drawCtx.lineWidth = 1;
+    drawCtx.beginPath();
+    drawCtx.roundRect(badgeX, badgeY, badgeW, badgeH, 5);
+    drawCtx.fill();
+    drawCtx.stroke();
+    drawCtx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+    drawCtx.font = `${Math.max(8, Math.round(tilePx * 0.42))}px Georgia, serif`;
+    drawCtx.textAlign = 'center';
+    drawCtx.textBaseline = 'middle';
+    drawCtx.fillText(String(text || ''), badgeX + Math.round(badgeW / 2), badgeY + Math.round(badgeH / 2) + 0.5);
+    drawCtx.restore();
+  };
+
   const drawPaintPreview = (hit) => {
     if (!hoverCtx || !hit) return;
     const mode = String(state.mapEditorTool && state.mapEditorTool.paintCategory || 'terrain');
@@ -44959,6 +45144,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
             hoverCtx.restore();
           }
           drawSimpleTerrainPreviewOverlay(hoverCtx, effectiveTerrainCode, sx, sy, logical, previewVariantState);
+          if (previewVariantState.deepwaterHarbor) {
+            drawTerrainPreviewBadge(hoverCtx, logical, 'DH');
+          }
           return;
         }
         if (mode === 'resource') {
@@ -45684,6 +45872,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   minimapBaseCanvas.height = minimapCanvas.height;
   let minimapBaseDirty = true;
   let minimapRefreshRaf = 0;
+  let pendingMinimapTileIndexes = new Set();
   let pendingMinimapRefreshMeta = null;
   minimapPanel.appendChild(statsControls);
   minimapPanel.appendChild(minimapCanvas);
@@ -45724,6 +45913,81 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   applySavedMapPaneView(false);
 
+  const getMiniMapDrawMetrics = () => {
+    const scaleX = minimapBaseCanvas.width / Math.max(1, baseWorldWidthPx);
+    const scaleY = minimapBaseCanvas.height / Math.max(1, baseWorldHeightPx);
+    return {
+      scaleX,
+      scaleY,
+      miniTileW: Math.max(1, tileW * scaleX),
+      miniTileH: Math.max(1, tileH * scaleY)
+    };
+  };
+  const drawMiniMapBaseTile = (baseCtx, tileIndex, metrics) => {
+    const record = tiles[tileIndex];
+    const geom = tileGeom[tileIndex];
+    if (!baseCtx || !record || !geom || !metrics) return false;
+    const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+    const sx = (basePosRaw.sx + originX - baseWorldLeftPx) * metrics.scaleX;
+    const sy = (basePosRaw.sy + originY - baseWorldTopPx) * metrics.scaleY;
+    const info = terrainInfo(record);
+    const drewSprite = drawTerrainSpriteToContext(baseCtx, record, geom, sx, sy, metrics.miniTileW, metrics.miniTileH);
+    if (!drewSprite) {
+      const midX = sx + (metrics.miniTileW / 2);
+      const midY = sy + (metrics.miniTileH / 2);
+      baseCtx.fillStyle = colorFromNumber(info.baseTerrain);
+      baseCtx.beginPath();
+      baseCtx.moveTo(midX, sy);
+      baseCtx.lineTo(sx + metrics.miniTileW, midY);
+      baseCtx.lineTo(midX, sy + metrics.miniTileH);
+      baseCtx.lineTo(sx, midY);
+      baseCtx.closePath();
+      baseCtx.fill();
+    }
+    return true;
+  };
+  const getMiniMapTileDrawRect = (tileIndex, metrics) => {
+    const geom = tileGeom[tileIndex];
+    if (!geom || !metrics) return null;
+    const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+    const sx = (basePosRaw.sx + originX - baseWorldLeftPx) * metrics.scaleX;
+    const sy = (basePosRaw.sy + originY - baseWorldTopPx) * metrics.scaleY;
+    return {
+      x: Math.floor(sx),
+      y: Math.floor(sy),
+      w: Math.max(1, Math.ceil(metrics.miniTileW)),
+      h: Math.max(1, Math.ceil(metrics.miniTileH))
+    };
+  };
+  const expandMiniMapPatchIndexes = (tileIndexes, depth = 3) => {
+    const queue = [];
+    const seen = new Set();
+    (Array.isArray(tileIndexes) ? tileIndexes : Array.from(tileIndexes || [])).forEach((rawIdx) => {
+      const idx = parseIntLoose(rawIdx, NaN);
+      if (!Number.isFinite(idx) || idx < 0 || idx > maxIdx || seen.has(idx)) return;
+      seen.add(idx);
+      queue.push({ idx, depth: 0 });
+    });
+    for (let i = 0; i < queue.length; i += 1) {
+      const item = queue[i];
+      if (!item || item.depth >= depth) continue;
+      mapTileNeighborIndexes(item.idx).forEach((neighborIdx) => {
+        if (neighborIdx < 0 || neighborIdx > maxIdx || seen.has(neighborIdx)) return;
+        seen.add(neighborIdx);
+        queue.push({ idx: neighborIdx, depth: item.depth + 1 });
+      });
+    }
+    return Array.from(seen).sort((a, b) => a - b);
+  };
+  const collectMiniMapPatchCandidates = (tileIndexes, dirtyRects, metrics) => {
+    const clips = Array.isArray(dirtyRects) ? dirtyRects.filter(Boolean) : [];
+    if (clips.length === 0) return [];
+    return expandMiniMapPatchIndexes(tileIndexes)
+      .filter((idx) => {
+        const rect = getMiniMapTileDrawRect(idx, metrics);
+        return !!(rect && clips.some((clip) => rectIntersects(rect, clip)));
+      });
+  };
   const rebuildMiniMapBase = () => {
     if (minimapBaseCanvas.width !== minimapCanvas.width) minimapBaseCanvas.width = minimapCanvas.width;
     if (minimapBaseCanvas.height !== minimapCanvas.height) minimapBaseCanvas.height = minimapCanvas.height;
@@ -45733,37 +45997,48 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     baseCtx.clearRect(0, 0, minimapBaseCanvas.width, minimapBaseCanvas.height);
     baseCtx.fillStyle = '#113246';
     baseCtx.fillRect(0, 0, minimapBaseCanvas.width, minimapBaseCanvas.height);
-    const scaleX = minimapBaseCanvas.width / Math.max(1, baseWorldWidthPx);
-    const scaleY = minimapBaseCanvas.height / Math.max(1, baseWorldHeightPx);
-    const miniTileW = Math.max(1, tileW * scaleX);
-    const miniTileH = Math.max(1, tileH * scaleY);
+    const metrics = getMiniMapDrawMetrics();
     for (let i = 0; i <= maxIdx; i += 1) {
-      const record = tiles[i];
-      const geom = tileGeom[i];
-      if (!record || !geom) continue;
-      const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
-      const sx = (basePosRaw.sx + originX - baseWorldLeftPx) * scaleX;
-      const sy = (basePosRaw.sy + originY - baseWorldTopPx) * scaleY;
-      const info = terrainInfo(record);
-      const drewSprite = drawTerrainSpriteToContext(baseCtx, record, geom, sx, sy, miniTileW, miniTileH);
-      if (!drewSprite) {
-        const midX = sx + (miniTileW / 2);
-        const midY = sy + (miniTileH / 2);
-        baseCtx.fillStyle = colorFromNumber(info.baseTerrain);
-        baseCtx.beginPath();
-        baseCtx.moveTo(midX, sy);
-        baseCtx.lineTo(sx + miniTileW, midY);
-        baseCtx.lineTo(midX, sy + miniTileH);
-        baseCtx.lineTo(sx, midY);
-        baseCtx.closePath();
-        baseCtx.fill();
-      }
+      drawMiniMapBaseTile(baseCtx, i, metrics);
     }
     minimapBaseDirty = false;
+    pendingMinimapTileIndexes.clear();
     appendDebugLog('biq-map:minimap-base-rebuild', {
       durationMs: Number((mapToolNowMs() - baseStartedAt).toFixed(2)),
       width: minimapBaseCanvas.width,
       height: minimapBaseCanvas.height
+    });
+    return true;
+  };
+  const patchMiniMapBaseTiles = (tileIndexes) => {
+    if (minimapBaseDirty) return false;
+    const indexes = Array.isArray(tileIndexes) ? tileIndexes : Array.from(tileIndexes || []);
+    if (indexes.length === 0) return false;
+    if (minimapBaseCanvas.width !== minimapCanvas.width) minimapBaseCanvas.width = minimapCanvas.width;
+    if (minimapBaseCanvas.height !== minimapCanvas.height) minimapBaseCanvas.height = minimapCanvas.height;
+    const patchStartedAt = mapToolNowMs();
+    const baseCtx = minimapBaseCanvas.getContext('2d');
+    if (!baseCtx) return false;
+    const metrics = getMiniMapDrawMetrics();
+    const unique = Array.from(new Set(indexes
+      .map((idx) => parseIntLoose(idx, NaN))
+      .filter((idx) => Number.isFinite(idx) && idx >= 0 && idx <= maxIdx)))
+      .sort((a, b) => a - b);
+    baseCtx.save();
+    baseCtx.fillStyle = '#113246';
+    const dirtyRects = unique.map((idx) => getMiniMapTileDrawRect(idx, metrics)).filter(Boolean);
+    dirtyRects.forEach((rect) => {
+      baseCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    });
+    collectMiniMapPatchCandidates(unique, dirtyRects, metrics).forEach((idx) => {
+      const rect = getMiniMapTileDrawRect(idx, metrics);
+      if (!rect) return;
+      drawMiniMapBaseTile(baseCtx, idx, metrics);
+    });
+    baseCtx.restore();
+    appendDebugLog('biq-map:minimap-base-patch', {
+      durationMs: Number((mapToolNowMs() - patchStartedAt).toFixed(2)),
+      tileSummary: summarizeTileIndexes(unique)
     });
     return true;
   };
@@ -45801,14 +46076,26 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
   };
   const scheduleDeferredMiniMapRefresh = (meta = {}) => {
-    minimapBaseDirty = true;
+    const tileIndexes = Array.isArray(meta && meta.minimapTileIndexes) ? meta.minimapTileIndexes : [];
+    if (tileIndexes.length > 0) {
+      tileIndexes.forEach((idx) => {
+        const n = parseIntLoose(idx, NaN);
+        if (Number.isFinite(n) && n >= 0 && n <= maxIdx) pendingMinimapTileIndexes.add(n);
+      });
+    } else {
+      minimapBaseDirty = true;
+      pendingMinimapTileIndexes.clear();
+    }
     pendingMinimapRefreshMeta = meta;
     if (minimapRefreshRaf) return;
     minimapRefreshRaf = window.requestAnimationFrame(() => {
       minimapRefreshRaf = 0;
       const refreshMeta = pendingMinimapRefreshMeta || {};
       pendingMinimapRefreshMeta = null;
+      const patchIndexes = Array.from(pendingMinimapTileIndexes);
+      pendingMinimapTileIndexes.clear();
       const minimapStartedAt = mapPerfNowMs();
+      if (!minimapBaseDirty && patchIndexes.length > 0) patchMiniMapBaseTiles(patchIndexes);
       renderMiniMap();
       const minimapMs = Number((mapPerfNowMs() - minimapStartedAt).toFixed(2));
       if (refreshMeta && refreshMeta.settleEvent) {
@@ -47233,6 +47520,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     scheduleDeferredMiniMapRefresh({
       settleEvent: 'biq-map:tile-edit-settled',
       redrawSummary: summarizeTileIndexes(redrawIndexes),
+      minimapTileIndexes: expandedRedrawIndexes,
       redrawMs,
       tileInfoMs,
       scheduledAt: mapPerfNowMs(),
@@ -47421,6 +47709,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }));
     });
     host.appendChild(grid);
+    if (isDeepwaterHarborTile(state.biqMapSelectedTile)) {
+      addOptionSummary(host, 'Special Terrain: Deepwater Harbor');
+    }
     const variantState = terrainVariantStateForTile(tile, current.realTerrain);
     const variantRows = [
       {

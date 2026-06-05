@@ -119,8 +119,8 @@ test('renderer loads planner before renderer.js and keeps minimap independent fr
   );
   assert.match(
     rendererText,
-    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, miniTileW, miniTileH\);/,
-    'minimap should remain a whole-map data render instead of depending on visible chunks'
+    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?const drawMiniMapBaseTile = \(baseCtx, tileIndex, metrics\) => \{[\s\S]*?drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, metrics\.miniTileW, metrics\.miniTileH\);[\s\S]*?const rebuildMiniMapBase = \(\) => \{[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?drawMiniMapBaseTile\(baseCtx, i, metrics\);/,
+    'minimap should remain a whole-map data render with a tile patch helper instead of depending on visible chunks'
   );
 });
 
@@ -160,8 +160,8 @@ test('renderer preserves interaction math while redirecting large redraws to chu
   );
   assert.match(
     rendererText,
-    /const getChunkCandidateIndexes = \(chunk\) => \{[\s\S]*?const indexes = collectTileIndexesForRects\(\[\{ x: chunk\.x, y: chunk\.y, w: chunk\.w, h: chunk\.h \}\]\) \|\| \[\];[\s\S]*?mapChunkCandidateCache\.set\(chunk\.key, indexes\);[\s\S]*?\};[\s\S]*?candidateIndexes: getChunkCandidateIndexes\(chunk\)/,
-    'chunk redraws should iterate only source tiles whose pixels can intersect that chunk'
+    /const getChunkCandidateIndexes = \(chunk\) => \{[\s\S]*?const indexes = collectTileIndexesForRects\(\[\{ x: chunk\.x, y: chunk\.y, w: chunk\.w, h: chunk\.h \}\]\) \|\| \[\];[\s\S]*?mapChunkCandidateCache\.set\(chunk\.key, indexes\);[\s\S]*?\};[\s\S]*?const redrawMapChunk = \(chunk, clipRects = null\) => \{[\s\S]*?const chunkCandidateIndexes = getChunkCandidateIndexes\(chunk\);[\s\S]*?const candidateIndexes = chunkClips[\s\S]*?filterTileIndexesForRects\(chunkCandidateIndexes, chunkClips\)[\s\S]*?\{ chunkDraw: true, chunkKey: chunk\.key, candidateIndexes \}/,
+    'chunk redraws should iterate only source tiles whose pixels can intersect the chunk, and clipped edits should filter that set further'
   );
   assert.match(
     rendererText,

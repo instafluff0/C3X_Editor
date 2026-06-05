@@ -99,17 +99,33 @@
     var center = tileCoordsByIndex(width, centerIndex);
     var wrapX = !options || options.wrapX !== false;
     var mapWidth = Math.floor(Number(width) || 0);
+    var halfWidth = Math.floor(mapWidth / 2);
     var maxDistance = radius * 2;
-    for (var i = 0; i < tileCount; i += 1) {
-      var p = tileCoordsByIndex(width, i);
-      var dx = p.xPos - center.xPos;
-      if (wrapX && mapWidth > 0) dx = wrapDelta(dx, mapWidth);
-      var dy = p.yPos - center.yPos;
-      // Use Civ3 logical tile axes instead of the packed TILE record grid so
-      // screen-space NxN brushes stay centered on the isometric lattice.
-      var axisA = dx + dy;
-      var axisB = dx - dy;
-      if (Math.max(Math.abs(axisA), Math.abs(axisB)) <= maxDistance) out.push(i);
+    if (maxDistance <= 0) {
+      var centerIdx = Math.floor(Number(centerIndex));
+      return centerIdx >= 0 && centerIdx < tileCount ? [centerIdx] : [];
+    }
+    if (halfWidth <= 0 || mapWidth <= 0) return out;
+    var maxRow = Math.ceil(tileCount / halfWidth) - 1;
+    var seen = Object.create(null);
+    for (var dy = -maxDistance; dy <= maxDistance; dy += 1) {
+      var row = center.yPos + dy;
+      if (row < 0 || row > maxRow) continue;
+      for (var dx = -maxDistance; dx <= maxDistance; dx += 1) {
+        // Use Civ3 logical tile axes instead of the packed TILE record grid so
+        // screen-space NxN brushes stay centered on the isometric lattice.
+        var axisA = dx + dy;
+        var axisB = dx - dy;
+        if (Math.max(Math.abs(axisA), Math.abs(axisB)) > maxDistance) continue;
+        var xPos = center.xPos + dx;
+        if (wrapX) xPos = ((xPos % mapWidth) + mapWidth) % mapWidth;
+        if (xPos < 0 || xPos >= mapWidth) continue;
+        if ((xPos & 1) !== (row & 1)) continue;
+        var idx = (row * halfWidth) + Math.floor(xPos / 2);
+        if (idx < 0 || idx >= tileCount || seen[idx]) continue;
+        seen[idx] = true;
+        out.push(idx);
+      }
     }
     return out;
   }
@@ -262,6 +278,57 @@
       baseTerrain: packed & 0x0f,
       realTerrain: (packed >>> 4) & 0x0f
     };
+  }
+
+  function packTerrain(code) {
+    var terrain = Number(code);
+    if (!Number.isFinite(terrain)) terrain = 0;
+    return ((terrain & 0x0f) << 4) | (terrain & 0x0f);
+  }
+
+  function isLandTerrain(record, terrainEnum) {
+    if (!record || !terrainEnum) return false;
+    return decodeTerrain(record).baseTerrain < terrainEnum.COAST;
+  }
+
+  function isDeepwaterHarborTile(record, neighborRecords, terrainEnum) {
+    if (!record || !terrainEnum) return false;
+    var terrain = decodeTerrain(record);
+    if (terrain.baseTerrain !== terrainEnum.SEA || terrain.realTerrain !== terrainEnum.SEA) return false;
+    if (!Array.isArray(neighborRecords)) return false;
+    return neighborRecords.some(function (neighbor) {
+      return isLandTerrain(neighbor, terrainEnum);
+    });
+  }
+
+  function applyDeepwaterHarborTerrain(record, terrainEnum, tileBonusEnum, bonusMask) {
+    if (!record || !terrainEnum) return false;
+    var current = decodeTerrain(record);
+    if (current.baseTerrain !== terrainEnum.COAST) return false;
+    var packedSea = packTerrain(terrainEnum.SEA);
+    var changed = false;
+    if (String(getField(record, 'baserealterrain') && getField(record, 'baserealterrain').value || '') !== String(packedSea)) {
+      setField(record, 'baserealterrain', String(packedSea), 'Base Real Terrain');
+      changed = true;
+    }
+    if (String(getField(record, 'c3cbaserealterrain') && getField(record, 'c3cbaserealterrain').value || '') !== String(packedSea)) {
+      setField(record, 'c3cbaserealterrain', String(packedSea), 'C3C Base Real Terrain');
+      changed = true;
+    }
+    if (tileBonusEnum) {
+      var currentBonus = parseIntLoose(getField(record, 'c3cbonuses') && getField(record, 'c3cbonuses').value, 0) >>> 0;
+      var nextBonus = sanitizeTerrainBonusMask(
+        terrainEnum.SEA,
+        bonusMask == null ? currentBonus : bonusMask,
+        terrainEnum,
+        tileBonusEnum
+      ) >>> 0;
+      if (currentBonus !== nextBonus) {
+        setField(record, 'c3cbonuses', String(nextBonus), 'C3C Bonuses');
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   function isWaterTile(record) {
@@ -578,6 +645,9 @@
     collectGrasslandPlainsDesertCoastFixups: collectGrasslandPlainsDesertCoastFixups,
     resolveTerrainPaintCode: resolveTerrainPaintCode,
     sanitizeTerrainBonusMask: sanitizeTerrainBonusMask,
+    decodeTerrain: decodeTerrain,
+    isDeepwaterHarborTile: isDeepwaterHarborTile,
+    applyDeepwaterHarborTerrain: applyDeepwaterHarborTerrain,
     RIVER_MASK: RIVER_MASK,
     applyRiverOverlay: applyRiverOverlay,
     applyOverlay: applyOverlay,

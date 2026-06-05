@@ -83,6 +83,13 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     /const BIQ_TERRAIN_LM_ATLAS_FILES = \[[\s\S]*?'Art\/Terrain\/lxtgc\.pcx'[\s\S]*?'Art\/Terrain\/lxpgc\.pcx'[\s\S]*?'Art\/Terrain\/lxdgc\.pcx'[\s\S]*?'Art\/Terrain\/lxdpc\.pcx'[\s\S]*?'Art\/Terrain\/lxdgp\.pcx'[\s\S]*?'Art\/Terrain\/lxggc\.pcx'[\s\S]*?'Art\/Terrain\/lwCSO\.pcx'[\s\S]*?'Art\/Terrain\/lwSSS\.pcx'[\s\S]*?'Art\/Terrain\/lwOOO\.pcx'[\s\S]*?\];[\s\S]*?BIQ_TERRAIN_LM_ATLAS_FILES\.forEach\(\(assetPath, idx\) => \{[\s\S]*?requestBiqMapArtAsset\(`terrain-lm-\$\{idx\}`, assetPath\);[\s\S]*?\}\);/,
     'map renderer should load the full landmark terrain atlas family alongside the standard base terrain atlases'
   );
+  assert.ok(
+    rendererText.includes("landmarksText.textContent = 'Label Special Terrain';")
+      && rendererText.includes("landmarksWrap.title = 'Show special terrain markers';")
+      && rendererText.includes("appendDebugLog('biq-map:special-terrain-toggle'")
+      && rendererText.includes("terrainVariantDeepwaterHarbor: false"),
+    'map display controls should label the marker toggle as special terrain and include Deepwater Harbor paint state'
+  );
   assert.match(
     rendererText,
     /const canUseRecordDiffUndoForPaint = \(\) => \{[\s\S]*?mode === 'terrain'[\s\S]*?mode === 'resource'[\s\S]*?mode === 'visibility'[\s\S]*?mode === 'fog'[\s\S]*?\};[\s\S]*?const canUseRecordDiffUndoForSelectedTileEdit = \(kind, spec = null\) => \{[\s\S]*?kind === 'terrainVariants'[\s\S]*?kind === 'resource'[\s\S]*?kind === 'visibility'/,
@@ -97,6 +104,53 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     rendererText,
     /const getTerrainAtlasCacheKey = \(fileIdx, useLandmarkAtlas = false\) => \{[\s\S]*?if \(useLandmarkAtlas && idx < BIQ_TERRAIN_LM_ATLAS_FILES\.length\) return `terrain-lm-\$\{idx\}`;[\s\S]*?return `terrain-\$\{idx\}`;[\s\S]*?\};[\s\S]*?const drawTerrainSpriteToContext = \(drawCtx, record, geom, sx, sy, drawW = tileW, drawH = tileH\) => \{[\s\S]*?const useLandmarkAtlas = terrainVariantStateForTile\(record\)\.landmark;[\s\S]*?drawTerrainAtlasSpriteToContext\([\s\S]*?useLandmarkAtlas[\s\S]*?\);/,
     'map terrain rendering should switch flat tile atlases to the landmark sheets when the tile has the LM variant'
+  );
+  assert.ok(
+    rendererText.includes('const terrainSupportsDeepwaterHarbor = (terrainCode) => terrainCode === BIQ_TERRAIN.SEA;')
+      && rendererText.includes("key: 'terrainVariantDeepwaterHarbor'")
+      && rendererText.includes("label: 'Deepwater Harbor'")
+      && rendererText.includes('deepwaterHarbor: terrainSupportsDeepwaterHarbor(code)')
+      && rendererText.includes('state.mapEditorTool.terrainVariantDeepwaterHarbor = nextState.deepwaterHarbor;'),
+    'Sea terrain paint should expose Deepwater Harbor as a conditional terrain variant without storing it in c3c bonus bits'
+  );
+  assert.ok(
+    rendererText.includes('const applyDeepwaterHarborToIndexes = (indexes, bonusMask = null) => {')
+      && rendererText.includes('mapCore.applyDeepwaterHarborTerrain(tile, BIQ_TERRAIN, BIQ_TILE_BONUS, bonusMask)')
+      && rendererText.includes("appendDebugLog('biq-map:deepwater-harbor-apply'")
+      && rendererText.includes('const deepwaterHarbor = terrainSupportsDeepwaterHarbor(terrainCode)')
+      && rendererText.includes('const changedIndexes = applyDeepwaterHarborToIndexes(indices, variantMask);')
+      && rendererText.includes("setStatus('Deepwater Harbor can only be painted onto Coast tiles.');"),
+    'Deepwater Harbor paint should use the special Coast-to-Sea path and report invalid target tiles'
+  );
+  assert.ok(
+    rendererText.includes('const tileHasPreservedDeepwaterGraphics = (tileIndex) => {')
+      && rendererText.includes('const expectedSea = computeSeaTerrainSpriteSpecAt(tileIndex);')
+      && rendererText.includes('stored.fileIdx !== expectedSea.fileIdx || stored.imageIdx !== expectedSea.imageIdx')
+      && rendererText.includes('&& tileHasPreservedDeepwaterGraphics(tileIndex);'),
+    'Deepwater Harbor detection should require preserved non-Sea graphics so normal Sea tiles are not mislabeled'
+  );
+  assert.ok(
+    rendererText.includes('const preserveDeepwaterIndexes = collectDeepwaterHarborIndexesAround(seeds);')
+      && rendererText.includes('preserveDeepwaterSummary: summarizeTileIndexes(Array.from(preserveDeepwaterIndexes))')
+      && rendererText.includes('normalizeCoastlineAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes, preserveDeepwaterIndexes);'),
+    'normal Sea painting should only preserve Deepwater Harbor tiles that existed before the terrain stroke'
+  );
+  assert.match(
+    rendererText,
+    /const recalculateTerrainFileAndImageAt = \(xPos, yPos\) => \{[\s\S]*?if \(isDeepwaterHarborTile\(southIdx\)\) return;[\s\S]*?const southBase = terrainInfo\(southTile\)\.baseTerrain;/,
+    'terrain sprite recalculation should preserve only tightly detected Deepwater Harbor file/image graphics during later neighboring terrain edits'
+  );
+  assert.match(
+    rendererText,
+    /const normalizeCoastlineAround = \(seedIndexes, changedIndexes, preserveDeepwaterIndexes = null\) => \{[\s\S]*?if \(!isWaterTerrain\(info\.baseTerrain\)\) return;[\s\S]*?if \(preserveDeepwaterIndexes && preserveDeepwaterIndexes\.has\(idx\)\) return;[\s\S]*?const touchesLand = mapTileNeighborIndexes\(idx\)\.some/,
+    'coastline normalization should protect only preexisting Deepwater Harbor tiles, not newly painted normal Sea'
+  );
+  assert.ok(
+    rendererText.includes("specialMarkers.push({ text: 'DH', tone: 'rgba(26, 118, 168, 0.92)' });")
+      && rendererText.includes('drawVariantBadgeCentered(marker.text, marker.tone, idx, specialMarkers.length);')
+      && rendererText.includes("drawTerrainPreviewBadge(hoverCtx, logical, 'DH');")
+      && rendererText.includes("addOptionSummary(host, 'Special Terrain: Deepwater Harbor');"),
+    'Deepwater Harbor tiles should get visible DH map markers, paint-preview badges, and selected-tile detail text'
   );
   assert.match(
     rendererText,
@@ -1156,8 +1210,13 @@ test('large wrapped BIQ maps keep panning smooth with native scroll and bounded 
   );
   assert.match(
     rendererText,
-    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?const rebuildMiniMapBase = \(\) => \{[\s\S]*?const drewSprite = drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, miniTileW, miniTileH\);[\s\S]*?minimapBaseDirty = false;[\s\S]*?\};[\s\S]*?renderMiniMap = \(\) => \{[\s\S]*?const rebuiltBase = !!minimapBaseDirty;[\s\S]*?if \(rebuiltBase\) rebuildMiniMapBase\(\);[\s\S]*?mmCtx\.drawImage\(minimapBaseCanvas, 0, 0, minimapCanvas\.width, minimapCanvas\.height\);[\s\S]*?const scheduleDeferredMiniMapRefresh = \(meta = \{\}\) => \{[\s\S]*?minimapBaseDirty = true;[\s\S]*?minimapRefreshRaf = window\.requestAnimationFrame\(\(\) => \{/,
-    'minimap redraws should use a cached minimap base canvas instead of sampling the main canvas'
+    /const filterTileIndexesForRects = \(indexes, rects\) => \{[\s\S]*?const candidates = Array\.isArray\(indexes\) \? indexes : \[\];[\s\S]*?clips\.some\(\(rect\) => rectIntersects\(tileClipInfluenceRect\(sx, sy\), rect\)\)[\s\S]*?const redrawMapChunk = \(chunk, clipRects = null\) => \{[\s\S]*?const chunkClips = getClipRectsForChunk\(chunk, clipRects\);[\s\S]*?const candidateIndexes = chunkClips[\s\S]*?filterTileIndexesForRects\(chunkCandidateIndexes, chunkClips\)[\s\S]*?redrawMapCanvasInPlace\([\s\S]*?chunkClips \|\| \[\{ x: chunk\.x, y: chunk\.y, w: chunk\.w, h: chunk\.h \}\]/,
+    'clipped edit redraws should filter cached chunk candidates to the actual edited rects instead of repainting full 1024px chunks'
+  );
+  assert.match(
+    rendererText,
+    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?let pendingMinimapTileIndexes = new Set\(\);[\s\S]*?const drawMiniMapBaseTile = \(baseCtx, tileIndex, metrics\) => \{[\s\S]*?drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, metrics\.miniTileW, metrics\.miniTileH\);[\s\S]*?const getMiniMapTileDrawRect = \(tileIndex, metrics\) => \{[\s\S]*?w: Math\.max\(1, Math\.ceil\(metrics\.miniTileW\)\),[\s\S]*?h: Math\.max\(1, Math\.ceil\(metrics\.miniTileH\)\)[\s\S]*?const expandMiniMapPatchIndexes = \(tileIndexes, depth = 3\) => \{[\s\S]*?mapTileNeighborIndexes\(item\.idx\)\.forEach[\s\S]*?const collectMiniMapPatchCandidates = \(tileIndexes, dirtyRects, metrics\) => \{[\s\S]*?return expandMiniMapPatchIndexes\(tileIndexes\)[\s\S]*?clips\.some\(\(clip\) => rectIntersects\(rect, clip\)\)[\s\S]*?const patchMiniMapBaseTiles = \(tileIndexes\) => \{[\s\S]*?if \(minimapBaseDirty\) return false;[\s\S]*?\.sort\(\(a, b\) => a - b\);[\s\S]*?const dirtyRects = unique\.map\(\(idx\) => getMiniMapTileDrawRect\(idx, metrics\)\)\.filter\(Boolean\);[\s\S]*?baseCtx\.fillRect\(rect\.x, rect\.y, rect\.w, rect\.h\);[\s\S]*?collectMiniMapPatchCandidates\(unique, dirtyRects, metrics\)\.forEach\(\(idx\) => \{[\s\S]*?drawMiniMapBaseTile\(baseCtx, idx, metrics\);[\s\S]*?appendDebugLog\('biq-map:minimap-base-patch'[\s\S]*?renderMiniMap = \(\) => \{[\s\S]*?if \(rebuiltBase\) rebuildMiniMapBase\(\);[\s\S]*?mmCtx\.drawImage\(minimapBaseCanvas, 0, 0, minimapCanvas\.width, minimapCanvas\.height\);[\s\S]*?const scheduleDeferredMiniMapRefresh = \(meta = \{\}\) => \{[\s\S]*?const tileIndexes = Array\.isArray\(meta && meta\.minimapTileIndexes\) \? meta\.minimapTileIndexes : \[\];[\s\S]*?if \(!minimapBaseDirty && patchIndexes\.length > 0\) patchMiniMapBaseTiles\(patchIndexes\);/,
+    'minimap redraws should use a cached base canvas, clear edited tile-sized minimap bounds, and repaint intersecting local neighbors instead of clearing large main-map edit rects or repainting only the touched tiles'
   );
   assert.match(
     rendererText,
