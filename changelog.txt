@@ -1,6 +1,10 @@
 * RELEASE 27.14
 - Changed the Map editor renderer to use bounded canvas chunks for oversized maps while keeping native scrolling, independent minimap rendering, and viewport-sized hover overlays, preventing large 362x306 maps from allocating multi-gigabyte full-world canvases.
+- Smoothed large-map scrolling, minimap dragging, and Ctrl-pan by draining visible map chunks across frame budgets, retaining nearby chunk canvases, and prefetching adjacent chunks after interaction settles.
 - Changed Map import to load source BIQs through a worker-backed map-only path and added a compact terrain preview to the import modal, avoiding full source scenario bundle/materialization work before confirming an import.
+- Cleared `scenario.districts.txt` district and named-tile sidecar data when importing or otherwise replacing the whole scenario map, so coordinate-bound labels do not survive onto the new map.
+- Moved the Resize Map terrain-fill selector into the resize control grid above the minimap preview so it matches the Map Width and East/West control width.
+- Fixed Map Resize undo so closing and reopening the Map editor cannot show the undone resized map from a stale Map tab button.
 - Changed Scenario -> Players so the main search bar filters Playable Civs and removed the duplicate mini search inside the Playable Civs panel.
 - Updated Tides catalog parity tests to follow the BIQ-declared scenario search root and the installed 242-improvement fixture baseline.
 - Fixed Scenario -> Players search inputs so typing in either the player filter or Playable Civs filter keeps focus and caret position after the filtered list rerenders.

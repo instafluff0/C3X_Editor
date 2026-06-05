@@ -680,6 +680,11 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
     'the map tab should expose an Import Map button that routes accepted imports into the explicit whole-map replacement path'
   );
   assert.match(
+    rendererText,
+    /function clearScenarioDistrictsForWholeMapReplacement\(tab\) \{[\s\S]*?meta\.entries = \[\];[\s\S]*?meta\.namedTiles = \[\];[\s\S]*?\}[\s\S]*?function applyWholeMapSectionsToTab\(tab, mapSectionsInput, mutation = 'set', mutationSource = 'generated'\) \{[\s\S]*?if \(mutation === 'set'\) clearScenarioDistrictsForWholeMapReplacement\(tab\);/,
+    'whole-map replacement, including imported maps, should clear scenario district and named-tile sidecar metadata immediately in the renderer'
+  );
+  assert.match(
     configCoreText,
     /function loadMapImport\(payload = \{\}\) \{[\s\S]*?buildMapTabFromBiq\(buildMapImportBiqTab\(biqTab\), mode\)[\s\S]*?buildImportedTerrainOverlayMapSectionsFromMapTab\(mapTab\)[\s\S]*?durationMs/,
     'config core should expose a map-only import loader that filters BIQ sections before map-tab materialization and reports timing'
@@ -718,6 +723,7 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
 
 test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimension changes for save', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
 
   assert.match(
     rendererText,
@@ -771,8 +777,13 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const terrainField = document\.createElement\('div'\);[\s\S]*?terrainLabel\.textContent = 'Add New Terrain as Type';[\s\S]*?const terrainSelect = document\.createElement\('select'\);[\s\S]*?QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS\.forEach\(\(option\) => \{[\s\S]*?terrainSelect\.value = String\(BIQ_TERRAIN\.SEA\);[\s\S]*?terrainSelect\.addEventListener\('change', refreshValidation\);/,
-    'Resize Map should expose an Add New Terrain as Type dropdown driven by the shared terrain options and refresh the preview when it changes'
+    /const terrainField = document\.createElement\('div'\);[\s\S]*?terrainField\.className = 'entity-field map-resize-terrain-field';[\s\S]*?terrainLabel\.textContent = 'Add New Terrain as Type';[\s\S]*?const terrainSelect = document\.createElement\('select'\);[\s\S]*?QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS\.forEach\(\(option\) => \{[\s\S]*?terrainSelect\.value = String\(BIQ_TERRAIN\.SEA\);[\s\S]*?grid\.appendChild\(terrainField\);[\s\S]*?const miniPreviewField = document\.createElement\('div'\);[\s\S]*?terrainSelect\.addEventListener\('change', refreshValidation\);/,
+    'Resize Map should expose Add New Terrain as Type in the resize grid before the minimap so it matches the Map Width and East/West control width'
+  );
+  assert.match(
+    stylesText,
+    /\.map-resize-terrain-field \{[\s\S]*?grid-column: 1 \/ span 1;[\s\S]*?\}/,
+    'Resize Map terrain selector should stay in one grid column instead of spanning the modal'
   );
   assert.match(
     rendererText,
@@ -786,8 +797,13 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
-    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
+    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const liveTab = getLiveMapTabForAction\(tab\);[\s\S]*?const liveTileSection = getMapTileSection\(liveTab\) \|\| tileSection;[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: liveTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map; Open Map should resolve the live map tab before opening, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
+  );
+  assert.match(
+    rendererText,
+    /function applyMapUndoSnapshotToCurrentBundle\(targetSnapshot, options = \{\}\) \{[\s\S]*?refreshActiveBiqRecordListDirtyBadges\(\);[\s\S]*?if \(state\.activeTab === 'map'\) \{[\s\S]*?renderTabs\(\);[\s\S]*?renderActiveTab\(\{ preserveTabScroll: true \}\);[\s\S]*?\}[\s\S]*?const mapModalVisible = !!\(/,
+    'scoped map undo should rerender the Map tab page before refreshing the modal so stale Open Map button closures cannot reopen an undone resized map'
   );
 });
 

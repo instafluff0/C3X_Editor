@@ -1068,6 +1068,10 @@ button:disabled {
   box-shadow: 0 0 0 2px rgba(182, 52, 28, 0.1);
 }
 
+.map-resize-terrain-field {
+  grid-column: 1 / span 1;
+}
+
 .reference-key-feedback {
   margin: 0;
   color: #6b6688;

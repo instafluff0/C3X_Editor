@@ -1205,15 +1205,35 @@ test('critical BIQ map: explicit imported whole-map save can replace all map sec
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  const scenarioDistrictsPath = path.join(tmp, 'scenario.districts.txt');
   fs.mkdirSync(c3x, { recursive: true });
   ensureDefaultC3xFiles(c3x);
   fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.writeFileSync(
+    scenarioDistrictsPath,
+    [
+      'DISTRICTS',
+      '',
+      '#District',
+      'coordinates = 1,2',
+      'district = Neighborhood',
+      '',
+      '#NamedTile',
+      'coordinates = 1,2',
+      'name = Old Named Tile',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
 
   const before = parseBiqFileForRawSections(scenarioBiq);
   assert.equal(before.ok, true, 'expected no-map fixture parse before imported-map save');
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected map tab for no-map fixture');
   assert.equal(bundle.tabs.map.hasMapData, false, 'expected no-map fixture to start without map data');
+  assert.ok(bundle.tabs.map.scenarioDistricts, 'expected scenario district sidecar metadata');
+  assert.equal(bundle.tabs.map.scenarioDistricts.entries.length, 1, 'expected loaded district sidecar entry before import');
+  assert.equal(bundle.tabs.map.scenarioDistricts.namedTiles.length, 1, 'expected loaded named tile before import');
 
   bundle.tabs.map.sections = buildGeneratedBlankMapSections(16, 16);
   bundle.tabs.map.mapMutation = 'set';
@@ -1239,6 +1259,10 @@ test('critical BIQ map: explicit imported whole-map save can replace all map sec
   });
   assertNoMapReferenceIssues(after, 'expected imported-map save to keep map references coherent');
   assertNoColonyOverlayIssues(after, 'expected imported-map save to keep colony overlay coherence intact');
+  const scenarioDistrictsText = fs.readFileSync(scenarioDistrictsPath, 'utf8');
+  assert.match(scenarioDistrictsText, /^DISTRICTS\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#District\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#NamedTile\b/);
 });
 
 test('critical BIQ map: explicit removemap save removes all BIQ map sections end-to-end', () => {

@@ -3231,7 +3231,10 @@ function collectScenarioDistrictsEdit(tabs) {
   const beforeNamedTiles = Array.isArray(meta.originalNamedTiles) ? meta.originalNamedTiles : [];
   const targetPath = String(meta.targetPath || '').trim();
   const sourcePath = String(meta.sourcePath || '').trim();
-  if (mapMutation === 'remove') {
+  const wholeMapReplacementSource = String(mapTab && mapTab.mapMutationSource || '').trim().toLowerCase();
+  const clearsCoordinateSidecar = mapMutation === 'remove'
+    || (mapMutation === 'set' && ['generated', 'imported', 'custom'].includes(wholeMapReplacementSource));
+  if (clearsCoordinateSidecar) {
     const hadScenarioDistricts = entries.length > 0
       || namedTiles.length > 0
       || beforeEntries.length > 0

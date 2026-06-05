@@ -42,6 +42,32 @@ test('large map can still keep native scroll dimensions without allocating one h
   );
 });
 
+test('large-map prefetch overscan keeps a nearby chunk ring beyond the visible viewport', () => {
+  const metrics = planner.computeWorldMetrics(362, 306, 16);
+  const visible = planner.buildChunksForRect(
+    metrics,
+    planner.viewportRect(11056, 4597, 1424, 806, 512),
+    { chunkSize: 1024 }
+  );
+  const prefetch = planner.buildChunksForRect(
+    metrics,
+    planner.viewportRect(11056, 4597, 1424, 806, 1536),
+    { chunkSize: 1024 }
+  );
+  const retain = planner.buildChunksForRect(
+    metrics,
+    planner.viewportRect(11056, 4597, 1424, 806, 2048),
+    { chunkSize: 1024 }
+  );
+
+  assert.equal(visible.length, 9);
+  assert.equal(prefetch.length, 25, 'idle prefetch should cover the next ring around a 3x3 visible window');
+  assert.ok(retain.length > prefetch.length, 'retention can keep prefetched chunks while pruning far-away canvases');
+  visible.forEach((chunk) => {
+    assert.ok(prefetch.some((candidate) => candidate.key === chunk.key), `expected prefetch ring to include visible chunk ${chunk.key}`);
+  });
+});
+
 test('chunked rendering uses tile influence bleed so viewport-edge art is not dropped', () => {
   const metrics = planner.computeWorldMetrics(362, 306, 16);
   const tileGeom = buildTileGeom(362, 306);
@@ -147,6 +173,31 @@ test('renderer preserves interaction math while redirecting large redraws to chu
       && rendererText.includes('redrawChunkedMapCanvas(null, { reason });')
       && rendererText.includes("scheduleChunkedMapViewportRefresh('scroll');"),
     'scrolling should schedule visible chunk refreshes without replacing native scroll behavior'
+  );
+  assert.match(
+    rendererText,
+    /const MAP_CHUNK_VISIBLE_FRAME_BUDGET_MS = 10;[\s\S]*?const MAP_CHUNK_PREFETCH_FRAME_BUDGET_MS = 5;[\s\S]*?const MAP_CHUNK_PREFETCH_OVERSCAN_PX = 1536;[\s\S]*?const MAP_CHUNK_RETAIN_OVERSCAN_PX = 2048;/,
+    'large-map chunk rendering should have explicit visible, prefetch, and retention budgets'
+  );
+  assert.match(
+    rendererText,
+    /const processMapChunkRenderQueue = \(options = \{\}\) => \{[\s\S]*?while \(mapChunkRenderQueue\.length > 0\) \{[\s\S]*?if \(rendered > 0 && \(mapPerfNowMs\(\) - startedAt\) >= budgetMs\) break;[\s\S]*?mapChunkRenderRaf = window\.requestAnimationFrame\(\(\) => processMapChunkRenderQueue\(options\)\);/,
+    'chunk queue draining should yield across frames instead of rendering every missing chunk in one pass'
+  );
+  assert.match(
+    rendererText,
+    /const scheduleMapChunkPrefetch = \(reason = 'idle'\) => \{[\s\S]*?isDraggingMap \|\| minimapPointerId != null[\s\S]*?requestIdleCallback[\s\S]*?enqueueMapChunks\(prefetchChunks, \{ visible: false, reason \}\);/,
+    'chunk prefetch should run at idle priority and pause while map or minimap dragging is active'
+  );
+  assert.match(
+    rendererText,
+    /const pruneMapChunkCache = \(retainChunks = \[\]\) => \{[\s\S]*?const retainKeys = new Set[\s\S]*?MAP_CHUNK_MAX_CACHE_ENTRIES[\s\S]*?mapChunkCandidateCache\.delete\(next\.key\);/,
+    'chunk cache pruning should retain nearby chunks while capping total cached canvases'
+  );
+  assert.match(
+    rendererText,
+    /const onDragEnd = \(\) => \{[\s\S]*?scheduleChunkedMapViewportRefresh\('drag-end'\);[\s\S]*?const releaseMiniMapPointer = \(ev\) => \{[\s\S]*?minimapPointerId = null;[\s\S]*?scheduleChunkedMapViewportRefresh\('minimap-release'\);/,
+    'map drag and minimap drag release should schedule a final visible refresh and nearby prefetch pass'
   );
   assert.match(
     rendererText,

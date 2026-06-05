@@ -27584,6 +27584,16 @@ function shiftScenarioDistrictsForMapResize(tab, width, height, offsets = {}) {
   }
 }
 
+function clearScenarioDistrictsForWholeMapReplacement(tab) {
+  const meta = tab && tab.scenarioDistricts;
+  if (!meta) return false;
+  const hadEntries = Array.isArray(meta.entries) && meta.entries.length > 0;
+  const hadNamedTiles = Array.isArray(meta.namedTiles) && meta.namedTiles.length > 0;
+  meta.entries = [];
+  meta.namedTiles = [];
+  return hadEntries || hadNamedTiles;
+}
+
 function applyMapResizePreviewToTab(tab, targetWidth, targetHeight, options = {}) {
   const width = normalizeMapResizePreviewDimension(targetWidth, 'width');
   const height = normalizeMapResizePreviewDimension(targetHeight, 'height');
@@ -27790,6 +27800,22 @@ async function promptEditMapAction(tab) {
   verticalAnchorField.appendChild(verticalAnchorSelect);
   grid.appendChild(verticalAnchorField);
 
+  const terrainField = document.createElement('div');
+  terrainField.className = 'entity-field map-resize-terrain-field';
+  const terrainLabel = document.createElement('label');
+  terrainLabel.textContent = 'Add New Terrain as Type';
+  const terrainSelect = document.createElement('select');
+  QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS.forEach((option) => {
+    const node = document.createElement('option');
+    node.value = String(option.value);
+    node.textContent = option.label;
+    terrainSelect.appendChild(node);
+  });
+  terrainSelect.value = String(BIQ_TERRAIN.SEA);
+  terrainField.appendChild(terrainLabel);
+  terrainField.appendChild(terrainSelect);
+  grid.appendChild(terrainField);
+
   const miniPreviewField = document.createElement('div');
   miniPreviewField.className = 'entity-field';
   const statusLine = document.createElement('div');
@@ -27805,21 +27831,6 @@ async function promptEditMapAction(tab) {
   miniPreviewField.appendChild(statusLine);
   miniPreviewField.appendChild(miniPreviewFrame);
   form.appendChild(miniPreviewField);
-  const terrainField = document.createElement('div');
-  terrainField.className = 'entity-field';
-  const terrainLabel = document.createElement('label');
-  terrainLabel.textContent = 'Add New Terrain as Type';
-  const terrainSelect = document.createElement('select');
-  QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS.forEach((option) => {
-    const node = document.createElement('option');
-    node.value = String(option.value);
-    node.textContent = option.label;
-    terrainSelect.appendChild(node);
-  });
-  terrainSelect.value = String(BIQ_TERRAIN.SEA);
-  terrainField.appendChild(terrainLabel);
-  terrainField.appendChild(terrainSelect);
-  form.appendChild(terrainField);
   el.entityModalContent.appendChild(form);
 
   let validation = getQuintCustomMapValidation(widthInput.value, heightInput.value);
@@ -36469,6 +36480,16 @@ function renderBiqTab(tab) {
   return wrap;
 }
 
+function getLiveMapTabForAction(fallbackTab = null) {
+  return (state.bundle && state.bundle.tabs && state.bundle.tabs.map) || fallbackTab || null;
+}
+
+function getMapTileSection(tab) {
+  return Array.isArray(tab && tab.sections)
+    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
+    : null;
+}
+
 function renderMapTab(tab) {
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
@@ -36528,7 +36549,14 @@ function renderMapTab(tab) {
     openBtn.className = 'ghost action-open';
     openBtn.textContent = '🗺 Open Map';
     openBtn.addEventListener('click', () => {
-      openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+      const liveTab = getLiveMapTabForAction(tab);
+      const liveTileSection = getMapTileSection(liveTab) || tileSection;
+      if (!liveTab || !liveTileSection) {
+        setStatus('Map data is not available.', true);
+        if (state.activeTab === 'map') renderActiveTab({ preserveTabScroll: true });
+        return;
+      }
+      openMapModal({ tab: liveTab, tileSection: liveTileSection, title: `${liveTab.title || 'Map'} Editor` });
     });
     actions.appendChild(openBtn);
   }
@@ -37054,6 +37082,7 @@ function applyWholeMapSectionsToTab(tab, mapSectionsInput, mutation = 'set', mut
   tab.mapMutationSource = mutation === 'set' ? String(mutationSource || 'generated') : null;
   tab.pendingMapResize = null;
   tab.recordOps = [];
+  if (mutation === 'set') clearScenarioDistrictsForWholeMapReplacement(tab);
   state.biqMapSelectedTile = tab.hasMapData ? 0 : -1;
   return true;
 }
@@ -37100,6 +37129,7 @@ function removeMapFromTab(tab) {
   tab.mapMutationSource = null;
   tab.pendingMapResize = null;
   tab.recordOps = [];
+  clearScenarioDistrictsForWholeMapReplacement(tab);
   state.biqMapSelectedTile = -1;
   return true;
 }
@@ -38879,6 +38909,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         top: mapPane.scrollTop
       });
     }
+    scheduleChunkedMapViewportRefresh('drag-end');
   };
   mapPane.addEventListener('pointerdown', (ev) => {
     if (isTileContextMenuOpen() && !tileContextMenu.contains(ev.target)) {
@@ -44090,6 +44121,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const mapChunkCache = new Map();
   const mapChunkCandidateCache = new Map();
   let mapChunkRefreshRaf = 0;
+  let mapChunkRenderRaf = 0;
+  let mapChunkPrefetchRaf = 0;
+  let minimapPointerId = null;
+  const mapChunkRenderQueue = [];
+  const mapChunkQueuedKeys = new Set();
+  const MAP_CHUNK_VISIBLE_FRAME_BUDGET_MS = 10;
+  const MAP_CHUNK_PREFETCH_FRAME_BUDGET_MS = 5;
+  const MAP_CHUNK_PREFETCH_OVERSCAN_PX = 1536;
+  const MAP_CHUNK_RETAIN_OVERSCAN_PX = 2048;
+  const MAP_CHUNK_MAX_CACHE_ENTRIES = 36;
   const collectTileIndexesForRects = (rects) => {
     const clips = Array.isArray(rects) && rects.length > 0 ? rects : [];
     if (clips.length === 0) return null;
@@ -44141,6 +44182,64 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
     return Array.from(byKey.values());
   };
+  const getViewportChunkRect = (overscanPx) => (mapRenderPlanner && typeof mapRenderPlanner.viewportRect === 'function'
+    ? mapRenderPlanner.viewportRect(
+        mapPane.scrollLeft || 0,
+        mapPane.scrollTop || 0,
+        mapPane.clientWidth || 1,
+        mapPane.clientHeight || 1,
+        overscanPx
+      )
+    : null);
+  const getChunkDistanceFromViewportCenter = (chunk) => {
+    const centerX = (mapPane.scrollLeft || 0) + ((mapPane.clientWidth || 1) / 2);
+    const centerY = (mapPane.scrollTop || 0) + ((mapPane.clientHeight || 1) / 2);
+    const chunkCenterX = Number(chunk && chunk.x || 0) + (Number(chunk && chunk.w || 0) / 2);
+    const chunkCenterY = Number(chunk && chunk.y || 0) + (Number(chunk && chunk.h || 0) / 2);
+    return Math.hypot(chunkCenterX - centerX, chunkCenterY - centerY);
+  };
+  const getViewportChunkPlan = (overscanPx = mapRenderPlanner && mapRenderPlanner.DEFAULT_VIEWPORT_OVERSCAN_PX) => {
+    const rect = getViewportChunkRect(overscanPx);
+    return rect ? getChunkPlanForRects([rect]) : [];
+  };
+  const sortChunkQueue = () => {
+    mapChunkRenderQueue.sort((a, b) => {
+      const visibleDelta = (b.visible ? 1 : 0) - (a.visible ? 1 : 0);
+      if (visibleDelta) return visibleDelta;
+      const priorityDelta = Number(a.priority || 0) - Number(b.priority || 0);
+      if (priorityDelta) return priorityDelta;
+      return String(a.chunk && a.chunk.key || '').localeCompare(String(b.chunk && b.chunk.key || ''));
+    });
+  };
+  const pruneMapChunkCache = (retainChunks = []) => {
+    const retainKeys = new Set((Array.isArray(retainChunks) ? retainChunks : []).map((chunk) => String(chunk && chunk.key || '')).filter(Boolean));
+    mapChunkCache.forEach((entry, key) => {
+      if (retainKeys.has(key)) return;
+      if (entry && entry.canvas && entry.canvas.isConnected) entry.canvas.remove();
+      mapChunkCache.delete(key);
+      mapChunkCandidateCache.delete(key);
+      mapChunkQueuedKeys.delete(key);
+    });
+    for (let i = mapChunkRenderQueue.length - 1; i >= 0; i -= 1) {
+      const item = mapChunkRenderQueue[i];
+      if (item && retainKeys.has(item.key)) continue;
+      if (item && item.key) mapChunkQueuedKeys.delete(item.key);
+      mapChunkRenderQueue.splice(i, 1);
+    }
+    if (mapChunkCache.size <= MAP_CHUNK_MAX_CACHE_ENTRIES) return;
+    const candidates = Array.from(mapChunkCache.entries())
+      .filter(([key]) => !retainKeys.has(key))
+      .map(([key, entry]) => ({ key, entry, distance: getChunkDistanceFromViewportCenter(entry && entry.chunk) }))
+      .sort((a, b) => b.distance - a.distance);
+    while (mapChunkCache.size > MAP_CHUNK_MAX_CACHE_ENTRIES && candidates.length > 0) {
+      const next = candidates.shift();
+      if (!next) break;
+      if (next.entry && next.entry.canvas && next.entry.canvas.isConnected) next.entry.canvas.remove();
+      mapChunkCache.delete(next.key);
+      mapChunkCandidateCache.delete(next.key);
+      mapChunkQueuedKeys.delete(next.key);
+    }
+  };
   const ensureMapChunkCanvas = (chunk) => {
     if (!chunkLayer || !chunk) return null;
     let entry = mapChunkCache.get(chunk.key) || null;
@@ -44148,9 +44247,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const chunkCanvas = document.createElement('canvas');
       chunkCanvas.className = 'biq-map-chunk';
       chunkLayer.appendChild(chunkCanvas);
-      entry = { canvas: chunkCanvas, dirty: true };
+      entry = { canvas: chunkCanvas, dirty: true, chunk };
       mapChunkCache.set(chunk.key, entry);
     }
+    entry.chunk = chunk;
     const chunkCanvas = entry.canvas;
     if (chunkCanvas.width !== chunk.w) chunkCanvas.width = chunk.w;
     if (chunkCanvas.height !== chunk.h) chunkCanvas.height = chunk.h;
@@ -44178,28 +44278,136 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     entry.dirty = false;
     return true;
   };
+  const enqueueMapChunks = (chunks, options = {}) => {
+    const visible = !!options.visible;
+    const force = !!options.force;
+    let queued = 0;
+    (Array.isArray(chunks) ? chunks : []).forEach((chunk) => {
+      const key = String(chunk && chunk.key || '');
+      if (!key) return;
+      const entry = mapChunkCache.get(key);
+      if (!force && entry && !entry.dirty) return;
+      const existingIndex = mapChunkRenderQueue.findIndex((item) => item && item.key === key);
+      const priority = getChunkDistanceFromViewportCenter(chunk) + (visible ? 0 : 100000);
+      if (existingIndex >= 0) {
+        const existing = mapChunkRenderQueue[existingIndex];
+        existing.chunk = chunk;
+        existing.visible = existing.visible || visible;
+        existing.force = existing.force || force;
+        existing.priority = Math.min(Number(existing.priority || priority), priority);
+        return;
+      }
+      mapChunkRenderQueue.push({ key, chunk, visible, force, priority });
+      mapChunkQueuedKeys.add(key);
+      queued += 1;
+    });
+    if (queued > 0) sortChunkQueue();
+    return queued;
+  };
+  const refreshChunkedHoverOverlay = () => {
+    if (!hoverCtx) return;
+    clearHoverLayer();
+    drawSelectedTileBorder(hoverCtx);
+    drawSelectedSpecialTileLabelsOverlay(hoverCtx);
+  };
+  const processMapChunkRenderQueue = (options = {}) => {
+    mapChunkRenderRaf = 0;
+    if (!container.isConnected || mapChunkRenderQueue.length === 0) return;
+    const startedAt = mapPerfNowMs();
+    const budgetMs = Number(options.budgetMs || MAP_CHUNK_VISIBLE_FRAME_BUDGET_MS);
+    let rendered = 0;
+    let skipped = 0;
+    while (mapChunkRenderQueue.length > 0) {
+      const item = mapChunkRenderQueue.shift();
+      if (!item || !item.chunk || !item.key) continue;
+      mapChunkQueuedKeys.delete(item.key);
+      if (!item.visible && (isDraggingMap || minimapPointerId != null)) {
+        skipped += 1;
+        continue;
+      }
+      const entry = mapChunkCache.get(item.key);
+      if (!item.force && entry && !entry.dirty) {
+        skipped += 1;
+      } else if (redrawMapChunk(item.chunk)) {
+        rendered += 1;
+      }
+      if (rendered > 0 && (mapPerfNowMs() - startedAt) >= budgetMs) break;
+    }
+    if (rendered > 0 || skipped > 0) {
+      appendDebugLog('biq-map:chunk-queue-drain', {
+        rendered,
+        skipped,
+        remaining: mapChunkRenderQueue.length,
+        budgetMs,
+        durationMs: Number((mapPerfNowMs() - startedAt).toFixed(2))
+      });
+    }
+    if (mapChunkRenderQueue.length > 0) {
+      mapChunkRenderRaf = window.requestAnimationFrame(() => processMapChunkRenderQueue(options));
+    }
+  };
+  const scheduleMapChunkQueueDrain = (budgetMs = MAP_CHUNK_VISIBLE_FRAME_BUDGET_MS) => {
+    if (mapChunkRenderRaf || mapChunkRenderQueue.length === 0) return;
+    mapChunkRenderRaf = window.requestAnimationFrame(() => processMapChunkRenderQueue({ budgetMs }));
+  };
+  const scheduleMapChunkPrefetch = (reason = 'idle') => {
+    if (!useChunkedMapRenderer || mapChunkPrefetchRaf || isDraggingMap || minimapPointerId != null) return;
+    const schedule = typeof window.requestIdleCallback === 'function'
+      ? (callback) => window.requestIdleCallback(callback, { timeout: 350 })
+      : (callback) => window.requestAnimationFrame(callback);
+    mapChunkPrefetchRaf = schedule(() => {
+      mapChunkPrefetchRaf = 0;
+      if (!container.isConnected || isDraggingMap || minimapPointerId != null) return;
+      const visibleChunks = getViewportChunkPlan(mapRenderPlanner.DEFAULT_VIEWPORT_OVERSCAN_PX);
+      const visibleKeys = new Set(visibleChunks.map((chunk) => chunk.key));
+      const prefetchChunks = getViewportChunkPlan(MAP_CHUNK_PREFETCH_OVERSCAN_PX)
+        .filter((chunk) => !visibleKeys.has(chunk.key));
+      const queued = enqueueMapChunks(prefetchChunks, { visible: false, reason });
+      if (queued > 0) {
+        appendDebugLog('biq-map:chunk-prefetch', {
+          reason,
+          queued,
+          visible: visibleChunks.length,
+          prefetch: prefetchChunks.length
+        });
+        scheduleMapChunkQueueDrain(MAP_CHUNK_PREFETCH_FRAME_BUDGET_MS);
+      }
+    });
+  };
   const redrawChunkedMapCanvas = (clipRects = null, options = {}) => {
     const startedAt = mapPerfNowMs();
     const chunks = getChunkPlanForRects(clipRects);
     if (chunks.length === 0) return;
-    const neededKeys = new Set(chunks.map((chunk) => chunk.key));
-    mapChunkCache.forEach((entry, key) => {
-      if (neededKeys.has(key)) return;
-      if (entry && entry.canvas && entry.canvas.isConnected) entry.canvas.remove();
-      mapChunkCache.delete(key);
-    });
+    const clipped = Array.isArray(clipRects) && clipRects.length > 0;
+    if (!clipped && !options.force) {
+      const retainChunks = getViewportChunkPlan(MAP_CHUNK_RETAIN_OVERSCAN_PX);
+      pruneMapChunkCache(retainChunks);
+      const queued = enqueueMapChunks(chunks, { visible: true, reason: options.reason || 'scroll' });
+      appendDebugLog('biq-map:chunk-redraw', {
+        chunks: chunks.length,
+        queued,
+        rendered: 0,
+        clipped: false,
+        async: true,
+        durationMs: Number((mapPerfNowMs() - startedAt).toFixed(2))
+      });
+      scheduleMapChunkQueueDrain(MAP_CHUNK_VISIBLE_FRAME_BUDGET_MS);
+      scheduleMapChunkPrefetch(options.reason || 'scroll');
+      return;
+    }
     let rendered = 0;
     chunks.forEach((chunk) => {
       const entry = ensureMapChunkCanvas(chunk);
       if (!entry) return;
-      if (clipRects || options.force || entry.dirty) {
+      if (clipped || options.force || entry.dirty) {
         if (redrawMapChunk(chunk)) rendered += 1;
       }
     });
     appendDebugLog('biq-map:chunk-redraw', {
       chunks: chunks.length,
       rendered,
-      clipped: Array.isArray(clipRects) && clipRects.length > 0,
+      clipped,
+      async: false,
       durationMs: Number((mapPerfNowMs() - startedAt).toFixed(2))
     });
   };
@@ -44209,11 +44417,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       mapChunkRefreshRaf = 0;
       if (!container.isConnected) return;
       redrawChunkedMapCanvas(null, { reason });
-      if (hoverCtx) {
-        clearHoverLayer();
-        drawSelectedTileBorder(hoverCtx);
-        drawSelectedSpecialTileLabelsOverlay(hoverCtx);
-      }
+      refreshChunkedHoverOverlay();
     });
   };
   const redrawMapAfterTileChanges = (changedIndexes, options = {}) => {
@@ -45635,7 +45839,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.biqMapScrollTop = mapPane.scrollTop;
     renderMiniMap();
   };
-  let minimapPointerId = null;
   minimapCanvas.addEventListener('pointerdown', (ev) => {
     ev.preventDefault();
     minimapPointerId = ev.pointerId;
@@ -45654,6 +45857,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       minimapCanvas.releasePointerCapture(minimapPointerId);
     } catch (_err) {}
     minimapPointerId = null;
+    scheduleChunkedMapViewportRefresh('minimap-release');
   };
   minimapCanvas.addEventListener('pointerup', releaseMiniMapPointer);
   minimapCanvas.addEventListener('pointercancel', releaseMiniMapPointer);
@@ -54859,6 +55063,10 @@ function applyMapUndoSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   refreshTabDirtyBadges();
   refreshActiveReferenceListDirtyBadges();
   refreshActiveBiqRecordListDirtyBadges();
+  if (state.activeTab === 'map') {
+    renderTabs();
+    renderActiveTab({ preserveTabScroll: true });
+  }
   const mapModalVisible = !!(
     mapModal.node
     && mapModal.node.isConnected
