@@ -17,6 +17,7 @@ const {
   resolvePaths,
   collectBiqMapEdits,
   collectBiqMapStructureOps,
+  loadMapImport,
   loadBundle,
   saveBundle,
   previewSavePlan
@@ -34,6 +35,23 @@ function makeMapField(baseKey, value, originalValue) {
     value: String(value),
     originalValue: String(originalValue == null ? value : originalValue)
   };
+}
+
+function getSection(sections, code) {
+  const target = String(code || '').trim().toUpperCase();
+  return (Array.isArray(sections) ? sections : []).find((section) => String(section && section.code || '').trim().toUpperCase() === target) || null;
+}
+
+function getRecordField(record, baseKey) {
+  const target = String(baseKey || '').trim().toLowerCase();
+  return (Array.isArray(record && record.fields) ? record.fields : []).find((field) => (
+    String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target
+  )) || null;
+}
+
+function getRecordValue(record, baseKey, fallback = '') {
+  const field = getRecordField(record, baseKey);
+  return field ? String(field.value || '') : String(fallback);
 }
 
 test('base config precedence is default -> scenario -> custom', () => {
@@ -191,6 +209,46 @@ test('parseBiqSectionsFromBuffer reads basic BIQ section metadata', () => {
   assert.equal(parsed.sections[0].code, 'BLDG');
   assert.equal(parsed.sections[0].count, 1);
   assert.equal(parsed.sections[parsed.sections.length - 1].code, 'GAME');
+});
+
+test('loadMapImport returns sanitized map-only replacement sections for source BIQ maps', () => {
+  const scenarioPath = path.resolve(__dirname, 'fixtures', 'biq_map_units_fixture.biq');
+  const result = loadMapImport({
+    mode: 'scenario',
+    civ3Path: path.resolve(__dirname, '..', '..'),
+    scenarioPath
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceScenarioPath, scenarioPath);
+  assert.ok(result.width > 0, 'expected source WMAP width');
+  assert.ok(result.height > 0, 'expected source WMAP height');
+  assert.ok(result.tileCount > 0, 'expected imported TILE records');
+  assert.ok(result.durationMs >= 0, 'expected loader timing metadata');
+
+  const sectionCodes = result.importedSections.map((section) => section.code);
+  assert.deepEqual(sectionCodes, ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+  assert.equal(getSection(result.importedSections, 'CITY').records.length, 0);
+  assert.equal(getSection(result.importedSections, 'UNIT').records.length, 0);
+  assert.equal(getSection(result.importedSections, 'CLNY').records.length, 0);
+  assert.equal(getSection(result.importedSections, 'SLOC').records.length, 0);
+
+  const wmapRecord = getSection(result.importedSections, 'WMAP').records[0];
+  assert.equal(getRecordValue(wmapRecord, 'numresources'), '0');
+  assert.equal(Number(getRecordValue(wmapRecord, 'width')), result.width);
+  assert.equal(Number(getRecordValue(wmapRecord, 'height')), result.height);
+
+  const tileSection = getSection(result.importedSections, 'TILE');
+  assert.equal(tileSection.records.length, result.tileCount);
+  for (const tile of tileSection.records.slice(0, Math.min(20, tileSection.records.length))) {
+    assert.equal(getRecordValue(tile, 'resource'), '-1');
+    assert.equal(getRecordValue(tile, 'barbariantribe'), '-1');
+    assert.equal(getRecordValue(tile, 'city'), '-1');
+    assert.equal(getRecordValue(tile, 'colony'), '-1');
+    assert.equal(getRecordValue(tile, 'border'), '0');
+    assert.notEqual(getRecordValue(tile, 'xpos', ''), '', 'expected tile x coordinate for preview rendering');
+    assert.notEqual(getRecordValue(tile, 'ypos', ''), '', 'expected tile y coordinate for preview rendering');
+  }
 });
 
 test('loadBundle + saveBundle writes to scope targets', () => {

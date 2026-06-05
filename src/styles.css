@@ -3489,6 +3489,19 @@ button.danger:hover {
   transform-origin: center center;
 }
 
+.biq-map-chunk-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.biq-map-chunk {
+  position: absolute;
+  display: block;
+  image-rendering: pixelated;
+  background: transparent;
+}
+
 .biq-map-canvas {
   display: block;
   image-rendering: pixelated;

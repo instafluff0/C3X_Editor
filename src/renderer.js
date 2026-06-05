@@ -303,6 +303,7 @@ const state = {
 
 const TAB_SEARCH_RENDER_DELAY_MS = 120;
 const mapCore = (typeof window !== 'undefined' && window.MapEditorCore) ? window.MapEditorCore : null;
+const mapRenderPlanner = (typeof window !== 'undefined' && window.MapRenderPlanner) ? window.MapRenderPlanner : null;
 const mapGeneratorCore = (typeof window !== 'undefined' && window.MapGeneratorCore) ? window.MapGeneratorCore : null;
 const richTooltip = {
   node: null,
@@ -26511,10 +26512,35 @@ async function promptImportMapAction() {
   summary.className = 'hint';
   summary.textContent = 'Select a source scenario to load its map summary.';
   form.appendChild(summary);
+
+  const previewField = document.createElement('div');
+  previewField.className = 'entity-field';
+  const previewFrame = document.createElement('div');
+  previewFrame.className = 'map-resize-preview-frame map-import-preview-frame';
+  const previewCanvas = document.createElement('canvas');
+  previewCanvas.width = 280;
+  previewCanvas.height = 220;
+  previewCanvas.className = 'biq-map-minimap-canvas';
+  previewFrame.appendChild(previewCanvas);
+  previewField.appendChild(previewFrame);
+  form.appendChild(previewField);
+  drawMapResizeMiniPreviewPlaceholder(previewCanvas, 'Select a source\nscenario');
+
   el.entityModalContent.appendChild(form);
 
   let selectedSourcePath = '';
   let importedSections = null;
+  const clearPreview = (message = 'Select a source\nscenario') => {
+    drawMapResizeMiniPreviewPlaceholder(previewCanvas, message);
+  };
+  const renderImportPreview = (sections, width, height, tileCount) => {
+    const safeTileCount = Number.isFinite(Number(tileCount)) ? Number(tileCount) : 0;
+    if (safeTileCount > MAP_IMPORT_MINI_PREVIEW_MAX_TILES) {
+      drawMapResizeMiniPreviewPlaceholder(previewCanvas, 'Preview hidden for\nvery large map sizes');
+      return;
+    }
+    drawMapResizeMiniPreview(previewCanvas, buildMapSectionsTerrainPreview(sections));
+  };
   const updateConfirmState = () => {
     if (el.entityModalConfirm) el.entityModalConfirm.disabled = !(selectedSourcePath && importedSections);
   };
@@ -26524,23 +26550,23 @@ async function promptImportMapAction() {
     importedSections = null;
     updateConfirmState();
     summary.textContent = 'Loading map...';
+    drawMapResizeMiniPreviewPlaceholder(previewCanvas, 'Loading map...');
     sourceSelect.disabled = true;
     try {
-      const sourceMapTab = await loadImportMapTab(filePath);
-      importedSections = buildImportedTerrainOverlayMapSections(sourceMapTab);
+      const loadedImport = await loadImportMapTab(filePath);
+      importedSections = loadedImport.importedSections;
       selectedSourcePath = filePath;
-      const importedWmap = importedSections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP');
-      const importedTile = importedSections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE');
-      const wmapRecord = importedWmap && Array.isArray(importedWmap.records) ? importedWmap.records[0] : null;
-      const width = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
-      const height = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
-      const tileCount = importedTile && Array.isArray(importedTile.records) ? importedTile.records.length : 0;
+      const width = parseIntLoose(loadedImport.width, 0);
+      const height = parseIntLoose(loadedImport.height, 0);
+      const tileCount = parseIntLoose(loadedImport.tileCount, 0);
       const sizeLabel = width > 0 && height > 0 ? `${width}x${height}` : 'unknown size';
       summary.textContent = `Ready to import ${sizeLabel} terrain/overlay data from ${getPathTail(filePath)} (${tileCount} tile records).`;
+      renderImportPreview(importedSections, width, height, tileCount);
     } catch (err) {
       importedSections = null;
       selectedSourcePath = '';
       summary.textContent = err && err.message ? err.message : 'Could not load import source scenario.';
+      clearPreview('Preview unavailable');
       setStatus(summary.textContent, true);
     } finally {
       sourceSelect.disabled = false;
@@ -26554,6 +26580,7 @@ async function promptImportMapAction() {
       selectedSourcePath = '';
       importedSections = null;
       summary.textContent = 'Select a source scenario to load its map summary.';
+      clearPreview();
       updateConfirmState();
       return;
     }
@@ -27266,6 +27293,7 @@ function getResizePreviewFillTerrain(sourceX, sourceY, sourceWidth, sourceHeight
 }
 
 const MAP_RESIZE_MINI_PREVIEW_MAX_TILES = 50000;
+const MAP_IMPORT_MINI_PREVIEW_MAX_TILES = 140000;
 
 function resetNewResizePreviewTileToTerrain(tile, terrainId = BIQ_TERRAIN.SEA) {
   if (!tile) return;
@@ -27334,6 +27362,27 @@ function buildMapResizeTerrainPreview(tab, targetWidth, targetHeight, fillTerrai
       preview.set(`${x},${y}`, packedTerrain & 0x0f);
     }
   }
+  return { width, height, tiles: preview };
+}
+
+function buildMapSectionsTerrainPreview(mapSections) {
+  const sections = Array.isArray(mapSections) ? mapSections : [];
+  const wmapSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP') || null;
+  const tileSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE') || null;
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  const width = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+  const height = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  const preview = new Map();
+  if (!tileSection || !Array.isArray(tileSection.records) || width <= 0 || height <= 0) {
+    return { width, height, tiles: preview };
+  }
+  tileSection.records.forEach((record) => {
+    const x = parseIntLoose(getMapFieldValue(record, 'xpos', ''), NaN);
+    const y = parseIntLoose(getMapFieldValue(record, 'ypos', ''), NaN);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const packedTerrain = parseIntLoose(getMapFieldValue(record, 'c3cbaserealterrain', getMapFieldValue(record, 'baserealterrain', '0')), 0);
+    preview.set(`${x},${y}`, packedTerrain & 0x0f);
+  });
   return { width, height, tiles: preview };
 }
 
@@ -31483,30 +31532,18 @@ function resolveEntityModal(payload) {
 }
 
 async function loadImportMapTab(filePath) {
-  const loaded = await window.c3xManager.loadBundle(buildLoadBundlePayload({
-    mode: 'scenario',
-    scenarioPath: filePath
-  }));
-  if (!loaded || !loaded.tabs || !loaded.tabs.map) {
+  if (!window.c3xManager || typeof window.c3xManager.loadMapImport !== 'function') {
+    throw new Error('Map import loader is unavailable.');
+  }
+  const loaded = await window.c3xManager.loadMapImport({
+    civ3Path: state.settings && state.settings.civ3Path || '',
+    scenarioPath: filePath,
+    textFileEncoding: state.settings && state.settings.textFileEncoding || ''
+  });
+  if (!loaded || loaded.ok === false || !Array.isArray(loaded.importedSections)) {
     throw new Error('Could not load import source scenario.');
   }
-  const sourceMapTab = loaded.tabs.map && loaded.tabs.map.deferred
-    ? await window.c3xManager.materializeMapTab({
-      mode: 'scenario',
-      civ3Path: state.settings && state.settings.civ3Path || '',
-      scenarioPath: filePath,
-      biq: loaded.biq,
-      mapTab: loaded.tabs.map,
-      tabs: {
-        districts: loaded.tabs.districts || null,
-        naturalWonders: loaded.tabs.naturalWonders || null
-      }
-    })
-    : loaded.tabs.map;
-  if (!hasMapData(sourceMapTab)) {
-    throw new Error('Selected scenario does not contain a map.');
-  }
-  return sourceMapTab;
+  return loaded;
 }
 
 async function loadImportEntriesForTab(tabKey, filePath) {
@@ -38897,6 +38934,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       appendDebugLog('biq-map:scroll', { left: state.biqMapScrollLeft, top: state.biqMapScrollTop });
     }
     if (typeof renderMiniMap === 'function') renderMiniMap();
+    scheduleChunkedMapViewportRefresh('scroll');
     scheduleTileInfoDockSideUpdate();
   });
   const clearDeferredZoomCommit = () => {
@@ -38993,11 +39031,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const paneRect = mapPane.getBoundingClientRect();
     const paneX = ev.clientX - paneRect.left;
     const paneY = ev.clientY - paneRect.top;
-    const canvasRect = canvas.getBoundingClientRect();
-    const canvasX = ((ev.clientX - canvasRect.left) / Math.max(1, canvasRect.width)) * canvas.width;
-    const canvasY = ((ev.clientY - canvasRect.top) / Math.max(1, canvasRect.height)) * canvas.height;
+    const canvasPoint = getCanvasPointFromEvent(ev);
     const hovered = typeof findTileAtCanvasPx === 'function'
-      ? findTileAtCanvasPx(canvasX, canvasY, false)
+      ? findTileAtCanvasPx(canvasPoint.x, canvasPoint.y, false)
       : null;
     const anchorContent = hovered
       ? { x: hovered.centerX, y: hovered.centerY }
@@ -39408,18 +39444,48 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     maxSx = 0;
     maxSy = 0;
   }
-  canvas.width = Math.max(1200, (maxSx - minSx) + tileW + padX * 2 + (wrapCenterOffset * 2));
-  canvas.height = Math.max(800, (maxSy - minSy) + tileH + padY * 2 + (wrapCenterOffsetY * 2));
+  const canvasLogicalWidth = Math.max(1200, (maxSx - minSx) + tileW + padX * 2 + (wrapCenterOffset * 2));
+  const canvasLogicalHeight = Math.max(800, (maxSy - minSy) + tileH + padY * 2 + (wrapCenterOffsetY * 2));
+  const renderPlannerMetrics = mapRenderPlanner && typeof mapRenderPlanner.computeWorldMetrics === 'function'
+    ? {
+        ...mapRenderPlanner.computeWorldMetrics(width, height, tilePx),
+        canvasW: canvasLogicalWidth,
+        canvasH: canvasLogicalHeight,
+        pixelCount: canvasLogicalWidth * canvasLogicalHeight,
+        rgbaBytes: canvasLogicalWidth * canvasLogicalHeight * 4
+      }
+    : {
+        canvasW: canvasLogicalWidth,
+        canvasH: canvasLogicalHeight,
+        pixelCount: canvasLogicalWidth * canvasLogicalHeight,
+        rgbaBytes: canvasLogicalWidth * canvasLogicalHeight * 4
+      };
+  const useChunkedMapRenderer = !!(
+    mapRenderPlanner
+    && typeof mapRenderPlanner.shouldUseChunkedRenderer === 'function'
+    && mapRenderPlanner.shouldUseChunkedRenderer(renderPlannerMetrics)
+  );
+  const chunkLayer = useChunkedMapRenderer ? document.createElement('div') : null;
+  if (chunkLayer) chunkLayer.className = 'biq-map-chunk-layer';
+  canvas.width = useChunkedMapRenderer ? 1 : canvasLogicalWidth;
+  canvas.height = useChunkedMapRenderer ? 1 : canvasLogicalHeight;
   canvas.className = 'biq-map-canvas';
-  canvas.style.width = `${canvas.width}px`;
-  canvas.style.height = `${canvas.height}px`;
-  hoverCanvas.width = canvas.width;
-  hoverCanvas.height = canvas.height;
+  canvas.style.width = `${canvasLogicalWidth}px`;
+  canvas.style.height = `${canvasLogicalHeight}px`;
+  hoverCanvas.width = useChunkedMapRenderer ? 1 : canvasLogicalWidth;
+  hoverCanvas.height = useChunkedMapRenderer ? 1 : canvasLogicalHeight;
   hoverCanvas.className = 'biq-map-hover-canvas';
-  hoverCanvas.style.width = canvas.style.width;
-  hoverCanvas.style.height = canvas.style.height;
-  const ctx = canvas.getContext('2d');
+  hoverCanvas.style.width = useChunkedMapRenderer ? '1px' : canvas.style.width;
+  hoverCanvas.style.height = useChunkedMapRenderer ? '1px' : canvas.style.height;
+  let ctx = useChunkedMapRenderer ? null : canvas.getContext('2d');
   const hoverCtx = hoverCanvas.getContext('2d');
+  const getCanvasPointFromEvent = (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((ev.clientX - rect.left) / Math.max(1, rect.width)) * canvasLogicalWidth,
+      y: ((ev.clientY - rect.top) / Math.max(1, rect.height)) * canvasLogicalHeight
+    };
+  };
   const originX = padX - minSx + wrapCenterOffset;
   const originY = padY - minSy + wrapCenterOffsetY;
   const baseWorldLeftPx = originX + minSx;
@@ -39449,8 +39515,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     worldWrapHeight,
     wrapCenterOffset,
     wrapCenterOffsetY,
-    canvasW: canvas.width,
-    canvasH: canvas.height
+    canvasW: canvasLogicalWidth,
+    canvasH: canvasLogicalHeight,
+    rendererMode: useChunkedMapRenderer ? 'chunked' : 'full-canvas',
+    rgbaBytes: renderPlannerMetrics.rgbaBytes
   });
 
   BIQ_TERRAIN_ATLAS_FILES.forEach((assetPath, idx) => {
@@ -43999,8 +44067,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return {
         x: Math.max(0, sx - padXLocal),
         y: Math.max(0, sy - padTop),
-        w: Math.min(canvas.width, tileW + padXLocal * 2),
-        h: Math.min(canvas.height, tileH + padTop + padBottom)
+        w: Math.min(canvasLogicalWidth, tileW + padXLocal * 2),
+        h: Math.min(canvasLogicalHeight, tileH + padTop + padBottom)
       };
     });
   };
@@ -44018,6 +44086,135 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       });
     });
     return Array.from(expanded);
+  };
+  const mapChunkCache = new Map();
+  const mapChunkCandidateCache = new Map();
+  let mapChunkRefreshRaf = 0;
+  const collectTileIndexesForRects = (rects) => {
+    const clips = Array.isArray(rects) && rects.length > 0 ? rects : [];
+    if (clips.length === 0) return null;
+    const out = [];
+    for (let i = 0; i <= maxIdx; i += 1) {
+      const geom = tileGeom[i];
+      if (!geom) continue;
+      const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+      const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+      let include = false;
+      for (const wrapOffset of drawWrapOffsets) {
+        const sx = basePos.sx + wrapOffset.dx;
+        const sy = basePos.sy + wrapOffset.dy;
+        if (clips.some((rect) => rectIntersects(tileClipInfluenceRect(sx, sy), rect))) {
+          include = true;
+          break;
+        }
+      }
+      if (include) out.push(i);
+    }
+    return out;
+  };
+  const getChunkCandidateIndexes = (chunk) => {
+    if (!chunk || !chunk.key) return null;
+    const cached = mapChunkCandidateCache.get(chunk.key);
+    if (Array.isArray(cached)) return cached;
+    const indexes = collectTileIndexesForRects([{ x: chunk.x, y: chunk.y, w: chunk.w, h: chunk.h }]) || [];
+    mapChunkCandidateCache.set(chunk.key, indexes);
+    return indexes;
+  };
+  const getChunkPlanForRects = (clipRects = null) => {
+    if (!useChunkedMapRenderer || !mapRenderPlanner || typeof mapRenderPlanner.buildChunksForRect !== 'function') return [];
+    const rects = Array.isArray(clipRects) && clipRects.length > 0
+      ? clipRects
+      : [mapRenderPlanner.viewportRect(
+          mapPane.scrollLeft || 0,
+          mapPane.scrollTop || 0,
+          mapPane.clientWidth || 1,
+          mapPane.clientHeight || 1,
+          mapRenderPlanner.DEFAULT_VIEWPORT_OVERSCAN_PX
+        )];
+    const byKey = new Map();
+    rects.forEach((rect) => {
+      mapRenderPlanner.buildChunksForRect(renderPlannerMetrics, rect, {
+        chunkSize: mapRenderPlanner.DEFAULT_CHUNK_SIZE
+      }).forEach((chunk) => {
+        byKey.set(chunk.key, chunk);
+      });
+    });
+    return Array.from(byKey.values());
+  };
+  const ensureMapChunkCanvas = (chunk) => {
+    if (!chunkLayer || !chunk) return null;
+    let entry = mapChunkCache.get(chunk.key) || null;
+    if (!entry) {
+      const chunkCanvas = document.createElement('canvas');
+      chunkCanvas.className = 'biq-map-chunk';
+      chunkLayer.appendChild(chunkCanvas);
+      entry = { canvas: chunkCanvas, dirty: true };
+      mapChunkCache.set(chunk.key, entry);
+    }
+    const chunkCanvas = entry.canvas;
+    if (chunkCanvas.width !== chunk.w) chunkCanvas.width = chunk.w;
+    if (chunkCanvas.height !== chunk.h) chunkCanvas.height = chunk.h;
+    chunkCanvas.style.left = `${chunk.x}px`;
+    chunkCanvas.style.top = `${chunk.y}px`;
+    chunkCanvas.style.width = `${chunk.w}px`;
+    chunkCanvas.style.height = `${chunk.h}px`;
+    return entry;
+  };
+  const redrawMapChunk = (chunk) => {
+    const entry = ensureMapChunkCanvas(chunk);
+    if (!entry || !entry.canvas) return false;
+    const chunkCtx = entry.canvas.getContext('2d');
+    if (!chunkCtx) return false;
+    const previousCtx = ctx;
+    ctx = chunkCtx;
+    chunkCtx.save();
+    chunkCtx.setTransform(1, 0, 0, 1, -chunk.x, -chunk.y);
+    redrawMapCanvasInPlace(
+      [{ x: chunk.x, y: chunk.y, w: chunk.w, h: chunk.h }],
+      { chunkDraw: true, chunkKey: chunk.key, candidateIndexes: getChunkCandidateIndexes(chunk) }
+    );
+    chunkCtx.restore();
+    ctx = previousCtx;
+    entry.dirty = false;
+    return true;
+  };
+  const redrawChunkedMapCanvas = (clipRects = null, options = {}) => {
+    const startedAt = mapPerfNowMs();
+    const chunks = getChunkPlanForRects(clipRects);
+    if (chunks.length === 0) return;
+    const neededKeys = new Set(chunks.map((chunk) => chunk.key));
+    mapChunkCache.forEach((entry, key) => {
+      if (neededKeys.has(key)) return;
+      if (entry && entry.canvas && entry.canvas.isConnected) entry.canvas.remove();
+      mapChunkCache.delete(key);
+    });
+    let rendered = 0;
+    chunks.forEach((chunk) => {
+      const entry = ensureMapChunkCanvas(chunk);
+      if (!entry) return;
+      if (clipRects || options.force || entry.dirty) {
+        if (redrawMapChunk(chunk)) rendered += 1;
+      }
+    });
+    appendDebugLog('biq-map:chunk-redraw', {
+      chunks: chunks.length,
+      rendered,
+      clipped: Array.isArray(clipRects) && clipRects.length > 0,
+      durationMs: Number((mapPerfNowMs() - startedAt).toFixed(2))
+    });
+  };
+  const scheduleChunkedMapViewportRefresh = (reason = 'scroll') => {
+    if (!useChunkedMapRenderer || mapChunkRefreshRaf) return;
+    mapChunkRefreshRaf = window.requestAnimationFrame(() => {
+      mapChunkRefreshRaf = 0;
+      if (!container.isConnected) return;
+      redrawChunkedMapCanvas(null, { reason });
+      if (hoverCtx) {
+        clearHoverLayer();
+        drawSelectedTileBorder(hoverCtx);
+        drawSelectedSpecialTileLabelsOverlay(hoverCtx);
+      }
+    });
   };
   const redrawMapAfterTileChanges = (changedIndexes, options = {}) => {
     const startedAt = mapPerfNowMs();
@@ -44058,10 +44255,21 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
     return true;
   };
-  const redrawMapCanvasInPlace = (clipRects = null) => {
+  const redrawMapCanvasInPlace = (clipRects = null, renderOptions = {}) => {
+    if (useChunkedMapRenderer && !(renderOptions && renderOptions.chunkDraw)) {
+      redrawChunkedMapCanvas(clipRects, { force: true });
+      return;
+    }
     if (!ctx) return;
     refreshMapStatsIfNeeded(false);
     const redrawStartedAt = mapToolNowMs();
+    const candidateIndexes = Array.isArray(renderOptions && renderOptions.candidateIndexes)
+      ? renderOptions.candidateIndexes
+          .map((idx) => parseIntLoose(idx, NaN))
+          .filter((idx) => Number.isFinite(idx) && idx >= 0 && idx <= maxIdx)
+      : null;
+    const candidateCount = candidateIndexes ? candidateIndexes.length : maxIdx + 1;
+    const candidateTileIndexAt = (drawPos) => (candidateIndexes ? candidateIndexes[drawPos] : drawPos);
     const terrainSpriteMissStats = {
       total: 0,
       byReason: Object.create(null),
@@ -44083,7 +44291,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ctx.clip();
       clips.forEach((rect) => ctx.clearRect(rect.x, rect.y, rect.w, rect.h));
     } else {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, canvasLogicalWidth, canvasLogicalHeight);
     }
     logRedrawPhase('clear', redrawStartedAt, {
       clipCount: clips ? clips.length : 0
@@ -44092,12 +44300,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     let phaseStartedAt = mapToolNowMs();
     appendDebugLog('biq-map:canvas-redraw-candidates', {
       clipped: !!clips,
-      candidateCount: maxIdx + 1,
+      candidateCount,
       totalTiles: maxIdx + 1,
+      candidateMode: candidateIndexes ? 'bounded' : 'full',
+      chunkKey: String(renderOptions && renderOptions.chunkKey || ''),
       clipSummary: summarizeRects(clips || [])
     });
-    for (let i = 0; i <= maxIdx; i += 1) {
-      const drawPos = i;
+    for (let drawPos = 0; drawPos < candidateCount; drawPos += 1) {
+      const i = candidateTileIndexAt(drawPos);
       if ((drawPos % 250) === 0) {
         const progressGeom = tileGeom[i] || null;
         const progressTile = tiles[i] || null;
@@ -44105,7 +44315,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         appendDebugLog('biq-map:canvas-redraw-progress', {
           stage: 'base-loop',
           drawPosition: drawPos,
-          candidateCount: maxIdx + 1,
+          candidateCount,
           tileIndex: i,
           xPos: progressGeom ? progressGeom.xPos : null,
           yPos: progressGeom ? progressGeom.yPos : null,
@@ -44231,7 +44441,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
     if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
       phaseStartedAt = mapToolNowMs();
-      for (let i = 0; i <= maxIdx; i += 1) {
+      for (let drawPos = 0; drawPos < candidateCount; drawPos += 1) {
+        const i = candidateTileIndexAt(drawPos);
         const record = tiles[i];
         const geom = tileGeom[i];
         const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
@@ -44665,12 +44876,33 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
   };
 
+  const syncHoverCanvasToViewport = () => {
+    if (!hoverCtx || !useChunkedMapRenderer) return;
+    const viewportW = Math.max(1, Math.ceil(mapPane.clientWidth || 1));
+    const viewportH = Math.max(1, Math.ceil(mapPane.clientHeight || 1));
+    if (hoverCanvas.width !== viewportW) hoverCanvas.width = viewportW;
+    if (hoverCanvas.height !== viewportH) hoverCanvas.height = viewportH;
+    hoverCanvas.style.width = `${viewportW}px`;
+    hoverCanvas.style.height = `${viewportH}px`;
+    hoverCanvas.style.transform = `translate(${Math.round(mapPane.scrollLeft || 0)}px, ${Math.round(mapPane.scrollTop || 0)}px)`;
+    hoverCtx.setTransform(1, 0, 0, 1, -Math.round(mapPane.scrollLeft || 0), -Math.round(mapPane.scrollTop || 0));
+  };
+  const clearHoverLayer = () => {
+    if (!hoverCtx) return;
+    if (useChunkedMapRenderer) syncHoverCanvasToViewport();
+    hoverCtx.save();
+    hoverCtx.setTransform(1, 0, 0, 1, 0, 0);
+    hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+    hoverCtx.restore();
+    if (useChunkedMapRenderer) syncHoverCanvasToViewport();
+  };
+
   let paintStroke = null;
   const readHitFromPointer = (ev) => {
     const startedAt = mapPerfNowMs();
-    const rect = canvas.getBoundingClientRect();
-    const px = ((ev.clientX - rect.left) / rect.width) * canvas.width;
-    const py = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+    const point = getCanvasPointFromEvent(ev);
+    const px = point.x;
+    const py = point.y;
     const hit = findTileAtCanvasPx(px, py, true);
     appendDebugLog('biq-map:hit-test', {
       pointerType: ev && ev.pointerType ? ev.pointerType : '',
@@ -44733,7 +44965,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.biqMapHoverState = null;
     hoverTooltip.classList.add('hidden');
     if (hoverCtx) {
-      hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+      clearHoverLayer();
       drawSelectedTileBorder(hoverCtx);
       drawSelectedSpecialTileLabelsOverlay(hoverCtx);
     }
@@ -44993,7 +45225,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const drawHoverBorder = (hit) => {
     if (!hoverCtx || !hit) return;
     const interactionMode = getEffectiveInteractionMode();
-    hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+    clearHoverLayer();
     if (interactionMode === 'select') drawSelectedTileBorder(hoverCtx);
     const previewIndexes = interactionMode === 'paint'
       ? getBrushTileIndexes(hit.index)
@@ -45171,7 +45403,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const g = tileGeom[hit.index] || null;
       appendDebugLog('biq-map:tile-select', { index: hit.index, xPos: g ? g.xPos : null, yPos: g ? g.yPos : null });
       if (hoverCtx) {
-        hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+        clearHoverLayer();
         drawHoverBorder(hit);
       }
       renderTileInfoPanel();
@@ -45200,7 +45432,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       wonderDistrict: !!wonderMeta
     });
     if (hoverCtx) {
-      hoverCtx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+      clearHoverLayer();
       drawHoverBorder(hit);
     }
     if (wonderMeta) {
@@ -45219,17 +45451,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const paneRect = mapPane.getBoundingClientRect();
     const paneX = ev.clientX - paneRect.left;
     const paneY = ev.clientY - paneRect.top;
-    const canvasRect = canvas.getBoundingClientRect();
-    const canvasX = ((ev.clientX - canvasRect.left) / Math.max(1, canvasRect.width)) * canvas.width;
-    const canvasY = ((ev.clientY - canvasRect.top) / Math.max(1, canvasRect.height)) * canvas.height;
+    const canvasPoint = getCanvasPointFromEvent(ev);
     const hovered = typeof findTileAtCanvasPx === 'function'
-      ? findTileAtCanvasPx(canvasX, canvasY, false)
+      ? findTileAtCanvasPx(canvasPoint.x, canvasPoint.y, false)
       : null;
     const anchorContent = hovered
       ? { x: hovered.centerX, y: hovered.centerY }
       : null;
     setMapZoom(stepZoomLevel(Number(state.biqMapZoom || 6), 1), 'double-click', paneX, paneY, anchorContent);
   });
+  if (chunkLayer) mapCanvasStack.appendChild(chunkLayer);
   mapCanvasStack.appendChild(canvas);
   mapCanvasStack.appendChild(hoverCanvas);
   mapPane.appendChild(mapCanvasStack);

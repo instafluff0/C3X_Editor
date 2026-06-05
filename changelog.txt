@@ -1,4 +1,6 @@
 * RELEASE 27.14
+- Changed the Map editor renderer to use bounded canvas chunks for oversized maps while keeping native scrolling, independent minimap rendering, and viewport-sized hover overlays, preventing large 362x306 maps from allocating multi-gigabyte full-world canvases.
+- Changed Map import to load source BIQs through a worker-backed map-only path and added a compact terrain preview to the import modal, avoiding full source scenario bundle/materialization work before confirming an import.
 - Changed Scenario -> Players so the main search bar filters Playable Civs and removed the duplicate mini search inside the Playable Civs panel.
 - Updated Tides catalog parity tests to follow the BIQ-declared scenario search root and the installed 242-improvement fixture baseline.
 - Fixed Scenario -> Players search inputs so typing in either the player filter or Playable Civs filter keeps focus and caret position after the filtered list rerenders.

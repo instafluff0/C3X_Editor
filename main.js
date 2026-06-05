@@ -1295,6 +1295,21 @@ ipcMain.handle('manager:materialize-map-tab', async (_event, payload) => {
   }
 });
 
+ipcMain.handle('manager:load-map-import', async (_event, payload) => {
+  const mode = 'scenario';
+  log.setCiv3Root(payload && payload.civ3Path || '');
+  applyLogContextFromPayload({ ...(payload || {}), mode });
+  log.info('loadMapImport', `scenario=${log.rel(payload && payload.scenarioPath)}`);
+  try {
+    const result = await runWorkerTask('loadMapImport', { ...(payload || {}), mode });
+    log.info('loadMapImport', `OK — ${result && result.width || 0}x${result && result.height || 0}, tiles=${result && result.tileCount || 0}, durationMs=${result && result.durationMs || 0}`);
+    return result;
+  } catch (err) {
+    log.error('loadMapImport', `Threw: ${err.message}`);
+    throw err;
+  }
+});
+
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
   const mode = (payload && payload.mode) || 'global';
   log.setCiv3Root(payload && payload.civ3Path || '');

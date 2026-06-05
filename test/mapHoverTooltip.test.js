@@ -516,8 +516,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?\};[\s\S]*?const redrawMapCanvasInPlace = \(clipRects = null\) => \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-candidates'[\s\S]*?candidateCount: maxIdx \+ 1[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?if \(state\.biqMapLayer === 'terrain' && tilePx >= 4 && state\.biqMapShowOverlays\) \{[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{/,
-    'partial map redraws should clip output to edit regions but still repaint the full tile iteration set so cleared redraw rects do not leave blank map holes'
+    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?\};[\s\S]*?const redrawMapCanvasInPlace = \(clipRects = null, renderOptions = \{\}\) => \{[\s\S]*?if \(useChunkedMapRenderer && !\(renderOptions && renderOptions\.chunkDraw\)\) \{[\s\S]*?redrawChunkedMapCanvas\(clipRects, \{ force: true \}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?const candidateIndexes = Array\.isArray\(renderOptions && renderOptions\.candidateIndexes\)[\s\S]*?const candidateCount = candidateIndexes \? candidateIndexes\.length : maxIdx \+ 1;[\s\S]*?candidateMode: candidateIndexes \? 'bounded' : 'full'[\s\S]*?for \(let drawPos = 0; drawPos < candidateCount; drawPos \+= 1\) \{[\s\S]*?const i = candidateTileIndexAt\(drawPos\);/,
+    'partial map redraws should clip output to edit regions, route oversized maps through chunks, and use bounded candidates only for chunk-internal repaints'
   );
   assert.match(
     rendererText,
@@ -526,7 +526,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const hideHoverTooltip = \(reason = ''\) => \{[\s\S]*?hoverTooltip\.classList\.add\('hidden'\);[\s\S]*?hoverCtx\.clearRect\(0, 0, hoverCanvas\.width, hoverCanvas\.height\);[\s\S]*?appendDebugLog\('biq-map:hover-layer'/,
+    /const hideHoverTooltip = \(reason = ''\) => \{[\s\S]*?hoverTooltip\.classList\.add\('hidden'\);[\s\S]*?clearHoverLayer\(\);[\s\S]*?appendDebugLog\('biq-map:hover-layer'/,
     'hover-layer clears should emit explicit debug logs so paint-end overlay stalls can be compared against dirty-UI and minimap timings'
   );
   assert.match(
@@ -650,6 +650,9 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const configCoreText = fs.readFileSync(path.join(__dirname, '..', 'src', 'configCore.js'), 'utf8');
   const biqSectionsText = fs.readFileSync(path.join(__dirname, '..', 'src', 'biq', 'biqSections.js'), 'utf8');
+  const mainText = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const preloadText = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const workerText = fs.readFileSync(path.join(__dirname, '..', 'src', 'operationWorker.js'), 'utf8');
 
   assert.match(
     rendererText,
@@ -658,13 +661,48 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
   );
   assert.match(
     rendererText,
-    /function buildImportedTerrainOverlayMapSections\(sourceMapTab\) \{[\s\S]*?setRecordFieldValue\(next, 'resource', '-1'\);[\s\S]*?setRecordFieldValue\(next, 'city', '-1'\);[\s\S]*?setRecordFieldValue\(next, 'colony', '-1'\);[\s\S]*?emptySection\('SLOC'\),[\s\S]*?emptySection\('CITY'\),[\s\S]*?emptySection\('UNIT'\),[\s\S]*?emptySection\('CLNY'\)/,
-    'terrain-overlay map import should strip resources and map entities while replacing the structural map sections'
+    /const previewFrame = document\.createElement\('div'\);[\s\S]*?previewFrame\.className = 'map-resize-preview-frame map-import-preview-frame';[\s\S]*?const previewCanvas = document\.createElement\('canvas'\);[\s\S]*?drawMapResizeMiniPreviewPlaceholder\(previewCanvas, 'Select a source\\nscenario'\);[\s\S]*?drawMapResizeMiniPreview\(previewCanvas, buildMapSectionsTerrainPreview\(sections\)\);/,
+    'map import should show a compact terrain preview using the same minimap preview frame style as resize'
+  );
+  assert.match(
+    rendererText,
+    /async function loadImportMapTab\(filePath\) \{[\s\S]*?typeof window\.c3xManager\.loadMapImport !== 'function'[\s\S]*?window\.c3xManager\.loadMapImport\(\{[\s\S]*?scenarioPath: filePath,[\s\S]*?textFileEncoding:/,
+    'map import should use the map-only IPC loader instead of loading and materializing a full source bundle'
+  );
+  assert.doesNotMatch(
+    rendererText,
+    /async function loadImportMapTab\(filePath\) \{[\s\S]*?window\.c3xManager\.loadBundle[\s\S]*?window\.c3xManager\.materializeMapTab/,
+    'map import source loading must not regress to full loadBundle plus materializeMapTab work'
   );
   assert.match(
     rendererText,
     /const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?importBtn\.textContent = '⇪ Import Map';[\s\S]*?const result = await promptImportMapAction\(\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.importedSections, 'set', 'imported'\);/,
     'the map tab should expose an Import Map button that routes accepted imports into the explicit whole-map replacement path'
+  );
+  assert.match(
+    configCoreText,
+    /function loadMapImport\(payload = \{\}\) \{[\s\S]*?buildMapTabFromBiq\(buildMapImportBiqTab\(biqTab\), mode\)[\s\S]*?buildImportedTerrainOverlayMapSectionsFromMapTab\(mapTab\)[\s\S]*?durationMs/,
+    'config core should expose a map-only import loader that filters BIQ sections before map-tab materialization and reports timing'
+  );
+  assert.match(
+    configCoreText,
+    /function buildImportedTerrainOverlayMapSectionsFromMapTab\(sourceMapTab\) \{[\s\S]*?setRecordFieldByBaseKey\(next, 'resource', '-1'\);[\s\S]*?setRecordFieldByBaseKey\(next, 'city', '-1'\);[\s\S]*?setRecordFieldByBaseKey\(next, 'colony', '-1'\);[\s\S]*?emptySection\('SLOC'\),[\s\S]*?emptySection\('CITY'\),[\s\S]*?emptySection\('UNIT'\),[\s\S]*?emptySection\('CLNY'\)/,
+    'terrain-overlay map import should strip resources and map entities while replacing the structural map sections'
+  );
+  assert.match(
+    preloadText,
+    /loadMapImport: \(payload\) => ipcRenderer\.invoke\('manager:load-map-import', payload\)/,
+    'preload should expose the map-only import IPC to the renderer'
+  );
+  assert.match(
+    mainText,
+    /ipcMain\.handle\('manager:load-map-import'[\s\S]*?runWorkerTask\('loadMapImport'[\s\S]*?log\.info\('loadMapImport'/,
+    'main process should run map import loading in the worker path and log timings'
+  );
+  assert.match(
+    workerText,
+    /const \{ saveBundle, createScenario, deleteScenario, loadMapImport \} = require\('\.\/configCore'\);[\s\S]*?task === 'loadMapImport'[\s\S]*?result = loadMapImport\(payload\);/,
+    'operation worker should support map import loading so large source BIQs do not block the main process'
   );
   assert.match(
     configCoreText,
@@ -1077,7 +1115,7 @@ test('modal map zoom restore waits for non-zero pane metrics before consuming th
   );
 });
 
-test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered canvas and limiting redraws to edits', () => {
+test('large wrapped BIQ maps keep panning smooth with native scroll and bounded redraws', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
   assert.match(
@@ -1087,18 +1125,18 @@ test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered c
   );
   assert.match(
     rendererText,
-    /const redrawMapCanvasInPlace = \(clipRects = null\) => \{/,
-    'canvas redraw should continue to support clipped edit refreshes without a separate candidate-index parameter'
+    /const redrawMapCanvasInPlace = \(clipRects = null, renderOptions = \{\}\) => \{/,
+    'canvas redraw should continue to support clipped edit refreshes while allowing chunk-internal draw options'
   );
   assert.match(
     rendererText,
-    /appendDebugLog\('biq-map:canvas-redraw-candidates', \{[\s\S]*?candidateCount: maxIdx \+ 1/,
-    'canvas redraw candidate logging should continue to report the full tile iteration set for correctness-sensitive clipped repaints'
+    /appendDebugLog\('biq-map:canvas-redraw-candidates', \{[\s\S]*?candidateCount,[\s\S]*?totalTiles: maxIdx \+ 1,[\s\S]*?candidateMode: candidateIndexes \? 'bounded' : 'full'/,
+    'canvas redraw candidate logging should report whether a repaint is full-candidate or bounded-candidate'
   );
   assert.match(
     rendererText,
-    /for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-progress'/,
-    'clipped redraws should still iterate the full tile set so every cleared tile in the redraw region gets repainted'
+    /const candidateCount = candidateIndexes \? candidateIndexes\.length : maxIdx \+ 1;[\s\S]*?for \(let drawPos = 0; drawPos < candidateCount; drawPos \+= 1\) \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-progress'/,
+    'chunk-internal redraws should be able to iterate bounded candidates while full-canvas redraws retain the full candidate count'
   );
   assert.match(
     rendererText,

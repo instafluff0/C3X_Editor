@@ -5449,6 +5449,152 @@ function buildMapTabFromBiq(biqTab, mode, options = {}) {
   };
 }
 
+function isBiqMapImportSectionCode(code) {
+  return ['WCHR', 'WMAP', 'TILE', 'CONT'].includes(String(code || '').trim().toUpperCase());
+}
+
+function getRecordFieldByBaseKey(record, baseKey) {
+  if (!record || !Array.isArray(record.fields)) return null;
+  const canonical = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetRaw = String(baseKey || '').trim().toLowerCase();
+  const targetCanonical = canonical(baseKey);
+  return record.fields.find((field) => {
+    const keyRaw = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    return keyRaw === targetRaw || canonical(keyRaw) === targetCanonical;
+  }) || null;
+}
+
+function setRecordFieldByBaseKey(record, baseKey, value) {
+  const field = getRecordFieldByBaseKey(record, baseKey);
+  const nextValue = String(value == null ? '' : value);
+  if (field) {
+    field.value = nextValue;
+    field.originalValue = nextValue;
+  }
+  if (record && typeof record === 'object') {
+    const canonical = (text) => String(text || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = canonical(baseKey);
+    Object.keys(record).forEach((key) => {
+      if (canonical(key) === target) record[key] = nextValue;
+    });
+  }
+  return !!field;
+}
+
+function getMapImportFieldInt(record, baseKey, fallback = 0) {
+  const field = getRecordFieldByBaseKey(record, baseKey);
+  if (field) return parseIntLoose(field.value, fallback);
+  if (record && typeof record === 'object') {
+    const canonical = (text) => String(text || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = canonical(baseKey);
+    const key = Object.keys(record).find((candidate) => canonical(candidate) === target);
+    if (key) return parseIntLoose(record[key], fallback);
+  }
+  return fallback;
+}
+
+function cloneMapImportSection(section) {
+  return section ? JSON.parse(JSON.stringify(section)) : null;
+}
+
+function findMapImportSection(sections, code) {
+  const target = String(code || '').trim().toUpperCase();
+  return (Array.isArray(sections) ? sections : []).find((section) => String(section && section.code || '').trim().toUpperCase() === target) || null;
+}
+
+function buildImportedTerrainOverlayMapSectionsFromMapTab(sourceMapTab) {
+  const sourceSections = Array.isArray(sourceMapTab && sourceMapTab.sections) ? sourceMapTab.sections : [];
+  const wchr = cloneMapImportSection(findMapImportSection(sourceSections, 'WCHR'));
+  const wmap = cloneMapImportSection(findMapImportSection(sourceSections, 'WMAP'));
+  const sourceTile = cloneMapImportSection(findMapImportSection(sourceSections, 'TILE'));
+  const cont = cloneMapImportSection(findMapImportSection(sourceSections, 'CONT'));
+  if (!wmap || !sourceTile) {
+    throw new Error('Selected scenario is missing required WMAP/TILE map sections.');
+  }
+  if (Array.isArray(wmap.records) && wmap.records[0]) {
+    setRecordFieldByBaseKey(wmap.records[0], 'numresources', '0');
+  }
+  const sanitizeTileRecord = (record) => {
+    const next = cloneMapImportSection(record) || {};
+    setRecordFieldByBaseKey(next, 'border', '0');
+    setRecordFieldByBaseKey(next, 'resource', '-1');
+    setRecordFieldByBaseKey(next, 'barbariantribe', '-1');
+    setRecordFieldByBaseKey(next, 'city', '-1');
+    setRecordFieldByBaseKey(next, 'colony', '-1');
+    return next;
+  };
+  const tile = {
+    ...sourceTile,
+    records: Array.isArray(sourceTile.records) ? sourceTile.records.map(sanitizeTileRecord) : []
+  };
+  const emptySection = (code) => ({
+    code,
+    title: code,
+    records: []
+  });
+  return [
+    ...(wchr ? [wchr] : []),
+    wmap,
+    tile,
+    ...(cont ? [cont] : []),
+    emptySection('SLOC'),
+    emptySection('CITY'),
+    emptySection('UNIT'),
+    emptySection('CLNY')
+  ];
+}
+
+function buildMapImportBiqTab(biqTab) {
+  const mapSections = (Array.isArray(biqTab && biqTab.sections) ? biqTab.sections : [])
+    .filter((section) => isBiqMapImportSectionCode(section && section.code));
+  return {
+    ...(biqTab || {}),
+    sections: mapSections
+  };
+}
+
+function loadMapImport(payload = {}) {
+  const startedAt = Date.now();
+  const mode = 'scenario';
+  const civ3Path = payload.civ3Path || '';
+  const scenarioPath = String(payload.scenarioPath || '').trim();
+  if (!/\.biq$/i.test(scenarioPath)) {
+    throw new Error('Choose a source scenario BIQ file to import a map.');
+  }
+  log.info('loadMapImport', `Loading map-only import source: ${log.rel(scenarioPath)}`);
+  const biqTab = loadBiqTab({
+    mode,
+    civ3Path,
+    scenarioPath,
+    textEncoding: payload.textFileEncoding || payload.textEncoding || 'windows-1252'
+  });
+  if (biqTab && biqTab.error) throw new Error(biqTab.error);
+  const mapTab = buildMapTabFromBiq(buildMapImportBiqTab(biqTab), mode);
+  if (!detectBiqHasMapData({ sections: mapTab.sections })) {
+    throw new Error('Selected scenario does not contain a map.');
+  }
+  const importedSections = buildImportedTerrainOverlayMapSectionsFromMapTab(mapTab);
+  const wmap = findMapImportSection(importedSections, 'WMAP');
+  const tile = findMapImportSection(importedSections, 'TILE');
+  const wmapRecord = wmap && Array.isArray(wmap.records) ? wmap.records[0] : null;
+  const width = getMapImportFieldInt(wmapRecord, 'width', 0);
+  const height = getMapImportFieldInt(wmapRecord, 'height', 0);
+  const tileCount = tile && Array.isArray(tile.records) ? tile.records.length : 0;
+  const durationMs = Date.now() - startedAt;
+  log.info('loadMapImport', `Complete — ${width}x${height}, tiles=${tileCount}, sections=${importedSections.length}, durationMs=${durationMs}`);
+  return {
+    ok: true,
+    sourceScenarioPath: scenarioPath,
+    importedSections,
+    width,
+    height,
+    tileCount,
+    compressedSource: !!biqTab.compressedSource,
+    textEncoding: biqTab.textEncoding || '',
+    durationMs
+  };
+}
+
 function detectBiqHasMapData(biqTab) {
   const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections : [];
   const wmapSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP');
@@ -12010,6 +12156,7 @@ module.exports = {
   resolveBiqPath,
   createScenario,
   deleteScenario,
+  loadMapImport,
   materializeMapTab,
   parseBiqSectionsFromBuffer,
   resolvePaths,
