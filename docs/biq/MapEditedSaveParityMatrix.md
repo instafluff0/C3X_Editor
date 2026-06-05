@@ -59,7 +59,7 @@ Current regression evidence in the repo already covers:
 
 Primary current test anchors:
 
-- `test/biqMapCritical.test.js`
+- `test/biqMap.test.js`
 - `test/biqRoundtrip.test.js`
 
 ## Matrix

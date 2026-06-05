@@ -1,8 +1,10 @@
 * RELEASE 27.14
+- Renamed the focused BIQ map test file and npm test tier from map-critical to map for clearer maintenance naming.
 - Changed the Map editor renderer to use bounded canvas chunks for oversized maps while keeping native scrolling, independent minimap rendering, and viewport-sized hover overlays, preventing large 362x306 maps from allocating multi-gigabyte full-world canvases.
 - Smoothed large-map scrolling, minimap dragging, and Ctrl-pan by draining visible map chunks across frame budgets, retaining nearby chunk canvases, and prefetching adjacent chunks after interaction settles.
 - Sped up large-map painting by keeping 1x1 brush resolution local, repainting only clipped edit regions inside already-rendered chunks, and patching changed minimap tiles instead of rebuilding the full minimap after every paint stroke.
 - Fixed incremental minimap terrain-paint patches so edited tiles do not leave dark background rectangles or stale overlapping coastline artifacts on the minimap.
+- Reconciled incremental minimap edit patches during idle time and widened their local repaint bounds, preventing subtle dark terrain-edge outlines without blocking paint gestures on a full minimap rebuild.
 - Changed Map import to load source BIQs through a worker-backed map-only path and added a compact terrain preview to the import modal, avoiding full source scenario bundle/materialization work before confirming an import.
 - Cleared `scenario.districts.txt` district and named-tile sidecar data when importing or otherwise replacing the whole scenario map, so coordinate-bound labels do not survive onto the new map.
 - Added Deepwater Harbor map painting as a Sea terrain variant that converts Coast tiles to Sea while preserving their Coast graphics, with `DH` special-terrain markers on the map.

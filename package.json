@@ -8,7 +8,7 @@
     "start": "electron .",
     "test": "node scripts/run-tests.js fast",
     "test:fast": "node scripts/run-tests.js fast",
-    "test:map-critical": "node scripts/run-tests.js map-critical",
+    "test:map": "node scripts/run-tests.js map",
     "test:biq": "node scripts/run-tests.js biq",
     "test:full": "node scripts/run-tests.js full",
     "dist": "electron-builder"

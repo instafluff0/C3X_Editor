@@ -45872,6 +45872,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   minimapBaseCanvas.height = minimapCanvas.height;
   let minimapBaseDirty = true;
   let minimapRefreshRaf = 0;
+  let minimapBaseReconcileIdleHandle = 0;
+  let minimapBaseReconcileReason = '';
   let pendingMinimapTileIndexes = new Set();
   let pendingMinimapRefreshMeta = null;
   minimapPanel.appendChild(statsControls);
@@ -45946,20 +45948,25 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return true;
   };
-  const getMiniMapTileDrawRect = (tileIndex, metrics) => {
+  const getMiniMapTileDrawRect = (tileIndex, metrics, paddingPx = 0) => {
     const geom = tileGeom[tileIndex];
     if (!geom || !metrics) return null;
     const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
     const sx = (basePosRaw.sx + originX - baseWorldLeftPx) * metrics.scaleX;
     const sy = (basePosRaw.sy + originY - baseWorldTopPx) * metrics.scaleY;
+    const pad = Math.max(0, Math.ceil(Number(paddingPx) || 0));
+    const x = Math.max(0, Math.floor(sx) - pad);
+    const y = Math.max(0, Math.floor(sy) - pad);
+    const right = Math.min(minimapBaseCanvas.width, Math.ceil(sx + metrics.miniTileW) + pad);
+    const bottom = Math.min(minimapBaseCanvas.height, Math.ceil(sy + metrics.miniTileH) + pad);
     return {
-      x: Math.floor(sx),
-      y: Math.floor(sy),
-      w: Math.max(1, Math.ceil(metrics.miniTileW)),
-      h: Math.max(1, Math.ceil(metrics.miniTileH))
+      x,
+      y,
+      w: Math.max(1, right - x),
+      h: Math.max(1, bottom - y)
     };
   };
-  const expandMiniMapPatchIndexes = (tileIndexes, depth = 3) => {
+  const expandMiniMapPatchIndexes = (tileIndexes, depth = 5) => {
     const queue = [];
     const seen = new Set();
     (Array.isArray(tileIndexes) ? tileIndexes : Array.from(tileIndexes || [])).forEach((rawIdx) => {
@@ -46026,7 +46033,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       .sort((a, b) => a - b);
     baseCtx.save();
     baseCtx.fillStyle = '#113246';
-    const dirtyRects = unique.map((idx) => getMiniMapTileDrawRect(idx, metrics)).filter(Boolean);
+    const dirtyRects = unique.map((idx) => getMiniMapTileDrawRect(idx, metrics, 2)).filter(Boolean);
     dirtyRects.forEach((rect) => {
       baseCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
     });
@@ -46041,6 +46048,28 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       tileSummary: summarizeTileIndexes(unique)
     });
     return true;
+  };
+  const scheduleMiniMapBaseReconcile = (reason = 'patch') => {
+    minimapBaseReconcileReason = String(reason || 'patch');
+    if (minimapBaseDirty || minimapBaseReconcileIdleHandle) return;
+    const schedule = typeof window.requestIdleCallback === 'function'
+      ? (callback) => window.requestIdleCallback(callback, { timeout: 600 })
+      : (callback) => window.setTimeout(callback, 180);
+    minimapBaseReconcileIdleHandle = schedule(() => {
+      minimapBaseReconcileIdleHandle = 0;
+      if (!container.isConnected) return;
+      if (paintStroke || isDraggingMap || minimapPointerId != null) {
+        scheduleMiniMapBaseReconcile(`${minimapBaseReconcileReason || reason}-deferred`);
+        return;
+      }
+      const startedAt = mapPerfNowMs();
+      minimapBaseDirty = true;
+      renderMiniMap();
+      appendDebugLog('biq-map:minimap-base-reconcile', {
+        reason: minimapBaseReconcileReason || reason,
+        durationMs: Number((mapPerfNowMs() - startedAt).toFixed(2))
+      });
+    });
   };
 
   renderMiniMap = () => {
@@ -46095,7 +46124,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const patchIndexes = Array.from(pendingMinimapTileIndexes);
       pendingMinimapTileIndexes.clear();
       const minimapStartedAt = mapPerfNowMs();
-      if (!minimapBaseDirty && patchIndexes.length > 0) patchMiniMapBaseTiles(patchIndexes);
+      if (!minimapBaseDirty && patchIndexes.length > 0 && patchMiniMapBaseTiles(patchIndexes)) {
+        scheduleMiniMapBaseReconcile('patched-edit');
+      }
       renderMiniMap();
       const minimapMs = Number((mapPerfNowMs() - minimapStartedAt).toFixed(2));
       if (refreshMeta && refreshMeta.settleEvent) {

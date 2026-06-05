@@ -1215,8 +1215,28 @@ test('large wrapped BIQ maps keep panning smooth with native scroll and bounded 
   );
   assert.match(
     rendererText,
-    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?let pendingMinimapTileIndexes = new Set\(\);[\s\S]*?const drawMiniMapBaseTile = \(baseCtx, tileIndex, metrics\) => \{[\s\S]*?drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, metrics\.miniTileW, metrics\.miniTileH\);[\s\S]*?const getMiniMapTileDrawRect = \(tileIndex, metrics\) => \{[\s\S]*?w: Math\.max\(1, Math\.ceil\(metrics\.miniTileW\)\),[\s\S]*?h: Math\.max\(1, Math\.ceil\(metrics\.miniTileH\)\)[\s\S]*?const expandMiniMapPatchIndexes = \(tileIndexes, depth = 3\) => \{[\s\S]*?mapTileNeighborIndexes\(item\.idx\)\.forEach[\s\S]*?const collectMiniMapPatchCandidates = \(tileIndexes, dirtyRects, metrics\) => \{[\s\S]*?return expandMiniMapPatchIndexes\(tileIndexes\)[\s\S]*?clips\.some\(\(clip\) => rectIntersects\(rect, clip\)\)[\s\S]*?const patchMiniMapBaseTiles = \(tileIndexes\) => \{[\s\S]*?if \(minimapBaseDirty\) return false;[\s\S]*?\.sort\(\(a, b\) => a - b\);[\s\S]*?const dirtyRects = unique\.map\(\(idx\) => getMiniMapTileDrawRect\(idx, metrics\)\)\.filter\(Boolean\);[\s\S]*?baseCtx\.fillRect\(rect\.x, rect\.y, rect\.w, rect\.h\);[\s\S]*?collectMiniMapPatchCandidates\(unique, dirtyRects, metrics\)\.forEach\(\(idx\) => \{[\s\S]*?drawMiniMapBaseTile\(baseCtx, idx, metrics\);[\s\S]*?appendDebugLog\('biq-map:minimap-base-patch'[\s\S]*?renderMiniMap = \(\) => \{[\s\S]*?if \(rebuiltBase\) rebuildMiniMapBase\(\);[\s\S]*?mmCtx\.drawImage\(minimapBaseCanvas, 0, 0, minimapCanvas\.width, minimapCanvas\.height\);[\s\S]*?const scheduleDeferredMiniMapRefresh = \(meta = \{\}\) => \{[\s\S]*?const tileIndexes = Array\.isArray\(meta && meta\.minimapTileIndexes\) \? meta\.minimapTileIndexes : \[\];[\s\S]*?if \(!minimapBaseDirty && patchIndexes\.length > 0\) patchMiniMapBaseTiles\(patchIndexes\);/,
-    'minimap redraws should use a cached base canvas, clear edited tile-sized minimap bounds, and repaint intersecting local neighbors instead of clearing large main-map edit rects or repainting only the touched tiles'
+    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?let minimapBaseReconcileIdleHandle = 0;[\s\S]*?let pendingMinimapTileIndexes = new Set\(\);/,
+    'minimap redraws should keep a cached base canvas with a coalesced idle reconciliation handle'
+  );
+  assert.match(
+    rendererText,
+    /const getMiniMapTileDrawRect = \(tileIndex, metrics, paddingPx = 0\) => \{[\s\S]*?const pad = Math\.max\(0, Math\.ceil\(Number\(paddingPx\) \|\| 0\)\);[\s\S]*?const right = Math\.min\(minimapBaseCanvas\.width, Math\.ceil\(sx \+ metrics\.miniTileW\) \+ pad\);[\s\S]*?w: Math\.max\(1, right - x\),[\s\S]*?h: Math\.max\(1, bottom - y\)/,
+    'minimap patch rectangles should support padded, canvas-clamped clears so subpixel terrain edges do not leave dark outlines'
+  );
+  assert.match(
+    rendererText,
+    /const expandMiniMapPatchIndexes = \(tileIndexes, depth = 5\) => \{[\s\S]*?mapTileNeighborIndexes\(item\.idx\)\.forEach[\s\S]*?const dirtyRects = unique\.map\(\(idx\) => getMiniMapTileDrawRect\(idx, metrics, 2\)\)\.filter\(Boolean\);[\s\S]*?collectMiniMapPatchCandidates\(unique, dirtyRects, metrics\)\.forEach\(\(idx\) => \{[\s\S]*?drawMiniMapBaseTile\(baseCtx, idx, metrics\);/,
+    'minimap patches should clear padded edited bounds and repaint a wider local candidate set'
+  );
+  assert.match(
+    rendererText,
+    /const scheduleMiniMapBaseReconcile = \(reason = 'patch'\) => \{[\s\S]*?requestIdleCallback[\s\S]*?if \(paintStroke \|\| isDraggingMap \|\| minimapPointerId != null\)[\s\S]*?minimapBaseDirty = true;[\s\S]*?renderMiniMap\(\);[\s\S]*?appendDebugLog\('biq-map:minimap-base-reconcile'/,
+    'patched minimap edits should schedule an idle full-base reconciliation after active paint and drag interactions finish'
+  );
+  assert.match(
+    rendererText,
+    /if \(!minimapBaseDirty && patchIndexes\.length > 0 && patchMiniMapBaseTiles\(patchIndexes\)\) \{[\s\S]*?scheduleMiniMapBaseReconcile\('patched-edit'\);[\s\S]*?\}[\s\S]*?renderMiniMap\(\);/,
+    'deferred minimap refreshes should keep the fast patch path and queue reconciliation only after a successful patch'
   );
   assert.match(
     rendererText,
