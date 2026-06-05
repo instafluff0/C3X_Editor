@@ -276,7 +276,7 @@ test('Scenario Players panel renders the GAME playable civ checklist beside LEAD
   );
 });
 
-test('Scenario Players search inputs preserve focus across filter rerenders', () => {
+test('Scenario Players top search filters Playable Civs and preserves focus', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
 
@@ -287,13 +287,23 @@ test('Scenario Players search inputs preserve focus across filter rerenders', ()
   );
   assert.match(
     text,
-    /search\.dataset\.preserveFocusKey = `biq-search:\$\{filterKey\}`;[\s\S]*?state\.biqRecordFilter\[filterKey\] = search\.value;[\s\S]*?renderActiveTabPreservingInputFocus\(search, \{ preserveTabScroll: true \}\);/,
-    'Playable Civs search should rerender through the focus-preserving helper'
+    /const playableCivsFilterKey = 'players:playable-civs';[\s\S]*?const primaryFilterKey = showPlayableCivsPanel \? playableCivsFilterKey : recordFilterKey;[\s\S]*?recordSearch\.placeholder = showPlayableCivsPanel \? 'Search playable civs\.\.\.' : `Search \$\{getFriendlyBiqSectionTitle\(selected\)\.toLowerCase\(\)\}\.\.\.`;/,
+    'The main Scenario -> Players search should become the Playable Civs search on the Players route'
   );
   assert.match(
     text,
-    /recordSearch\.dataset\.preserveFocusKey = `biq-record-search:\$\{recordFilterKey\}`;[\s\S]*?state\.biqRecordFilter\[recordFilterKey\] = recordSearch\.value;[\s\S]*?renderActiveTabPreservingInputFocus\(recordSearch, \{ preserveTabScroll: true \}\);/,
-    'Player list search should rerender through the focus-preserving helper'
+    /recordSearch\.dataset\.preserveFocusKey = showPlayableCivsPanel[\s\S]*?\? `biq-search:\$\{playableCivsFilterKey\}`[\s\S]*?: `biq-record-search:\$\{recordFilterKey\}`;[\s\S]*?state\.biqRecordFilter\[primaryFilterKey\] = recordSearch\.value;[\s\S]*?renderActiveTabPreservingInputFocus\(recordSearch, \{ preserveTabScroll: true \}\);/,
+    'The main search should retain focus while updating the active filter key'
+  );
+  assert.match(
+    text,
+    /const recordNeedle = showPlayableCivsPanel \? '' : String\(state\.biqRecordFilter\[recordFilterKey\] \|\| ''\)\.trim\(\)\.toLowerCase\(\);/,
+    'The LEAD player list should not be filtered on Scenario -> Players'
+  );
+  assert.doesNotMatch(
+    text,
+    /search\.placeholder = 'Search civs\.\.\.';/,
+    'The Playable Civs panel should not render its own mini search input'
   );
 });
 

@@ -30929,19 +30929,8 @@ function renderPlayableCivilizationsPanel({ readOnly = false } = {}) {
   header.appendChild(count);
   panel.appendChild(header);
 
-  const search = document.createElement('input');
-  search.type = 'search';
-  search.classList.add('app-search-input');
-  search.placeholder = 'Search civs...';
   const filterKey = 'players:playable-civs';
-  search.dataset.preserveFocusKey = `biq-search:${filterKey}`;
   const needle = String(state.biqRecordFilter[filterKey] || '').trim().toLowerCase();
-  search.value = state.biqRecordFilter[filterKey] || '';
-  search.addEventListener('input', () => {
-    state.biqRecordFilter[filterKey] = search.value;
-    renderActiveTabPreservingInputFocus(search, { preserveTabScroll: true });
-  });
-  panel.appendChild(search);
 
   const list = document.createElement('div');
   list.className = 'players-playable-civs-list';
@@ -34781,15 +34770,26 @@ function renderBiqTab(tab) {
     wrap.style.setProperty('--biq-subtabs-offset', `${stickySubtabRows * 52}px`);
   }
 
+  const recordFilterKey = `${selectionKey}:${selected.id}`;
+  const playableCivsFilterKey = 'players:playable-civs';
+  const showPlayableCivsPanel = selected.code === 'LEAD'
+    && selectedSectionTab
+    && selectedSectionTab.key === 'players'
+    && selectedBaseCode === 'GAME'
+    && activeGamePanel
+    && activeGamePanel.id === 'players'
+    && !!getScenarioGameRecord();
+  const primaryFilterKey = showPlayableCivsPanel ? playableCivsFilterKey : recordFilterKey;
   const recordFilterRow = document.createElement('div');
   recordFilterRow.className = 'reference-filter-row sticky-search-row';
   const recordSearch = document.createElement('input');
   recordSearch.type = 'search';
   recordSearch.classList.add('app-search-input');
-  recordSearch.placeholder = `Search ${getFriendlyBiqSectionTitle(selected).toLowerCase()}...`;
-  const recordFilterKey = `${selectionKey}:${selected.id}`;
-  recordSearch.dataset.preserveFocusKey = `biq-record-search:${recordFilterKey}`;
-  recordSearch.value = state.biqRecordFilter[recordFilterKey] || '';
+  recordSearch.placeholder = showPlayableCivsPanel ? 'Search playable civs...' : `Search ${getFriendlyBiqSectionTitle(selected).toLowerCase()}...`;
+  recordSearch.dataset.preserveFocusKey = showPlayableCivsPanel
+    ? `biq-search:${playableCivsFilterKey}`
+    : `biq-record-search:${recordFilterKey}`;
+  recordSearch.value = state.biqRecordFilter[primaryFilterKey] || '';
   recordFilterRow.appendChild(recordSearch);
   const controlsRight = document.createElement('div');
   controlsRight.className = 'reference-filter-right';
@@ -35042,13 +35042,6 @@ function renderBiqTab(tab) {
   const layout = document.createElement('div');
   layout.className = 'entry-layout';
   if (hideRecordList) layout.style.gridTemplateColumns = '1fr';
-  const showPlayableCivsPanel = selected.code === 'LEAD'
-    && selectedSectionTab
-    && selectedSectionTab.key === 'players'
-    && selectedBaseCode === 'GAME'
-    && activeGamePanel
-    && activeGamePanel.id === 'players'
-    && !!getScenarioGameRecord();
   if (showPlayableCivsPanel) layout.classList.add('players-with-playable-civs');
 
   const listPane = document.createElement('div');
@@ -35057,7 +35050,7 @@ function renderBiqTab(tab) {
     const showTerrainThumbs = (selected.code === 'TERR' || selected.code === 'TFRM') && !!(tab && tab.civilopedia);
     const showLeadThumbs = selected.code === 'LEAD';
     const terrainThumbTabKey = selected.code === 'TFRM' ? 'workerActions' : 'terrainPedia';
-    const recordNeedle = String(state.biqRecordFilter[recordFilterKey] || '').trim().toLowerCase();
+    const recordNeedle = showPlayableCivsPanel ? '' : String(state.biqRecordFilter[recordFilterKey] || '').trim().toLowerCase();
     records.forEach((record, idx) => {
       const recordTitle = getDisplayBiqRecordName(selected.code, record, idx);
       if (recordNeedle && !recordTitle.toLowerCase().includes(recordNeedle)) return;
@@ -35095,7 +35088,7 @@ function renderBiqTab(tab) {
       listPane.appendChild(itemBtn);
     });
     recordSearch.addEventListener('input', () => {
-      state.biqRecordFilter[recordFilterKey] = recordSearch.value;
+      state.biqRecordFilter[primaryFilterKey] = recordSearch.value;
       renderActiveTabPreservingInputFocus(recordSearch, { preserveTabScroll: true });
     });
     if (showPlayableCivsPanel) {

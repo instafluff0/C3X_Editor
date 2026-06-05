@@ -1,4 +1,5 @@
 * RELEASE 27.14
+- Changed Scenario -> Players so the main search bar filters Playable Civs and removed the duplicate mini search inside the Playable Civs panel.
 - Updated Tides catalog parity tests to follow the BIQ-declared scenario search root and the installed 242-improvement fixture baseline.
 - Fixed Scenario -> Players search inputs so typing in either the player filter or Playable Civs filter keeps focus and caret position after the filtered list rerenders.
 - Moved the Scenario Playable Civilizations checklist from Scenario -> Scenario into Scenario -> Players beside the player list, matching workflow while still saving the underlying GAME playable-civ fields.
