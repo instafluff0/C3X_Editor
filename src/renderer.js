@@ -306,6 +306,7 @@ const TAB_SEARCH_RENDER_DELAY_MS = 120;
 const mapCore = (typeof window !== 'undefined' && window.MapEditorCore) ? window.MapEditorCore : null;
 const mapRenderPlanner = (typeof window !== 'undefined' && window.MapRenderPlanner) ? window.MapRenderPlanner : null;
 const mapGeneratorCore = (typeof window !== 'undefined' && window.MapGeneratorCore) ? window.MapGeneratorCore : null;
+const techBoxLayout = (typeof window !== 'undefined' && window.TechBoxLayout) ? window.TechBoxLayout : null;
 const richTooltip = {
   node: null,
   active: false
@@ -10680,7 +10681,7 @@ async function loadPreviewsForReferenceEntry(tabKey, entry, previewWrap) {
   }
 }
 
-function drawPreviewFrameToCanvas(preview, canvas) {
+function drawPreviewFrameToCanvas(preview, canvas, options = {}) {
   const ctx = canvas.getContext('2d');
   if (!ctx || !preview) return;
   let rgba;
@@ -10701,8 +10702,10 @@ function drawPreviewFrameToCanvas(preview, canvas) {
   if (!scratch || !scratch.ctx || !scratch.canvas) return;
   scratch.ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height), 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!options.transparentBackground) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
   const ratio = Math.min(canvas.width / preview.width, canvas.height / preview.height);
   const w = Math.max(1, Math.floor(preview.width * ratio));
   const h = Math.max(1, Math.floor(preview.height * ratio));
@@ -10710,6 +10713,17 @@ function drawPreviewFrameToCanvas(preview, canvas) {
   const y = Math.floor((canvas.height - h) / 2);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(scratch.canvas, x, y, w, h);
+}
+
+function getReferenceListThumbnailCanvasSize(holder) {
+  const raw = holder && holder.dataset ? Number.parseInt(String(holder.dataset.thumbSize || ''), 10) : NaN;
+  return Number.isFinite(raw) && raw > 0 ? raw : 28;
+}
+
+function shouldUseTransparentReferenceThumbnail(holder) {
+  if (!holder) return false;
+  if (holder.dataset && holder.dataset.transparentThumb === '1') return true;
+  return !!holder.closest('.tech-tree-node-game-box');
 }
 
 function getReferenceListThumbnailPendingSlot(tabKey, entry, assetPath) {
@@ -10732,11 +10746,12 @@ function getReferenceListThumbnailPendingSlot(tabKey, entry, assetPath) {
 }
 
 function paintReferenceListThumbnailPreview(holder, preview) {
+  const size = getReferenceListThumbnailCanvasSize(holder);
   const canvas = document.createElement('canvas');
-  canvas.width = 28;
-  canvas.height = 28;
+  canvas.width = size;
+  canvas.height = size;
   canvas.className = 'entry-thumb-canvas';
-  drawPreviewFrameToCanvas(preview, canvas);
+  drawPreviewFrameToCanvas(preview, canvas, { transparentBackground: shouldUseTransparentReferenceThumbnail(holder) });
   holder.innerHTML = '';
   holder.appendChild(canvas);
   holder.classList.remove('art-pending');
@@ -10790,9 +10805,10 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
               if (metrics) refreshPendingImportedUnitIconAssignments();
               refreshTabDirtyBadges();
             }).catch(() => {});
+            const size = getReferenceListThumbnailCanvasSize(holder);
             const canvas = document.createElement('canvas');
-            canvas.width = 28;
-            canvas.height = 28;
+            canvas.width = size;
+            canvas.height = size;
             canvas.className = 'entry-thumb-canvas';
             if (!drawUnits32IconToCanvas(preview, iconIndex, canvas)) {
               const btn = holder.closest('.entry-list-item');
@@ -10831,11 +10847,12 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
         }))
           .then((res) => {
             if (!res || !res.ok || !holder.isConnected) return false;
+            const size = getReferenceListThumbnailCanvasSize(holder);
             const canvas = document.createElement('canvas');
-            canvas.width = 28;
-            canvas.height = 28;
+            canvas.width = size;
+            canvas.height = size;
             canvas.className = 'entry-thumb-canvas';
-            drawPreviewFrameToCanvas(res, canvas);
+            drawPreviewFrameToCanvas(res, canvas, { transparentBackground: shouldUseTransparentReferenceThumbnail(holder) });
             holder.innerHTML = '';
             holder.appendChild(canvas);
             return true;
@@ -23589,8 +23606,7 @@ const TECH_TREE_ERA_BACKGROUND_CANDIDATES = {
   2: ['Art/Advisors/science_industrial_new.pcx', 'Art/Advisors/science_industrial.pcx'],
   3: ['Art/Advisors/science_modern.pcx']
 };
-const TECH_TREE_LAYOUT_SCALE_X = 1.24;
-const TECH_TREE_LAYOUT_SCALE_Y = 1.18;
+const TECH_TREE_TECHBOX_CANDIDATES = ['Art/Advisors/techboxes.pcx'];
 const TECH_TREE_NON_ERA_GUTTER_WIDTH = 220;
 const TECH_TREE_NON_ERA_GUTTER_LEFT = 18;
 const TECH_TREE_NON_ERA_MIN_VERTICAL_GAP = 14;
@@ -23750,6 +23766,136 @@ function getTechTreeData(entries) {
     });
   });
   return { nodes, byId, dependents };
+}
+
+const TECH_TREE_TECHBOX_UNLOCK_GROUP_KEYS = new Set(['units', 'improvements', 'workerJobs']);
+
+function getTechTreeBoxIconCount(node, unitCivFilter = null) {
+  if (!node) return 1;
+  return 1 + getTechTreeBoxUnlockItems(node, unitCivFilter).length;
+}
+
+function getTechTreeUnitAvailableToIndices(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'availableto');
+  return new Set(decodeAvailableToIndices(field && field.value).map((value) => Number(value)));
+}
+
+function shouldShowUnitInTechTreeBox(entry, unitCivFilter = null) {
+  if (!entry || !isCountableReferenceEntry('units', entry)) return false;
+  const availableTo = getTechTreeUnitAvailableToIndices(entry);
+  if (availableTo.size === 0) return false;
+  const selectedCivIndex = Number(unitCivFilter && unitCivFilter.selectedCivIndex);
+  if (Number.isFinite(selectedCivIndex) && selectedCivIndex >= 0) {
+    return availableTo.has(selectedCivIndex);
+  }
+  const generalCivIndices = Array.isArray(unitCivFilter && unitCivFilter.generalCivIndices)
+    ? unitCivFilter.generalCivIndices
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value >= 0)
+    : [];
+  if (generalCivIndices.length === 0) return true;
+  return generalCivIndices.every((idx) => availableTo.has(idx));
+}
+
+function getTechTreeBoxUnlockItems(node, unitCivFilter = null) {
+  if (!node) return [];
+  const items = [];
+  TECHNOLOGY_UNLOCK_GROUPS.forEach((spec) => {
+    if (!TECH_TREE_TECHBOX_UNLOCK_GROUP_KEYS.has(String(spec && spec.key || ''))) return;
+    let selected = [];
+    try {
+      selected = getTechnologyUnlockSelectedEntries(spec, node.id, node.entry);
+    } catch (_err) {
+      selected = [];
+    }
+    selected.forEach((item) => {
+      if (isTechnologyUnlockBiqStructureGroup(spec)) {
+        const thumbEntry = getTechnologyUnlockBiqStructureThumbnailEntry(spec, item && item.entry);
+        if (thumbEntry) {
+          items.push({ tabKey: 'workerActions', entry: thumbEntry });
+        }
+        return;
+      }
+      if (item && item.entry && spec.tabKey) {
+        if (String(spec.key || '') === 'units' && !shouldShowUnitInTechTreeBox(item.entry, unitCivFilter)) return;
+        items.push({ tabKey: spec.tabKey, entry: item.entry });
+      }
+    });
+  });
+  return items;
+}
+
+function getTechTreeBoxSizeIndex(node, unitCivFilter = null) {
+  const count = getTechTreeBoxIconCount(node, unitCivFilter);
+  if (techBoxLayout && typeof techBoxLayout.chooseTechBoxSizeIndexForIconCount === 'function') {
+    return techBoxLayout.chooseTechBoxSizeIndexForIconCount(count);
+  }
+  if (count <= 2) return 0;
+  if (count <= 4) return 1;
+  if (count === 5) return 3;
+  if (count <= 7) return 2;
+  return 3;
+}
+
+function getTechTreeBoxTopRowIconCapacity(frame, iconCount) {
+  const count = Math.max(1, Number(iconCount) || 1);
+  const sizeIndex = Number(frame && frame.sizeIndex);
+  if (sizeIndex === 0) return Math.min(2, count);
+  if (sizeIndex === 1 || sizeIndex === 2) return Math.min(4, count);
+  if (sizeIndex === 3) return Math.min(5, count);
+  const width = Math.max(1, Number(frame && frame.w) || 1);
+  return Math.max(1, Math.min(count, Math.floor(width / 32)));
+}
+
+function appendTechTreeIconRowPlaceholders(row, count) {
+  const n = Math.max(0, Number(count) || 0);
+  for (let i = 0; i < n; i += 1) {
+    const spacer = document.createElement('span');
+    spacer.className = 'tech-tree-node-icon-spacer';
+    row.appendChild(spacer);
+  }
+}
+
+function getTechBoxPreviewRgba(techBoxPreview) {
+  if (!techBoxPreview || !techBoxPreview.rgbaBase64) return null;
+  if (!techBoxPreview._cachedRgbaBytes) {
+    techBoxPreview._cachedRgbaBytes = fromBase64ToUint8(techBoxPreview.rgbaBase64);
+  }
+  return techBoxPreview._cachedRgbaBytes;
+}
+
+function buildTechBoxLayoutFromPreview(techBoxPreview) {
+  if (!techBoxLayout || typeof techBoxLayout.parseTechBoxSheetLayout !== 'function') return null;
+  if (!techBoxPreview || !techBoxPreview.width || !techBoxPreview.height || !techBoxPreview.rgbaBase64) return null;
+  if (techBoxPreview._cachedTechBoxLayout) return techBoxPreview._cachedTechBoxLayout;
+  const rgba = getTechBoxPreviewRgba(techBoxPreview);
+  if (!rgba) return null;
+  techBoxPreview._cachedTechBoxLayout = techBoxLayout.parseTechBoxSheetLayout({
+    width: Number(techBoxPreview.width),
+    height: Number(techBoxPreview.height),
+    rgba
+  });
+  return techBoxPreview._cachedTechBoxLayout;
+}
+
+function getTechTreeBoxFrame(techBoxPreview, eraValue, node, unitCivFilter = null) {
+  if (!techBoxLayout || typeof techBoxLayout.getTechBoxFrame !== 'function') return null;
+  const layout = buildTechBoxLayoutFromPreview(techBoxPreview);
+  if (!layout) return null;
+  return techBoxLayout.getTechBoxFrame(layout, eraValue, getTechTreeBoxSizeIndex(node, unitCivFilter), layout.defaultColumnIndex);
+}
+
+function drawTechTreeBoxFrame(techBoxPreview, frame, canvas) {
+  if (!techBoxPreview || !frame || !canvas) return false;
+  const sheet = rgbaToCanvas(techBoxPreview);
+  const ctx = canvas.getContext('2d');
+  if (!sheet || !ctx) return false;
+  canvas.width = Math.max(1, Number(frame.w) || 1);
+  canvas.height = Math.max(1, Number(frame.h) || 1);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(sheet, frame.x, frame.y, frame.w, frame.h, 0, 0, canvas.width, canvas.height);
+  return true;
 }
 
 function getReachableTechIdsForCivilization(nodes, civEntry) {
@@ -24102,6 +24248,37 @@ function createTechTreePanel({
     }
     if (renderToken !== bgRenderToken) return;
 
+    let techBoxPreview = null;
+    if (techBoxLayout) {
+      for (const assetPath of TECH_TREE_TECHBOX_CANDIDATES) {
+        try {
+          const res = await window.c3xManager.getPreview({
+            kind: 'civilopediaIcon',
+            civ3Path: state.settings.civ3Path,
+            scenarioPath: state.settings.scenarioPath,
+            scenarioPaths: getScenarioPreviewPaths(),
+            assetPath,
+            options: { transparentIndexes: [254, 255] }
+          });
+          if (res && res.ok) {
+            techBoxPreview = res;
+            break;
+          }
+        } catch (_err) {
+          // Try next candidate.
+        }
+      }
+    }
+    if (renderToken !== bgRenderToken) return;
+    if (techBoxPreview) {
+      try {
+        buildTechBoxLayoutFromPreview(techBoxPreview);
+      } catch (err) {
+        _dbgWarn('TechTree', `techboxes:parse-failed ${(err && err.message) ? err.message : err}`);
+        techBoxPreview = null;
+      }
+    }
+
     let baseW = 1024;
     let baseH = 768;
     if (bgPreview && bgPreview.width && bgPreview.height) {
@@ -24120,6 +24297,12 @@ function createTechTreePanel({
 
     const selectedCivIndex = Number.parseInt(civFilterValue, 10);
     const selectedCivEntry = Number.isFinite(selectedCivIndex) && selectedCivIndex >= 0 ? (civEntries[selectedCivIndex] || null) : null;
+    const techBoxUnitCivFilter = {
+      selectedCivIndex: selectedCivEntry ? selectedCivIndex : null,
+      generalCivIndices: civOptions
+        .map((opt) => Number.parseInt(String(opt && opt.value), 10))
+        .filter((value) => Number.isFinite(value) && value >= 0)
+    };
     const civFreeTechIds = selectedCivEntry ? getCivilizationFreeTechIds(selectedCivEntry) : [];
     _dbgLog('INF', 'TechTree', `render:civ-free-techs civ=${selectedCivEntry ? String(selectedCivEntry.name || selectedCivEntry.civilopediaKey || selectedCivIndex) : '(none)'} ids=${civFreeTechIds.join(',') || '(none)'}`);
     const reachableTechIds = selectedCivEntry ? getReachableTechIdsForCivilization(nodes, selectedCivEntry) : null;
@@ -24138,8 +24321,8 @@ function createTechTreePanel({
       overlapCounts.set(key, n + 1);
       const rawDisplayX = node.x + ((n % 4) * 38);
       const rawDisplayY = node.y + (Math.floor(n / 4) * 30);
-      node._rawDisplayX = rawDisplayX * TECH_TREE_LAYOUT_SCALE_X;
-      node._rawDisplayY = rawDisplayY * TECH_TREE_LAYOUT_SCALE_Y;
+      node._rawDisplayX = rawDisplayX;
+      node._rawDisplayY = rawDisplayY;
       node.autoLayout = false;
     });
     let nonEraItems = [];
@@ -24203,22 +24386,20 @@ function createTechTreePanel({
       node.autoLayout = true;
     });
     const displayNodes = [...gutterItems.map((item) => item.node), ...eraNodes];
-    const minEraRawX = eraNodes.reduce((m, n) => Math.min(m, Number(n._rawDisplayX) || 0), Number.POSITIVE_INFINITY);
-    const minEraRawY = eraNodes.reduce((m, n) => Math.min(m, Number(n._rawDisplayY) || 0), Number.POSITIVE_INFINITY);
     const maxEraRawX = eraNodes.reduce((m, n) => Math.max(m, (Number(n._rawDisplayX) || 0) + NODE_W), 0);
     const maxEraRawY = eraNodes.reduce((m, n) => Math.max(m, (Number(n._rawDisplayY) || 0) + NODE_H), 0);
-    activeEraMinRawX = Number.isFinite(minEraRawX) ? minEraRawX : 0;
-    activeEraMinRawY = Number.isFinite(minEraRawY) ? minEraRawY : 0;
-    activeEraBaseX = activeGutterOffset + TECH_TREE_ERA_PANE_LEFT_PADDING;
-    activeEraBaseY = 48;
+    activeEraMinRawX = 0;
+    activeEraMinRawY = 0;
+    activeEraBaseX = activeGutterOffset;
+    activeEraBaseY = 0;
     const availableStageW = Math.max(960, (stageWrap && stageWrap.clientWidth) ? stageWrap.clientWidth - 6 : 1280);
-    const contentW = Math.round(availableStageW);
-    const availableEraWidth = Math.max(240, contentW - activeEraBaseX - TECH_TREE_STAGE_SIDE_PADDING - NODE_W);
-    const eraRawWidth = Math.max(1, maxEraRawX - activeEraMinRawX);
-    displayHorizontalFit = eraRawWidth > availableEraWidth ? (availableEraWidth / eraRawWidth) : 1;
+    const nativeEraW = Math.max(1024, Math.round(baseW));
+    const nativeEraH = Math.max(768, Math.round(baseH));
+    const contentW = Math.max(Math.round(availableStageW), activeEraBaseX + nativeEraW);
+    displayHorizontalFit = 1;
     eraNodes.forEach((node) => {
-      node.vx = activeEraBaseX + (((Number(node._rawDisplayX) || 0) - activeEraMinRawX) * displayHorizontalFit);
-      node.vy = activeEraBaseY + ((Number(node._rawDisplayY) || 0) - activeEraMinRawY);
+      node.vx = activeEraBaseX + (Number(node._rawDisplayX) || 0);
+      node.vy = activeEraBaseY + (Number(node._rawDisplayY) || 0);
     });
     const minEraDisplayY = eraNodes.reduce((m, n) => Math.min(m, Number(n.vy) || 0), Number.POSITIVE_INFINITY);
     const maxEraDisplayY = eraNodes.reduce((m, n) => Math.max(m, Number(n.vy) || 0), 0);
@@ -24237,8 +24418,7 @@ function createTechTreePanel({
       }
     });
     const maxNodeY = displayNodes.reduce((m, n) => Math.max(m, (Number(n.vy) || 0) + 80), 0);
-    baseH = Math.max(baseH, Math.round(820 * TECH_TREE_LAYOUT_SCALE_Y));
-    const contentH = Math.max(baseH, maxNodeY + 24);
+    const contentH = Math.max(nativeEraH, maxNodeY + 24);
     activeDisplayShiftX = 0;
     activeDisplayShiftY = 0;
     _dbgLog('INF', 'TechTree', `render:display displayNodes=${displayNodes.length} gutterOffset=${activeGutterOffset} eraRawMin=${Math.round(activeEraMinRawX)},${Math.round(activeEraMinRawY)} eraRawMax=${Math.round(maxEraRawX)},${Math.round(maxEraRawY)}`);
@@ -24251,6 +24431,10 @@ function createTechTreePanel({
     }
     stage.style.width = `${contentW}px`;
     stage.style.height = `${contentH}px`;
+    bg.style.left = `${activeEraBaseX}px`;
+    bg.style.top = `${activeEraBaseY}px`;
+    bg.style.width = `${nativeEraW}px`;
+    bg.style.height = `${nativeEraH}px`;
     lines.setAttribute('width', String(contentW));
     lines.setAttribute('height', String(contentH));
     lines.setAttribute('viewBox', `0 0 ${contentW} ${contentH}`);
@@ -24281,8 +24465,8 @@ function createTechTreePanel({
       eraPanel.className = 'tech-tree-lane tech-tree-lane-era';
       eraPanel.style.left = `${Math.max(0, dividerX)}px`;
       eraPanel.style.top = '0px';
-      eraPanel.style.width = `${Math.max(120, contentW - dividerX)}px`;
-      eraPanel.style.height = `${contentH}px`;
+      eraPanel.style.width = `${nativeEraW}px`;
+      eraPanel.style.height = `${nativeEraH}px`;
       const eraTitle = document.createElement('div');
       eraTitle.className = 'tech-tree-lane-title';
       eraTitle.textContent = String((eraOptions.find((opt) => String(opt.value) === String(eraValue)) || {}).label || `Era ${eraValue + 1}`);
@@ -24372,17 +24556,69 @@ function createTechTreePanel({
       const elNode = document.createElement('button');
       elNode.type = 'button';
       elNode.className = 'tech-tree-node';
+      const techBoxUnlockItems = node.autoLayout ? [] : getTechTreeBoxUnlockItems(node, techBoxUnitCivFilter);
+      const techBoxFrame = node.autoLayout ? null : getTechTreeBoxFrame(techBoxPreview, eraValue, node, techBoxUnitCivFilter);
       if (node.autoLayout) elNode.classList.add('tech-tree-node-auto-layout');
+      if (techBoxFrame) {
+        elNode.classList.add('tech-tree-node-game-box');
+        elNode.style.width = `${Math.max(1, Number(techBoxFrame.w) || NODE_W)}px`;
+        elNode.style.height = `${Math.max(1, Number(techBoxFrame.h) || NODE_H)}px`;
+        const boxCanvas = document.createElement('canvas');
+        boxCanvas.className = 'tech-tree-node-box-art';
+        drawTechTreeBoxFrame(techBoxPreview, techBoxFrame, boxCanvas);
+        elNode.appendChild(boxCanvas);
+      }
       if (node.id === selectedId) elNode.classList.add('selected');
       elNode.style.left = `${node.vx}px`;
       elNode.style.top = `${node.vy}px`;
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb';
+      if (techBoxFrame) {
+        thumb.dataset.thumbSize = '32';
+        thumb.dataset.transparentThumb = '1';
+      }
       const label = document.createElement('span');
       label.className = 'tech-tree-node-label';
       label.textContent = String(node.entry && node.entry.name || `Tech ${node.id}`);
-      elNode.appendChild(thumb);
-      elNode.appendChild(label);
+      if (techBoxFrame) {
+        elNode.appendChild(label);
+        const iconWrap = document.createElement('span');
+        iconWrap.className = 'tech-tree-node-icons';
+        iconWrap.classList.add(`tech-tree-node-icons-size-${Math.max(0, Math.min(3, Number(techBoxFrame.sizeIndex) || 0))}`);
+        const topRow = document.createElement('span');
+        topRow.className = 'tech-tree-node-icon-row tech-tree-node-icon-row-top';
+        const bottomRow = document.createElement('span');
+        bottomRow.className = 'tech-tree-node-icon-row tech-tree-node-icon-row-bottom';
+        const iconHolders = [thumb];
+        const unlockHolders = [];
+        techBoxUnlockItems.slice(0, 8).forEach((item) => {
+          if (!item || !item.tabKey || !item.entry) return;
+          const unlockThumb = document.createElement('span');
+          unlockThumb.className = 'entry-thumb tech-tree-node-unlock-thumb';
+          unlockThumb.dataset.thumbSize = '32';
+          unlockThumb.dataset.transparentThumb = '1';
+          iconHolders.push(unlockThumb);
+          unlockHolders.push({ holder: unlockThumb, item });
+        });
+        const topRowCount = getTechTreeBoxTopRowIconCapacity(techBoxFrame, iconHolders.length);
+        iconWrap.style.setProperty('--tech-tree-icon-cols', String(topRowCount));
+        const bottomRowCount = Math.max(0, iconHolders.length - topRowCount);
+        if (bottomRowCount > 0) {
+          appendTechTreeIconRowPlaceholders(bottomRow, Math.floor(Math.max(0, topRowCount - bottomRowCount) / 2));
+        }
+        iconHolders.forEach((holder, idx) => {
+          (idx < topRowCount ? topRow : bottomRow).appendChild(holder);
+        });
+        iconWrap.appendChild(topRow);
+        if (bottomRow.childNodes.length > 0) iconWrap.appendChild(bottomRow);
+        elNode.appendChild(iconWrap);
+        unlockHolders.forEach(({ holder, item }) => {
+          loadReferenceListThumbnail(item.tabKey, item.entry, holder);
+        });
+      } else {
+        elNode.appendChild(thumb);
+        elNode.appendChild(label);
+      }
       loadReferenceListThumbnail('technologies', node.entry, thumb);
       nodeElById.set(node.id, elNode);
 
@@ -24399,8 +24635,8 @@ function createTechTreePanel({
         elNode.style.left = `${nextX}px`;
         elNode.style.top = `${nextY}px`;
         setCoordsText(
-          Math.max(0, ((((nextX - activeEraBaseX) / displayHorizontalFit) + activeEraMinRawX) / TECH_TREE_LAYOUT_SCALE_X)),
-          Math.max(0, (((nextY - activeEraBaseY) + activeEraMinRawY) / TECH_TREE_LAYOUT_SCALE_Y))
+          Math.max(0, nextX - activeEraBaseX),
+          Math.max(0, nextY - activeEraBaseY)
         );
         const linked = edgeByNodeId.get(node.id) || [];
         linked.forEach((edgeObj) => placeEdge(edgeObj));
@@ -24454,12 +24690,10 @@ function createTechTreePanel({
           }, 120);
         }
         if (!referenceEditable || !moved) return;
-        const finalDisplayX = Number.isFinite(node.vx) ? node.vx : (node.x * TECH_TREE_LAYOUT_SCALE_X);
-        const finalDisplayY = Number.isFinite(node.vy) ? node.vy : (node.y * TECH_TREE_LAYOUT_SCALE_Y);
-        const finalRawDisplayX = ((finalDisplayX - activeEraBaseX) / displayHorizontalFit) + activeEraMinRawX;
-        const finalRawDisplayY = (finalDisplayY - activeEraBaseY) + activeEraMinRawY;
-        const finalX = Math.max(0, Math.round(finalRawDisplayX / TECH_TREE_LAYOUT_SCALE_X));
-        const finalY = Math.max(0, Math.round(finalRawDisplayY / TECH_TREE_LAYOUT_SCALE_Y));
+        const finalDisplayX = Number.isFinite(node.vx) ? node.vx : (activeEraBaseX + node.x);
+        const finalDisplayY = Number.isFinite(node.vy) ? node.vy : (activeEraBaseY + node.y);
+        const finalX = Math.max(0, Math.round(finalDisplayX - activeEraBaseX));
+        const finalY = Math.max(0, Math.round(finalDisplayY - activeEraBaseY));
         let snappedX = finalX;
         let snappedY = finalY;
         const snapEnabled = !!snapCheck.checked;
@@ -24470,8 +24704,8 @@ function createTechTreePanel({
         }
         node.x = snappedX;
         node.y = snappedY;
-        node.vx = activeEraBaseX + (((snappedX * TECH_TREE_LAYOUT_SCALE_X) - activeEraMinRawX) * displayHorizontalFit);
-        node.vy = activeEraBaseY + ((snappedY * TECH_TREE_LAYOUT_SCALE_Y) - activeEraMinRawY);
+        node.vx = activeEraBaseX + snappedX;
+        node.vy = activeEraBaseY + snappedY;
         setTechFieldInt(node.entry, 'x', 'X Position', snappedX);
         setTechFieldInt(node.entry, 'y', 'Y Position', snappedY);
         elNode.style.left = `${node.vx}px`;

@@ -1,3 +1,6 @@
+* RELEASE 27.15
+- Added scenario-aware Science Advisor and `Art/Advisors/techboxes.pcx` rendering in the Tech Tree modal, including native background sizing, in-game techbox art, and unit/improvement/worker-job unlock thumbnails for box size selection.
+
 * RELEASE 27.14
 - Renamed the focused BIQ map test file and npm test tier from map-critical to map for clearer maintenance naming.
 - Changed the Map editor renderer to use bounded canvas chunks for oversized maps while keeping native scrolling, independent minimap rendering, and viewport-sized hover overlays, preventing large 362x306 maps from allocating multi-gigabyte full-world canvases.

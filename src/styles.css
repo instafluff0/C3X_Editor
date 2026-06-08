@@ -7110,7 +7110,10 @@ details > summary:focus-visible {
 
 .tech-tree-bg {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 0;
 }
@@ -7119,7 +7122,7 @@ details > summary:focus-visible {
   content: "";
   position: absolute;
   inset: 0;
-  background: rgba(248, 251, 255, 0.7);
+  display: none;
 }
 
 .tech-tree-bg-canvas {
@@ -7127,8 +7130,8 @@ details > summary:focus-visible {
   width: 100%;
   height: 100%;
   object-fit: fill;
-  opacity: 0.28;
-  filter: saturate(0.68) contrast(0.8) brightness(1.12);
+  opacity: 1;
+  filter: none;
 }
 
 .tech-tree-lanes {
@@ -7199,11 +7202,11 @@ details > summary:focus-visible {
 .tech-tree-node {
   position: absolute;
   display: inline-grid;
-  grid-template-columns: 30px 1fr;
+  grid-template-columns: 32px 1fr;
   align-items: center;
   gap: 8px;
   width: 136px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 5px 7px;
   border-radius: 10px;
   border: 1px solid rgba(43, 56, 89, 0.22);
@@ -7222,9 +7225,106 @@ details > summary:focus-visible {
   transform: none !important;
 }
 
+.tech-tree-node-game-box {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.tech-tree-node-box-art {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.tech-tree-node-game-box .tech-tree-node-icons {
+  position: absolute;
+  left: 7px;
+  right: 2px;
+  top: 26px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  row-gap: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.tech-tree-node-game-box .tech-tree-node-icons-size-3 {
+  left: 5px;
+  right: 1px;
+}
+
+.tech-tree-node-game-box .tech-tree-node-icon-row {
+  display: grid;
+  grid-template-columns: repeat(var(--tech-tree-icon-cols, 4), 32px);
+  column-gap: 1px;
+  width: max-content;
+  height: 32px;
+}
+
+.tech-tree-node-game-box .tech-tree-node-icon-row-top {
+  justify-self: start;
+}
+
+.tech-tree-node-game-box .tech-tree-node-icon-row-bottom {
+  justify-self: start;
+}
+
+.tech-tree-node-game-box .tech-tree-node-icon-spacer {
+  width: 32px;
+  height: 32px;
+  pointer-events: none;
+}
+
+.tech-tree-node-game-box .entry-thumb {
+  position: static;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.tech-tree-node-game-box .entry-thumb-canvas {
+  width: 32px;
+  height: 32px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.tech-tree-node-game-box .tech-tree-node-unlock-thumb {
+  position: static;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+}
+
+.tech-tree-node-game-box .tech-tree-node-label {
+  position: absolute;
+  left: 9px;
+  right: 8px;
+  top: 10px;
+  z-index: 1;
+  color: #22273c;
+  font-size: 0.65rem;
+  font-weight: 500;
+  line-height: 1;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
 .tech-tree-node .entry-thumb {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
 }
 
 .tech-tree-node-label {
@@ -7288,6 +7388,11 @@ details > summary:focus-visible {
   border-color: rgba(210, 98, 30, 0.72);
   background: rgba(255, 239, 224, 0.95);
   box-shadow: 0 8px 18px rgba(130, 66, 26, 0.24);
+}
+
+.tech-tree-node-game-box.selected {
+  background: transparent;
+  box-shadow: 0 0 0 2px rgba(232, 109, 24, 0.9), 0 8px 18px rgba(130, 66, 26, 0.2);
 }
 
 .tech-tree-node-auto-layout {
