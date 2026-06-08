@@ -1,5 +1,8 @@
 * RELEASE 27.15
-- Added scenario-aware Science Advisor and `Art/Advisors/techboxes.pcx` rendering in the Tech Tree modal, including native background sizing, in-game techbox art, and unit/improvement/worker-job unlock thumbnails for box size selection.
+- Added scenario-aware Science Advisor and `Art/Advisors/techboxes.pcx` rendering in the Tech Tree modal, including native background sizing, in-game techbox art, unit/improvement/worker-job unlock thumbnails for box size selection, and opt-in scenario-local Science Advisor arrow regeneration after moving techs.
+- Added read-only Worker Jobs command-button previews from Conquests `NormButtons.pcx` in Terrain -> Worker Jobs and Tech Tree unlock boxes, and documented that BIQ `TFRM` records do not store those atlas coordinates.
+- Added obsoleted improvements to Tech Tree unlock boxes with Civ-style red X overlays, so they contribute to tech-box icon sizing and match the in-game Science Advisor.
+- Added the in-game italic title and blue no-go marker for Tech Tree technologies flagged as not required for era advancement, keeping the marker as UI-only overlay art.
 
 * RELEASE 27.14
 - Renamed the focused BIQ map test file and npm test tier from map-critical to map for clearer maintenance naming.

@@ -121,6 +121,7 @@ const state = {
   techTreeSnapByTab: {},
   techTreeCivFilterByTab: {},
   techTreeShowNonEraByTab: {},
+  techTreeArrowArtDirty: false,
   biqMapZoom: 6,
   biqMapLayer: 'terrain',
   biqMapShowGrid: false,
@@ -3151,6 +3152,7 @@ function captureCleanSnapshot() {
   clearCleanReferenceDirtySignatureCache();
   state.undoHistory = [];
   state.isDirty = false;
+  state.techTreeArrowArtDirty = false;
   clearDirtyTabCounts();
   refreshDirtyUi();
   refreshTabDirtyBadges();
@@ -6156,6 +6158,7 @@ function clearBundleView() {
   clearCleanReferenceDirtySignatureCache();
   state.undoHistory = [];
   state.isDirty = false;
+  state.techTreeArrowArtDirty = false;
   clearDirtyTabCounts();
   refreshDirtyUi();
   if (el.tabs) el.tabs.innerHTML = '';
@@ -10713,6 +10716,84 @@ function drawPreviewFrameToCanvas(preview, canvas, options = {}) {
   const y = Math.floor((canvas.height - h) / 2);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(scratch.canvas, x, y, w, h);
+}
+
+function isTechTreeBackgroundArrowRgb(r, g, b) {
+  return r >= 58 && r <= 210
+    && g >= 12 && g <= 130
+    && b <= 95
+    && r > g + 22
+    && g >= b - 12;
+}
+
+function eraseTechTreeBackgroundArrowsFromCanvas(canvas) {
+  if (!canvas || !canvas.width || !canvas.height) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  let image;
+  try {
+    image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  } catch (_err) {
+    return;
+  }
+  const { data, width, height } = image;
+  const x1 = Math.max(0, Math.floor(width * 0.04));
+  const y1 = Math.max(0, Math.floor(height * 0.11));
+  const x2 = Math.min(width - 1, Math.ceil(width * 0.94));
+  const y2 = Math.min(height - 1, Math.ceil(height * 0.9));
+  const mask = new Uint8Array(width * height);
+  for (let y = y1; y <= y2; y += 1) {
+    for (let x = x1; x <= x2; x += 1) {
+      const pixel = y * width + x;
+      const off = pixel * 4;
+      if (isTechTreeBackgroundArrowRgb(data[off], data[off + 1], data[off + 2])) {
+        mask[pixel] = 1;
+      }
+    }
+  }
+  const dilated = new Uint8Array(mask);
+  for (let y = y1; y <= y2; y += 1) {
+    for (let x = x1; x <= x2; x += 1) {
+      const pixel = y * width + x;
+      if (!mask[pixel]) continue;
+      for (let oy = -2; oy <= 2; oy += 1) {
+        for (let ox = -2; ox <= 2; ox += 1) {
+          const nx = x + ox;
+          const ny = y + oy;
+          if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
+          dilated[ny * width + nx] = 1;
+        }
+      }
+    }
+  }
+  const copyFromNeighbor = (x, y, targetOff) => {
+    const candidates = [
+      [0, -9], [0, 9], [-9, 0], [9, 0],
+      [0, -15], [0, 15], [-15, 0], [15, 0],
+      [-10, -10], [10, -10], [-10, 10], [10, 10]
+    ];
+    for (const [ox, oy] of candidates) {
+      const nx = x + ox;
+      const ny = y + oy;
+      if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
+      const pixel = ny * width + nx;
+      if (dilated[pixel]) continue;
+      const srcOff = pixel * 4;
+      data[targetOff] = data[srcOff];
+      data[targetOff + 1] = data[srcOff + 1];
+      data[targetOff + 2] = data[srcOff + 2];
+      data[targetOff + 3] = data[srcOff + 3];
+      return;
+    }
+  };
+  for (let y = y1; y <= y2; y += 1) {
+    for (let x = x1; x <= x2; x += 1) {
+      const pixel = y * width + x;
+      if (!dilated[pixel]) continue;
+      copyFromNeighbor(x, y, pixel * 4);
+    }
+  }
+  ctx.putImageData(image, 0, 0);
 }
 
 function getReferenceListThumbnailCanvasSize(holder) {
@@ -23768,7 +23849,13 @@ function getTechTreeData(entries) {
   return { nodes, byId, dependents };
 }
 
-const TECH_TREE_TECHBOX_UNLOCK_GROUP_KEYS = new Set(['units', 'improvements', 'workerJobs']);
+function isTechNotRequiredForEraAdvancement(entry) {
+  const field = getTechField(entry, 'notrequiredforadvancement');
+  const raw = String(field && field.value != null ? field.value : '').trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
+}
+
+const TECH_TREE_TECHBOX_UNLOCK_GROUP_KEYS = new Set(['units', 'improvements', 'workerJobs', 'obsoleteImprovements']);
 
 function getTechTreeBoxIconCount(node, unitCivFilter = null) {
   if (!node) return 1;
@@ -23812,13 +23899,17 @@ function getTechTreeBoxUnlockItems(node, unitCivFilter = null) {
       if (isTechnologyUnlockBiqStructureGroup(spec)) {
         const thumbEntry = getTechnologyUnlockBiqStructureThumbnailEntry(spec, item && item.entry);
         if (thumbEntry) {
-          items.push({ tabKey: 'workerActions', entry: thumbEntry });
+          items.push({ tabKey: 'workerActions', entry: thumbEntry, commandButtonRecord: item.entry || null });
         }
         return;
       }
       if (item && item.entry && spec.tabKey) {
         if (String(spec.key || '') === 'units' && !shouldShowUnitInTechTreeBox(item.entry, unitCivFilter)) return;
-        items.push({ tabKey: spec.tabKey, entry: item.entry });
+        items.push({
+          tabKey: spec.tabKey,
+          entry: item.entry,
+          obsolete: String(spec.key || '') === 'obsoleteImprovements'
+        });
       }
     });
   });
@@ -24105,6 +24196,31 @@ function createTechTreePanel({
   snapWrap.appendChild(snapCheck);
   snapWrap.appendChild(snapText);
   toolbarRow.appendChild(snapWrap);
+
+  const autoArrowWrap = document.createElement('label');
+  autoArrowWrap.className = 'tech-tree-snap-toggle';
+  const autoArrowCheck = document.createElement('input');
+  autoArrowCheck.type = 'checkbox';
+  autoArrowCheck.checked = state.settings && state.settings.autoUpdateScienceAdvisorArrows === true;
+  autoArrowCheck.disabled = !(state.settings && state.settings.mode === 'scenario');
+  const autoArrowText = document.createElement('span');
+  autoArrowText.textContent = 'Auto-update background arrows on move';
+  autoArrowWrap.title = autoArrowCheck.disabled
+    ? 'Available in Scenario mode only.'
+    : 'Writes scenario-local Tech Tree background PCX arrows during Save.';
+  autoArrowWrap.appendChild(autoArrowCheck);
+  autoArrowWrap.appendChild(autoArrowText);
+  autoArrowCheck.addEventListener('change', () => {
+    state.settings.autoUpdateScienceAdvisorArrows = autoArrowCheck.checked === true;
+    if (window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
+      window.c3xManager.setSettings(state.settings).catch(() => {});
+    }
+    void renderForEra();
+    setStatus(autoArrowCheck.checked
+      ? 'Science Advisor arrows will be regenerated for this scenario on save.'
+      : 'Science Advisor background arrow generation disabled.');
+  });
+  toolbarRow.appendChild(autoArrowWrap);
   controls.appendChild(toolbarRow);
 
   const metaRow = document.createElement('div');
@@ -24117,10 +24233,6 @@ function createTechTreePanel({
     ? 'Click to select. Drag the selected tech to update BIQ X/Y.'
     : 'Read-only preview of prerequisites and unlock paths.';
   hintStack.appendChild(dragHint);
-  const alignmentHint = document.createElement('span');
-  alignmentHint.className = 'hint hint-compact';
-  alignmentHint.textContent = 'Note: this layout approximates Civ III and may not match exact in-game positions at every resolution.';
-  hintStack.appendChild(alignmentHint);
   metaRow.appendChild(hintStack);
   const coordsChip = document.createElement('span');
   coordsChip.className = 'tech-tree-live-coords';
@@ -24211,18 +24323,21 @@ function createTechTreePanel({
     nodesLayer.innerHTML = '';
     laneLayer.innerHTML = '';
     while (lines.firstChild) lines.removeChild(lines.firstChild);
+    const autoArrowPreviewActive = autoArrowCheck.checked === true && state.techTreeArrowArtDirty === true;
+    lines.classList.toggle('tech-tree-lines-auto-preview', autoArrowPreviewActive);
+    lines.classList.toggle('tech-tree-lines-hidden', autoArrowCheck.checked === true && !autoArrowPreviewActive);
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
     marker.setAttribute('id', 'tech-tree-arrowhead');
-    marker.setAttribute('markerWidth', '8');
-    marker.setAttribute('markerHeight', '8');
-    marker.setAttribute('refX', '6');
-    marker.setAttribute('refY', '3');
+    marker.setAttribute('markerWidth', autoArrowPreviewActive ? '7' : '8');
+    marker.setAttribute('markerHeight', autoArrowPreviewActive ? '6' : '8');
+    marker.setAttribute('refX', autoArrowPreviewActive ? '6' : '6');
+    marker.setAttribute('refY', autoArrowPreviewActive ? '3' : '3');
     marker.setAttribute('orient', 'auto');
-    marker.setAttribute('markerUnits', 'strokeWidth');
+    marker.setAttribute('markerUnits', autoArrowPreviewActive ? 'userSpaceOnUse' : 'strokeWidth');
     const head = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    head.setAttribute('d', 'M 0 0 L 6 3 L 0 6 z');
-    head.setAttribute('fill', '#cf4e20');
+    head.setAttribute('d', autoArrowPreviewActive ? 'M 0 0 L 6 3 L 0 6 z' : 'M 0 0 L 6 3 L 0 6 z');
+    head.setAttribute('fill', autoArrowPreviewActive ? '#8f3a18' : '#cf4e20');
     marker.appendChild(head);
     defs.appendChild(marker);
     lines.appendChild(defs);
@@ -24290,6 +24405,9 @@ function createTechTreePanel({
       c.height = Number(bgPreview.height) || baseH;
       c.className = 'tech-tree-bg-canvas';
       drawPreviewFrameToCanvas(bgPreview, c);
+      if (autoArrowPreviewActive) {
+        eraseTechTreeBackgroundArrowsFromCanvas(c);
+      }
       bg.appendChild(c);
     } else {
       bg.innerHTML = '';
@@ -24524,22 +24642,28 @@ function createTechTreePanel({
     const placeEdge = (edgeObj) => {
       const src = edgeObj.source;
       const dst = edgeObj.target;
-      const srcCenter = getNodeCenter(src);
-      const dstCenter = getNodeCenter(dst);
-      const srcW = getNodeSize(src.id).width;
-      const dstW = getNodeSize(dst.id).width;
-      const dir = dstCenter.x >= srcCenter.x ? 1 : -1;
-      const sx = srcCenter.x + (dir * (srcW / 2));
-      const sy = srcCenter.y;
-      const tx = dstCenter.x - (dir * (dstW / 2));
-      const ty = dstCenter.y;
-      const dx = tx - sx;
-      const elbow = Math.max(18, Math.min(96, Math.abs(dx) * 0.42));
-      const mx1 = sx + (elbow * dir);
-      const mx2 = tx - (elbow * dir);
-      const d = Math.abs(dx) < 28
-        ? `M ${sx} ${sy} L ${(sx + tx) / 2} ${sy} L ${(sx + tx) / 2} ${ty} L ${tx} ${ty}`
-        : `M ${sx} ${sy} L ${mx1} ${sy} L ${mx2} ${ty} L ${tx} ${ty}`;
+      const srcSize = getNodeSize(src.id);
+      const dstSize = getNodeSize(dst.id);
+      const route = techBoxLayout && typeof techBoxLayout.buildTechTreeArrowRoute === 'function'
+        ? techBoxLayout.buildTechTreeArrowRoute(
+          {
+            x: Number.isFinite(src.vx) ? src.vx : src.x,
+            y: Number.isFinite(src.vy) ? src.vy : src.y,
+            w: srcSize.width,
+            h: srcSize.height
+          },
+          {
+            x: Number.isFinite(dst.vx) ? dst.vx : dst.x,
+            y: Number.isFinite(dst.vy) ? dst.vy : dst.y,
+            w: dstSize.width,
+            h: dstSize.height
+          },
+          { pad: 0, maxElbow: 140 }
+        )
+        : null;
+      const d = route && techBoxLayout && typeof techBoxLayout.formatTechTreeArrowSvgPath === 'function'
+        ? techBoxLayout.formatTechTreeArrowSvgPath(route, { radius: autoArrowPreviewActive ? 13 : 0 })
+        : '';
       edgeObj.path.setAttribute('d', d);
     };
     const redrawLines = () => {
@@ -24559,6 +24683,14 @@ function createTechTreePanel({
       const techBoxUnlockItems = node.autoLayout ? [] : getTechTreeBoxUnlockItems(node, techBoxUnitCivFilter);
       const techBoxFrame = node.autoLayout ? null : getTechTreeBoxFrame(techBoxPreview, eraValue, node, techBoxUnitCivFilter);
       if (node.autoLayout) elNode.classList.add('tech-tree-node-auto-layout');
+      const notRequiredForEraAdvancement = isTechNotRequiredForEraAdvancement(node.entry);
+      if (notRequiredForEraAdvancement) {
+        elNode.classList.add('tech-tree-node-not-required');
+        const badge = document.createElement('span');
+        badge.className = 'tech-tree-node-era-optional-badge';
+        badge.setAttribute('aria-hidden', 'true');
+        elNode.appendChild(badge);
+      }
       if (techBoxFrame) {
         elNode.classList.add('tech-tree-node-game-box');
         elNode.style.width = `${Math.max(1, Number(techBoxFrame.w) || NODE_W)}px`;
@@ -24595,6 +24727,7 @@ function createTechTreePanel({
           if (!item || !item.tabKey || !item.entry) return;
           const unlockThumb = document.createElement('span');
           unlockThumb.className = 'entry-thumb tech-tree-node-unlock-thumb';
+          if (item.obsolete) unlockThumb.classList.add('tech-tree-node-obsolete-thumb');
           unlockThumb.dataset.thumbSize = '32';
           unlockThumb.dataset.transparentThumb = '1';
           iconHolders.push(unlockThumb);
@@ -24613,7 +24746,15 @@ function createTechTreePanel({
         if (bottomRow.childNodes.length > 0) iconWrap.appendChild(bottomRow);
         elNode.appendChild(iconWrap);
         unlockHolders.forEach(({ holder, item }) => {
-          loadReferenceListThumbnail(item.tabKey, item.entry, holder);
+          if (item && item.commandButtonRecord) {
+            loadTfrmCommandButtonThumbnail(item.commandButtonRecord, holder).then((ok) => {
+              if (!ok && holder.isConnected) loadReferenceListThumbnail(item.tabKey, item.entry, holder);
+            }).catch(() => {
+              if (holder.isConnected) loadReferenceListThumbnail(item.tabKey, item.entry, holder);
+            });
+          } else {
+            loadReferenceListThumbnail(item.tabKey, item.entry, holder);
+          }
         });
       } else {
         elNode.appendChild(thumb);
@@ -24714,6 +24855,10 @@ function createTechTreePanel({
         const linked = edgeByNodeId.get(node.id) || [];
         linked.forEach((edgeObj) => placeEdge(edgeObj));
         setDirty(true);
+        if (autoArrowCheck.checked === true) {
+          state.techTreeArrowArtDirty = true;
+          void renderForEra();
+        }
       };
       elNode.addEventListener('pointerup', finishDrag);
       elNode.addEventListener('pointercancel', finishDrag);
@@ -34836,6 +34981,143 @@ function getTerrainCivilopediaEntryForRecord(tab, sectionCode, record) {
   return entries.find((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === targetKey) || null;
 }
 
+const TFRM_COMMAND_BUTTON_ATLAS_CELLS = new Map([
+  [0, { action: 'Build Mine', row: 3, col: 1, index: 25 }],
+  [1, { action: 'Irrigate', row: 3, col: 2, index: 26 }],
+  [2, { action: 'Build Fortress', row: 3, col: 0, index: 24 }],
+  [3, { action: 'Build Road', row: 2, col: 6, index: 22 }],
+  [4, { action: 'Build Railroad', row: 2, col: 7, index: 23 }],
+  [5, { action: 'Plant Forest', row: 3, col: 5, index: 29 }],
+  [6, { action: 'Clear Forest', row: 3, col: 3, index: 27 }],
+  [7, { action: 'Clear Wetlands', row: 3, col: 4, index: 28 }],
+  [8, { action: 'Clear Damage', row: 3, col: 6, index: 30 }],
+  [9, { action: 'Build Airfield', row: 4, col: 1, index: 33 }],
+  [10, { action: 'Build Radar Tower', row: 4, col: 2, index: 34 }],
+  [11, { action: 'Build Outpost', row: 4, col: 3, index: 35 }],
+  [12, { action: 'Build Barricade', row: 4, col: 4, index: 36 }]
+]);
+
+function getTfrmCommandButtonAtlasCell(record) {
+  const idx = Number.isFinite(record && record.index) ? Number(record.index) : -1;
+  if (!TFRM_COMMAND_BUTTON_ATLAS_CELLS.has(idx)) return null;
+  return TFRM_COMMAND_BUTTON_ATLAS_CELLS.get(idx);
+}
+
+function loadTfrmCommandButtonThumbnail(record, holder) {
+  const cell = getTfrmCommandButtonAtlasCell(record);
+  if (!cell || !holder || !window.c3xManager || typeof window.c3xManager.getPreview !== 'function') {
+    return Promise.resolve(false);
+  }
+  const cacheKey = JSON.stringify({
+    kind: 'worker-command-button-thumbnail',
+    row: cell.row,
+    col: cell.col,
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths().join('|')
+  });
+  return getOrStartPreviewRequest(cacheKey, () => window.c3xManager.getPreview({
+    kind: 'workerCommandButtonSheet',
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    crop: { row: cell.row, col: cell.col, w: 32, h: 32 }
+  })).then((res) => {
+    if (!res || !res.ok || !holder.isConnected) return false;
+    const size = getReferenceListThumbnailCanvasSize(holder);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    canvas.className = 'entry-thumb-canvas';
+    drawPreviewFrameToCanvas(res, canvas, { transparentBackground: true });
+    holder.innerHTML = '';
+    holder.appendChild(canvas);
+    return true;
+  }).catch(() => false);
+}
+
+function renderTfrmCommandButtonRow(record) {
+  const row = document.createElement('div');
+  row.className = 'rule-row worker-command-button-row';
+
+  const label = document.createElement('label');
+  label.className = 'field-meta';
+  label.textContent = 'Command Button';
+  attachRichTooltip(
+    label,
+    'Read-only game UI art from Conquests/Art/interface/NormButtons.pcx. BIQ TFRM records do not store these atlas coordinates.'
+  );
+  row.appendChild(label);
+
+  const controlWrap = document.createElement('div');
+  controlWrap.className = 'rule-control worker-command-button-control';
+  const cell = getTfrmCommandButtonAtlasCell(record);
+  if (!cell) {
+    const empty = document.createElement('div');
+    empty.className = 'field-meta';
+    empty.textContent = 'No command button mapping';
+    controlWrap.appendChild(empty);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  const previewBtn = document.createElement('button');
+  previewBtn.type = 'button';
+  previewBtn.className = 'worker-command-button-preview';
+  previewBtn.title = 'View command button';
+  previewBtn.setAttribute('aria-label', `View ${cell.action} command button`);
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  canvas.className = 'entry-thumb-canvas';
+  previewBtn.appendChild(canvas);
+  controlWrap.appendChild(previewBtn);
+
+  const meta = document.createElement('div');
+  meta.className = 'worker-command-button-meta';
+  const detail = document.createElement('div');
+  detail.className = 'worker-command-button-detail';
+  detail.textContent = `NormButtons.pcx - index ${cell.index} - row ${cell.row} - col ${cell.col}`;
+  meta.appendChild(detail);
+  controlWrap.appendChild(meta);
+
+  let loadedPreview = null;
+  const cacheKey = JSON.stringify({
+    kind: 'worker-command-button',
+    row: cell.row,
+    col: cell.col,
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths().join('|')
+  });
+  getOrStartPreviewRequest(cacheKey, () => window.c3xManager.getPreview({
+    kind: 'workerCommandButtonSheet',
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    crop: { row: cell.row, col: cell.col, w: 32, h: 32 }
+  })).then((res) => {
+    if (!res || !res.ok || !canvas.isConnected) return;
+    loadedPreview = res;
+    canvas.width = res.width || 32;
+    canvas.height = res.height || 32;
+    drawPreviewFrameToCanvas(res, canvas, { transparentBackground: true });
+  }).catch(() => {
+    const missing = document.createElement('div');
+    missing.className = 'field-meta';
+    missing.textContent = 'NormButtons.pcx not found';
+    meta.appendChild(missing);
+  });
+
+  previewBtn.addEventListener('click', () => {
+    if (!loadedPreview) return;
+    openArtFocusWithPreview(loadedPreview, cell.action, loadedPreview.sourcePath || 'NormButtons.pcx');
+  });
+
+  row.appendChild(controlWrap);
+  return row;
+}
+
 function parseCsvNumberLikeList(raw) {
   const text = String(raw == null ? '' : raw).trim();
   if (!text || text === '(none)') return [];
@@ -36650,6 +36932,9 @@ function renderBiqTab(tab) {
           row.appendChild(controlWrap);
           groupCard.appendChild(row);
         });
+        if (selected.code === 'TFRM' && groupName === 'General') {
+          groupCard.appendChild(renderTfrmCommandButtonRow(record));
+        }
         rows.appendChild(groupCard);
       };
       const finalizeBiqRows = () => {
@@ -53410,6 +53695,7 @@ async function loadBundleAndRender(options = {}) {
     state.filesReadEntriesCache = null;
     state.filesReadEntriesCacheDirty = true;
     state.isDirty = false;
+    state.techTreeArrowArtDirty = false;
     state.undoHistory = [];
     clearDirtyTabCounts();
     refreshDirtyUi();
@@ -53835,6 +54121,7 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
     autoAddImportedResourceIcons: state.settings.autoAddImportedResourceIcons !== false,
     autoAddImportedUnitIcons: state.settings.autoAddImportedUnitIcons !== false,
     autoAddImportedBuildingCityIcons: state.settings.autoAddImportedBuildingCityIcons !== false,
+    autoUpdateScienceAdvisorArrows: state.settings.autoUpdateScienceAdvisorArrows === true && state.techTreeArrowArtDirty === true,
     dirtyTabs,
     tabs: tabsToSave
   };
@@ -55669,6 +55956,7 @@ async function undoOneStep() {
       loadingText: 'Restoring previous change...',
       statusMessage: 'Undid the last change.'
     });
+    if (!state.isDirty) state.techTreeArrowArtDirty = false;
   } catch (err) {
     setStatus('Undo failed.', true);
   }
@@ -55743,6 +56031,7 @@ async function undoAllChanges() {
       loadingText: 'Restoring clean state...',
       statusMessage: 'Undid all unsaved changes.'
     });
+    state.techTreeArrowArtDirty = false;
   } catch (_err) {
     setStatus('Undo all failed.', true);
   }
@@ -55845,6 +56134,9 @@ async function init() {
   }
   if (typeof state.settings.autoAddImportedBuildingCityIcons !== 'boolean') {
     state.settings.autoAddImportedBuildingCityIcons = true;
+  }
+  if (typeof state.settings.autoUpdateScienceAdvisorArrows !== 'boolean') {
+    state.settings.autoUpdateScienceAdvisorArrows = false;
   }
   if (typeof state.settings.writeLogFiles !== 'boolean') {
     state.settings.writeLogFiles = true;

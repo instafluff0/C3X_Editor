@@ -917,6 +917,23 @@ function getPreview(request) {
     return { ok: true, ...decodeByPath(pcxPath, request.crop) };
   }
 
+  if (kind === 'workerCommandButtonSheet') {
+    const pcxPath = resolveConquestsAssetPath(
+      civ3Path,
+      path.join('Art', 'interface', 'NormButtons.pcx'),
+      scenarioPath,
+      scenarioPaths
+    );
+    if (!pcxPath) {
+      log.warn('getPreview', 'workerCommandButtonSheet: NormButtons.pcx not found');
+      return { ok: false, error: 'Worker command button sheet not found' };
+    }
+    return {
+      ok: true,
+      ...decodeByPath(pcxPath, request.crop, { transparentIndexes: [0, 254, 255] })
+    };
+  }
+
   if (kind === 'animationIni') {
     const iniRel = String(request.iniPath || '').replace(/\\/g, path.sep).replace(/\//g, path.sep);
     const iniAbs = path.isAbsolute(iniRel)

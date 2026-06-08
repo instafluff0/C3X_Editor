@@ -109,12 +109,150 @@ function chooseTechBoxSizeIndexForIconCount(iconCount) {
   return 3;
 }
 
+function normalizeArrowRect(rect) {
+  const x = Number(rect && rect.x) || 0;
+  const y = Number(rect && rect.y) || 0;
+  const w = Math.max(1, Number(rect && (rect.w || rect.width)) || 1);
+  const h = Math.max(1, Number(rect && (rect.h || rect.height)) || 1);
+  return { x, y, w, h };
+}
+
+function clamp(value, min, max) {
+  const n = Number(value) || 0;
+  return Math.max(min, Math.min(max, n));
+}
+
+function buildTechTreeArrowRoute(sourceRect, targetRect, options = {}) {
+  const source = normalizeArrowRect(sourceRect);
+  const target = normalizeArrowRect(targetRect);
+  const sourceCenterX = source.x + (source.w / 2);
+  const targetCenterX = target.x + (target.w / 2);
+  const dir = targetCenterX >= sourceCenterX ? 1 : -1;
+  const pad = Math.max(0, Number(options.pad) || 0);
+  const sx = dir > 0 ? source.x + source.w + pad : source.x - pad;
+  const tx = dir > 0 ? target.x - pad : target.x + target.w + pad;
+  const sy = source.y + (source.h / 2);
+  const ty = target.y + (target.h / 2);
+  const dx = tx - sx;
+  const points = [{ x: sx, y: sy }];
+  if (Math.abs(ty - sy) <= 3 || Math.abs(dx) < 18) {
+    if (Math.abs(dx) < 18 && Math.abs(ty - sy) > 3) {
+      const midX = (sx + tx) / 2;
+      points.push({ x: midX, y: sy }, { x: midX, y: ty });
+    }
+    points.push({ x: tx, y: ty });
+    return { dir, points };
+  }
+  const elbow = clamp(Math.abs(dx) * 0.46, 28, Math.max(28, Number(options.maxElbow) || 140));
+  const mx1 = sx + (elbow * dir);
+  const mx2 = tx - (elbow * dir);
+  if ((dir > 0 && mx1 < mx2) || (dir < 0 && mx1 > mx2)) {
+    points.push({ x: mx1, y: sy }, { x: mx2, y: ty }, { x: tx, y: ty });
+  } else {
+    const midX = (sx + tx) / 2;
+    points.push({ x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty });
+  }
+  return { dir, points };
+}
+
+function getDistance(a, b) {
+  const dx = Number(b && b.x) - Number(a && a.x);
+  const dy = Number(b && b.y) - Number(a && a.y);
+  return Math.sqrt((dx * dx) + (dy * dy));
+}
+
+function getPointAlong(from, to, distanceFromTo) {
+  const dist = getDistance(from, to);
+  if (!dist) return { x: Number(to && to.x) || 0, y: Number(to && to.y) || 0 };
+  const ratio = clamp(distanceFromTo / dist, 0, 1);
+  return {
+    x: (Number(to && to.x) || 0) + (((Number(from && from.x) || 0) - (Number(to && to.x) || 0)) * ratio),
+    y: (Number(to && to.y) || 0) + (((Number(from && from.y) || 0) - (Number(to && to.y) || 0)) * ratio)
+  };
+}
+
+function buildSmoothedSegments(route, radius = 13) {
+  const points = route && Array.isArray(route.points) ? route.points : [];
+  if (points.length === 0) return [];
+  if (points.length === 1) return [{ type: 'move', to: points[0] }];
+  if (points.length === 2 || Number(radius) <= 0) {
+    return [
+      { type: 'move', to: points[0] },
+      ...points.slice(1).map((pt) => ({ type: 'line', to: pt }))
+    ];
+  }
+  const segments = [{ type: 'move', to: points[0] }];
+  for (let idx = 1; idx < points.length - 1; idx += 1) {
+    const prev = points[idx - 1];
+    const curr = points[idx];
+    const next = points[idx + 1];
+    const cornerRadius = Math.min(Number(radius) || 0, getDistance(prev, curr) / 2, getDistance(curr, next) / 2);
+    const before = getPointAlong(prev, curr, cornerRadius);
+    const after = getPointAlong(next, curr, cornerRadius);
+    segments.push({ type: 'line', to: before });
+    segments.push({ type: 'quad', control: curr, to: after });
+  }
+  segments.push({ type: 'line', to: points[points.length - 1] });
+  return segments;
+}
+
+function formatNumber(value) {
+  const n = Number(value) || 0;
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatTechTreeArrowSvgPath(route, options = {}) {
+  const segments = buildSmoothedSegments(route, options.radius || 13);
+  if (segments.length === 0) return '';
+  return segments.map((segment) => {
+    if (segment.type === 'move') return `M ${formatNumber(segment.to.x)} ${formatNumber(segment.to.y)}`;
+    if (segment.type === 'quad') return `Q ${formatNumber(segment.control.x)} ${formatNumber(segment.control.y)} ${formatNumber(segment.to.x)} ${formatNumber(segment.to.y)}`;
+    return `L ${formatNumber(segment.to.x)} ${formatNumber(segment.to.y)}`;
+  }).join(' ');
+}
+
+function sampleQuadratic(from, control, to, steps) {
+  const out = [];
+  const count = Math.max(1, Math.round(Number(steps) || 1));
+  for (let idx = 1; idx <= count; idx += 1) {
+    const t = idx / count;
+    const inv = 1 - t;
+    out.push({
+      x: (inv * inv * from.x) + (2 * inv * t * control.x) + (t * t * to.x),
+      y: (inv * inv * from.y) + (2 * inv * t * control.y) + (t * t * to.y)
+    });
+  }
+  return out;
+}
+
+function sampleTechTreeArrowRoute(route, options = {}) {
+  const segments = buildSmoothedSegments(route, options.radius || 13);
+  const samples = [];
+  let current = null;
+  segments.forEach((segment) => {
+    if (segment.type === 'move') {
+      current = segment.to;
+      samples.push(current);
+    } else if (segment.type === 'quad' && current) {
+      sampleQuadratic(current, segment.control, segment.to, options.curveSteps || 8).forEach((pt) => samples.push(pt));
+      current = segment.to;
+    } else if (segment.to) {
+      samples.push(segment.to);
+      current = segment.to;
+    }
+  });
+  return samples;
+}
+
 return {
   TECH_BOX_ROWS_PER_ERA,
   TECH_BOX_COLUMNS_PER_ROW,
   TECH_BOX_DEFAULT_COLUMN_INDEX,
   parseTechBoxSheetLayout,
   getTechBoxFrame,
-  chooseTechBoxSizeIndexForIconCount
+  chooseTechBoxSizeIndexForIconCount,
+  buildTechTreeArrowRoute,
+  formatTechTreeArrowSvgPath,
+  sampleTechTreeArrowRoute
 };
 }));

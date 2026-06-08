@@ -98,6 +98,17 @@ function readStartupAutoAddImportedBuildingCityIcons() {
   }
 }
 
+function readStartupAutoUpdateScienceAdvisorArrows() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return false;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeAutoUpdateScienceAdvisorArrows(raw && raw.autoUpdateScienceAdvisorArrows);
+  } catch (_err) {
+    return false;
+  }
+}
+
 function readStartupTextFileEncoding() {
   try {
     const settingsPath = getSettingsPathUnsafe();
@@ -188,6 +199,10 @@ function normalizeAutoAddImportedBuildingCityIcons(value) {
   return value !== false;
 }
 
+function normalizeAutoUpdateScienceAdvisorArrows(value) {
+  return value === true;
+}
+
 function normalizeTextFileEncoding(value) {
   const raw = String(value || 'auto').trim().toLowerCase();
   const aliases = {
@@ -232,6 +247,7 @@ const startupReloadAfterSave = readStartupReloadAfterSave();
 const startupAutoAddImportedResourceIcons = readStartupAutoAddImportedResourceIcons();
 const startupAutoAddImportedUnitIcons = readStartupAutoAddImportedUnitIcons();
 const startupAutoAddImportedBuildingCityIcons = readStartupAutoAddImportedBuildingCityIcons();
+const startupAutoUpdateScienceAdvisorArrows = readStartupAutoUpdateScienceAdvisorArrows();
 const startupTextFileEncoding = readStartupTextFileEncoding();
 const startupMapAutoDockTileInfoLeft = readStartupMapAutoDockTileInfoLeft();
 const startupWriteLogFiles = readStartupWriteLogFiles();
@@ -242,6 +258,7 @@ let currentReloadAfterSave = startupReloadAfterSave;
 let currentAutoAddImportedResourceIcons = startupAutoAddImportedResourceIcons;
 let currentAutoAddImportedUnitIcons = startupAutoAddImportedUnitIcons;
 let currentAutoAddImportedBuildingCityIcons = startupAutoAddImportedBuildingCityIcons;
+let currentAutoUpdateScienceAdvisorArrows = startupAutoUpdateScienceAdvisorArrows;
 let currentTextFileEncoding = startupTextFileEncoding;
 let currentMapAutoDockTileInfoLeft = startupMapAutoDockTileInfoLeft;
 let currentWriteLogFiles = startupWriteLogFiles;
@@ -967,6 +984,7 @@ ipcMain.handle('manager:get-settings', async () => {
     autoAddImportedResourceIcons: true,
     autoAddImportedUnitIcons: true,
     autoAddImportedBuildingCityIcons: true,
+    autoUpdateScienceAdvisorArrows: false,
     mapAutoDockTileInfoLeft: true,
     writeLogFiles: true,
     logFolder: getDefaultLogFolderUnsafe(),
@@ -982,6 +1000,7 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(merged.autoAddImportedResourceIcons);
   merged.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(merged.autoAddImportedUnitIcons);
   merged.autoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(merged.autoAddImportedBuildingCityIcons);
+  merged.autoUpdateScienceAdvisorArrows = normalizeAutoUpdateScienceAdvisorArrows(merged.autoUpdateScienceAdvisorArrows);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
   merged.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(merged.mapAutoDockTileInfoLeft);
   merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
@@ -994,6 +1013,7 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(inferred.autoAddImportedResourceIcons);
   inferred.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(inferred.autoAddImportedUnitIcons);
   inferred.autoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(inferred.autoAddImportedBuildingCityIcons);
+  inferred.autoUpdateScienceAdvisorArrows = normalizeAutoUpdateScienceAdvisorArrows(inferred.autoUpdateScienceAdvisorArrows);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
   inferred.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(inferred.mapAutoDockTileInfoLeft);
   inferred.writeLogFiles = normalizeWriteLogFiles(inferred.writeLogFiles);
@@ -1004,6 +1024,7 @@ ipcMain.handle('manager:get-settings', async () => {
   currentAutoAddImportedResourceIcons = inferred.autoAddImportedResourceIcons;
   currentAutoAddImportedUnitIcons = inferred.autoAddImportedUnitIcons;
   currentAutoAddImportedBuildingCityIcons = inferred.autoAddImportedBuildingCityIcons;
+  currentAutoUpdateScienceAdvisorArrows = inferred.autoUpdateScienceAdvisorArrows;
   currentTextFileEncoding = inferred.textFileEncoding;
   currentMapAutoDockTileInfoLeft = inferred.mapAutoDockTileInfoLeft;
   currentWriteLogFiles = inferred.writeLogFiles;
@@ -1016,7 +1037,7 @@ ipcMain.handle('manager:get-settings', async () => {
   applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
-  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}`);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
   log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
   if (inferred.mode === 'scenario') {
@@ -1038,6 +1059,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     autoAddImportedResourceIcons: normalizeAutoAddImportedResourceIcons(settings && settings.autoAddImportedResourceIcons),
     autoAddImportedUnitIcons: normalizeAutoAddImportedUnitIcons(settings && settings.autoAddImportedUnitIcons),
     autoAddImportedBuildingCityIcons: normalizeAutoAddImportedBuildingCityIcons(settings && settings.autoAddImportedBuildingCityIcons),
+    autoUpdateScienceAdvisorArrows: normalizeAutoUpdateScienceAdvisorArrows(settings && settings.autoUpdateScienceAdvisorArrows),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
     c3xVersion: normalizeC3xVersion(settings && settings.c3xVersion),
     mapAutoDockTileInfoLeft: normalizeMapAutoDockTileInfoLeft(settings && settings.mapAutoDockTileInfoLeft),
@@ -1047,7 +1069,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   log.setCiv3Root(normalized.civ3Path || '');
   applyLogContextFromPayload(normalized);
   log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
-  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}`);
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
     log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
@@ -1076,6 +1098,10 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentAutoAddImportedBuildingCityIcons !== normalized.autoAddImportedBuildingCityIcons) {
     currentAutoAddImportedBuildingCityIcons = normalized.autoAddImportedBuildingCityIcons;
+    buildAppMenu();
+  }
+  if (currentAutoUpdateScienceAdvisorArrows !== normalized.autoUpdateScienceAdvisorArrows) {
+    currentAutoUpdateScienceAdvisorArrows = normalized.autoUpdateScienceAdvisorArrows;
     buildAppMenu();
   }
   if (currentTextFileEncoding !== normalized.textFileEncoding) {

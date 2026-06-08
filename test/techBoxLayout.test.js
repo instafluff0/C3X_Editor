@@ -8,7 +8,10 @@ const {
   TECH_BOX_DEFAULT_COLUMN_INDEX,
   parseTechBoxSheetLayout,
   getTechBoxFrame,
-  chooseTechBoxSizeIndexForIconCount
+  chooseTechBoxSizeIndexForIconCount,
+  buildTechTreeArrowRoute,
+  formatTechTreeArrowSvgPath,
+  sampleTechTreeArrowRoute
 } = require('../src/techBoxLayout');
 
 function makeSyntheticSheet() {
@@ -101,4 +104,22 @@ test('techbox size tier selection matches Civ3 row use by icon count', () => {
   assert.equal(chooseTechBoxSizeIndexForIconCount(6), 2);
   assert.equal(chooseTechBoxSizeIndexForIconCount(7), 2);
   assert.equal(chooseTechBoxSizeIndexForIconCount(8), 3);
+});
+
+test('science advisor arrow routes anchor to techbox edges and smooth corners', () => {
+  const route = buildTechTreeArrowRoute(
+    { x: 100, y: 40, w: 84, h: 54 },
+    { x: 300, y: 120, w: 140, h: 54 }
+  );
+  assert.equal(route.dir, 1);
+  assert.deepEqual(route.points[0], { x: 184, y: 67 });
+  assert.deepEqual(route.points[route.points.length - 1], { x: 300, y: 147 });
+  assert.match(formatTechTreeArrowSvgPath(route), /^M 184 67 L .* Q /);
+  assert.ok(sampleTechTreeArrowRoute(route).length > route.points.length);
+
+  const horizontal = buildTechTreeArrowRoute(
+    { x: 100, y: 40, w: 84, h: 54 },
+    { x: 240, y: 40, w: 84, h: 54 }
+  );
+  assert.match(formatTechTreeArrowSvgPath(horizontal), /^M 184 67 L 240 67$/);
 });

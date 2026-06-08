@@ -3,8 +3,9 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const iconv = require('iconv-lite');
-const { resolveUnitIniPath, decodePcx, encodePcx, encodeRgbaToPcx, encodeRgbaToLeaderFlc } = require('./artPreview');
+const { resolveConquestsAssetPath, resolveUnitIniPath, decodePcx, encodePcx, encodeRgbaToPcx, encodeRgbaToLeaderFlc } = require('./artPreview');
 const log = require('./log');
+const techBoxLayout = require('./techBoxLayout');
 const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
 const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('./biq/bldgCodec');
@@ -35,6 +36,19 @@ const BUILDING_CITY_ATLAS_GEOMETRY = {
   large: { cellW: 51, cellH: 41, drawW: 50, drawH: 40 },
   small: { cellW: 33, cellH: 33, drawW: 32, drawH: 32 }
 };
+const SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS = [
+  ['Art/Advisors/science_ancient.pcx'],
+  ['Art/Advisors/science_middle.pcx', 'Art/Advisors/science_middle_ages.pcx'],
+  ['Art/Advisors/science_industrial_new.pcx', 'Art/Advisors/science_industrial.pcx'],
+  ['Art/Advisors/science_modern.pcx']
+];
+const SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH = 'Art/Advisors/techboxes.pcx';
+const SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES = [
+  { w: 84, h: 54 },
+  { w: 140, h: 54 },
+  { w: 140, h: 85 },
+  { w: 170, h: 54 }
+];
 
 const FILE_SPECS = {
   base: {
@@ -7695,6 +7709,329 @@ function getBiqFieldByBaseKey(entry, key) {
   ) || null;
 }
 
+function parseScienceAdvisorTechFieldInt(entry, key, fallback = 0) {
+  const field = getBiqFieldByBaseKey(entry, key);
+  const parsed = parseReferenceIdFromFieldValue(field && field.value);
+  if (parsed != null) return parsed;
+  const n = Number.parseInt(String(field && field.value || ''), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function collectScienceAdvisorTechNodes(tabs) {
+  const entries = (tabs && tabs.technologies && Array.isArray(tabs.technologies.entries))
+    ? tabs.technologies.entries
+    : [];
+  const nodes = entries.map((entry, fallbackIdx) => {
+    const id = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    const prereqs = ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4', 'prerequisite']
+      .map((key) => {
+        const field = getBiqFieldByBaseKey(entry, key);
+        return parseReferenceIdFromFieldValue(field && field.value);
+      })
+      .filter((value, idx, arr) => value != null && value >= 0 && arr.indexOf(value) === idx);
+    return {
+      id,
+      entry,
+      era: parseScienceAdvisorTechFieldInt(entry, 'era', -1),
+      x: Math.max(0, parseScienceAdvisorTechFieldInt(entry, 'x', 0)),
+      y: Math.max(0, parseScienceAdvisorTechFieldInt(entry, 'y', 0)),
+      prereqs
+    };
+  });
+  const byId = new Map();
+  nodes.forEach((node) => byId.set(node.id, node));
+  return { nodes, byId };
+}
+
+function countScienceAdvisorUnlockIconsForTech(tabs, techId) {
+  let count = 1;
+  const unitEntries = (((tabs || {}).units || {}).entries) || [];
+  unitEntries.forEach((entry) => {
+    const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'requiredtech') && getBiqFieldByBaseKey(entry, 'requiredtech').value);
+    if (required === techId) count += 1;
+  });
+  const improvementEntries = (((tabs || {}).improvements || {}).entries) || [];
+  improvementEntries.forEach((entry) => {
+    const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'reqadvance') && getBiqFieldByBaseKey(entry, 'reqadvance').value);
+    if (required === techId) count += 1;
+  });
+  const workerEntries = (((tabs || {}).workerActions || {}).entries) || [];
+  workerEntries.forEach((entry) => {
+    const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'requiredadvance') && getBiqFieldByBaseKey(entry, 'requiredadvance').value);
+    if (required === techId) count += 1;
+  });
+  return count;
+}
+
+function loadScienceAdvisorTechBoxLayout({ civ3Path, scenarioPath, scenarioRoots }) {
+  const sourcePath = resolveConquestsAssetPath(civ3Path, SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH, scenarioPath, scenarioRoots);
+  if (!sourcePath) return null;
+  try {
+    const decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [254, 255] });
+    return techBoxLayout.parseTechBoxSheetLayout(decoded);
+  } catch (_err) {
+    return null;
+  }
+}
+
+function getScienceAdvisorTechBoxRect({ layout, eraIndex, sizeIndex }) {
+  const frame = layout
+    ? techBoxLayout.getTechBoxFrame(layout, eraIndex, sizeIndex, techBoxLayout.TECH_BOX_DEFAULT_COLUMN_INDEX)
+    : null;
+  if (frame) return { w: Math.max(1, Number(frame.w) || 1), h: Math.max(1, Number(frame.h) || 1) };
+  return SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES[sizeIndex] || SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES[0];
+}
+
+function annotateScienceAdvisorNodeRects({ nodes, tabs, layout }) {
+  nodes.forEach((node) => {
+    const iconCount = countScienceAdvisorUnlockIconsForTech(tabs, node.id);
+    const sizeIndex = techBoxLayout.chooseTechBoxSizeIndexForIconCount(iconCount);
+    const rect = getScienceAdvisorTechBoxRect({ layout, eraIndex: node.era, sizeIndex });
+    node.w = rect.w;
+    node.h = rect.h;
+    node.sizeIndex = sizeIndex;
+  });
+}
+
+function getNearestPaletteIndex(palette, color, fallback = 0) {
+  if (!Array.isArray(palette) || palette.length === 0) return fallback;
+  let best = fallback;
+  let bestScore = Number.POSITIVE_INFINITY;
+  palette.forEach((entry, idx) => {
+    if (!entry) return;
+    const dr = (Number(entry.r) || 0) - color.r;
+    const dg = (Number(entry.g) || 0) - color.g;
+    const db = (Number(entry.b) || 0) - color.b;
+    const score = (dr * dr) + (dg * dg) + (db * db);
+    if (score < bestScore) {
+      bestScore = score;
+      best = idx;
+    }
+  });
+  return best;
+}
+
+function isScienceAdvisorArrowColor(r, g, b) {
+  return r >= 58 && r <= 210
+    && g >= 12 && g <= 130
+    && b <= 95
+    && r > g + 22
+    && g >= b - 12;
+}
+
+function getScienceAdvisorArrowBounds(nodes, width, height) {
+  const visible = nodes.filter((node) => node && node.era >= 0);
+  if (visible.length === 0) return { x1: 0, y1: 0, x2: width - 1, y2: height - 1 };
+  let x1 = width;
+  let y1 = height;
+  let x2 = 0;
+  let y2 = 0;
+  visible.forEach((node) => {
+    x1 = Math.min(x1, Number(node.x) || 0);
+    y1 = Math.min(y1, Number(node.y) || 0);
+    x2 = Math.max(x2, (Number(node.x) || 0) + (Number(node.w) || 120));
+    y2 = Math.max(y2, (Number(node.y) || 0) + (Number(node.h) || 60));
+  });
+  return {
+    x1: Math.max(0, Math.floor(x1 - 90)),
+    y1: Math.max(0, Math.floor(y1 - 70)),
+    x2: Math.min(width - 1, Math.ceil(x2 + 120)),
+    y2: Math.min(height - 1, Math.ceil(y2 + 90))
+  };
+}
+
+function clearScienceAdvisorArrowPixels({ indices, palette, width, height, bounds }) {
+  const mask = new Uint8Array(width * height);
+  for (let y = bounds.y1; y <= bounds.y2; y += 1) {
+    for (let x = bounds.x1; x <= bounds.x2; x += 1) {
+      const offset = y * width + x;
+      const color = palette[indices[offset]] || {};
+      if (isScienceAdvisorArrowColor(Number(color.r) || 0, Number(color.g) || 0, Number(color.b) || 0)) {
+        mask[offset] = 1;
+      }
+    }
+  }
+  const dilated = new Uint8Array(mask);
+  for (let y = bounds.y1; y <= bounds.y2; y += 1) {
+    for (let x = bounds.x1; x <= bounds.x2; x += 1) {
+      const offset = y * width + x;
+      if (!mask[offset]) continue;
+      for (let oy = -2; oy <= 2; oy += 1) {
+        for (let ox = -2; ox <= 2; ox += 1) {
+          const nx = x + ox;
+          const ny = y + oy;
+          if (nx < bounds.x1 || nx > bounds.x2 || ny < bounds.y1 || ny > bounds.y2) continue;
+          dilated[ny * width + nx] = 1;
+        }
+      }
+    }
+  }
+  const findReplacement = (x, y) => {
+    const candidates = [
+      [0, -7], [0, 7], [-7, 0], [7, 0],
+      [0, -12], [0, 12], [-12, 0], [12, 0],
+      [-8, -8], [8, -8], [-8, 8], [8, 8]
+    ];
+    for (const [ox, oy] of candidates) {
+      const nx = x + ox;
+      const ny = y + oy;
+      if (nx < bounds.x1 || nx > bounds.x2 || ny < bounds.y1 || ny > bounds.y2) continue;
+      const offset = ny * width + nx;
+      if (!dilated[offset]) return indices[offset];
+    }
+    return indices[y * width + x];
+  };
+  for (let y = bounds.y1; y <= bounds.y2; y += 1) {
+    for (let x = bounds.x1; x <= bounds.x2; x += 1) {
+      const offset = y * width + x;
+      if (dilated[offset]) indices[offset] = findReplacement(x, y);
+    }
+  }
+}
+
+function setScienceAdvisorPixel(indices, width, height, x, y, paletteIndex) {
+  const ix = Math.round(x);
+  const iy = Math.round(y);
+  if (ix < 0 || ix >= width || iy < 0 || iy >= height) return;
+  indices[iy * width + ix] = paletteIndex;
+}
+
+function drawScienceAdvisorCircle(indices, width, height, x, y, radius, paletteIndex) {
+  const r = Math.max(0, Math.round(radius));
+  for (let oy = -r; oy <= r; oy += 1) {
+    for (let ox = -r; ox <= r; ox += 1) {
+      if ((ox * ox) + (oy * oy) > r * r) continue;
+      setScienceAdvisorPixel(indices, width, height, x + ox, y + oy, paletteIndex);
+    }
+  }
+}
+
+function drawScienceAdvisorSegment(indices, width, height, from, to, radius, paletteIndex) {
+  let x0 = Math.round(from.x);
+  let y0 = Math.round(from.y);
+  const x1 = Math.round(to.x);
+  const y1 = Math.round(to.y);
+  const dx = Math.abs(x1 - x0);
+  const sx = x0 < x1 ? 1 : -1;
+  const dy = -Math.abs(y1 - y0);
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  while (true) {
+    drawScienceAdvisorCircle(indices, width, height, x0, y0, radius, paletteIndex);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x0 += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y0 += sy;
+    }
+  }
+}
+
+function drawScienceAdvisorArrowHead(indices, width, height, tip, dir, paletteIndex, options = {}) {
+  const length = Math.max(4, Number(options.length) || 7);
+  const half = Math.max(2, Number(options.half) || 3);
+  const tx = Math.round(tip.x);
+  const ty = Math.round(tip.y);
+  for (let ix = 0; ix <= length; ix += 1) {
+    const x = tx - (dir * ix);
+    const maxY = Math.round((ix / length) * half);
+    for (let oy = -maxY; oy <= maxY; oy += 1) {
+      setScienceAdvisorPixel(indices, width, height, x, ty + oy, paletteIndex);
+    }
+  }
+}
+
+function drawScienceAdvisorRoute({ indices, palette, width, height, route }) {
+  const outline = getNearestPaletteIndex(palette, { r: 91, g: 33, b: 13 }, 0);
+  const main = getNearestPaletteIndex(palette, { r: 143, g: 58, b: 22 }, outline);
+  const highlight = getNearestPaletteIndex(palette, { r: 204, g: 118, b: 58 }, main);
+  const points = techBoxLayout && typeof techBoxLayout.sampleTechTreeArrowRoute === 'function'
+    ? techBoxLayout.sampleTechTreeArrowRoute(route, { radius: 13, curveSteps: 10 })
+    : ((route && Array.isArray(route.points)) ? route.points : []);
+  for (let idx = 1; idx < points.length; idx += 1) {
+    drawScienceAdvisorSegment(indices, width, height, points[idx - 1], points[idx], 1, outline);
+  }
+  for (let idx = 1; idx < points.length; idx += 1) {
+    drawScienceAdvisorSegment(indices, width, height, points[idx - 1], points[idx], 0, main);
+  }
+  for (let idx = 1; idx < points.length; idx += 1) {
+    drawScienceAdvisorSegment(indices, width, height, { x: points[idx - 1].x + 1, y: points[idx - 1].y - 1 }, { x: points[idx].x + 1, y: points[idx].y - 1 }, 0, highlight);
+  }
+  if (points.length > 0) {
+    drawScienceAdvisorArrowHead(indices, width, height, points[points.length - 1], route.dir || 1, outline, { length: 6, half: 3 });
+    drawScienceAdvisorArrowHead(indices, width, height, points[points.length - 1], route.dir || 1, main, { length: 5, half: 2 });
+  }
+}
+
+function buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex }) {
+  const routes = [];
+  nodes
+    .filter((node) => node && node.era === eraIndex)
+    .forEach((target) => {
+      target.prereqs.forEach((sourceId) => {
+        const source = byId.get(sourceId);
+        if (!source || source.era !== eraIndex) return;
+        routes.push(techBoxLayout.buildTechTreeArrowRoute(
+          { x: source.x, y: source.y, w: source.w, h: source.h },
+          { x: target.x, y: target.y, w: target.w, h: target.h },
+          { pad: 0, maxElbow: 140 }
+        ));
+      });
+    });
+  return routes;
+}
+
+function prepareScienceAdvisorArrowArtWrites({ tabs, targetContentRoot, scenarioPath, scenarioRoots, civ3Path }) {
+  if (!targetContentRoot) return { ok: true, changed: false, writes: [] };
+  const { nodes, byId } = collectScienceAdvisorTechNodes(tabs || {});
+  if (nodes.length === 0) return { ok: true, changed: false, writes: [] };
+  const layout = loadScienceAdvisorTechBoxLayout({ civ3Path, scenarioPath, scenarioRoots });
+  annotateScienceAdvisorNodeRects({ nodes, tabs: tabs || {}, layout });
+  const writes = [];
+  SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS.forEach((candidates, eraIndex) => {
+    const eraNodes = nodes.filter((node) => node.era === eraIndex);
+    if (eraNodes.length === 0) return;
+    const routes = buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex });
+    if (routes.length === 0) return;
+    const relativePath = candidates.find((assetPath) => resolveConquestsAssetPath(civ3Path, assetPath, scenarioPath, scenarioRoots));
+    if (!relativePath) return;
+    const sourcePath = resolveConquestsAssetPath(civ3Path, relativePath, scenarioPath, scenarioRoots);
+    if (!sourcePath) return;
+    let decoded;
+    try {
+      decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [] });
+    } catch (_err) {
+      return;
+    }
+    if (!decoded || !decoded.indices || !Array.isArray(decoded.palette)) return;
+    const width = Number(decoded.width) || 0;
+    const height = Number(decoded.height) || 0;
+    const indices = Uint8Array.from(decoded.indices);
+    const bounds = getScienceAdvisorArrowBounds(eraNodes, width, height);
+    clearScienceAdvisorArrowPixels({ indices, palette: decoded.palette, width, height, bounds });
+    routes.forEach((route) => drawScienceAdvisorRoute({ indices, palette: decoded.palette, width, height, route }));
+    const targetPath = path.join(targetContentRoot, relativePath);
+    try {
+      const data = encodePcx(indices, decoded.palette, width, height);
+      writes.push({
+        kind: 'scienceAdvisor',
+        path: targetPath,
+        sourcePath,
+        data,
+        eraIndex,
+        applied: routes.length
+      });
+    } catch (_err) {
+      // Skip this era; other scenario saves should not be blocked by one unreadable advisor PCX.
+    }
+  });
+  return { ok: true, changed: writes.some((write) => write.kind === 'scienceAdvisor'), writes };
+}
+
 function applyImportedResourceIconAtlasAssignments({ resourceTab, targetAtlasBuffer, loadSourceAtlasBuffer }) {
   if (!resourceTab || !Array.isArray(resourceTab.recordOps) || !Array.isArray(resourceTab.entries)) {
     return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [] };
@@ -9118,6 +9455,34 @@ function buildSavePlan(payload) {
         bom: encoding.bom
       });
       saveReport.push({ kind: 'scenarioDistricts', path: targetPath, applied: scenarioDistrictsEdit.entries.length + scenarioDistrictsEdit.namedTiles.length });
+    }
+
+    if (payload.autoUpdateScienceAdvisorArrows === true) {
+      const scienceAdvisorWrites = prepareScienceAdvisorArrowArtWrites({
+        tabs: payload.tabs || {},
+        targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+        scenarioPath,
+        scenarioRoots: scenarioContext.searchRoots,
+        civ3Path
+      });
+      if (scienceAdvisorWrites && !scienceAdvisorWrites.ok) {
+        return { ok: false, error: scienceAdvisorWrites.error || 'Failed to update Science Advisor arrow art.' };
+      }
+      for (const write of (scienceAdvisorWrites && scienceAdvisorWrites.writes) || []) {
+        const protectErr = failIfProtected(write.path, 'Science Advisor background target');
+        if (protectErr) return { ok: false, error: protectErr };
+        if (isProtectedBaseCiv3Path(civ3Path, write.path)) {
+          return { ok: false, error: `Refusing to modify base Civilization III file (Science Advisor background target): ${write.path}` };
+        }
+        plannedWrites.push(write);
+        saveReport.push({
+          kind: write.kind,
+          path: write.path,
+          sourcePath: write.sourcePath,
+          applied: write.applied || 0,
+          detail: `Regenerated ${write.applied || 0} Science Advisor arrow connector${(write.applied || 0) === 1 ? '' : 's'}`
+        });
+      }
     }
 
     // Copy art files referenced by imported entries into the local scenario content root.
