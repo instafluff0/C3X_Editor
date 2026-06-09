@@ -25242,7 +25242,18 @@ function createTechTreePanel({
     nodesLayer.innerHTML = '';
     laneLayer.innerHTML = '';
     while (arrowHandles.firstChild) arrowHandles.removeChild(arrowHandles.firstChild);
-    const isAutoArrowPreviewActive = () => autoArrowCheck.checked === true && !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraDirtyKey]);
+    const hasKnownScienceAdvisorArrowRoutesForEra = () => {
+      const prefix = `${eraDirtyKey}:`;
+      const hasEraKey = (source) => {
+        const root = source && typeof source === 'object' ? source : {};
+        return Object.keys(root).some((key) => String(key || '').startsWith(prefix));
+      };
+      return hasEraKey(state.techTreeArrowRouteOverrides) || hasEraKey(state.techTreeArrowBaselineRouteHints);
+    };
+    const isAutoArrowPreviewActive = () => autoArrowCheck.checked === true && (
+      !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraDirtyKey])
+      || hasKnownScienceAdvisorArrowRoutesForEra()
+    );
     const syncArrowPreviewVisibility = () => {
       const active = isAutoArrowPreviewActive();
       lines.classList.toggle('tech-tree-lines-auto-preview', active);
@@ -26233,9 +26244,11 @@ function createTechTreePanel({
         linked.forEach((edgeObj) => placeEdge(edgeObj));
         if (autoArrowCheck.checked === true) {
           markCurrentArrowEraDirty();
-          void renderForEra();
+          setDirty(true, { knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-node-drag' });
         }
-        setDirty(true);
+        redrawLines();
+        renderArrowHandles();
+        setDirty(true, { knownDirtyTab: 'technologies', reason: 'tech-tree-node-drag' });
       };
       elNode.addEventListener('pointerup', finishDrag);
       elNode.addEventListener('pointercancel', finishDrag);

@@ -165,6 +165,11 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
+    /const hasKnownScienceAdvisorArrowRoutesForEra = \(\) => \{[\s\S]*?const prefix = `\$\{eraDirtyKey\}:`;[\s\S]*?state\.techTreeArrowRouteOverrides[\s\S]*?state\.techTreeArrowBaselineRouteHints[\s\S]*?\};[\s\S]*?const isAutoArrowPreviewActive = \(\) => autoArrowCheck\.checked === true && \([\s\S]*?state\.techTreeArrowArtDirtyByEra\[eraDirtyKey\][\s\S]*?\|\| hasKnownScienceAdvisorArrowRoutesForEra\(\)/,
+    'Expected saved scenario arrow metadata to make route handles available before an era is dirty'
+  );
+  assert.match(
+    source,
     /techTreeArrowDirtyEras: shouldUpdateScienceAdvisorArrows \? techTreeArrowDirtyEras : \[\]/,
     'Expected generated Science Advisor arrow saves to carry the exact dirty eras instead of regenerating every era'
   );
@@ -268,6 +273,11 @@ test('Tech Tree clicks select without being treated as drags', () => {
     source,
     /updateDraggedNodePosition\(ev\.clientX, ev\.clientY\);[\s\S]*?const moved = drag\.moved;[\s\S]*?if \(!referenceEditable \|\| !moved\) return;/,
     'Expected pointerup without movement to preserve normal click and double-click behavior'
+  );
+  assert.match(
+    source,
+    /const finishDrag = \(ev\) => \{[\s\S]*?if \(autoArrowCheck\.checked === true\) \{[\s\S]*?markCurrentArrowEraDirty\(\);[\s\S]*?setDirty\(true, \{ knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-node-drag' \}\);[\s\S]*?\}[\s\S]*?redrawLines\(\);[\s\S]*?renderArrowHandles\(\);[\s\S]*?setDirty\(true, \{ knownDirtyTab: 'technologies', reason: 'tech-tree-node-drag' \}\);[\s\S]*?\};/,
+    'Expected Tech Tree node drops to update the current tree in place instead of rebuilding the whole era'
   );
   assert.match(
     source,

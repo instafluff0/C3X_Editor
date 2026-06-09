@@ -1,11 +1,14 @@
 * RELEASE 27.15
 - Added a scenario-local editor-only Tech Tree arrow metadata sidecar so saved generated Science Advisor route adjustments are reused when reopening a scenario.
+- Changed Tech Tree generated-arrow handles so previously saved scenario arrow metadata makes routes editable immediately when reopening that era.
 - Improved generated Science Advisor arrow erasing near advisor-frame edges so cleared old arrows are filled from matching local background instead of smearing nearby frame texture into the parchment.
+- Fixed generated Science Advisor arrow erasing so isolated fringe-colored background pixels are not cleared merely because they are near a real arrow.
 - Grouped Tech Tree header controls into soft Scope, Display, Layout, and Background Arrows sections for easier scanning.
 - Made the Tech Tree modal header more compact by removing redundant helper text and moving the live coordinate readout into the tree stage.
 - Synced modal Save, Undo, and Undo All enablement so modal Save cannot be active when the matching modal Undo action is inactive, and Undo/Undo All now share the same undoable-state predicate.
 - Added gentle nearby route-axis snapping while dragging Tech Tree arrow route handles, with Alt/Option-drag bypass for exact free placement.
 - Fixed Tech Tree node double-click navigation so Back reopens the Tech Tree modal instead of staying on the Techs tab.
+- Reduced Tech Tree flashing after dragging a tech by updating the moved node and generated-arrow preview in place instead of rebuilding the whole era.
 - Added fuzzy Firaxis Science Advisor arrow-shape regression tests that compare generated route tangents and curve proximity against stock PCX arrow pixels.
 - Fixed Tech Tree arrow route handle drags so each arrow-point move is its own Undo step instead of the next Undo reverting multiple previous arrow edits.
 - Fixed Tech Tree single-step Undo after moving a tech so it restores the generated-arrow preview state as well as the tech coordinates, returning to the original PCX arrows when appropriate.

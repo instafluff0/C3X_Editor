@@ -263,7 +263,7 @@ function expandArrowClearMask({ mask, candidate, width, height, x1, y1, x2, y2, 
   return out;
 }
 
-function dilateArrowClearMask({ mask, width, height, x1, y1, x2, y2, radius = 3 }) {
+function dilateArrowClearMask({ mask, candidate, width, height, x1, y1, x2, y2, radius = 3 }) {
   const out = new Uint8Array(mask);
   const r = Math.max(0, Math.round(Number(radius) || 0));
   for (let y = y1; y <= y2; y += 1) {
@@ -276,7 +276,9 @@ function dilateArrowClearMask({ mask, width, height, x1, y1, x2, y2, radius = 3 
           const nx = x + ox;
           const ny = y + oy;
           if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
-          out[ny * width + nx] = 1;
+          const outOffset = ny * width + nx;
+          if (candidate && !candidate[outOffset]) continue;
+          out[outOffset] = 1;
         }
       }
     }
@@ -287,6 +289,18 @@ function dilateArrowClearMask({ mask, width, height, x1, y1, x2, y2, radius = 3 
 function includeNearbyArrowCandidates({ mask, candidate, width, height, x1, y1, x2, y2, radius = 8 }) {
   const out = new Uint8Array(mask);
   const r = Math.max(0, Math.round(Number(radius) || 0));
+  const hasCandidateNeighbor = (x, y) => {
+    for (let oy = -1; oy <= 1; oy += 1) {
+      for (let ox = -1; ox <= 1; ox += 1) {
+        if (ox === 0 && oy === 0) continue;
+        const nx = x + ox;
+        const ny = y + oy;
+        if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
+        if (candidate[ny * width + nx]) return true;
+      }
+    }
+    return false;
+  };
   for (let y = y1; y <= y2; y += 1) {
     for (let x = x1; x <= x2; x += 1) {
       const offset = y * width + x;
@@ -298,7 +312,7 @@ function includeNearbyArrowCandidates({ mask, candidate, width, height, x1, y1, 
           const ny = y + oy;
           if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
           const candidateOffset = ny * width + nx;
-          if (candidate[candidateOffset]) out[candidateOffset] = 1;
+          if (candidate[candidateOffset] && hasCandidateNeighbor(nx, ny)) out[candidateOffset] = 1;
         }
       }
     }
@@ -421,7 +435,7 @@ function buildScienceAdvisorArrowClearMask({ width, height, bounds, getColor }) 
   const seededRuns = seedArrowCandidateRuns({ seed, candidate, width, height, x1, y1, x2, y2 });
   const expanded = expandArrowClearMask({ mask: seededRuns, candidate, width, height, x1, y1, x2, y2, iterations: 5 });
   const withNearbyFringe = includeNearbyArrowCandidates({ mask: expanded, candidate, width, height, x1, y1, x2, y2, radius: 8 });
-  const dilated = dilateArrowClearMask({ mask: withNearbyFringe, width, height, x1, y1, x2, y2, radius: 3 });
+  const dilated = dilateArrowClearMask({ mask: withNearbyFringe, candidate, width, height, x1, y1, x2, y2, radius: 3 });
   return { mask: dilated, candidate, x1, y1, x2, y2 };
 }
 
