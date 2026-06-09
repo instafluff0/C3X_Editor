@@ -1,8 +1,13 @@
 * RELEASE 27.15
+- Removed faint stock Ancient Science Advisor pale scratch remnants by filling small holes inside cleared arrow masks and avoiding same-color replacement fills for those masked pixels.
+- Restored broad generated Science Advisor arrow cleanup for stock and scenario backgrounds while keeping protected frame/chrome pixels out of the erase mask.
+- Protected fixed Science Advisor frame/chrome regions from generated-arrow cleanup so stock and scenario backgrounds keep border texture while still removing old arrow remnants in the tech graph.
 - Added a scenario-local editor-only Tech Tree arrow metadata sidecar so saved generated Science Advisor route adjustments are reused when reopening a scenario.
 - Changed Tech Tree generated-arrow handles so previously saved scenario arrow metadata makes routes editable immediately when reopening that era.
 - Improved generated Science Advisor arrow erasing near advisor-frame edges so cleared old arrows are filled from matching local background instead of smearing nearby frame texture into the parchment.
 - Fixed generated Science Advisor arrow erasing so isolated fringe-colored background pixels are not cleared merely because they are near a real arrow.
+- Improved generated Science Advisor arrow erasing so stock Industrial pale arrow shadows and CCM3 dotted red arrow residue are removed without clearing ordinary frame or parchment texture.
+- Improved generated Science Advisor arrow erasing for root vanilla Modern pale blue arrow shadows and CCM3 dotted olive residue, including diagonal supported remnants.
 - Grouped Tech Tree header controls into soft Scope, Display, Layout, and Background Arrows sections for easier scanning.
 - Made the Tech Tree modal header more compact by removing redundant helper text and moving the live coordinate readout into the tree stage.
 - Synced modal Save, Undo, and Undo All enablement so modal Save cannot be active when the matching modal Undo action is inactive, and Undo/Undo All now share the same undoable-state predicate.

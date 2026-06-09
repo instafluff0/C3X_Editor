@@ -18,6 +18,7 @@ const techBoxLayout = require('../src/techBoxLayout');
 const scienceAdvisorArrows = require('../src/scienceAdvisorArrows');
 
 const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
+const STOCK_SCIENCE_MODERN_PCX = path.join(CIV3_ROOT, 'Art', 'Advisors', 'science_modern.pcx');
 const STOCK_SCIENCE_ANCIENT_PCX = path.join(CIV3_ROOT, 'Conquests', 'Art', 'Advisors', 'science_ancient.pcx');
 const STOCK_SCIENCE_INDUSTRIAL_PCX = path.join(CIV3_ROOT, 'Conquests', 'Art', 'Advisors', 'science_industrial.pcx');
 const CCM3_SCIENCE_ANCIENT_PCX = path.join(CIV3_ROOT, 'Conquests', 'Scenarios', 'CCM3', 'Art', 'Advisors', 'science_ancient.pcx');
@@ -384,7 +385,122 @@ test('Science Advisor arrow clearing does not smear nearby advisor-frame texture
   }
 });
 
-test('Science Advisor arrow clearing preserves stock Industrial upper-right frame and parchment pixels', (t) => {
+test('Science Advisor arrow clearing broadly erases arrow halos without touching protected frame pixels', () => {
+  const width = 100;
+  const height = 80;
+  const palette = makePalette();
+  palette[31 * 3] = 222;
+  palette[31 * 3 + 1] = 198;
+  palette[31 * 3 + 2] = 162;
+  palette[32 * 3] = 112;
+  palette[32 * 3 + 1] = 52;
+  palette[32 * 3 + 2] = 40;
+  const indices = new Uint8Array(width * height);
+  indices.fill(31);
+  for (let x = 18; x <= 60; x += 1) {
+    indices[(24 * width) + x] = x % 6 === 0 ? 31 : 11;
+    indices[(25 * width) + x] = 31;
+  }
+  for (let x = 10; x <= 70; x += 1) {
+    indices[(3 * width) + x] = 32;
+  }
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: { x1: 0, y1: 0, x2: width - 1, y2: height - 1 }
+  });
+
+  for (let x = 18; x <= 60; x += 1) {
+    assert.equal(indices[(24 * width) + x], 31);
+    assert.equal(indices[(25 * width) + x], 31);
+  }
+  for (let x = 10; x <= 70; x += 1) {
+    assert.equal(indices[(3 * width) + x], 32);
+  }
+});
+
+test('Science Advisor arrow clearing removes supported diagonal pale blue residue', () => {
+  const width = 44;
+  const height = 44;
+  const palette = makeMixedEraPalette();
+  palette[24 * 3] = 165;
+  palette[24 * 3 + 1] = 178;
+  palette[24 * 3 + 2] = 183;
+  const indices = new Uint8Array(width * height);
+  const residueOffsets = [];
+  for (let step = 0; step <= 18; step += 1) {
+    const x = 8 + step;
+    const y = 8 + step;
+    indices[(y * width) + x] = 24;
+    residueOffsets.push((y * width) + x);
+    indices[((y + 3) * width) + x] = 21;
+  }
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: { x1: 0, y1: 0, x2: width - 1, y2: height - 1 }
+  });
+
+  for (const offset of residueOffsets) {
+    assert.notEqual(indices[offset], 24, 'Expected supported diagonal pale blue residue to be cleared');
+  }
+});
+
+test('Science Advisor arrow clearing removes stock Ancient pale parchment arrow remnants', (t) => {
+  if (!fs.existsSync(STOCK_SCIENCE_ANCIENT_PCX)) {
+    t.skip('Stock Ancient Science Advisor art is not installed');
+    return;
+  }
+
+  const decoded = decodePcx(STOCK_SCIENCE_ANCIENT_PCX, { returnIndexed: true, transparentIndexes: [] });
+  const { width, height, palette } = decoded;
+  const indices = new Uint8Array(decoded.indices);
+  const original = new Uint8Array(decoded.indices);
+  const paleRemnantPixels = [
+    { x: 443, y: 208 },
+    { x: 464, y: 208 },
+    { x: 218, y: 325 },
+    { x: 382, y: 356 },
+    { x: 417, y: 109 }
+  ];
+  for (const point of paleRemnantPixels) {
+    const offset = (point.y * width) + point.x;
+    const paletteOffset = original[offset] * 3;
+    const r = palette[paletteOffset];
+    const g = palette[paletteOffset + 1];
+    const b = palette[paletteOffset + 2];
+    assert.ok(
+      r >= 214 && g >= 189 && b >= 148,
+      `Expected stock Ancient pale remnant fixture pixel at ${point.x},${point.y}`
+    );
+  }
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: {
+      x1: Math.max(0, Math.floor(width * 0.04)),
+      y1: Math.max(0, Math.floor(height * 0.11)),
+      x2: Math.min(width - 1, Math.ceil(width * 0.94)),
+      y2: Math.min(height - 1, Math.ceil(height * 0.9))
+    }
+  });
+
+  for (const point of paleRemnantPixels) {
+    const offset = (point.y * width) + point.x;
+    assert.notEqual(indices[offset], original[offset], `Expected stock Ancient pale arrow remnant at ${point.x},${point.y} to be removed`);
+  }
+});
+
+test('Science Advisor arrow clearing preserves stock Industrial outer chrome pixels', (t) => {
   if (!fs.existsSync(STOCK_SCIENCE_INDUSTRIAL_PCX)) {
     t.skip('Stock Industrial Science Advisor art is not installed');
     return;
@@ -403,26 +519,111 @@ test('Science Advisor arrow clearing preserves stock Industrial upper-right fram
 
   scienceAdvisorArrows.clearScienceAdvisorArrowPixelsRgba({ rgba, width, height, bounds });
 
-  let protectedPixels = 0;
-  for (let y = 145; y <= 170; y += 1) {
+  const assertPixelUnchanged = (x, y) => {
+    const pixel = (y * width) + x;
+    const rgbaOffset = pixel * 4;
+    assert.equal(rgba[rgbaOffset], original[rgbaOffset], `Expected stock Industrial chrome pixel ${x},${y} to keep red channel`);
+    assert.equal(rgba[rgbaOffset + 1], original[rgbaOffset + 1], `Expected stock Industrial chrome pixel ${x},${y} to keep green channel`);
+    assert.equal(rgba[rgbaOffset + 2], original[rgbaOffset + 2], `Expected stock Industrial chrome pixel ${x},${y} to keep blue channel`);
+  };
+  let checked = 0;
+  for (let y = bounds.y1; y <= Math.min(height - 1, bounds.y1 + 4); y += 1) {
     for (let x = 480; x <= 760; x += 1) {
-      const pixel = (y * width) + x;
-      const paletteOffset = decoded.indices[pixel] * 3;
-      const r = palette[paletteOffset];
-      const g = palette[paletteOffset + 1];
-      const b = palette[paletteOffset + 2];
-      if (scienceAdvisorArrows.isScienceAdvisorArrowColor(r, g, b)
-        || scienceAdvisorArrows.isScienceAdvisorArrowFringeColor(r, g, b)) {
-        continue;
-      }
-      protectedPixels += 1;
-      const rgbaOffset = pixel * 4;
-      assert.equal(rgba[rgbaOffset], original[rgbaOffset], `Expected non-arrow stock Industrial pixel ${x},${y} to keep red channel`);
-      assert.equal(rgba[rgbaOffset + 1], original[rgbaOffset + 1], `Expected non-arrow stock Industrial pixel ${x},${y} to keep green channel`);
-      assert.equal(rgba[rgbaOffset + 2], original[rgbaOffset + 2], `Expected non-arrow stock Industrial pixel ${x},${y} to keep blue channel`);
+      assertPixelUnchanged(x, y);
+      checked += 1;
     }
   }
-  assert.ok(protectedPixels > 1000, 'Expected the upper-right stock Industrial regression box to include protected background pixels');
+  for (let y = 145; y <= 650; y += 1) {
+    for (let x = Math.max(bounds.x1, width - 62); x <= bounds.x2; x += 1) {
+      assertPixelUnchanged(x, y);
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 1000, 'Expected stock Industrial outer chrome regression coverage');
+});
+
+test('Science Advisor arrow clearing removes stock Industrial pale arrow shadow remnants', (t) => {
+  if (!fs.existsSync(STOCK_SCIENCE_INDUSTRIAL_PCX)) {
+    t.skip('Stock Industrial Science Advisor art is not installed');
+    return;
+  }
+
+  const decoded = decodePcx(STOCK_SCIENCE_INDUSTRIAL_PCX, { returnIndexed: true, transparentIndexes: [] });
+  const { width, height, palette } = decoded;
+  const indices = new Uint8Array(decoded.indices);
+  const original = new Uint8Array(decoded.indices);
+  const paleShadowRuns = [
+    { x1: 180, x2: 255, y: 146, index: 14 },
+    { x1: 179, x2: 256, y: 168, index: 14 }
+  ];
+  for (const run of paleShadowRuns) {
+    assert.equal(original[(run.y * width) + run.x1], run.index, `Expected stock Industrial pale arrow shadow at ${run.x1},${run.y}`);
+  }
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: {
+      x1: Math.max(0, Math.floor(width * 0.04)),
+      y1: Math.max(0, Math.floor(height * 0.11)),
+      x2: Math.min(width - 1, Math.ceil(width * 0.94)),
+      y2: Math.min(height - 1, Math.ceil(height * 0.9))
+    }
+  });
+
+  for (const run of paleShadowRuns) {
+    for (let x = run.x1; x <= run.x2; x += 1) {
+      const offset = (run.y * width) + x;
+      if (original[offset] !== run.index) continue;
+      assert.notEqual(indices[offset], run.index, `Expected stock Industrial pale arrow shadow at ${x},${run.y} to be removed`);
+    }
+  }
+});
+
+test('Science Advisor arrow clearing removes vanilla Modern pale blue arrow shadow remnants', (t) => {
+  if (!fs.existsSync(STOCK_SCIENCE_MODERN_PCX)) {
+    t.skip('Stock Modern Science Advisor art is not installed');
+    return;
+  }
+
+  const decoded = decodePcx(STOCK_SCIENCE_MODERN_PCX, { returnIndexed: true, transparentIndexes: [] });
+  const { width, height, palette } = decoded;
+  const indices = new Uint8Array(decoded.indices);
+  const original = new Uint8Array(decoded.indices);
+  const paleBlueRuns = [
+    { x1: 179, x2: 406, y: 116, index: 136 },
+    { x1: 642, x2: 805, y: 418, index: 136 },
+    { x1: 380, x2: 653, y: 604, index: 136 }
+  ];
+  for (const run of paleBlueRuns) {
+    assert.equal(original[(run.y * width) + run.x1], run.index, `Expected stock Modern pale blue arrow shadow at ${run.x1},${run.y}`);
+  }
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: {
+      x1: Math.max(0, Math.floor(width * 0.04)),
+      y1: Math.max(0, Math.floor(height * 0.11)),
+      x2: Math.min(width - 1, Math.ceil(width * 0.94)),
+      y2: Math.min(height - 1, Math.ceil(height * 0.9))
+    }
+  });
+
+  for (const run of paleBlueRuns) {
+    let checked = 0;
+    for (let x = run.x1; x <= run.x2; x += 1) {
+      const offset = (run.y * width) + x;
+      if (original[offset] !== run.index) continue;
+      checked += 1;
+      assert.notEqual(indices[offset], run.index, `Expected stock Modern pale blue arrow shadow at ${x},${run.y} to be removed`);
+    }
+    assert.ok(checked > 40, `Expected stock Modern pale blue fixture coverage for row ${run.y}`);
+  }
 });
 
 test('Science Advisor arrow clearing removes detached CCM3 glint and shadow runs', (t) => {
@@ -462,6 +663,87 @@ test('Science Advisor arrow clearing removes detached CCM3 glint and shadow runs
       assert.notEqual(indices[offset], run.index, `Expected CCM3 arrow residue index ${run.index} at ${x},${run.y} to be removed`);
     }
   }
+});
+
+test('Science Advisor arrow clearing removes CCM3 dotted red arrow residue', (t) => {
+  if (!fs.existsSync(CCM3_SCIENCE_ANCIENT_PCX)) {
+    t.skip('CCM3 Science Advisor art is not installed');
+    return;
+  }
+
+  const decoded = decodePcx(CCM3_SCIENCE_ANCIENT_PCX, { returnIndexed: true, transparentIndexes: [] });
+  const { width, height, palette } = decoded;
+  const indices = new Uint8Array(decoded.indices);
+  const original = new Uint8Array(decoded.indices);
+  const redRuns = [
+    { x1: 176, x2: 280, y: 109, indexes: new Set([1, 249]) },
+    { x1: 317, x2: 467, y: 109, indexes: new Set([1, 249]) }
+  ];
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: { x1: 60, y1: 80, x2: 970, y2: 735 }
+  });
+
+  for (const run of redRuns) {
+    let checked = 0;
+    for (let x = run.x1; x <= run.x2; x += 1) {
+      const offset = (run.y * width) + x;
+      if (!run.indexes.has(original[offset])) continue;
+      checked += 1;
+      assert.notEqual(indices[offset], original[offset], `Expected CCM3 dotted red arrow residue at ${x},${run.y} to be removed`);
+    }
+    assert.ok(checked > 20, `Expected CCM3 dotted red residue fixture coverage for row ${run.y}`);
+  }
+});
+
+test('Science Advisor arrow clearing removes CCM3 dotted olive arrow residue', (t) => {
+  if (!fs.existsSync(CCM3_SCIENCE_ANCIENT_PCX)) {
+    t.skip('CCM3 Science Advisor art is not installed');
+    return;
+  }
+
+  const decoded = decodePcx(CCM3_SCIENCE_ANCIENT_PCX, { returnIndexed: true, transparentIndexes: [] });
+  const { width, height, palette } = decoded;
+  const indices = new Uint8Array(decoded.indices);
+  const original = new Uint8Array(decoded.indices);
+  const oliveRuns = [
+    { x1: 368, x2: 886, y: 269, index: 3 },
+    { x1: 554, x2: 709, y: 474, index: 3 },
+    { x1: 177, x2: 285, y: 109, index: 3 }
+  ];
+  const oliveVerticalRun = { x: 895, y1: 437, y2: 647, index: 3 };
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: { x1: 60, y1: 80, x2: 970, y2: 735 }
+  });
+
+  for (const run of oliveRuns) {
+    let checked = 0;
+    for (let x = run.x1; x <= run.x2; x += 1) {
+      const offset = (run.y * width) + x;
+      if (original[offset] !== run.index) continue;
+      checked += 1;
+      assert.notEqual(indices[offset], run.index, `Expected CCM3 dotted olive arrow residue at ${x},${run.y} to be removed`);
+    }
+    assert.ok(checked > 20, `Expected CCM3 dotted olive residue fixture coverage for row ${run.y}`);
+  }
+
+  let checked = 0;
+  for (let y = oliveVerticalRun.y1; y <= oliveVerticalRun.y2; y += 1) {
+    const offset = (y * width) + oliveVerticalRun.x;
+    if (original[offset] !== oliveVerticalRun.index) continue;
+    checked += 1;
+    assert.notEqual(indices[offset], oliveVerticalRun.index, `Expected CCM3 dotted olive arrow residue at ${oliveVerticalRun.x},${y} to be removed`);
+  }
+  assert.ok(checked > 20, 'Expected CCM3 dotted olive vertical residue fixture coverage');
 });
 
 test('Science Advisor route builder uses cached router baseline hints until an edge is dirty', () => {
