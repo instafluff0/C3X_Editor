@@ -122,6 +122,19 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function normalizeAutoLayoutExclusionZones(zones) {
+  return (Array.isArray(zones) ? zones : [])
+    .map((zone) => {
+      const x = Number(zone && zone.x);
+      const y = Number(zone && zone.y);
+      const w = Number(zone && (zone.w || zone.width));
+      const h = Number(zone && (zone.h || zone.height));
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !(w > 0) || !(h > 0)) return null;
+      return { x, y, w, h };
+    })
+    .filter(Boolean);
+}
+
 function getRectCenter(rect) {
   const r = normalizeArrowRect(rect);
   return { x: r.x + (r.w / 2), y: r.y + (r.h / 2) };
@@ -184,21 +197,50 @@ function chooseTechTreeArrowSides(sourceRect, targetRect) {
   const verticalGap = absDy - ((source.h + target.h) / 2);
   const targetSideForHorizontal = dx >= 0 ? 'left' : 'right';
   const sourceSideForHorizontal = dx >= 0 ? 'right' : 'left';
+  const directVerticalThreshold = Math.min(source.w, target.w) * 0.35;
+  const horizontalOverlap = getRangeOverlapAmount(source.x, source.x + source.w, target.x, target.x + target.w);
+  const closeDiagonalStack = horizontalOverlap > Math.min(source.w, target.w) * 0.4
+    && absDx > directVerticalThreshold
+    && verticalGap > -8
+    && verticalGap <= Math.min(source.h, target.h) * 0.8;
+  if (closeDiagonalStack) {
+    return {
+      sourceSide: dy < 0 ? 'top' : 'bottom',
+      targetSide: targetSideForHorizontal
+    };
+  }
 
   if (horizontalGap > -20 && (absDy <= 18 || (horizontalGap > 30 && absDx > absDy * 1.45))) {
+    if (verticalGap > 18 && verticalGap <= 44 && absDy > absDx * 0.5) {
+      return {
+        sourceSide: sourceSideForHorizontal,
+        targetSide: dy < 0 ? 'bottom' : 'top'
+      };
+    }
     return {
       sourceSide: sourceSideForHorizontal,
       targetSide: targetSideForHorizontal
     };
   }
 
+  if (horizontalGap > -40 && horizontalGap < 36 && absDy > 35 && absDy < absDx * 0.95) {
+    return {
+      sourceSide: dy < 0 ? 'top' : 'bottom',
+      targetSide: targetSideForHorizontal
+    };
+  }
+
   if (verticalGap > 12 && (horizontalGap < 36 || absDy > absDx * 0.55)) {
     const sourceSide = dy < 0 ? 'top' : 'bottom';
-    const directVerticalThreshold = Math.min(source.w, target.w) * 0.35;
-    const horizontalOverlap = getRangeOverlapAmount(source.x, source.x + source.w, target.x, target.x + target.w);
     const strongVerticalStack = horizontalOverlap > 8
       && absDx <= Math.min(source.w, target.w) * 0.65
       && verticalGap > Math.min(source.h, target.h) * 0.85;
+    if (!strongVerticalStack && absDx > directVerticalThreshold && absDy > absDx * 1.1) {
+      return {
+        sourceSide: sourceSideForHorizontal,
+        targetSide: dy < 0 ? 'bottom' : 'top'
+      };
+    }
     const targetSide = strongVerticalStack || absDx <= directVerticalThreshold
       ? (dy < 0 ? 'bottom' : 'top')
       : targetSideForHorizontal;
@@ -308,7 +350,16 @@ function compareAutoLayoutNodesByStableOrder(a, b) {
   return (Number(a && a._index) || 0) - (Number(b && b._index) || 0);
 }
 
-function buildAutoLayoutRanks(nodes, edges) {
+function compareAutoLayoutNodesByInputOrder(a, b) {
+  const ai = Number(a && a._index);
+  const bi = Number(b && b._index);
+  if (Number.isFinite(ai) && Number.isFinite(bi) && ai !== bi) return ai - bi;
+  const nameCmp = String(a && a.label || '').localeCompare(String(b && b.label || ''), 'en', { sensitivity: 'base' });
+  if (nameCmp) return nameCmp;
+  return String(a && a.id || '').localeCompare(String(b && b.id || ''), 'en', { sensitivity: 'base' });
+}
+
+function buildAutoLayoutRanks(nodes, edges, compareNodes = compareAutoLayoutNodesByStableOrder) {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const childrenById = new Map(nodes.map((node) => [node.id, []]));
   const indegree = new Map(nodes.map((node) => [node.id, 0]));
@@ -318,7 +369,7 @@ function buildAutoLayoutRanks(nodes, edges) {
   });
   const queue = nodes
     .filter((node) => (indegree.get(node.id) || 0) === 0)
-    .sort(compareAutoLayoutNodesByStableOrder)
+    .sort(compareNodes)
     .map((node) => node.id);
   const rankById = new Map(nodes.map((node) => [node.id, 0]));
   const visited = new Set();
@@ -332,7 +383,7 @@ function buildAutoLayoutRanks(nodes, edges) {
       indegree.set(childId, Math.max(0, (indegree.get(childId) || 0) - 1));
       if ((indegree.get(childId) || 0) === 0) queue.push(childId);
     });
-    queue.sort((a, b) => compareAutoLayoutNodesByStableOrder(byId.get(a), byId.get(b)));
+    queue.sort((a, b) => compareNodes(byId.get(a), byId.get(b)));
   }
   nodes.filter((node) => !visited.has(node.id)).forEach((node) => {
     const parentRanks = edges
@@ -353,7 +404,7 @@ function getAutoLayoutOrderMap(columns) {
   return order;
 }
 
-function sortAutoLayoutColumnByNeighbors(column, edges, orderMap, direction) {
+function sortAutoLayoutColumnByNeighbors(column, edges, orderMap, direction, compareNodes = compareAutoLayoutNodesByStableOrder) {
   const edgeKey = direction === 'forward' ? 'target' : 'source';
   const neighborKey = direction === 'forward' ? 'source' : 'target';
   return column.slice().sort((a, b) => {
@@ -366,8 +417,67 @@ function sortAutoLayoutColumnByNeighbors(column, edges, orderMap, direction) {
     const af = av == null ? Number.POSITIVE_INFINITY : av;
     const bf = bv == null ? Number.POSITIVE_INFINITY : bv;
     if (af !== bf) return af - bf;
-    return compareAutoLayoutNodesByStableOrder(a, b);
+    return compareNodes(a, b);
   });
+}
+
+function compactAutoLayoutColumnsToFit(columns, options = {}) {
+  const list = Array.isArray(columns) ? columns.filter((column) => Array.isArray(column) && column.length > 0) : [];
+  if (list.length <= 1 || options.preserveExisting !== false) return list;
+  const bounds = getAutoLayoutUsableBounds(list.flat(), options);
+  const maxNodeWidth = list.reduce((max, column) => (
+    Math.max(max, column.reduce((colMax, node) => Math.max(colMax, Number(node && node.w) || 0), 0))
+  ), 1);
+  const maxNodeHeight = list.reduce((max, column) => (
+    Math.max(max, column.reduce((colMax, node) => Math.max(colMax, Number(node && node.h) || 0), 0))
+  ), 1);
+  const minRowGap = Math.max(8, Number(options.minRowGap) || 30);
+  const fitColumnGap = Math.max(24, Math.min(40, Number(options.minColumnGap) || 40));
+  const columnWidths = list.map((column) => column.reduce((max, node) => Math.max(max, Number(node && node.w) || 0), 0));
+  const getWidthFloor = (widths) => {
+    const sorted = widths.slice().sort((a, b) => a - b);
+    if (sorted.length === 0) return 1;
+    return sorted[Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * 0.25)))] || 1;
+  };
+  const getScaledStep = (widths) => widths.length > 1
+    ? (bounds.w - widths[widths.length - 1]) / (widths.length - 1)
+    : bounds.w;
+  const compactToColumnCount = (targetColumnCount) => {
+    const compacted = list.map((column) => column.slice());
+    const columnHeight = (column) => column.reduce((sum, node) => sum + (Number(node && node.h) || 0), 0) + (minRowGap * Math.max(0, column.length - 1));
+    const columnWidth = (column) => column.reduce((max, node) => Math.max(max, Number(node && node.w) || 0), 0);
+    while (compacted.length > targetColumnCount && compacted.length > 1) {
+      let bestIndex = 0;
+      let bestScore = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < compacted.length - 1; index += 1) {
+        const merged = compacted[index].concat(compacted[index + 1]);
+        const score = (columnHeight(merged) * 8) + columnWidth(merged) + (merged.length * 20);
+        if (score < bestScore) {
+          bestScore = score;
+          bestIndex = index;
+        }
+      }
+      compacted.splice(bestIndex, 2, compacted[bestIndex].concat(compacted[bestIndex + 1]));
+    }
+    return compacted.filter((column) => column.length > 0);
+  };
+  const fitWidth = columnWidths.reduce((sum, value) => sum + value, 0) + (fitColumnGap * Math.max(0, list.length - 1));
+  if (fitWidth <= bounds.w) return list;
+  const widthFloor = getWidthFloor(columnWidths);
+  const scaledColumnStep = getScaledStep(columnWidths);
+  if (scaledColumnStep >= widthFloor * 0.8) return list;
+  const maxRowsPerColumn = Math.max(1, Math.floor((bounds.h + minRowGap) / (maxNodeHeight + minRowGap)));
+  const nodeCount = list.reduce((sum, column) => sum + column.length, 0);
+  const minColumnsForHeight = Math.max(1, Math.ceil(nodeCount / maxRowsPerColumn));
+  for (let count = list.length - 1; count >= Math.max(2, minColumnsForHeight); count -= 1) {
+    const compacted = compactToColumnCount(count);
+    const compactedWidths = compacted.map((column) => column.reduce((max, node) => Math.max(max, Number(node && node.w) || 0), 0));
+    if (getScaledStep(compactedWidths) >= getWidthFloor(compactedWidths) * 0.8) return compacted;
+  }
+  const maxColumnsForWidth = Math.max(1, Math.floor((bounds.w + fitColumnGap) / (maxNodeWidth + fitColumnGap)));
+  const targetColumnCount = Math.max(1, Math.min(list.length, Math.min(maxColumnsForWidth, Math.max(2, minColumnsForHeight))));
+  if (targetColumnCount >= list.length) return list;
+  return compactToColumnCount(targetColumnCount);
 }
 
 function pointIsInsideRect(point, rect, inset = 0) {
@@ -380,15 +490,28 @@ function pointIsInsideRect(point, rect, inset = 0) {
     && y <= (rect.y + rect.h + inset);
 }
 
-function countAutoLayoutRouteObstacleHits(layout, edges) {
-  const rects = Array.from(layout.rectById.entries()).map(([id, rect]) => ({ id, rect }));
-  let hits = 0;
-  const routed = layoutTechTreeArrowEdges(edges.map((edge) => ({
+function pointRectDistance(point, rect) {
+  const x = Number(point && point.x);
+  const y = Number(point && point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return Number.POSITIVE_INFINITY;
+  const dx = Math.max(rect.x - x, 0, x - (rect.x + rect.w));
+  const dy = Math.max(rect.y - y, 0, y - (rect.y + rect.h));
+  return Math.hypot(dx, dy);
+}
+
+function getAutoLayoutRoutedEdges(layout, edges) {
+  return layoutTechTreeArrowEdges(edges.map((edge) => ({
     source: { id: edge.source },
     target: { id: edge.target },
     sourceRect: layout.rectById.get(edge.source),
     targetRect: layout.rectById.get(edge.target)
   })), { slotSpacing: 10 });
+}
+
+function countAutoLayoutRouteObstacleHits(layout, edges) {
+  const rects = Array.from(layout.rectById.entries()).map(([id, rect]) => ({ id, rect }));
+  let hits = 0;
+  const routed = getAutoLayoutRoutedEdges(layout, edges);
   routed.forEach((edge) => {
     const route = buildTechTreeArrowRoute(edge.sourceRect, edge.targetRect, {
       sourceSide: edge.sourceSide,
@@ -405,6 +528,71 @@ function countAutoLayoutRouteObstacleHits(layout, edges) {
     if (hit) hits += 1;
   });
   return hits;
+}
+
+function scoreAutoLayoutRouteClearance(layout, edges) {
+  const rects = Array.from(layout.rectById.entries()).map(([id, rect]) => ({ id, rect }));
+  let penalty = 0;
+  const routed = getAutoLayoutRoutedEdges(layout, edges);
+  routed.forEach((edge) => {
+    const route = buildTechTreeArrowRoute(edge.sourceRect, edge.targetRect, {
+      sourceSide: edge.sourceSide,
+      targetSide: edge.targetSide,
+      sourceOffset: edge.sourceOffset,
+      targetOffset: edge.targetOffset,
+      horizontalTolerance: 18
+    });
+    const samples = sampleTechTreeArrowRoute(route, { curveSteps: 8, radius: 13 });
+    rects.forEach((item) => {
+      if (item.id === String(edge.source && edge.source.id) || item.id === String(edge.target && edge.target.id)) return;
+      let nearest = Number.POSITIVE_INFINITY;
+      samples.forEach((point) => {
+        nearest = Math.min(nearest, pointRectDistance(point, item.rect));
+      });
+      if (nearest < 24) penalty += 24 - nearest;
+    });
+  });
+  return Number(penalty.toFixed(2));
+}
+
+function countAutoLayoutBoxOverlaps(layout, gap = 0) {
+  const rects = Array.from(layout.rectById.entries()).map(([id, rect]) => ({ id, rect }));
+  let overlaps = 0;
+  for (let i = 0; i < rects.length; i += 1) {
+    for (let j = i + 1; j < rects.length; j += 1) {
+      if (autoLayoutRectsOverlap(rects[i].rect, rects[j].rect, gap)) overlaps += 1;
+    }
+  }
+  return overlaps;
+}
+
+function scoreAutoLayoutBoundsOverflow(layout) {
+  const bounds = layout && layout.bounds;
+  if (!bounds || !Number.isFinite(Number(bounds.x)) || !Number.isFinite(Number(bounds.y)) || !(Number(bounds.w) > 0) || !(Number(bounds.h) > 0)) return 0;
+  const left = Number(bounds.x) || 0;
+  const top = Number(bounds.y) || 0;
+  const right = left + (Number(bounds.w) || 0);
+  const bottom = top + (Number(bounds.h) || 0);
+  let overflow = 0;
+  Array.from(layout.rectById.values()).forEach((rect) => {
+    overflow += Math.max(0, left - rect.x);
+    overflow += Math.max(0, top - rect.y);
+    overflow += Math.max(0, (rect.x + rect.w) - right);
+    overflow += Math.max(0, (rect.y + rect.h) - bottom);
+  });
+  return Number(overflow.toFixed(2));
+}
+
+function scoreAutoLayoutExclusionOverlap(layout) {
+  const zones = normalizeAutoLayoutExclusionZones(layout && layout.exclusionZones);
+  if (zones.length === 0) return 0;
+  let overlap = 0;
+  Array.from(layout.rectById.values()).forEach((rect) => {
+    zones.forEach((zone) => {
+      overlap += getAutoLayoutRectOverlapArea(rect, zone);
+    });
+  });
+  return Number(overlap.toFixed(2));
 }
 
 function countAutoLayoutEdgeCrossings(layout, edges) {
@@ -428,6 +616,100 @@ function countAutoLayoutEdgeCrossings(layout, edges) {
   return crossings;
 }
 
+function getLineSegmentIntersection(a, b) {
+  const ax1 = Number(a && a.a && a.a.x);
+  const ay1 = Number(a && a.a && a.a.y);
+  const ax2 = Number(a && a.b && a.b.x);
+  const ay2 = Number(a && a.b && a.b.y);
+  const bx1 = Number(b && b.a && b.a.x);
+  const by1 = Number(b && b.a && b.a.y);
+  const bx2 = Number(b && b.b && b.b.x);
+  const by2 = Number(b && b.b && b.b.y);
+  if (![ax1, ay1, ax2, ay2, bx1, by1, bx2, by2].every(Number.isFinite)) return null;
+  const denominator = ((ax1 - ax2) * (by1 - by2)) - ((ay1 - ay2) * (bx1 - bx2));
+  const within = (value, one, two) => value >= Math.min(one, two) - 0.01 && value <= Math.max(one, two) + 0.01;
+  if (Math.abs(denominator) < 0.01) {
+    const cross = ((bx1 - ax1) * (ay2 - ay1)) - ((by1 - ay1) * (ax2 - ax1));
+    if (Math.abs(cross) > 0.01) return null;
+    const points = [
+      { x: ax1, y: ay1 },
+      { x: ax2, y: ay2 },
+      { x: bx1, y: by1 },
+      { x: bx2, y: by2 }
+    ].filter((point) => (
+      within(point.x, ax1, ax2)
+      && within(point.y, ay1, ay2)
+      && within(point.x, bx1, bx2)
+      && within(point.y, by1, by2)
+    ));
+    return points.length > 0 ? points[0] : null;
+  }
+  const px = (((ax1 * ay2 - ay1 * ax2) * (bx1 - bx2)) - ((ax1 - ax2) * (bx1 * by2 - by1 * bx2))) / denominator;
+  const py = (((ax1 * ay2 - ay1 * ax2) * (by1 - by2)) - ((ay1 - ay2) * (bx1 * by2 - by1 * bx2))) / denominator;
+  if (!within(px, ax1, ax2) || !within(py, ay1, ay2) || !within(px, bx1, bx2) || !within(py, by1, by2)) return null;
+  return { x: px, y: py };
+}
+
+function pointNearRect(point, rect, distance = 8) {
+  if (!point || !rect) return false;
+  return pointRectDistance(point, rect) <= distance;
+}
+
+function countAutoLayoutRouteCrossings(layout, edges) {
+  const routed = getAutoLayoutRoutedEdges(layout, edges);
+  const routes = routed.map((edge) => {
+    const route = buildTechTreeArrowRoute(edge.sourceRect, edge.targetRect, {
+      sourceSide: edge.sourceSide,
+      targetSide: edge.targetSide,
+      sourceOffset: edge.sourceOffset,
+      targetOffset: edge.targetOffset,
+      horizontalTolerance: 18
+    });
+    const points = route && Array.isArray(route.points) ? route.points : [];
+    const segments = [];
+    for (let idx = 1; idx < points.length; idx += 1) {
+      const a = points[idx - 1];
+      const b = points[idx];
+      if (getPointDistance(a, b) < 1) continue;
+      segments.push({ a, b });
+    }
+    return {
+      edge,
+      segments,
+      sourceRect: edge.sourceRect,
+      targetRect: edge.targetRect
+    };
+  });
+  let crossings = 0;
+  for (let i = 0; i < routes.length; i += 1) {
+    for (let j = i + 1; j < routes.length; j += 1) {
+      const a = routes[i];
+      const b = routes[j];
+      const aSourceId = String(a.edge && a.edge.source && a.edge.source.id);
+      const aTargetId = String(a.edge && a.edge.target && a.edge.target.id);
+      const bSourceId = String(b.edge && b.edge.source && b.edge.source.id);
+      const bTargetId = String(b.edge && b.edge.target && b.edge.target.id);
+      if (aSourceId === bSourceId || aSourceId === bTargetId || aTargetId === bSourceId || aTargetId === bTargetId) continue;
+      let crossed = false;
+      for (let ai = 0; ai < a.segments.length && !crossed; ai += 1) {
+        for (let bi = 0; bi < b.segments.length && !crossed; bi += 1) {
+          const intersection = getLineSegmentIntersection(a.segments[ai], b.segments[bi]);
+          if (!intersection) continue;
+          if (
+            pointNearRect(intersection, a.sourceRect)
+            || pointNearRect(intersection, a.targetRect)
+            || pointNearRect(intersection, b.sourceRect)
+            || pointNearRect(intersection, b.targetRect)
+          ) continue;
+          crossed = true;
+        }
+      }
+      if (crossed) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
 function scoreAutoLayout(layout, edges) {
   let backwardEdges = 0;
   let verticalSpan = 0;
@@ -438,15 +720,252 @@ function scoreAutoLayout(layout, edges) {
     if ((source.x + source.w) >= target.x) backwardEdges += 1;
     verticalSpan += Math.abs((source.y + source.h / 2) - (target.y + target.h / 2));
   });
+  const boxOverlaps = countAutoLayoutBoxOverlaps(layout, 0);
+  const boundsOverflow = scoreAutoLayoutBoundsOverflow(layout);
+  const exclusionOverlap = scoreAutoLayoutExclusionOverlap(layout);
   const obstacleHits = countAutoLayoutRouteObstacleHits(layout, edges);
   const edgeCrossings = countAutoLayoutEdgeCrossings(layout, edges);
+  const routeCrossings = countAutoLayoutRouteCrossings(layout, edges);
+  const routeClearancePenalty = scoreAutoLayoutRouteClearance(layout, edges);
   return {
-    score: (backwardEdges * 100000) + (obstacleHits * 10000) + (edgeCrossings * 1200) + verticalSpan,
+    score: (boxOverlaps * 100000000) + (exclusionOverlap * 1000000) + (boundsOverflow * 10000) + (backwardEdges * 100000) + (obstacleHits * 10000) + (routeCrossings * 8000) + (edgeCrossings * 1200) + (routeClearancePenalty * 80) + verticalSpan,
+    boxOverlaps,
+    boundsOverflow,
+    exclusionOverlap,
     backwardEdges,
     obstacleHits,
     edgeCrossings,
+    routeCrossings,
+    routeClearancePenalty,
     verticalSpan
   };
+}
+
+function autoLayoutRectsOverlap(a, b, gap = 0) {
+  return a.x < b.x + b.w + gap
+    && a.x + a.w + gap > b.x
+    && a.y < b.y + b.h + gap
+    && a.y + a.h + gap > b.y;
+}
+
+function getAutoLayoutRectOverlapArea(a, b) {
+  if (!a || !b) return 0;
+  const overlapW = Math.min((Number(a.x) || 0) + (Number(a.w) || 0), (Number(b.x) || 0) + (Number(b.w) || 0))
+    - Math.max(Number(a.x) || 0, Number(b.x) || 0);
+  const overlapH = Math.min((Number(a.y) || 0) + (Number(a.h) || 0), (Number(b.y) || 0) + (Number(b.h) || 0))
+    - Math.max(Number(a.y) || 0, Number(b.y) || 0);
+  return Math.max(0, overlapW) * Math.max(0, overlapH);
+}
+
+function getAutoLayoutPositionBounds(bounds) {
+  if (!bounds || !Number.isFinite(Number(bounds.left)) || !Number.isFinite(Number(bounds.top))) return null;
+  const left = Number(bounds.left) || 0;
+  const top = Number(bounds.top) || 0;
+  const right = Number.isFinite(Number(bounds.right)) ? Number(bounds.right) : Number.POSITIVE_INFINITY;
+  const bottom = Number.isFinite(Number(bounds.bottom)) ? Number(bounds.bottom) : Number.POSITIVE_INFINITY;
+  if (!(right > left) || !(bottom > top)) return null;
+  return { left, top, right, bottom };
+}
+
+function clampAutoLayoutPositionToBounds(position, bounds) {
+  const box = getAutoLayoutPositionBounds(bounds);
+  if (!box || !position) return false;
+  const maxX = box.right - (Number(position.w) || 0);
+  const maxY = box.bottom - (Number(position.h) || 0);
+  const nextX = Math.max(box.left, Math.min(maxX, Number(position.x) || 0));
+  const nextY = Math.max(box.top, Math.min(maxY, Number(position.y) || 0));
+  const moved = Math.abs(nextX - position.x) > 0.01 || Math.abs(nextY - position.y) > 0.01;
+  position.x = nextX;
+  position.y = nextY;
+  return moved;
+}
+
+function repairAutoLayoutOverlapPairInsideBounds(a, b, bounds, gap = 0) {
+  if (!a || !b || !autoLayoutRectsOverlap(a, b, gap)) return false;
+  const box = getAutoLayoutPositionBounds(bounds);
+  if (!box) return false;
+  const overlapX = Math.min(a.x + a.w + gap, b.x + b.w + gap) - Math.max(a.x, b.x);
+  const overlapY = Math.min(a.y + a.h + gap, b.y + b.h + gap) - Math.max(a.y, b.y);
+  const aCenterX = a.x + (a.w / 2);
+  const bCenterX = b.x + (b.w / 2);
+  const aCenterY = a.y + (a.h / 2);
+  const bCenterY = b.y + (b.h / 2);
+  const xDirection = aCenterX <= bCenterX ? -1 : 1;
+  const yDirection = aCenterY <= bCenterY ? -1 : 1;
+  const candidates = [];
+  const addCandidate = (target, dx, dy) => {
+    const other = target === a ? b : a;
+    const next = { ...target, x: target.x + dx, y: target.y + dy };
+    if (next.x < box.left - 0.01 || next.y < box.top - 0.01 || next.x + next.w > box.right + 0.01 || next.y + next.h > box.bottom + 0.01) return;
+    if (autoLayoutRectsOverlap(next, other, gap)) return;
+    candidates.push({ target, dx, dy, score: Math.abs(dx) + Math.abs(dy) });
+  };
+  const nudgeX = Math.max(1, overlapX + 1);
+  const nudgeY = Math.max(1, overlapY + 1);
+  addCandidate(a, xDirection * nudgeX, 0);
+  addCandidate(b, -xDirection * nudgeX, 0);
+  addCandidate(a, -xDirection * nudgeX, 0);
+  addCandidate(b, xDirection * nudgeX, 0);
+  addCandidate(a, 0, yDirection * nudgeY);
+  addCandidate(b, 0, -yDirection * nudgeY);
+  addCandidate(a, 0, -yDirection * nudgeY);
+  addCandidate(b, 0, yDirection * nudgeY);
+  if (candidates.length === 0) return false;
+  candidates.sort((left, right) => left.score - right.score);
+  const best = candidates[0];
+  best.target.x += best.dx;
+  best.target.y += best.dy;
+  return true;
+}
+
+function repairAutoLayoutHardBounds(positions, bounds, options = {}) {
+  const list = Array.isArray(positions) ? positions : [];
+  if (list.length === 0) return;
+  const box = getAutoLayoutPositionBounds(bounds);
+  if (!box) return;
+  const gap = Math.max(0, Number(options.gap) || 0);
+  const maxPasses = Math.max(1, Number(options.maxPasses) || 120);
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    let moved = false;
+    list.forEach((position) => {
+      if (clampAutoLayoutPositionToBounds(position, box)) moved = true;
+    });
+    let repairedPair = false;
+    for (let i = 0; i < list.length; i += 1) {
+      for (let j = i + 1; j < list.length; j += 1) {
+        if (!autoLayoutRectsOverlap(list[i], list[j], gap)) continue;
+        if (repairAutoLayoutOverlapPairInsideBounds(list[i], list[j], box, gap)) {
+          moved = true;
+          repairedPair = true;
+          break;
+        }
+      }
+      if (repairedPair) break;
+    }
+    if (!moved) break;
+  }
+  list.forEach((position) => {
+    clampAutoLayoutPositionToBounds(position, box);
+  });
+}
+
+function positionExclusionOverlapArea(position, exclusionZones) {
+  return normalizeAutoLayoutExclusionZones(exclusionZones).reduce((sum, zone) => sum + getAutoLayoutRectOverlapArea(position, zone), 0);
+}
+
+function resolveAutoLayoutExclusions(positions, bounds, exclusionZones, options = {}) {
+  const list = Array.isArray(positions) ? positions : [];
+  const zones = normalizeAutoLayoutExclusionZones(exclusionZones);
+  if (list.length === 0 || zones.length === 0) return;
+  const box = getAutoLayoutPositionBounds(bounds);
+  if (!box) return;
+  const gap = Math.max(0, Number(options.gap) || 8);
+  const maxPasses = Math.max(1, Number(options.maxPasses) || 60);
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    let moved = false;
+    list.forEach((position) => {
+      const intersectingZones = zones.filter((zone) => getAutoLayoutRectOverlapArea(position, zone) > 0);
+      if (intersectingZones.length === 0) return;
+      const candidates = [];
+      const addCandidate = (nextX, nextY) => {
+        const next = {
+          ...position,
+          x: Math.max(box.left, Math.min(box.right - position.w, nextX)),
+          y: Math.max(box.top, Math.min(box.bottom - position.h, nextY))
+        };
+        const exclusionOverlap = positionExclusionOverlapArea(next, zones);
+        const boxOverlap = list.reduce((sum, other) => {
+          if (other === position) return sum;
+          return sum + getAutoLayoutRectOverlapArea(next, other);
+        }, 0);
+        const leftwardPenalty = next.x < position.x ? Math.abs(next.x - position.x) * 4 : 0;
+        candidates.push({
+          next,
+          score: (exclusionOverlap * 100000) + (boxOverlap * 1000) + leftwardPenalty + Math.abs(next.x - position.x) + Math.abs(next.y - position.y),
+          exclusionOverlap,
+          boxOverlap
+        });
+      };
+      intersectingZones.forEach((zone) => {
+        addCandidate(zone.x - position.w - gap, position.y);
+        addCandidate(position.x, zone.y + zone.h + gap);
+        addCandidate(zone.x - position.w - gap, zone.y + zone.h + gap);
+      });
+      if (candidates.length === 0) return;
+      candidates.sort((a, b) => a.score - b.score);
+      const best = candidates[0];
+      if (!best || best.exclusionOverlap >= positionExclusionOverlapArea(position, zones)) return;
+      if (Math.abs(best.next.x - position.x) > 0.01 || Math.abs(best.next.y - position.y) > 0.01) {
+        position.x = best.next.x;
+        position.y = best.next.y;
+        moved = true;
+      }
+    });
+    if (!moved) break;
+  }
+}
+
+function resolveAutoLayoutOverlaps(positions, bounds, options = {}) {
+  const list = Array.isArray(positions) ? positions : [];
+  if (list.length < 2) return;
+  const topLimit = Number.isFinite(Number(bounds && bounds.top)) ? Number(bounds.top) : 0;
+  const bottomLimit = Number.isFinite(Number(bounds && bounds.bottom)) ? Number(bounds.bottom) : Number.POSITIVE_INFINITY;
+  const gap = Math.max(0, Number(options.gap) || 6);
+  const maxPasses = Math.max(1, Number(options.maxPasses) || 80);
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    let moved = false;
+    const ordered = list.slice().sort((a, b) => {
+      if (a.y !== b.y) return a.y - b.y;
+      if (a.x !== b.x) return a.x - b.x;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    const placed = [];
+    ordered.forEach((position) => {
+      let nextY = Math.max(topLimit, position.y);
+      placed.forEach((other) => {
+        if (!autoLayoutRectsOverlap({ ...position, y: nextY }, other, gap)) return;
+        nextY = Math.max(nextY, other.y + other.h + gap);
+      });
+      if (Math.abs(nextY - position.y) > 0.01) {
+        position.y = nextY;
+        moved = true;
+      }
+      placed.push(position);
+    });
+    const minY = Math.min(...list.map((position) => position.y));
+    const maxBottom = Math.max(...list.map((position) => position.y + position.h));
+    const overflow = maxBottom - bottomLimit;
+    if (overflow > 0) {
+      const shift = Math.min(overflow, Math.max(0, minY - topLimit));
+      if (shift > 0) {
+        list.forEach((position) => { position.y -= shift; });
+        moved = true;
+      }
+      const stillOverflow = Math.max(...list.map((position) => position.y + position.h)) - bottomLimit;
+      if (stillOverflow > 0) {
+        const bottomOrdered = list.slice().sort((a, b) => {
+          if ((a.y + a.h) !== (b.y + b.h)) return (b.y + b.h) - (a.y + a.h);
+          if (a.x !== b.x) return b.x - a.x;
+          return String(a.id).localeCompare(String(b.id));
+        });
+        const placedFromBottom = [];
+        bottomOrdered.forEach((position) => {
+          let nextY = Math.min(position.y, bottomLimit - position.h);
+          placedFromBottom.forEach((other) => {
+            if (!autoLayoutRectsOverlap({ ...position, y: nextY }, other, gap)) return;
+            nextY = Math.min(nextY, other.y - position.h - gap);
+          });
+          nextY = Math.max(topLimit, nextY);
+          if (Math.abs(nextY - position.y) > 0.01) {
+            position.y = nextY;
+            moved = true;
+          }
+          placedFromBottom.push(position);
+        });
+      }
+    }
+    if (!moved) break;
+  }
 }
 
 function buildAutoLayoutPositions(columns, rankById, options) {
@@ -463,8 +982,10 @@ function buildAutoLayoutPositions(columns, rankById, options) {
   const paddingRight = Math.max(0, Number(options.paddingRight) || 72);
   const paddingTop = Math.max(0, Number(options.paddingTop) || 56);
   const paddingBottom = Math.max(0, Number(options.paddingBottom) || 56);
-  const minColumnGap = Math.max(24, Number(options.minColumnGap) || 64);
-  const minRowGap = Math.max(8, Number(options.minRowGap) || 20);
+  const preserveExisting = options.preserveExisting !== false;
+  const minColumnGap = Math.max(24, Number(options.minColumnGap) || (preserveExisting ? 64 : 88));
+  const minRowGap = Math.max(8, Number(options.minRowGap) || (preserveExisting ? 20 : 30));
+  const exclusionZones = normalizeAutoLayoutExclusionZones(options.exclusionZones || (rawBounds && rawBounds.exclusionZones));
   const layoutLeft = useBounds ? Math.max(0, Number(rawBounds.x) || 0) : paddingLeft;
   const layoutTop = useBounds ? Math.max(0, Number(rawBounds.y) || 0) : paddingTop;
   const availableWidth = useBounds
@@ -485,6 +1006,41 @@ function buildAutoLayoutPositions(columns, rankById, options) {
     ? Math.max(1, (availableWidth - columnWidths[columnWidths.length - 1]) / (columnCount - 1))
     : 0;
   let x = Math.max(0, layoutLeft + Math.floor(Math.max(0, availableWidth - totalWidth) / 2));
+  const naturalColumnLefts = columns.map((column, columnIndex) => {
+    const left = totalWidth > availableWidth && columnCount > 1
+      ? layoutLeft + (columnIndex * scaledColumnStep)
+      : x;
+    x += (columnWidths[columnIndex] || 0) + columnGap;
+    return left;
+  });
+  let columnLefts = naturalColumnLefts.slice();
+  const existingColumnLefts = columns.map((column) => {
+    const value = medianNumber(column.map((node) => node.x));
+    return value == null ? null : value;
+  });
+  const validExistingLefts = existingColumnLefts.filter((value) => value != null);
+  if (preserveExisting && validExistingLefts.length === columns.length) {
+    const existingMin = Math.min(...validExistingLefts);
+    const existingMax = Math.max(...validExistingLefts);
+    if ((existingMax - existingMin) >= availableWidth * 0.25) {
+      columnLefts = existingColumnLefts.map((value) => Number(value) || layoutLeft);
+      for (let idx = 1; idx < columnLefts.length; idx += 1) {
+        columnLefts[idx] = Math.max(columnLefts[idx], columnLefts[idx - 1] + Math.min(36, minColumnGap));
+      }
+      const minLeft = Math.min(...columnLefts);
+      const maxRight = Math.max(...columnLefts.map((left, idx) => left + (columnWidths[idx] || 0)));
+      const targetRight = layoutLeft + availableWidth;
+      if (minLeft < layoutLeft || maxRight > targetRight) {
+        const span = Math.max(1, maxRight - minLeft);
+        const fitSpan = Math.max(1, availableWidth);
+        const scale = Math.min(1, fitSpan / span);
+        columnLefts = columnLefts.map((left, idx) => {
+          const scaled = layoutLeft + ((left - minLeft) * scale);
+          return Math.max(layoutLeft, Math.min(targetRight - (columnWidths[idx] || 0), scaled));
+        });
+      }
+    }
+  }
   const maxRows = columns.reduce((max, column) => Math.max(max, column.length), 1);
   const maxNodeHeight = columns.reduce((max, column) => (
     Math.max(max, column.reduce((colMax, node) => Math.max(colMax, node.h), 0))
@@ -496,20 +1052,47 @@ function buildAutoLayoutPositions(columns, rankById, options) {
   const positions = [];
   const rectById = new Map();
   columns.forEach((column, columnIndex) => {
+    const renderColumn = preserveExisting ? column.slice().sort(compareAutoLayoutNodesByStableOrder) : column;
     const columnWidth = columnWidths[columnIndex] || 0;
-    const columnMaxHeight = column.reduce((max, node) => Math.max(max, node.h), 0);
-    const columnSpan = column.length > 1 ? ((column.length - 1) * rowStep) + columnMaxHeight : columnMaxHeight;
+    const columnMaxHeight = renderColumn.reduce((max, node) => Math.max(max, node.h), 0);
+    const columnSpan = renderColumn.length > 1 ? ((renderColumn.length - 1) * rowStep) + columnMaxHeight : columnMaxHeight;
     let y = layoutTop + Math.max(0, Math.floor((availableHeight - columnSpan) / 2));
-    const columnLeft = totalWidth > availableWidth && columnCount > 1
-      ? layoutLeft + (columnIndex * scaledColumnStep)
-      : x;
-    column.forEach((node, rowIndex) => {
+    const columnLeft = columnLefts[columnIndex] == null ? layoutLeft : columnLefts[columnIndex];
+    let packedYById = null;
+    if (preserveExisting) {
+      packedYById = new Map();
+      let cursor = layoutTop;
+      renderColumn.forEach((node) => {
+        const maxY = useBounds ? layoutTop + availableHeight - node.h : Number.POSITIVE_INFINITY;
+        const preferredY = Math.max(layoutTop, Math.min(maxY, Number(node.y) || layoutTop));
+        const nextY = Math.max(preferredY, cursor);
+        packedYById.set(node.id, nextY);
+        cursor = nextY + node.h + minRowGap;
+      });
+      const last = renderColumn[renderColumn.length - 1];
+      if (last) {
+        const lastBottom = (packedYById.get(last.id) || layoutTop) + last.h;
+        const overflow = lastBottom - (layoutTop + availableHeight);
+        if (overflow > 0) {
+          const first = renderColumn[0];
+          const maxShift = Math.max(0, (packedYById.get(first.id) || layoutTop) - layoutTop);
+          const shift = Math.min(overflow, maxShift);
+          renderColumn.forEach((node) => {
+            packedYById.set(node.id, Math.max(layoutTop, (packedYById.get(node.id) || layoutTop) - shift));
+          });
+        }
+      }
+    }
+    renderColumn.forEach((node, rowIndex) => {
       const align = String(options.columnAlign || 'left').toLowerCase();
       const alignOffset = align === 'center' ? ((columnWidth - node.w) / 2) : 0;
       const maxX = useBounds ? layoutLeft + availableWidth - node.w : Number.POSITIVE_INFINITY;
       const maxY = useBounds ? layoutTop + availableHeight - node.h : Number.POSITIVE_INFINITY;
       const rawX = Math.round(Math.min(maxX, columnLeft + alignOffset) / grid) * grid;
-      const rawY = Math.round((y + (rowIndex * rowStep) + ((columnMaxHeight - node.h) / 2)) / grid) * grid;
+      const rawPackedY = preserveExisting && packedYById
+        ? packedYById.get(node.id)
+        : (y + (rowIndex * rowStep) + ((columnMaxHeight - node.h) / 2));
+      const rawY = Math.round(rawPackedY / grid) * grid;
       const px = Math.min(maxX, rawX);
       const py = Math.min(maxY, rawY);
       const position = {
@@ -525,9 +1108,191 @@ function buildAutoLayoutPositions(columns, rankById, options) {
       positions.push(position);
       rectById.set(node.id, { x: position.x, y: position.y, w: position.w, h: position.h });
     });
-    x += columnWidth + columnGap;
   });
-  return { positions, rectById, rankById };
+  if (preserveExisting || useBounds) {
+    resolveAutoLayoutExclusions(positions, {
+      left: layoutLeft,
+      top: layoutTop,
+      right: layoutLeft + availableWidth,
+      bottom: layoutTop + availableHeight
+    }, exclusionZones, { gap: Math.min(16, Math.max(8, minRowGap / 2)), maxPasses: 80 });
+    rectById.clear();
+    positions.forEach((position) => {
+      rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+    });
+    resolveAutoLayoutOverlaps(positions, {
+      top: layoutTop,
+      bottom: layoutTop + availableHeight
+    }, { gap: preserveExisting ? Math.min(10, minRowGap) : minRowGap, maxPasses: 120 });
+    rectById.clear();
+    positions.forEach((position) => {
+      rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+    });
+    if (countAutoLayoutBoxOverlaps({ rectById }, 0) > 0) {
+      resolveAutoLayoutOverlaps(positions, {
+        top: layoutTop,
+        bottom: layoutTop + availableHeight
+      }, { gap: 0, maxPasses: 240 });
+      rectById.clear();
+      positions.forEach((position) => {
+        rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+      });
+    }
+    if (!preserveExisting && countAutoLayoutBoxOverlaps({ rectById }, 0) > 0) {
+      resolveAutoLayoutOverlaps(positions, {
+        top: layoutTop,
+        bottom: Number.POSITIVE_INFINITY
+      }, { gap: minRowGap, maxPasses: 240 });
+      rectById.clear();
+      positions.forEach((position) => {
+        rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+      });
+    }
+    repairAutoLayoutHardBounds(positions, {
+      left: layoutLeft,
+      top: layoutTop,
+      right: layoutLeft + availableWidth,
+      bottom: layoutTop + availableHeight
+    }, { gap: 0, maxPasses: 240 });
+    resolveAutoLayoutExclusions(positions, {
+      left: layoutLeft,
+      top: layoutTop,
+      right: layoutLeft + availableWidth,
+      bottom: layoutTop + availableHeight
+    }, exclusionZones, { gap: Math.min(16, Math.max(8, minRowGap / 2)), maxPasses: 80 });
+    rectById.clear();
+    positions.forEach((position) => {
+      rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+    });
+  }
+  return { positions, rectById, rankById, bounds: { x: layoutLeft, y: layoutTop, w: availableWidth, h: availableHeight }, exclusionZones };
+}
+
+function getAutoLayoutUsableBounds(nodes, options = {}) {
+  const width = Math.max(480, Number(options.width) || 1024);
+  const height = Math.max(360, Number(options.height) || 768);
+  const rawBounds = options && options.bounds && typeof options.bounds === 'object' ? options.bounds : null;
+  if (
+    rawBounds
+    && Number.isFinite(Number(rawBounds.x))
+    && Number.isFinite(Number(rawBounds.y))
+    && Number(rawBounds.w) > 0
+    && Number(rawBounds.h) > 0
+  ) {
+    return {
+      x: Math.max(0, Number(rawBounds.x) || 0),
+      y: Math.max(0, Number(rawBounds.y) || 0),
+      w: Math.max(1, Number(rawBounds.w) || 1),
+      h: Math.max(1, Number(rawBounds.h) || 1)
+    };
+  }
+  const paddingLeft = Math.max(0, Number(options.paddingLeft) || 72);
+  const paddingRight = Math.max(0, Number(options.paddingRight) || 72);
+  const paddingTop = Math.max(0, Number(options.paddingTop) || 56);
+  const paddingBottom = Math.max(0, Number(options.paddingBottom) || 56);
+  return {
+    x: paddingLeft,
+    y: paddingTop,
+    w: Math.max(1, width - paddingLeft - paddingRight),
+    h: Math.max(1, height - paddingTop - paddingBottom)
+  };
+}
+
+function buildConservativeAutoLayout(nodes, edges, rankById, options = {}) {
+  const bounds = getAutoLayoutUsableBounds(nodes, options);
+  const grid = Math.max(1, Number(options.grid) || 16);
+  const columnThreshold = Math.max(12, Number(options.columnThreshold) || 36);
+  const exclusionZones = normalizeAutoLayoutExclusionZones(options.exclusionZones || (options.bounds && options.bounds.exclusionZones));
+  const positions = nodes.map((node) => {
+    const maxX = bounds.x + bounds.w - node.w;
+    const maxY = bounds.y + bounds.h - node.h;
+    return {
+      id: node.originalId,
+      key: node.id,
+      x: Math.max(bounds.x, Math.min(maxX, Math.round(node.x / grid) * grid)),
+      y: Math.max(bounds.y, Math.min(maxY, Math.round(node.y / grid) * grid)),
+      w: node.w,
+      h: node.h,
+      rank: rankById.get(node.id) || 0,
+      row: 0
+    };
+  });
+  const sorted = positions.slice().sort((a, b) => {
+    if (a.x !== b.x) return a.x - b.x;
+    return a.y - b.y;
+  });
+  let group = [];
+  const flushGroup = () => {
+    if (group.length === 0) return;
+    const alignedX = Math.min(...group.map((position) => position.x));
+    group.forEach((position) => { position.x = alignedX; });
+    group = [];
+  };
+  sorted.forEach((position) => {
+    if (group.length === 0) {
+      group.push(position);
+      return;
+    }
+    const anchor = medianNumber(group.map((item) => item.x));
+    if (Math.abs(position.x - anchor) <= columnThreshold) {
+      group.push(position);
+    } else {
+      flushGroup();
+      group.push(position);
+    }
+  });
+  flushGroup();
+  resolveAutoLayoutOverlaps(positions, {
+    top: bounds.y,
+    bottom: bounds.y + bounds.h
+  }, { gap: Math.min(10, Math.max(6, Number(options.minRowGap) || 20)), maxPasses: 120 });
+  resolveAutoLayoutExclusions(positions, {
+    left: bounds.x,
+    top: bounds.y,
+    right: bounds.x + bounds.w,
+    bottom: bounds.y + bounds.h
+  }, exclusionZones, { gap: 8, maxPasses: 80 });
+  const rectById = new Map();
+  positions.forEach((position) => {
+    rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+  });
+  if (countAutoLayoutBoxOverlaps({ rectById }, 0) > 0) {
+    resolveAutoLayoutOverlaps(positions, {
+      top: bounds.y,
+      bottom: bounds.y + bounds.h
+    }, { gap: 0, maxPasses: 240 });
+    rectById.clear();
+    positions.forEach((position) => {
+      rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+    });
+  }
+  if (countAutoLayoutBoxOverlaps({ rectById }, 0) > 0) {
+    resolveAutoLayoutOverlaps(positions, {
+      top: bounds.y,
+      bottom: Number.POSITIVE_INFINITY
+    }, { gap: 0, maxPasses: 240 });
+    rectById.clear();
+    positions.forEach((position) => {
+      rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+    });
+  }
+  repairAutoLayoutHardBounds(positions, {
+    left: bounds.x,
+    top: bounds.y,
+    right: bounds.x + bounds.w,
+    bottom: bounds.y + bounds.h
+  }, { gap: 0, maxPasses: 240 });
+  resolveAutoLayoutExclusions(positions, {
+    left: bounds.x,
+    top: bounds.y,
+    right: bounds.x + bounds.w,
+    bottom: bounds.y + bounds.h
+  }, exclusionZones, { gap: 8, maxPasses: 80 });
+  rectById.clear();
+  positions.forEach((position) => {
+    rectById.set(String(position.key), { x: position.x, y: position.y, w: position.w, h: position.h });
+  });
+  return { positions, rectById, rankById, bounds, exclusionZones };
 }
 
 function autoLayoutTechTreeNodes(inputNodes, options = {}) {
@@ -542,33 +1307,67 @@ function autoLayoutTechTreeNodes(inputNodes, options = {}) {
     });
   });
   if (nodes.length === 0) {
-    return { positions: [], stats: { score: 0, obstacleHits: 0, edgeCrossings: 0, backwardEdges: 0 } };
+    return { positions: [], stats: { score: 0, boxOverlaps: 0, obstacleHits: 0, edgeCrossings: 0, backwardEdges: 0 } };
   }
-  const rankById = buildAutoLayoutRanks(nodes, edges);
+  const preserveMode = String(options.preserveExisting || '').trim().toLowerCase();
+  const autoPreserveExisting = preserveMode === 'auto';
+  const rebuildFromScratch = options.preserveExisting === false;
+  const compareNodesForLayout = rebuildFromScratch ? compareAutoLayoutNodesByInputOrder : compareAutoLayoutNodesByStableOrder;
+  const rankById = buildAutoLayoutRanks(nodes, edges, compareNodesForLayout);
+  let conservativeCandidate = null;
+  if (options.preserveExisting !== false) {
+    const minX = Math.min(...nodes.map((node) => node.x));
+    const maxRight = Math.max(...nodes.map((node) => node.x + node.w));
+    const minY = Math.min(...nodes.map((node) => node.y));
+    const maxBottom = Math.max(...nodes.map((node) => node.y + node.h));
+    const bounds = getAutoLayoutUsableBounds(nodes, options);
+    const hasUsefulExistingSpread = (maxRight - minX) >= bounds.w * 0.35
+      && (maxBottom - minY) >= bounds.h * 0.35;
+    if (hasUsefulExistingSpread) {
+      const layout = buildConservativeAutoLayout(nodes, edges, rankById, options);
+      conservativeCandidate = {
+        positions: layout.positions,
+        stats: {
+          ...scoreAutoLayout(layout, edges),
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          columnCount: new Set(layout.positions.map((position) => Math.round(position.x))).size
+        }
+      };
+      if (!autoPreserveExisting) {
+        return conservativeCandidate;
+      }
+    }
+  }
+  const layoutOptions = autoPreserveExisting ? { ...options, preserveExisting: false } : options;
   const maxRank = nodes.reduce((max, node) => Math.max(max, rankById.get(node.id) || 0), 0);
   let columns = [];
   for (let rank = 0; rank <= maxRank; rank += 1) {
     columns.push(nodes
       .filter((node) => (rankById.get(node.id) || 0) === rank)
-      .sort(compareAutoLayoutNodesByStableOrder));
+      .sort(compareNodesForLayout));
   }
   columns = columns.filter((column) => column.length > 0);
-  for (let pass = 0; pass < 4; pass += 1) {
+  const orderSweepCount = rebuildFromScratch ? 2 : 4;
+  for (let pass = 0; pass < orderSweepCount; pass += 1) {
     let orderMap = getAutoLayoutOrderMap(columns);
     for (let col = 1; col < columns.length; col += 1) {
-      columns[col] = sortAutoLayoutColumnByNeighbors(columns[col], edges, orderMap, 'forward');
+      columns[col] = sortAutoLayoutColumnByNeighbors(columns[col], edges, orderMap, 'forward', compareNodesForLayout);
       orderMap = getAutoLayoutOrderMap(columns);
     }
-    for (let col = columns.length - 2; col >= 0; col -= 1) {
-      columns[col] = sortAutoLayoutColumnByNeighbors(columns[col], edges, orderMap, 'backward');
-      orderMap = getAutoLayoutOrderMap(columns);
+    if (!rebuildFromScratch) {
+      for (let col = columns.length - 2; col >= 0; col -= 1) {
+        columns[col] = sortAutoLayoutColumnByNeighbors(columns[col], edges, orderMap, 'backward', compareNodesForLayout);
+        orderMap = getAutoLayoutOrderMap(columns);
+      }
     }
   }
+  columns = compactAutoLayoutColumnsToFit(columns, layoutOptions);
 
-  const makeLayout = () => buildAutoLayoutPositions(columns, rankById, options);
+  const makeLayout = () => buildAutoLayoutPositions(columns, rankById, layoutOptions);
   let bestLayout = makeLayout();
   let bestStats = scoreAutoLayout(bestLayout, edges);
-  for (let pass = 0; pass < 3; pass += 1) {
+  for (let pass = 0; layoutOptions.preserveExisting === false && pass < 3; pass += 1) {
     let improved = false;
     for (let col = 0; col < columns.length; col += 1) {
       for (let row = 0; row < columns[col].length - 1; row += 1) {
@@ -592,13 +1391,29 @@ function autoLayoutTechTreeNodes(inputNodes, options = {}) {
     if (!improved) break;
   }
 
-  return {
+  const graphCandidate = {
     positions: bestLayout.positions,
     stats: {
       ...bestStats,
       nodeCount: nodes.length,
       edgeCount: edges.length,
       columnCount: columns.length
+    }
+  };
+  if (conservativeCandidate && conservativeCandidate.stats && conservativeCandidate.stats.score <= graphCandidate.stats.score) {
+    return {
+      ...conservativeCandidate,
+      stats: {
+        ...conservativeCandidate.stats,
+        selectedLayout: 'existing'
+      }
+    };
+  }
+  return {
+    ...graphCandidate,
+    stats: {
+      ...graphCandidate.stats,
+      selectedLayout: conservativeCandidate ? 'rebuild' : 'generated'
     }
   };
 }
@@ -770,9 +1585,9 @@ function buildTechTreeArrowRouteForSides(sourceRect, targetRect, options = {}) {
       start.y = straightY;
       end.y = straightY;
     }
-  } else if (canSlideBothEndpoints && !sourceHorizontal && !targetHorizontal) {
+  } else if (!sourceHorizontal && !targetHorizontal) {
     const straightX = getOverlappingBorderAxisCoordinate(source, sourceSide, target, targetSide, end.x);
-    if (straightX != null) {
+    if (straightX != null && (canSlideBothEndpoints || Math.abs(start.x - end.x) <= 18)) {
       start.x = straightX;
       end.x = straightX;
     }
@@ -781,11 +1596,17 @@ function buildTechTreeArrowRouteForSides(sourceRect, targetRect, options = {}) {
   const targetApproach = { x: end.x + (targetVector.x * stem), y: end.y + (targetVector.y * stem) };
   const sourceCenter = getRectCenter(source);
   const targetCenter = getRectCenter(target);
-  if (!sourceHorizontal && targetHorizontal && Math.abs(sourceOffset) < 0.01) {
+  if (!sourceHorizontal && targetHorizontal) {
     const sourceRange = getBorderAxisRange(source, sourceSide);
     const axisDelta = targetApproach.x - start.x;
     const targetDelta = targetCenter.x - sourceCenter.x;
-    if (axisDelta * targetDelta >= -0.01 && targetApproach.x >= sourceRange.min && targetApproach.x <= sourceRange.max) {
+    const canSlideSourceAxis = Math.abs(sourceOffset) < 0.01
+      || Math.abs(axisDelta) <= 24
+      || (targetApproach.x >= source.x + 5 && targetApproach.x <= source.x + source.w - 5);
+    if (canSlideSourceAxis
+      && (axisDelta * targetDelta >= -0.01 || Math.abs(axisDelta) <= 24)
+      && targetApproach.x >= sourceRange.min
+      && targetApproach.x <= sourceRange.max) {
       start.x = targetApproach.x;
       sourceExit.x = targetApproach.x;
     }
@@ -796,6 +1617,15 @@ function buildTechTreeArrowRouteForSides(sourceRect, targetRect, options = {}) {
     if (axisDelta * targetDelta >= -0.01 && targetApproach.y >= sourceRange.min && targetApproach.y <= sourceRange.max) {
       start.y = targetApproach.y;
       sourceExit.y = targetApproach.y;
+    }
+    if (targetSide === 'top' && Math.abs(targetOffset) < 0.01) {
+      const targetRange = getBorderAxisRange(target, targetSide);
+      const inset = Math.min(28, Math.max(10, target.w * 0.16));
+      const minAxis = Math.min(targetRange.max, targetRange.min + inset);
+      const maxAxis = Math.max(targetRange.min, targetRange.max - inset);
+      const desiredAxis = clamp(sourceExit.x, minAxis, maxAxis);
+      end.x = desiredAxis;
+      targetApproach.x = desiredAxis;
     }
   }
   const points = [start];

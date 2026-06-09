@@ -311,6 +311,116 @@ function countDominantAxisBacktracking(route, sourceRect, targetRect) {
   return backtrack;
 }
 
+function countRouteTurns(route) {
+  const points = route && Array.isArray(route.points) ? route.points : [];
+  let turns = 0;
+  for (let idx = 1; idx < points.length - 1; idx += 1) {
+    const prev = points[idx - 1];
+    const curr = points[idx];
+    const next = points[idx + 1];
+    const ax = curr.x - prev.x;
+    const ay = curr.y - prev.y;
+    const bx = next.x - curr.x;
+    const by = next.y - curr.y;
+    if (Math.abs((ax * by) - (ay * bx)) > 0.01) turns += 1;
+  }
+  return turns;
+}
+
+function getAxisClusters(values, threshold = 36) {
+  const sorted = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const clusters = [];
+  sorted.forEach((value) => {
+    const last = clusters[clusters.length - 1];
+    if (!last || Math.abs(value - last[last.length - 1]) > threshold) {
+      clusters.push([value]);
+    } else {
+      last.push(value);
+    }
+  });
+  return clusters;
+}
+
+function getAdvisorFaceExclusionZones(width = 1024, height = 768) {
+  const left = Math.max(0, Math.floor(width - Math.max(216, width * 0.21)));
+  const bottom = Math.min(height, Math.ceil(Math.max(260, height * 0.35)));
+  return [{ x: left, y: 0, w: width - left, h: bottom }];
+}
+
+function rectOverlapArea(a, b) {
+  const overlapW = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const overlapH = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return Math.max(0, overlapW) * Math.max(0, overlapH);
+}
+
+function rectOverlapsAnyZone(rect, zones) {
+  return (Array.isArray(zones) ? zones : []).some((zone) => rectOverlapArea(rect, zone) > 0);
+}
+
+function summarizeLayoutDistance(referenceNodes, positions) {
+  const positionById = new Map((Array.isArray(positions) ? positions : []).map((position) => [String(position.id), position]));
+  let total = 0;
+  let max = 0;
+  let count = 0;
+  (Array.isArray(referenceNodes) ? referenceNodes : []).forEach((node) => {
+    const position = positionById.get(String(node.id));
+    if (!position) return;
+    const distance = Math.hypot((Number(position.x) || 0) - (Number(node.x) || 0), (Number(position.y) || 0) - (Number(node.y) || 0));
+    total += distance;
+    max = Math.max(max, distance);
+    count += 1;
+  });
+  return { mean: count > 0 ? total / count : 0, max };
+}
+
+function getStockEraLayoutFixture(t, eraIndex) {
+  const techboxesPath = path.join(CIV3_ROOT, 'Art', 'Advisors', 'techboxes.pcx');
+  const biqPath = path.join(CIV3_ROOT, 'Conquests', 'conquests.biq');
+  [techboxesPath, biqPath].forEach((requiredPath) => {
+    if (!fs.existsSync(requiredPath)) t.skip(`Missing local Civ3 stock fixture at ${requiredPath}`);
+  });
+  if ([techboxesPath, biqPath].some((requiredPath) => !fs.existsSync(requiredPath))) return null;
+
+  const bundle = loadBundle({ mode: 'global', civ3Path: CIV3_ROOT });
+  const techBoxLayout = parseTechBoxSheetLayout(decodePcx(techboxesPath));
+  const eraTechs = getEntries(bundle, 'technologies').filter((tech) => getStockTechEra(tech) === eraIndex);
+  const prereqsByTarget = new Map();
+  getStockTechPrerequisiteEdges(bundle, eraIndex).forEach(({ source, target }) => {
+    if (!prereqsByTarget.has(target.biqIndex)) prereqsByTarget.set(target.biqIndex, []);
+    prereqsByTarget.get(target.biqIndex).push(source.biqIndex);
+  });
+  const nodes = eraTechs.map((tech) => {
+    const sizeIndex = chooseTechBoxSizeIndexForIconCount(countStockTechUnlockIcons(bundle, tech.biqIndex));
+    const frame = getTechBoxFrame(techBoxLayout, eraIndex, sizeIndex);
+    return {
+      id: tech.biqIndex,
+      name: tech.name,
+      x: parseLastNumber(getBiqFieldValue(tech, 'x'), 0),
+      y: parseLastNumber(getBiqFieldValue(tech, 'y'), 0),
+      w: frame.w,
+      h: frame.h,
+      prereqs: prereqsByTarget.get(tech.biqIndex) || []
+    };
+  });
+  const boundsLeft = Math.min(...nodes.map((node) => node.x));
+  const boundsTop = Math.min(...nodes.map((node) => node.y));
+  const boundsRight = Math.max(...nodes.map((node) => node.x + node.w));
+  const rawBoundsBottom = Math.max(...nodes.map((node) => node.y + node.h));
+  const innerArtBottom = Math.floor(768 - Math.max(88, 768 * 0.115));
+  const boundsBottom = Math.min(rawBoundsBottom, innerArtBottom);
+  const bounds = {
+    x: boundsLeft,
+    y: boundsTop,
+    w: boundsRight - boundsLeft,
+    h: boundsBottom - boundsTop,
+    exclusionZones: getAdvisorFaceExclusionZones(1024, 768)
+  };
+  return { nodes, bounds };
+}
+
 test('techbox layout parser groups four columns and four size rows per era', () => {
   const layout = parseTechBoxSheetLayout(makeSyntheticSheet());
 
@@ -412,8 +522,20 @@ test('stock Conquests Science Advisor routes keep tight Firaxis-like endpoint pl
     { era: 1, file: 'science_middle.pcx', source: 'Engineering', target: 'Invention', sides: ['right', 'left'], maxAxisDelta: 24 },
     { era: 1, file: 'science_middle.pcx', source: 'Theology', target: 'Printing Press', sides: ['right', 'left'], maxAxisDelta: 20 },
     { era: 1, file: 'science_middle.pcx', source: 'Theology', target: 'Education', sides: ['bottom', 'top'], maxAxisDelta: 24 },
-    { era: 2, file: 'science_industrial.pcx', source: 'Industrialization', target: 'The Corporation', sides: ['bottom', 'left'], maxAxisDelta: 30 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Industrialization', target: 'The Corporation', sides: ['bottom', 'left'], maxAxisDelta: 52 },
     { era: 2, file: 'science_industrial.pcx', source: 'The Corporation', target: 'Steel', sides: ['bottom', 'left'], maxAxisDelta: 28 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Refining', target: 'Combustion', sides: ['bottom', 'left'], maxAxisDelta: 28 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Steel', target: 'Combustion', sides: ['top', 'left'], maxAxisDelta: 28 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Combustion', target: 'Flight', sides: ['top', 'left'], maxAxisDelta: 28 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Mass Production', target: 'Amphibious War', sides: ['top', 'bottom'], maxAxisDelta: 30 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Flight', target: 'Advanced Flight', sides: ['right', 'top'], maxAxisDelta: 32 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Electronics', target: 'Advanced Flight', sides: ['right', 'bottom'], maxAxisDelta: 34 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Motorized Transportation', target: 'Advanced Flight', sides: ['top', 'bottom'], maxAxisDelta: 34 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Combustion', target: 'Mass Production', sides: ['bottom', 'left'], maxAxisDelta: 30 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Replaceable Parts', target: 'Mass Production', sides: ['top', 'left'], maxAxisDelta: 30 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Mass Production', target: 'Motorized Transportation', sides: ['bottom', 'left'], maxAxisDelta: 34 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Atomic Theory', target: 'Electronics', sides: ['right', 'left'], maxAxisDelta: 32 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Electricity', target: 'Replaceable Parts', sides: ['right', 'left'], maxAxisDelta: 34 },
     { era: 3, file: 'science_modern.pcx', source: 'Rocketry', target: 'Space Flight', sides: ['right', 'left'], maxAxisDelta: 24 },
     { era: 3, file: 'science_modern.pcx', source: 'Space Flight', target: 'Satellites', sides: ['right', 'left'], maxAxisDelta: 28 }
   ];
@@ -475,8 +597,8 @@ test('tech tree auto-layout produces deterministic left-to-right non-overlapping
     { id: 'republic', name: 'The Republic', x: 780, y: 520, w: 188, h: 70, prereqs: ['code', 'philosophy'] }
   ];
 
-  const result = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16 });
-  const repeat = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16 });
+  const result = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16, preserveExisting: false });
+  const repeat = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16, preserveExisting: false });
   assert.deepEqual(result.positions, repeat.positions);
   assert.equal(result.stats.backwardEdges, 0);
   assert.equal(result.stats.obstacleHits, 0);
@@ -507,12 +629,324 @@ test('tech tree auto-layout improves route clearance for long prerequisite links
     { id: 'e', name: 'E', x: 700, y: 470, w: 180, h: 70, prereqs: ['c'] }
   ];
 
-  const result = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16 });
+  const result = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16, preserveExisting: false });
   const byId = new Map(result.positions.map((position) => [String(position.id), position]));
   assert.equal(result.stats.obstacleHits, 0);
   assert.equal(countRouteObstacleHits(nodes, result.positions), 0);
   assert.ok(byId.get('a').x < byId.get('d').x, 'long prerequisite edge still flows left to right');
   assert.ok(Math.abs((byId.get('b').y + byId.get('b').h / 2) - (byId.get('d').y + byId.get('d').h / 2)) < 220);
+});
+
+test('tech tree rebuild auto-layout ignores cramped input and keeps breathing room', () => {
+  const nodes = [
+    { id: 'root-a', name: 'Root A', x: 120, y: 120, w: 160, h: 70, prereqs: [] },
+    { id: 'root-b', name: 'Root B', x: 126, y: 126, w: 160, h: 70, prereqs: [] },
+    { id: 'root-c', name: 'Root C', x: 132, y: 132, w: 160, h: 70, prereqs: [] },
+    { id: 'child-a', name: 'Child A', x: 140, y: 140, w: 188, h: 70, prereqs: ['root-a'] },
+    { id: 'child-b', name: 'Child B', x: 146, y: 146, w: 188, h: 70, prereqs: ['root-b'] },
+    { id: 'child-c', name: 'Child C', x: 152, y: 152, w: 188, h: 70, prereqs: ['root-c'] }
+  ];
+
+  const result = autoLayoutTechTreeNodes(nodes, {
+    width: 1024,
+    height: 768,
+    bounds: { x: 64, y: 56, w: 896, h: 620 },
+    preserveExisting: false,
+    grid: 16,
+    minColumnGap: 96,
+    minRowGap: 32
+  });
+  const byId = new Map(result.positions.map((position) => [String(position.id), position]));
+  const rootRight = Math.max(byId.get('root-a').x + byId.get('root-a').w, byId.get('root-b').x + byId.get('root-b').w, byId.get('root-c').x + byId.get('root-c').w);
+  const childLeft = Math.min(byId.get('child-a').x, byId.get('child-b').x, byId.get('child-c').x);
+  assert.ok(childLeft - rootRight >= 96, 'rebuild layout leaves horizontal breathing room between columns');
+
+  [byId.get('root-a'), byId.get('root-b'), byId.get('root-c')]
+    .sort((a, b) => a.y - b.y)
+    .forEach((position, index, sorted) => {
+      if (index === 0) return;
+      assert.ok(position.y - (sorted[index - 1].y + sorted[index - 1].h) >= 32, 'rebuild layout leaves vertical breathing room inside columns');
+    });
+});
+
+test('tech tree auto-layout avoids the advisor face exclusion zone', () => {
+  const bounds = {
+    x: 64,
+    y: 56,
+    w: 896,
+    h: 620,
+    exclusionZones: [{ x: 760, y: 0, w: 264, h: 260 }]
+  };
+  const nodes = [
+    { id: 'root', label: 'Root', x: 80, y: 80, w: 120, h: 64, prereqs: [] },
+    { id: 'branch', label: 'Branch', x: 320, y: 80, w: 120, h: 64, prereqs: ['root'] },
+    { id: 'corner', label: 'Corner', x: 820, y: 80, w: 120, h: 64, prereqs: ['branch'] }
+  ];
+  const result = autoLayoutTechTreeNodes(nodes, {
+    width: 1024,
+    height: 768,
+    bounds,
+    columnAlign: 'left',
+    preserveExisting: false,
+    grid: 16,
+    minColumnGap: 96,
+    minRowGap: 32
+  });
+
+  assert.equal(result.stats.exclusionOverlap, 0);
+  result.positions.forEach((position) => {
+    assert.equal(rectOverlapsAnyZone(position, bounds.exclusionZones), false, `${position.id} avoids the advisor face zone`);
+  });
+});
+
+test('tech tree auto-layout respects existing-coordinate bounds and left-aligns columns', () => {
+  const nodes = [
+    { id: 'root-wide', name: 'Root Wide', x: 60, y: 80, w: 190, h: 70, prereqs: [] },
+    { id: 'root-small', name: 'Root Small', x: 60, y: 640, w: 98, h: 64, prereqs: [] },
+    { id: 'mid', name: 'Middle', x: 390, y: 120, w: 160, h: 70, prereqs: ['root-wide'] },
+    { id: 'late', name: 'Late', x: 720, y: 620, w: 188, h: 70, prereqs: ['mid', 'root-small'] }
+  ];
+  const bounds = { x: 60, y: 80, w: 848, h: 630 };
+
+  const result = autoLayoutTechTreeNodes(nodes, {
+    width: 1024,
+    height: 768,
+    bounds,
+    columnAlign: 'left',
+    grid: 16
+  });
+  const byId = new Map(result.positions.map((position) => [String(position.id), position]));
+
+  result.positions.forEach((position) => {
+    assert.ok(position.x >= bounds.x, `${position.id} stays inside left bound`);
+    assert.ok(position.y >= bounds.y, `${position.id} stays inside top bound`);
+    assert.ok(position.x + position.w <= bounds.x + bounds.w, `${position.id} stays inside right bound`);
+    assert.ok(position.y + position.h <= bounds.y + bounds.h, `${position.id} stays inside bottom bound`);
+  });
+  assert.equal(byId.get('root-wide').x, byId.get('root-small').x);
+});
+
+test('stock Conquests Industrial auto-layout stays inside the existing art envelope without box overlap', (t) => {
+  const techboxesPath = path.join(CIV3_ROOT, 'Art', 'Advisors', 'techboxes.pcx');
+  const biqPath = path.join(CIV3_ROOT, 'Conquests', 'conquests.biq');
+  [techboxesPath, biqPath].forEach((requiredPath) => {
+    if (!fs.existsSync(requiredPath)) t.skip(`Missing local Civ3 stock fixture at ${requiredPath}`);
+  });
+  if ([techboxesPath, biqPath].some((requiredPath) => !fs.existsSync(requiredPath))) return;
+
+  const bundle = loadBundle({ mode: 'global', civ3Path: CIV3_ROOT });
+  const techBoxLayout = parseTechBoxSheetLayout(decodePcx(techboxesPath));
+  const eraIndex = 2;
+  const eraTechs = getEntries(bundle, 'technologies').filter((tech) => getStockTechEra(tech) === eraIndex);
+  const prereqsByTarget = new Map();
+  getStockTechPrerequisiteEdges(bundle, eraIndex).forEach(({ source, target }) => {
+    if (!prereqsByTarget.has(target.biqIndex)) prereqsByTarget.set(target.biqIndex, []);
+    prereqsByTarget.get(target.biqIndex).push(source.biqIndex);
+  });
+  const nodes = eraTechs.map((tech) => {
+    const sizeIndex = chooseTechBoxSizeIndexForIconCount(countStockTechUnlockIcons(bundle, tech.biqIndex));
+    const frame = getTechBoxFrame(techBoxLayout, eraIndex, sizeIndex);
+    return {
+      id: tech.biqIndex,
+      name: tech.name,
+      x: parseLastNumber(getBiqFieldValue(tech, 'x'), 0),
+      y: parseLastNumber(getBiqFieldValue(tech, 'y'), 0),
+      w: frame.w,
+      h: frame.h,
+      prereqs: prereqsByTarget.get(tech.biqIndex) || []
+    };
+  });
+  const boundsLeft = Math.min(...nodes.map((node) => node.x));
+  const boundsTop = Math.min(...nodes.map((node) => node.y));
+  const boundsRight = Math.max(...nodes.map((node) => node.x + node.w));
+  const rawBoundsBottom = Math.max(...nodes.map((node) => node.y + node.h));
+  const innerArtBottom = Math.floor(768 - Math.max(88, 768 * 0.115));
+  const boundsBottom = Math.min(rawBoundsBottom, innerArtBottom);
+  const bounds = {
+    x: boundsLeft,
+    y: boundsTop,
+    w: boundsRight - boundsLeft,
+    h: boundsBottom - boundsTop,
+    exclusionZones: getAdvisorFaceExclusionZones(1024, 768)
+  };
+  const result = autoLayoutTechTreeNodes(nodes, {
+    width: 1024,
+    height: 768,
+    bounds,
+    columnAlign: 'left',
+    preserveExisting: true,
+    grid: 16
+  });
+
+  result.positions.forEach((position) => {
+    assert.ok(position.x >= bounds.x, `${position.id} stays inside left bound`);
+    assert.ok(position.y >= bounds.y, `${position.id} stays inside top bound`);
+    assert.ok(position.x + position.w <= bounds.x + bounds.w, `${position.id} stays inside right bound`);
+    assert.ok(position.y + position.h <= bounds.y + bounds.h, `${position.id} stays inside bottom bound`);
+    assert.equal(rectOverlapsAnyZone(position, bounds.exclusionZones), false, `${position.id} avoids the advisor face corner`);
+  });
+  assert.equal(result.stats.exclusionOverlap, 0);
+  for (let i = 0; i < result.positions.length; i += 1) {
+    for (let j = i + 1; j < result.positions.length; j += 1) {
+      assert.equal(rectsOverlap(result.positions[i], result.positions[j], 4), false, `${result.positions[i].id} overlaps ${result.positions[j].id}`);
+    }
+  }
+});
+
+test('stock Conquests Industrial routes avoid extra bends when endpoints can slide on techbox borders', (t) => {
+  const techboxesPath = path.join(CIV3_ROOT, 'Art', 'Advisors', 'techboxes.pcx');
+  const biqPath = path.join(CIV3_ROOT, 'Conquests', 'conquests.biq');
+  [techboxesPath, biqPath].forEach((requiredPath) => {
+    if (!fs.existsSync(requiredPath)) t.skip(`Missing local Civ3 stock fixture at ${requiredPath}`);
+  });
+  if ([techboxesPath, biqPath].some((requiredPath) => !fs.existsSync(requiredPath))) return;
+
+  const bundle = loadBundle({ mode: 'global', civ3Path: CIV3_ROOT });
+  const techBoxLayout = parseTechBoxSheetLayout(decodePcx(techboxesPath));
+  const routed = layoutTechTreeArrowEdges(getStockTechPrerequisiteEdges(bundle, 2).map(({ source, target }) => ({
+    source: { id: source.name },
+    target: { id: target.name },
+    sourceRect: getStockTechRect(bundle, techBoxLayout, source.name),
+    targetRect: getStockTechRect(bundle, techBoxLayout, target.name)
+  })), { slotSpacing: 10 });
+  const byPair = new Map(routed.map((edge) => [`${edge.source.id}->${edge.target.id}`, edge]));
+  const routeFor = (sourceName, targetName) => {
+    const edge = byPair.get(`${sourceName}->${targetName}`);
+    assert.ok(edge, `Expected stock route ${sourceName} -> ${targetName}`);
+    return buildTechTreeArrowRoute(edge.sourceRect, edge.targetRect, {
+      sourceSide: edge.sourceSide,
+      targetSide: edge.targetSide,
+      sourceOffset: edge.sourceOffset,
+      targetOffset: edge.targetOffset,
+      horizontalTolerance: 18
+    });
+  };
+
+  assert.equal(countRouteTurns(routeFor('Steam Power', 'Ironclads')), 0);
+  assert.equal(countRouteTurns(routeFor('Industrialization', 'The Corporation')), 1);
+});
+
+test('stock Conquests Tidy auto-position preserves Firaxis-like hand layouts', (t) => {
+  [0, 1, 2, 3].forEach((eraIndex) => {
+    const fixture = getStockEraLayoutFixture(t, eraIndex);
+    if (!fixture) return;
+    const { nodes, bounds } = fixture;
+    nodes.forEach((node) => {
+      assert.equal(rectOverlapsAnyZone(node, bounds.exclusionZones), false, `era ${eraIndex}: stock ${node.name} avoids the advisor face corner`);
+    });
+    const perturbed = nodes.map((node, index) => ({
+      ...node,
+      x: Math.max(bounds.x, Math.min(bounds.x + bounds.w - node.w, node.x + [0, 13, -11, 7, -5][index % 5])),
+      y: Math.max(bounds.y, Math.min(bounds.y + bounds.h - node.h, node.y + [-9, 12, 6, -7, 4][index % 5]))
+    }));
+    const result = autoLayoutTechTreeNodes(perturbed, {
+      width: 1024,
+      height: 768,
+      bounds,
+      columnAlign: 'left',
+      preserveExisting: true,
+      grid: 16,
+      minColumnGap: 96,
+      minRowGap: 32
+    });
+    const distance = summarizeLayoutDistance(nodes, result.positions);
+
+    assert.equal(result.stats.boxOverlaps, 0, `era ${eraIndex} has no real box overlaps`);
+    assert.equal(result.stats.boundsOverflow, 0, `era ${eraIndex} stays inside the Firaxis advisor frame`);
+    assert.equal(result.stats.exclusionOverlap, 0, `era ${eraIndex} stays out of the advisor face corner`);
+    assert.ok(distance.mean <= 55, `era ${eraIndex} Tidy keeps average movement near stock (${distance.mean.toFixed(1)}px)`);
+    assert.ok(distance.max <= 130, `era ${eraIndex} Tidy avoids large stock-layout drift (${distance.max.toFixed(1)}px)`);
+    if (eraIndex === 3) {
+      const positionByName = new Map(result.positions.map((position) => {
+        const node = nodes.find((candidate) => String(candidate.id) === String(position.id));
+        return [node ? node.name : String(position.id), position];
+      }));
+      ['Computers', 'Miniaturization'].forEach((name) => {
+        const position = positionByName.get(name);
+        assert.ok(position, `Expected ${name} in Modern Times auto-position output`);
+        assert.ok(position.y + position.h <= bounds.y + bounds.h, `${name} stays inside the Modern Times bottom frame`);
+      });
+    }
+    for (let i = 0; i < result.positions.length; i += 1) {
+      for (let j = i + 1; j < result.positions.length; j += 1) {
+        assert.equal(rectsOverlap(result.positions[i], result.positions[j], 0), false, `era ${eraIndex}: ${result.positions[i].id} overlaps ${result.positions[j].id}`);
+      }
+      assert.equal(rectOverlapsAnyZone(result.positions[i], bounds.exclusionZones), false, `era ${eraIndex}: ${result.positions[i].id} avoids the advisor face corner`);
+    }
+  });
+});
+
+test('stock Conquests Rebuild auto-position produces Firaxis-like layouts from scrambled coordinates', (t) => {
+  const summarizePositions = (positions) => (Array.isArray(positions) ? positions : [])
+    .map((position) => ({
+      id: String(position.id),
+      x: position.x,
+      y: position.y,
+      w: position.w,
+      h: position.h,
+      rank: position.rank
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+  [0, 1, 2, 3].forEach((eraIndex) => {
+    const fixture = getStockEraLayoutFixture(t, eraIndex);
+    if (!fixture) return;
+    const { nodes, bounds } = fixture;
+    const scrambled = nodes.map((node, index) => ({
+      ...node,
+      x: bounds.x + ((index * 137) % Math.max(1, bounds.w - node.w)),
+      y: bounds.y + ((index * 89) % Math.max(1, bounds.h - node.h))
+    }));
+    const alternateScrambled = nodes.map((node, index) => ({
+      ...node,
+      x: bounds.x + (((nodes.length - index) * 173) % Math.max(1, bounds.w - node.w)),
+      y: bounds.y + (((nodes.length - index) * 71) % Math.max(1, bounds.h - node.h))
+    }));
+    const result = autoLayoutTechTreeNodes(scrambled, {
+      width: 1024,
+      height: 768,
+      bounds,
+      columnAlign: 'left',
+      preserveExisting: false,
+      grid: 16,
+      minColumnGap: 96,
+      minRowGap: 32
+    });
+    const alternateResult = autoLayoutTechTreeNodes(alternateScrambled, {
+      width: 1024,
+      height: 768,
+      bounds,
+      columnAlign: 'left',
+      preserveExisting: false,
+      grid: 16,
+      minColumnGap: 96,
+      minRowGap: 32
+    });
+    const distance = summarizeLayoutDistance(nodes, result.positions);
+    const stockColumnCount = getAxisClusters(nodes.map((node) => node.x), 36).length;
+
+    assert.deepEqual(
+      summarizePositions(result.positions),
+      summarizePositions(alternateResult.positions),
+      `era ${eraIndex} Rebuild output is independent of current/scrambled coordinates`
+    );
+    assert.equal(result.stats.boxOverlaps, 0, `era ${eraIndex} Rebuild has no real box overlaps`);
+    assert.equal(result.stats.boundsOverflow, 0, `era ${eraIndex} Rebuild stays inside the Firaxis advisor frame`);
+    assert.equal(result.stats.exclusionOverlap, 0, `era ${eraIndex} Rebuild stays out of the advisor face corner`);
+    assert.ok(result.stats.obstacleHits <= 10, `era ${eraIndex} Rebuild routes avoid most unrelated boxes`);
+    assert.ok(result.stats.routeCrossings <= 8, `era ${eraIndex} Rebuild avoids spaghetti route crossings`);
+    assert.ok(
+      Math.abs(result.stats.columnCount - stockColumnCount) <= 2,
+      `era ${eraIndex} Rebuild column count ${result.stats.columnCount} stays close to stock ${stockColumnCount}`
+    );
+    assert.ok(distance.mean <= 280, `era ${eraIndex} Rebuild average stock distance remains bounded (${distance.mean.toFixed(1)}px)`);
+    assert.ok(distance.max <= 550, `era ${eraIndex} Rebuild worst stock distance remains bounded (${distance.max.toFixed(1)}px)`);
+    for (let i = 0; i < result.positions.length; i += 1) {
+      for (let j = i + 1; j < result.positions.length; j += 1) {
+        assert.equal(rectsOverlap(result.positions[i], result.positions[j], 0), false, `era ${eraIndex}: ${result.positions[i].id} overlaps ${result.positions[j].id}`);
+      }
+      assert.equal(rectOverlapsAnyZone(result.positions[i], bounds.exclusionZones), false, `era ${eraIndex}: ${result.positions[i].id} avoids the advisor face corner`);
+    }
+  });
 });
 
 test('science advisor arrow routes anchor to techbox edges and smooth corners', () => {
@@ -585,6 +1019,25 @@ test('science advisor arrow layout enters side of vertically offset targets', ()
   });
   assert.deepEqual(route.points[0], { x: 160, y: 160 });
   assert.deepEqual(route.points[route.points.length - 1], { x: 285, y: 270 });
+});
+
+test('science advisor arrow layout avoids side-exit detours for close diagonal boxes', () => {
+  const sourceRect = { x: 208, y: 271, w: 158, h: 75 };
+  const targetRect = { x: 304, y: 356, w: 104, h: 67 };
+  const routed = layoutTechTreeArrowEdges([
+    { source: { id: 'industrialization' }, target: { id: 'corporation' }, sourceRect, targetRect }
+  ])[0];
+
+  assert.equal(routed.sourceSide, 'bottom');
+  assert.equal(routed.targetSide, 'left');
+  const route = buildTechTreeArrowRoute(sourceRect, targetRect, {
+    sourceSide: routed.sourceSide,
+    targetSide: routed.targetSide,
+    sourceOffset: routed.sourceOffset,
+    targetOffset: routed.targetOffset
+  });
+  assert.deepEqual(route.points[0], { x: 286, y: 346 });
+  assert.deepEqual(route.points[route.points.length - 1], { x: 304, y: 389.5 });
 });
 
 test('science advisor arrow routes snap nearly aligned side links flat', () => {

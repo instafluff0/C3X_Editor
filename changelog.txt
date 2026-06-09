@@ -1,7 +1,28 @@
 * RELEASE 27.15
+- Added a scenario-local editor-only Tech Tree arrow metadata sidecar so saved generated Science Advisor route adjustments are reused when reopening a scenario.
+- Improved generated Science Advisor arrow erasing near advisor-frame edges so cleared old arrows are filled from matching local background instead of smearing nearby frame texture into the parchment.
+- Grouped Tech Tree header controls into soft Scope, Display, Layout, and Background Arrows sections for easier scanning.
+- Made the Tech Tree modal header more compact by removing redundant helper text and moving the live coordinate readout into the tree stage.
+- Synced modal Save, Undo, and Undo All enablement so modal Save cannot be active when the matching modal Undo action is inactive, and Undo/Undo All now share the same undoable-state predicate.
+- Added gentle nearby route-axis snapping while dragging Tech Tree arrow route handles, with Alt/Option-drag bypass for exact free placement.
+- Fixed Tech Tree node double-click navigation so Back reopens the Tech Tree modal instead of staying on the Techs tab.
+- Added fuzzy Firaxis Science Advisor arrow-shape regression tests that compare generated route tangents and curve proximity against stock PCX arrow pixels.
+- Fixed Tech Tree arrow route handle drags so each arrow-point move is its own Undo step instead of the next Undo reverting multiple previous arrow edits.
+- Fixed Tech Tree single-step Undo after moving a tech so it restores the generated-arrow preview state as well as the tech coordinates, returning to the original PCX arrows when appropriate.
+- Replaced the Tech Tree `Snap to Grid` checkbox with `Tidy` and `Rebuild` Auto-Position modes, with stock Conquests tests covering close-to-current cleanup and from-scratch Firaxis-like layout generation.
+- Improved Tech Tree `Rebuild` Auto-Position so from-scratch layouts ignore current coordinate noise, keep stable prerequisite-branch ordering, and score visible generated-arrow crossings to avoid spaghetti routes.
+- Constrained Tech Tree Auto-Position around the Science Advisor upper-right face area, using stock Conquests layouts to keep the reserved corner clear without shrinking the whole advisor frame.
+- Tightened the Tech Tree Background Arrows style panel so color labels and swatches render as compact paired controls.
+- Fixed Tech Tree `Auto-Position` bounds repair so close/tall stock-shaped layouts keep bottom-row tech boxes inside the Science Advisor frame instead of pushing them below the visible border.
+- Improved Tech Tree arrow routing for close diagonal prerequisite boxes so routes prefer Firaxis-like bottom/top exits instead of odd side exits into nearby targets.
+- Fixed Tech Tree `Auto-Position` so it scores box overlap as a hard failure, compares generated layouts against stock-shaped candidates automatically, compacts excessive dependency ranks into readable visual columns, and is regression-tested against Firaxis Conquests era layouts.
+- Fixed generated Science Advisor PCX saves so arrow anchors use the same civ-scoped tech-box sizing shown in the Tech Tree modal, including unit availability filters and obsolete improvement icons.
+- Added regression coverage that compares generated Science Advisor arrow preview pixels against the saved PCX output after palette quantization, including route overrides and custom arrow style.
 - Reduced generated Science Advisor arrow erasure near game borders by requiring nearby true arrow-color pixels before clearing detached fringe-colored runs.
 - Added a Tech Tree `Auto-Position` action that lays out the selected era left-to-right from prerequisites, aligns tech boxes on a grid, avoids overlaps, and favors generated-arrow routes that do not pass through unrelated boxes.
 - Fixed Tech Tree modal Undo All enablement so it activates after the first unsaved change, including pending arrow-style edits before the global dirty flag refresh completes.
+- Fixed Tech Tree node clicks so single-click selection and double-click close/focus are not misclassified as drag moves or arrow redraws.
+- Changed generated Science Advisor arrow previews to clear the era background once and redraw all arrows with cached app-generated route baselines, while recomputing only edges connected to moved tech boxes.
 - Added scenario-aware Science Advisor and `Art/Advisors/techboxes.pcx` rendering in the Tech Tree modal, including native background sizing, in-game techbox art, unit/improvement/worker-job unlock thumbnails for box size selection, and opt-in scenario-local Science Advisor arrow regeneration after moving techs.
 - Refined generated Science Advisor arrows with shared preview/save raster output, coverage-based antialiasing, wider Firaxis-style arrowheads, and layered light glints on the arrow body.
 - Added live Tech Tree controls for generated Science Advisor arrow colors, body thickness, edge softness, curve radius, and arrowhead geometry, with the same style passed to scenario PCX save output and color-picker redraws throttled for smoother dragging.
@@ -12,7 +33,7 @@
 - Added session-only draggable Science Advisor arrow route handles in the Tech Tree modal, so regenerated arrows can be adjusted in preview and written through the normal scenario PCX save without creating extra route files.
 - Improved generated Science Advisor arrow routing and editing by avoiding rounded reverse-turn kinks, preventing short-gap target approaches from bending back on themselves, preserving separated shared endpoint slots, removing avoidable mixed-side doglegs, entering side borders for vertically offset targets, choosing arrow-red palette colors instead of neutral near-matches, showing route handles only while hovering an arrow, and allowing arrow start/tip points to slide along tech-box borders.
 - Matched generated Science Advisor arrows to era-specific Firaxis palette colors, including blue Modern Times arrows, cleared existing blue background arrows in previews and save output, limited scenario PCX regeneration to only changed eras, and added route-shape tests for Firaxis-like connector behavior.
-- Added stock Conquests Science Advisor PCX regression coverage across Ancient Times, Middle Ages, Industrial Ages, and Modern Times for generated arrow endpoint sides and side-axis attachment placement, including the Monotheism, Theology, Chivalry, Feudalism, Invention, and Engineering cluster, using Firaxis arrow pixels as the comparison target.
+- Added stock Conquests Science Advisor PCX regression coverage across Ancient Times, Middle Ages, Industrial Ages, and Modern Times for generated arrow endpoint sides and side-axis attachment placement, including the Monotheism, Theology, Chivalry, Feudalism, Invention, and Engineering cluster plus Industrial Combustion, Flight, Amphibious War, Advanced Flight, Mass Production, Motorized Transportation, Electronics, and Replaceable Parts routes, using Firaxis arrow pixels as the comparison target.
 - Added read-only Worker Jobs command-button previews from Conquests `NormButtons.pcx` in Terrain -> Worker Jobs and Tech Tree unlock boxes, and documented that BIQ `TFRM` records do not store those atlas coordinates.
 - Added obsoleted improvements to Tech Tree unlock boxes with Civ-style red X overlays, so they contribute to tech-box icon sizing and match the in-game Science Advisor.
 - Added the in-game italic title and blue no-go marker for Tech Tree technologies flagged as not required for era advancement, keeping the marker as UI-only overlay art.

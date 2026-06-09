@@ -44,6 +44,8 @@ const SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS = [
   ['Art/Advisors/science_modern.pcx']
 ];
 const SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH = 'Art/Advisors/techboxes.pcx';
+const SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH = 'c3x_editor_tech_tree_arrows.json';
+const SCIENCE_ADVISOR_ARROW_METADATA_FORMAT = 'c3x-editor-tech-tree-arrows';
 const SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES = [
   { w: 84, h: 54 },
   { w: 140, h: 54 },
@@ -6572,6 +6574,9 @@ function loadBundle(payload) {
       scenarioWriteRoots: scenarioContext.writableRoots,
       tabs: {}
     };
+    bundle.scienceAdvisorArrowMetadata = mode === 'scenario'
+      ? loadScienceAdvisorArrowMetadata(scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioDir)
+      : loadScienceAdvisorArrowMetadata('');
 
     bundle.biq = biqTab;
     if (mode === 'scenario' && scenarioSearchFolderOverride.length > 0 && biqTab && Array.isArray(biqTab.sections)) {
@@ -7744,17 +7749,60 @@ function collectScienceAdvisorTechNodes(tabs) {
   return { nodes, byId };
 }
 
-function countScienceAdvisorUnlockIconsForTech(tabs, techId) {
+function decodeScienceAdvisorAvailableToIndices(rawValue) {
+  const raw = cleanDisplayText(rawValue);
+  const parsed = /^-?\d+$/.test(raw) ? Number.parseInt(raw, 10) : 0;
+  const mask = (Number.isFinite(parsed) ? parsed : 0) >>> 0;
+  const out = [];
+  for (let idx = 0; idx < 32; idx += 1) {
+    if (((mask >>> idx) & 1) === 1) out.push(idx);
+  }
+  return out;
+}
+
+function normalizeScienceAdvisorUnitCivFilter(filter) {
+  if (!filter || typeof filter !== 'object') return null;
+  const rawSelectedCivIndex = filter.selectedCivIndex;
+  const selectedCivIndex = rawSelectedCivIndex == null || rawSelectedCivIndex === '' ? NaN : Number(rawSelectedCivIndex);
+  const generalCivIndices = Array.isArray(filter.generalCivIndices)
+    ? filter.generalCivIndices
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value >= 0)
+    : [];
+  return {
+    selectedCivIndex: Number.isFinite(selectedCivIndex) && selectedCivIndex >= 0 ? selectedCivIndex : null,
+    generalCivIndices
+  };
+}
+
+function shouldShowScienceAdvisorUnitInTechBox(entry, unitCivFilter = null) {
+  const availableTo = new Set(decodeScienceAdvisorAvailableToIndices(getBiqFieldByBaseKey(entry, 'availableto') && getBiqFieldByBaseKey(entry, 'availableto').value));
+  if (availableTo.size === 0) return false;
+  const filter = normalizeScienceAdvisorUnitCivFilter(unitCivFilter);
+  if (filter && filter.selectedCivIndex != null) return availableTo.has(filter.selectedCivIndex);
+  const generalCivIndices = filter ? filter.generalCivIndices : [];
+  if (generalCivIndices.length === 0) return true;
+  return generalCivIndices.every((idx) => availableTo.has(idx));
+}
+
+function getScienceAdvisorCivFilterForEra(civFiltersByEra, eraIndex) {
+  const root = civFiltersByEra && typeof civFiltersByEra === 'object' ? civFiltersByEra : {};
+  return normalizeScienceAdvisorUnitCivFilter(root[String(Number(eraIndex) || 0)] || null);
+}
+
+function countScienceAdvisorUnlockIconsForTech(tabs, techId, unitCivFilter = null) {
   let count = 1;
   const unitEntries = (((tabs || {}).units || {}).entries) || [];
   unitEntries.forEach((entry) => {
     const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'requiredtech') && getBiqFieldByBaseKey(entry, 'requiredtech').value);
-    if (required === techId) count += 1;
+    if (required === techId && shouldShowScienceAdvisorUnitInTechBox(entry, unitCivFilter)) count += 1;
   });
   const improvementEntries = (((tabs || {}).improvements || {}).entries) || [];
   improvementEntries.forEach((entry) => {
     const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'reqadvance') && getBiqFieldByBaseKey(entry, 'reqadvance').value);
     if (required === techId) count += 1;
+    const obsoleteBy = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'obsoleteby') && getBiqFieldByBaseKey(entry, 'obsoleteby').value);
+    if (obsoleteBy === techId) count += 1;
   });
   const workerEntries = (((tabs || {}).workerActions || {}).entries) || [];
   workerEntries.forEach((entry) => {
@@ -7783,9 +7831,9 @@ function getScienceAdvisorTechBoxRect({ layout, eraIndex, sizeIndex }) {
   return SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES[sizeIndex] || SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES[0];
 }
 
-function annotateScienceAdvisorNodeRects({ nodes, tabs, layout }) {
+function annotateScienceAdvisorNodeRects({ nodes, tabs, layout, civFiltersByEra = {} }) {
   nodes.forEach((node) => {
-    const iconCount = countScienceAdvisorUnlockIconsForTech(tabs, node.id);
+    const iconCount = countScienceAdvisorUnlockIconsForTech(tabs, node.id, getScienceAdvisorCivFilterForEra(civFiltersByEra, node.era));
     const sizeIndex = techBoxLayout.chooseTechBoxSizeIndexForIconCount(iconCount);
     const rect = getScienceAdvisorTechBoxRect({ layout, eraIndex: node.era, sizeIndex });
     node.w = rect.w;
@@ -7827,7 +7875,111 @@ function normalizeScienceAdvisorOverrideRoute(route) {
   return normalized.length >= 2 ? normalized : null;
 }
 
-function buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex, routeOverrides = {} }) {
+function normalizeScienceAdvisorRouteOverrides(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const out = {};
+  Object.entries(source).forEach(([key, value]) => {
+    const route = normalizeScienceAdvisorOverrideRoute(value);
+    if (!route) return;
+    out[String(key)] = {
+      points: route.map((point) => ({
+        x: Math.round(point.x),
+        y: Math.round(point.y)
+      }))
+    };
+  });
+  return out;
+}
+
+function normalizeScienceAdvisorRouteHint(hint) {
+  const sourceSide = String(hint && hint.sourceSide || '').toLowerCase();
+  const targetSide = String(hint && hint.targetSide || '').toLowerCase();
+  const validSides = new Set(['left', 'right', 'top', 'bottom']);
+  if (!validSides.has(sourceSide) || !validSides.has(targetSide)) return null;
+  return {
+    sourceSide,
+    targetSide,
+    sourceOffset: Number(hint && hint.sourceOffset) || 0,
+    targetOffset: Number(hint && hint.targetOffset) || 0,
+    horizontalTolerance: Number.isFinite(Number(hint && hint.horizontalTolerance)) ? Number(hint.horizontalTolerance) : 18
+  };
+}
+
+function normalizeScienceAdvisorRouteHints(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const out = {};
+  Object.entries(source).forEach(([key, value]) => {
+    const hint = normalizeScienceAdvisorRouteHint(value);
+    if (!hint) return;
+    out[String(key)] = hint;
+  });
+  return out;
+}
+
+function loadScienceAdvisorArrowMetadata(targetContentRoot) {
+  const root = String(targetContentRoot || '').trim();
+  const metadataPath = root ? path.join(root, SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH) : '';
+  if (!metadataPath) {
+    return {
+      path: '',
+      exists: false,
+      routeOverrides: {},
+      baselineRouteHints: {}
+    };
+  }
+  let parsed = null;
+  const text = readTextIfExists(metadataPath);
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch (_err) {
+      parsed = null;
+    }
+  }
+  return {
+    path: metadataPath,
+    exists: !!text,
+    format: parsed && typeof parsed === 'object' ? String(parsed.format || '') : '',
+    version: parsed && typeof parsed === 'object' ? Number(parsed.version) || 0 : 0,
+    routeOverrides: normalizeScienceAdvisorRouteOverrides(parsed && parsed.routeOverrides),
+    baselineRouteHints: normalizeScienceAdvisorRouteHints(parsed && parsed.baselineRouteHints)
+  };
+}
+
+function buildScienceAdvisorArrowMetadataWrite({ targetContentRoot, routeOverrides = {}, baselineRouteHints = {} }) {
+  const root = String(targetContentRoot || '').trim();
+  if (!root) return null;
+  const metadata = {
+    format: SCIENCE_ADVISOR_ARROW_METADATA_FORMAT,
+    version: 1,
+    routeOverrides: normalizeScienceAdvisorRouteOverrides(routeOverrides),
+    baselineRouteHints: normalizeScienceAdvisorRouteHints(baselineRouteHints)
+  };
+  return {
+    kind: 'scienceAdvisorArrowMetadata',
+    path: path.join(root, SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH),
+    data: `${JSON.stringify(metadata, null, 2)}\n`,
+    encoding: 'utf8',
+    applied: Object.keys(metadata.routeOverrides).length + Object.keys(metadata.baselineRouteHints).length,
+    detail: 'Saved generated Science Advisor arrow routing metadata'
+  };
+}
+
+function getScienceAdvisorEraDirtyEdgeSet(dirtyEdgesByEra, eraIndex) {
+  const root = dirtyEdgesByEra && typeof dirtyEdgesByEra === 'object' ? dirtyEdgesByEra : {};
+  const value = root[String(Number(eraIndex) || 0)];
+  if (!value || typeof value !== 'object') return new Set();
+  return new Set(Object.keys(value).filter((key) => value[key]));
+}
+
+function buildScienceAdvisorArrowRoutesForEra({
+  nodes,
+  byId,
+  eraIndex,
+  routeOverrides = {},
+  baselineRouteHints = {},
+  dirtyEdgesByEra = {}
+}) {
   const edges = [];
   const eraNodes = nodes.filter((node) => node && node.era === eraIndex);
   eraNodes.forEach((target) => {
@@ -7835,6 +7987,7 @@ function buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex, routeOver
         const source = byId.get(sourceId);
         if (!source || source.era !== eraIndex) return;
         edges.push({
+          key: buildScienceAdvisorArrowRouteKey(eraIndex, source.id, target.id),
           source,
           target,
           sourceRect: { x: source.x, y: source.y, w: source.w, h: source.h },
@@ -7842,9 +7995,11 @@ function buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex, routeOver
         });
       });
     });
+  const dirtyEdgeSet = getScienceAdvisorEraDirtyEdgeSet(dirtyEdgesByEra, eraIndex);
   return techBoxLayout.layoutTechTreeArrowEdges(edges, { slotSpacing: 10 })
     .map((edge) => {
-      const override = normalizeScienceAdvisorOverrideRoute(routeOverrides[buildScienceAdvisorArrowRouteKey(eraIndex, edge.source.id, edge.target.id)]);
+      const routeKey = edge.key || buildScienceAdvisorArrowRouteKey(eraIndex, edge.source.id, edge.target.id);
+      const override = normalizeScienceAdvisorOverrideRoute(routeOverrides[routeKey]);
       if (override) {
         const tip = override[override.length - 1];
         const prev = override.length > 1 ? override[override.length - 2] : { x: tip.x - 1, y: tip.y };
@@ -7854,28 +8009,50 @@ function buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex, routeOver
           points: override
         };
       }
+      const baselineHint = !dirtyEdgeSet.has(routeKey)
+        ? normalizeScienceAdvisorRouteHint(baselineRouteHints[routeKey])
+        : null;
+      const routeOptions = baselineHint || {
+        sourceSide: edge.sourceSide,
+        targetSide: edge.targetSide,
+        sourceOffset: edge.sourceOffset,
+        targetOffset: edge.targetOffset,
+        horizontalTolerance: 18
+      };
       return techBoxLayout.buildTechTreeArrowRoute(
         edge.sourceRect,
         edge.targetRect,
         {
           pad: 0,
           maxElbow: 140,
-          sourceSide: edge.sourceSide,
-          targetSide: edge.targetSide,
-          sourceOffset: edge.sourceOffset,
-          targetOffset: edge.targetOffset,
-          horizontalTolerance: 18
+          sourceSide: routeOptions.sourceSide,
+          targetSide: routeOptions.targetSide,
+          sourceOffset: routeOptions.sourceOffset,
+          targetOffset: routeOptions.targetOffset,
+          horizontalTolerance: routeOptions.horizontalTolerance
         }
       );
     });
 }
 
-function prepareScienceAdvisorArrowArtWrites({ tabs, targetContentRoot, scenarioPath, scenarioRoots, civ3Path, routeOverrides = {}, dirtyEraIndexes = [], arrowStyle = null }) {
+function prepareScienceAdvisorArrowArtWrites({
+  tabs,
+  targetContentRoot,
+  scenarioPath,
+  scenarioRoots,
+  civ3Path,
+  routeOverrides = {},
+  baselineRouteHints = {},
+  dirtyEdgesByEra = {},
+  dirtyEraIndexes = [],
+  arrowStyle = null,
+  civFiltersByEra = {}
+}) {
   if (!targetContentRoot) return { ok: true, changed: false, writes: [] };
   const { nodes, byId } = collectScienceAdvisorTechNodes(tabs || {});
   if (nodes.length === 0) return { ok: true, changed: false, writes: [] };
   const layout = loadScienceAdvisorTechBoxLayout({ civ3Path, scenarioPath, scenarioRoots });
-  annotateScienceAdvisorNodeRects({ nodes, tabs: tabs || {}, layout });
+  annotateScienceAdvisorNodeRects({ nodes, tabs: tabs || {}, layout, civFiltersByEra });
   const writes = [];
   const dirtyEraSet = new Set((Array.isArray(dirtyEraIndexes) ? dirtyEraIndexes : [])
     .map((value) => Number(value))
@@ -7884,7 +8061,14 @@ function prepareScienceAdvisorArrowArtWrites({ tabs, targetContentRoot, scenario
     if (dirtyEraSet.size > 0 && !dirtyEraSet.has(eraIndex)) return;
     const eraNodes = nodes.filter((node) => node.era === eraIndex);
     if (eraNodes.length === 0) return;
-    const routes = buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex, routeOverrides });
+    const routes = buildScienceAdvisorArrowRoutesForEra({
+      nodes,
+      byId,
+      eraIndex,
+      routeOverrides,
+      baselineRouteHints,
+      dirtyEdgesByEra
+    });
     if (routes.length === 0) return;
     const relativePath = candidates.find((assetPath) => resolveConquestsAssetPath(civ3Path, assetPath, scenarioPath, scenarioRoots));
     if (!relativePath) return;
@@ -9354,8 +9538,11 @@ function buildSavePlan(payload) {
         scenarioRoots: scenarioContext.searchRoots,
         civ3Path,
         routeOverrides: payload.techTreeArrowRouteOverrides || {},
+        baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {},
+        dirtyEdgesByEra: payload.techTreeArrowDirtyEdgesByEra || {},
         dirtyEraIndexes: payload.techTreeArrowDirtyEras || [],
-        arrowStyle: payload.scienceAdvisorArrowStyle || null
+        arrowStyle: payload.scienceAdvisorArrowStyle || null,
+        civFiltersByEra: payload.techTreeArrowCivFiltersByEra || {}
       });
       if (scienceAdvisorWrites && !scienceAdvisorWrites.ok) {
         return { ok: false, error: scienceAdvisorWrites.error || 'Failed to update Science Advisor arrow art.' };
@@ -9373,6 +9560,22 @@ function buildSavePlan(payload) {
           sourcePath: write.sourcePath,
           applied: write.applied || 0,
           detail: `Regenerated ${write.applied || 0} Science Advisor arrow connector${(write.applied || 0) === 1 ? '' : 's'}`
+        });
+      }
+      const metadataWrite = buildScienceAdvisorArrowMetadataWrite({
+        targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+        routeOverrides: payload.techTreeArrowRouteOverrides || {},
+        baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {}
+      });
+      if (metadataWrite) {
+        const protectErr = failIfProtected(metadataWrite.path, 'Science Advisor arrow metadata target');
+        if (protectErr) return { ok: false, error: protectErr };
+        plannedWrites.push(metadataWrite);
+        saveReport.push({
+          kind: metadataWrite.kind,
+          path: metadataWrite.path,
+          applied: metadataWrite.applied || 0,
+          detail: metadataWrite.detail
         });
       }
     }
@@ -12442,6 +12645,11 @@ module.exports = {
   appendBuildingCityIconRowToAtlas,
   appendBuildingCityIconRowToAtlases,
   applyImportedBuildingCityIconAtlasAssignments,
+  buildScienceAdvisorArrowRoutesForEra,
+  prepareScienceAdvisorArrowArtWrites,
+  loadScienceAdvisorArrowMetadata,
+  buildScienceAdvisorArrowMetadataWrite,
+  countScienceAdvisorUnlockIconsForTech,
   previewFileDiff,
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,

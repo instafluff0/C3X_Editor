@@ -1,15 +1,24 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { decodePcx } = require('../src/artPreview');
+const {
+  buildScienceAdvisorArrowRoutesForEra,
+  prepareScienceAdvisorArrowArtWrites,
+  loadScienceAdvisorArrowMetadata,
+  buildScienceAdvisorArrowMetadataWrite,
+  countScienceAdvisorUnlockIconsForTech
+} = require('../src/configCore');
 const techBoxLayout = require('../src/techBoxLayout');
 const scienceAdvisorArrows = require('../src/scienceAdvisorArrows');
 
 const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
+const STOCK_SCIENCE_ANCIENT_PCX = path.join(CIV3_ROOT, 'Conquests', 'Art', 'Advisors', 'science_ancient.pcx');
 const CCM3_SCIENCE_ANCIENT_PCX = path.join(CIV3_ROOT, 'Conquests', 'Scenarios', 'CCM3', 'Art', 'Advisors', 'science_ancient.pcx');
 
 function makePalette() {
@@ -47,6 +56,52 @@ function makeMixedEraPalette() {
   return palette;
 }
 
+function makeTechEntry({ biqIndex, name, era, x, y, prereq = -1 }) {
+  const fields = [
+    ['era', era],
+    ['x', x],
+    ['y', y],
+    ['prerequisite1', prereq],
+    ['prerequisite2', -1],
+    ['prerequisite3', -1],
+    ['prerequisite4', -1]
+  ];
+  return {
+    biqIndex,
+    name,
+    biqFields: fields.map(([baseKey, value]) => ({
+      key: baseKey,
+      baseKey,
+      label: baseKey,
+      value: String(value)
+    }))
+  };
+}
+
+function makeBiqEntry(fields) {
+  return {
+    biqFields: Object.entries(fields || {}).map(([baseKey, value]) => ({
+      key: baseKey,
+      baseKey,
+      label: baseKey,
+      value: String(value)
+    }))
+  };
+}
+
+function indexedToRgba(indices, palette) {
+  const rgba = new Uint8ClampedArray(indices.length * 4);
+  for (let idx = 0; idx < indices.length; idx += 1) {
+    const paletteOffset = indices[idx] * 3;
+    const rgbaOffset = idx * 4;
+    rgba[rgbaOffset] = palette[paletteOffset];
+    rgba[rgbaOffset + 1] = palette[paletteOffset + 1];
+    rgba[rgbaOffset + 2] = palette[paletteOffset + 2];
+    rgba[rgbaOffset + 3] = 255;
+  }
+  return rgba;
+}
+
 test('Science Advisor palette style prefers arrow-like reds over closer neutral colors', () => {
   const palette = new Uint8Array(256 * 3);
   palette[1 * 3] = 90;
@@ -60,6 +115,128 @@ test('Science Advisor palette style prefers arrow-like reds over closer neutral 
   assert.equal(style.outlineIndex, 2);
   assert.equal(style.mainIndex, 2);
   assert.equal(style.highlightIndex, 2);
+});
+
+test('Science Advisor save tech-box sizing uses the preview civ unit filter', () => {
+  const tabs = {
+    units: {
+      entries: [
+        makeBiqEntry({ requiredtech: '4', availableto: String((1 << 0) | (1 << 1)) }),
+        makeBiqEntry({ requiredtech: '4', availableto: String(1 << 0) }),
+        makeBiqEntry({ requiredtech: '4', availableto: String(1 << 1) }),
+        makeBiqEntry({ requiredtech: '4', availableto: '0' }),
+        makeBiqEntry({ requiredtech: '7', availableto: String(1 << 0) })
+      ]
+    },
+    improvements: {
+      entries: [
+        makeBiqEntry({ reqadvance: '4', obsoleteby: '-1' }),
+        makeBiqEntry({ reqadvance: '-1', obsoleteby: '4' })
+      ]
+    },
+    workerActions: {
+      entries: [
+        makeBiqEntry({ requiredadvance: '4' })
+      ]
+    }
+  };
+
+  assert.equal(countScienceAdvisorUnlockIconsForTech(tabs, 4, { selectedCivIndex: 0, generalCivIndices: [0, 1] }), 6);
+  assert.equal(countScienceAdvisorUnlockIconsForTech(tabs, 4, { selectedCivIndex: 1, generalCivIndices: [0, 1] }), 6);
+  assert.equal(countScienceAdvisorUnlockIconsForTech(tabs, 4, { selectedCivIndex: null, generalCivIndices: [0, 1] }), 5);
+  assert.equal(countScienceAdvisorUnlockIconsForTech(tabs, 4, null), 7);
+});
+
+test('Science Advisor arrow metadata loads scenario-local route overrides', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-metadata-load-'));
+  const metadataPath = path.join(root, 'c3x_editor_tech_tree_arrows.json');
+  fs.writeFileSync(metadataPath, JSON.stringify({
+    format: 'c3x-editor-tech-tree-arrows',
+    version: 1,
+    routeOverrides: {
+      '0:1->2': {
+        points: [
+          { x: 12.2, y: 24.8 },
+          { x: 90.6, y: 25.1 }
+        ]
+      },
+      '0:bad': {
+        points: [
+          { x: 1, y: 2 }
+        ]
+      }
+    },
+    baselineRouteHints: {
+      '0:1->2': {
+        sourceSide: 'right',
+        targetSide: 'left',
+        sourceOffset: 4.5,
+        targetOffset: -2,
+        horizontalTolerance: 22
+      },
+      '0:bad': {
+        sourceSide: 'diagonal',
+        targetSide: 'left'
+      }
+    }
+  }), 'utf8');
+
+  const metadata = loadScienceAdvisorArrowMetadata(root);
+
+  assert.equal(metadata.path, metadataPath);
+  assert.equal(metadata.exists, true);
+  assert.deepEqual(metadata.routeOverrides, {
+    '0:1->2': {
+      points: [
+        { x: 12, y: 25 },
+        { x: 91, y: 25 }
+      ]
+    }
+  });
+  assert.deepEqual(metadata.baselineRouteHints, {
+    '0:1->2': {
+      sourceSide: 'right',
+      targetSide: 'left',
+      sourceOffset: 4.5,
+      targetOffset: -2,
+      horizontalTolerance: 22
+    }
+  });
+});
+
+test('Science Advisor arrow metadata write is editor-only scenario sidecar JSON', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-metadata-write-'));
+  const write = buildScienceAdvisorArrowMetadataWrite({
+    targetContentRoot: root,
+    routeOverrides: {
+      '2:10->11': {
+        points: [
+          { x: 20.4, y: 30.5 },
+          { x: 44.7, y: 52.2 }
+        ]
+      }
+    },
+    baselineRouteHints: {
+      '2:10->11': {
+        sourceSide: 'bottom',
+        targetSide: 'left',
+        sourceOffset: -6,
+        targetOffset: 8
+      }
+    }
+  });
+
+  assert.equal(write.kind, 'scienceAdvisorArrowMetadata');
+  assert.equal(write.path, path.join(root, 'c3x_editor_tech_tree_arrows.json'));
+  assert.equal(write.encoding, 'utf8');
+  const parsed = JSON.parse(write.data);
+  assert.equal(parsed.format, 'c3x-editor-tech-tree-arrows');
+  assert.equal(parsed.version, 1);
+  assert.deepEqual(parsed.routeOverrides['2:10->11'].points, [
+    { x: 20, y: 31 },
+    { x: 45, y: 52 }
+  ]);
+  assert.equal(parsed.baselineRouteHints['2:10->11'].horizontalTolerance, 18);
 });
 
 test('Science Advisor palette style is era-specific for reddish and modern blue arrows', () => {
@@ -169,6 +346,43 @@ test('Science Advisor arrow clearing leaves detached border-colored runs without
   }
 });
 
+test('Science Advisor arrow clearing does not smear nearby advisor-frame texture into cleared arrows', () => {
+  const width = 72;
+  const height = 32;
+  const palette = makePalette();
+  palette[1 * 3] = 221;
+  palette[1 * 3 + 1] = 207;
+  palette[1 * 3 + 2] = 170;
+  palette[2 * 3] = 166;
+  palette[2 * 3 + 1] = 158;
+  palette[2 * 3 + 2] = 137;
+  const indices = new Uint8Array(width * height);
+  indices.fill(1);
+  for (let x = 6; x <= 60; x += 1) {
+    indices[(2 * width) + x] = 2;
+    indices[(3 * width) + x] = 2;
+  }
+  for (let x = 12; x <= 48; x += 1) {
+    indices[(12 * width) + x] = 11;
+  }
+
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices,
+    palette,
+    width,
+    height,
+    bounds: { x1: 0, y1: 0, x2: width - 1, y2: height - 1 }
+  });
+
+  for (let x = 6; x <= 60; x += 1) {
+    assert.equal(indices[(2 * width) + x], 2);
+    assert.equal(indices[(3 * width) + x], 2);
+  }
+  for (let x = 12; x <= 48; x += 1) {
+    assert.equal(indices[(12 * width) + x], 1, `Expected cleared arrow at ${x},12 to use parchment fill, not frame stripe`);
+  }
+});
+
 test('Science Advisor arrow clearing removes detached CCM3 glint and shadow runs', (t) => {
   if (!fs.existsSync(CCM3_SCIENCE_ANCIENT_PCX)) {
     t.skip('CCM3 Science Advisor art is not installed');
@@ -205,6 +419,43 @@ test('Science Advisor arrow clearing removes detached CCM3 glint and shadow runs
       assert.notEqual(indices[offset], run.index, `Expected CCM3 arrow residue index ${run.index} at ${x},${run.y} to be removed`);
     }
   }
+});
+
+test('Science Advisor route builder uses cached router baseline hints until an edge is dirty', () => {
+  const source = { id: 0, era: 0, x: 10, y: 10, w: 12, h: 12, prereqs: [] };
+  const target = { id: 1, era: 0, x: 50, y: 10, w: 12, h: 12, prereqs: [0] };
+  const nodes = [source, target];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const routeKey = '0:0->1';
+  const baselineRouteHints = {
+    [routeKey]: {
+      sourceSide: 'bottom',
+      targetSide: 'top',
+      sourceOffset: -2,
+      targetOffset: 2,
+      horizontalTolerance: 18
+    }
+  };
+
+  const inherited = buildScienceAdvisorArrowRoutesForEra({
+    nodes,
+    byId,
+    eraIndex: 0,
+    baselineRouteHints,
+    dirtyEdgesByEra: {}
+  })[0];
+  assert.equal(Math.round(inherited.points[0].y), source.y + source.h);
+  assert.equal(Math.round(inherited.points[inherited.points.length - 1].y), target.y);
+
+  const recomputed = buildScienceAdvisorArrowRoutesForEra({
+    nodes,
+    byId,
+    eraIndex: 0,
+    baselineRouteHints,
+    dirtyEdgesByEra: { 0: { [routeKey]: true } }
+  })[0];
+  assert.equal(Math.round(recomputed.points[0].x), source.x + source.w);
+  assert.equal(Math.round(recomputed.points[recomputed.points.length - 1].x), target.x);
 });
 
 test('Science Advisor arrow rasterer uses identical palette colors for indexed save and RGBA preview', () => {
@@ -254,6 +505,123 @@ test('Science Advisor arrow rasterer uses identical palette colors for indexed s
   assert.equal(scienceAdvisorArrows.SCIENCE_ADVISOR_ARROW_STYLE.segmentStep, 0.45);
   assert.equal(scienceAdvisorArrows.SCIENCE_ADVISOR_ARROW_STYLE.rasterScale, 4);
   assert.equal(scienceAdvisorArrows.SCIENCE_ADVISOR_ARROW_STYLE.coverageThreshold, 3);
+});
+
+test('Science Advisor saved PCX arrows match the palette-quantized generated preview', (t) => {
+  if (!fs.existsSync(STOCK_SCIENCE_ANCIENT_PCX)) {
+    t.skip('Stock Science Advisor art is not installed');
+    return;
+  }
+
+  const routePoints = [
+    { x: 150, y: 152 },
+    { x: 238, y: 152 },
+    { x: 260, y: 180 },
+    { x: 332, y: 180 }
+  ];
+  const routeOverrides = {
+    '0:0->1': { points: routePoints }
+  };
+  const arrowStyle = {
+    body: {
+      outlineRadius: 1.75,
+      highlightOffset: { x: 1, y: -1 }
+    },
+    head: {
+      outline: { length: 7, half: 6 },
+      main: { length: 6, half: 5 },
+      glint: { offsetPerp: -2.4 }
+    }
+  };
+  const tabs = {
+    technologies: {
+      entries: [
+        makeTechEntry({ biqIndex: 0, name: 'Source', era: 0, x: 118, y: 130 }),
+        makeTechEntry({ biqIndex: 1, name: 'Target', era: 0, x: 320, y: 158, prereq: 0 })
+      ]
+    }
+  };
+  const targetContentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-save-'));
+  const result = prepareScienceAdvisorArrowArtWrites({
+    tabs,
+    targetContentRoot,
+    scenarioPath: '',
+    scenarioRoots: [],
+    civ3Path: CIV3_ROOT,
+    routeOverrides,
+    dirtyEraIndexes: [0],
+    arrowStyle
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'science advisor save preparation failed'));
+  assert.equal(result.writes.length, 1);
+  const write = result.writes[0];
+  assert.equal(write.kind, 'scienceAdvisor');
+  assert.equal(write.eraIndex, 0);
+
+  const source = decodePcx(write.sourcePath, { returnIndexed: true, transparentIndexes: [] });
+  const saved = decodePcx(write.data, { returnIndexed: true, transparentIndexes: [] });
+  assert.equal(saved.width, source.width);
+  assert.equal(saved.height, source.height);
+  assert.deepEqual(Buffer.from(saved.palette), Buffer.from(source.palette));
+
+  const previewBase = indexedToRgba(source.indices, source.palette);
+  const previewBaseIndices = Uint8Array.from(source.indices);
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsRgba({
+    rgba: previewBase,
+    width: source.width,
+    height: source.height,
+    bounds: { x1: 0, y1: 0, x2: source.width - 1, y2: source.height - 1 }
+  });
+  scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({
+    indices: previewBaseIndices,
+    palette: source.palette,
+    width: source.width,
+    height: source.height,
+    bounds: { x1: 0, y1: 0, x2: source.width - 1, y2: source.height - 1 }
+  });
+
+  const overlay = new Uint8ClampedArray(source.width * source.height * 4);
+  const previewRoute = {
+    dir: 1,
+    headVector: {
+      x: routePoints[routePoints.length - 1].x - routePoints[routePoints.length - 2].x,
+      y: routePoints[routePoints.length - 1].y - routePoints[routePoints.length - 2].y
+    },
+    points: routePoints
+  };
+  scienceAdvisorArrows.drawScienceAdvisorRoutesRgba({
+    rgba: overlay,
+    palette: source.palette,
+    width: source.width,
+    height: source.height,
+    routes: [previewRoute],
+    techBoxLayout,
+    eraIndex: 0,
+    style: arrowStyle
+  });
+
+  let compared = 0;
+  for (let pixel = 0; pixel < saved.indices.length; pixel += 1) {
+    const overlayOffset = pixel * 4;
+    const alphaByte = overlay[overlayOffset + 3];
+    if (!alphaByte) continue;
+    const alpha = alphaByte / 255;
+    const baseRgbaOffset = pixel * 4;
+    const composite = {
+      r: Math.round((overlay[overlayOffset] * alpha) + (previewBase[baseRgbaOffset] * (1 - alpha))),
+      g: Math.round((overlay[overlayOffset + 1] * alpha) + (previewBase[baseRgbaOffset + 1] * (1 - alpha))),
+      b: Math.round((overlay[overlayOffset + 2] * alpha) + (previewBase[baseRgbaOffset + 2] * (1 - alpha)))
+    };
+    const expectedIndex = scienceAdvisorArrows.getNearestPaletteIndex(
+      source.palette,
+      composite,
+      previewBaseIndices[pixel]
+    );
+    assert.equal(saved.indices[pixel], expectedIndex, `saved PCX pixel ${pixel} should match generated preview`);
+    compared += 1;
+  }
+  assert.ok(compared > 40, 'Expected preview/save equivalence test to compare visible arrow pixels');
 });
 
 test('Science Advisor arrow rasterer uses modern blue palette colors in the modern era', () => {

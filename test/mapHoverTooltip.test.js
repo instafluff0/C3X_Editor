@@ -896,8 +896,8 @@ test('map art loads repaint an open map modal in place instead of rebuilding the
 
   assert.match(
     rendererText,
-    /function ensureMapModalNode\(\) \{[\s\S]*?<button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?mapModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?if \(!state\.isDirty \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError\) return;[\s\S]*?await saveCurrentBundle\(\);[\s\S]*?\}[\s\S]*?function refreshMapModalUndoButtons\(\) \{[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?mapModal\.saveBtn\.disabled = !state\.isDirty \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError;[\s\S]*?mapModal\.saveBtn\.title = state\.sectionValidationError \|\| '';[\s\S]*?\}/,
-    'the map modal header should expose a Save button beside Undo and route it through the shared saveCurrentBundle flow with matching disabled-state rules'
+    /function ensureMapModalNode\(\) \{[\s\S]*?<button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?mapModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?if \(!hasMapModalUndoableChanges\(\) \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError\) return;[\s\S]*?await saveCurrentBundle\(\);[\s\S]*?\}[\s\S]*?function refreshMapModalUndoButtons\(\) \{[\s\S]*?const hasUndoable = hasMapModalUndoableChanges\(\);[\s\S]*?setModalUndoSaveButtonState\(mapModal, \{[\s\S]*?hasUndoable,[\s\S]*?hasSaveable: hasUndoable && hasTrackedUnsavedMapChanges\(\)/,
+    'the map modal header should expose a Save button beside Undo and keep Save scoped to map-undoable changes'
   );
   assert.match(
     rendererText,
@@ -1015,7 +1015,12 @@ test('modal header Save buttons mirror the main save button wiring', () => {
   assert.match(
     rendererText,
     /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, techTreeModal\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn, mapModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
-    'modal Save buttons should share the main Save label, dirty class, disabled state, and validation title'
+    'modal Save buttons should share the main Save label and dirty class before modal-specific action state is applied'
+  );
+  assert.match(
+    rendererText,
+    /function setModalUndoSaveButtonState\(modal, \{ canEdit = true, hasUndoable = false, hasSaveable = false \} = \{\}\) \{[\s\S]*?const undoDisabled = !canEdit \|\| !hasUndoable \|\| state\.isLoading;[\s\S]*?modal\.undoBtn\.disabled = undoDisabled;[\s\S]*?modal\.undoAllBtn\.disabled = undoDisabled;[\s\S]*?modal\.saveBtn\.disabled = undoDisabled \|\| !hasSaveable \|\| state\.isSaving \|\| !state\.bundle \|\| !!state\.sectionValidationError;/,
+    'modal Save should be disabled whenever the matching modal Undo action is disabled'
   );
   assert.match(
     rendererText,
@@ -1026,6 +1031,11 @@ test('modal header Save buttons mirror the main save button wiring', () => {
     rendererText,
     /function ensureUnitTableModalNode\(\) \{[\s\S]*?<button type="button" class="secondary unit-table-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?unitTableModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(unitTableModal\.saveBtn && !unitTableModal\.saveBtn\.dataset\.bound\) \{[\s\S]*?unitTableModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);/,
     'Unit Table should expose a secondary Save button beside Undo and route clicks through saveCurrentBundle'
+  );
+  assert.match(
+    rendererText,
+    /const updateToolbar = \(\) => \{[\s\S]*?refreshDirtyUi\(\);[\s\S]*?refreshUnitTableModalActionButtons\(\);[\s\S]*?\};[\s\S]*?unitTableModal\.undoBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoOneStep\(\);[\s\S]*?\}[\s\S]*?unitTableModal\.undoAllBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoAllChanges\(\);/,
+    'Unit Table Undo, Undo All, and Save should share the same immediate undoable-state refresh'
   );
   assert.match(
     stylesText,
@@ -1045,8 +1055,8 @@ test('Availability by Civ keeps Undo actions in the modal header', () => {
   );
   assert.match(
     rendererText,
-    /const refreshUndoButtons = \(\) => \{[\s\S]*?unitAvailabilityModal\.undoBtn\.disabled = !referenceEditable \|\| !getLatestUndoSnapshot\(\);[\s\S]*?unitAvailabilityModal\.undoAllBtn\.disabled = !referenceEditable \|\| !state\.isDirty;[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoBtn\.onclick = async \(\) => \{[\s\S]*?await undoOneStep\(\);[\s\S]*?render\(\);[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoAllBtn\.onclick = async \(\) => \{[\s\S]*?await undoAllChanges\(\);[\s\S]*?render\(\);[\s\S]*?\};/,
-    'Availability by Civ header Undo buttons should keep their disabled-state wiring while refreshing the mounted modal in place after undo'
+    /const refreshUndoButtons = \(\) => \{[\s\S]*?refreshUnitAvailabilityModalActionButtons\(\);[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoBtn\.onclick = async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoOneStep\(\);[\s\S]*?render\(\);[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoAllBtn\.onclick = async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoAllChanges\(\);[\s\S]*?render\(\);[\s\S]*?\};/,
+    'Availability by Civ header Undo buttons should use the same undoable-state wiring while refreshing the mounted modal in place after undo'
   );
   assert.match(
     stylesText,
@@ -1055,8 +1065,8 @@ test('Availability by Civ keeps Undo actions in the modal header', () => {
   );
   assert.match(
     rendererText,
-    /if \(unitAvailabilityModal\.saveBtn && !unitAvailabilityModal\.saveBtn\.dataset\.bound\) \{[\s\S]*?unitAvailabilityModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);[\s\S]*?\}[\s\S]*?overlay\.classList\.remove\('hidden'\);[\s\S]*?overlay\.setAttribute\('aria-hidden', 'false'\);[\s\S]*?refreshDirtyUi\(\);/,
-    'Availability by Civ Save should route clicks through saveCurrentBundle and sync disabled state when opened'
+    /unitAvailabilityModal\.referenceEditable = !!referenceEditable;[\s\S]*?if \(unitAvailabilityModal\.saveBtn && !unitAvailabilityModal\.saveBtn\.dataset\.bound\) \{[\s\S]*?unitAvailabilityModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);[\s\S]*?\}[\s\S]*?overlay\.classList\.remove\('hidden'\);[\s\S]*?overlay\.setAttribute\('aria-hidden', 'false'\);[\s\S]*?refreshDirtyUi\(\);/,
+    'Availability by Civ Save should route clicks through saveCurrentBundle and sync disabled state from the modal editability when opened'
   );
   assert.match(
     stylesText,
@@ -1302,8 +1312,8 @@ test('map modal undo all follows tracked map dirty state', () => {
   );
   assert.match(
     rendererText,
-    /mapModal\.undoAllBtn\.disabled = !isScenarioMode\(\) \|\| !hasTrackedUnsavedMapChanges\(\) \|\| state\.isLoading;/,
-    'map modal Undo All should disable unless tracked map changes exist'
+    /function hasMapModalUndoableChanges\(\) \{[\s\S]*?return hasTrackedUnsavedMapChanges\(\) && !!getLatestScopedUndoSnapshot\('map'\);[\s\S]*?\}[\s\S]*?setModalUndoSaveButtonState\(mapModal, \{[\s\S]*?canEdit: isScenarioMode\(\),[\s\S]*?hasUndoable,[\s\S]*?hasSaveable: hasUndoable && hasTrackedUnsavedMapChanges\(\)/,
+    'map modal Undo and Undo All should disable together unless tracked map changes have a map-scoped undo snapshot'
   );
   assert.match(
     rendererText,

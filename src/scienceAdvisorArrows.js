@@ -435,6 +435,85 @@ function getIndexedRgb(indices, palette, offset) {
   };
 }
 
+function getRgbDistanceSquared(a, b) {
+  if (!a || !b) return Number.POSITIVE_INFINITY;
+  const dr = (Number(a.r) || 0) - (Number(b.r) || 0);
+  const dg = (Number(a.g) || 0) - (Number(b.g) || 0);
+  const db = (Number(a.b) || 0) - (Number(b.b) || 0);
+  return (dr * dr) + (dg * dg) + (db * db);
+}
+
+function collectScienceAdvisorClearContext({ x, y, width, height, x1, y1, x2, y2, mask, candidate, getColor, radius = 6 }) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  const limit = Math.max(1, Math.round(Number(radius) || 1));
+  for (let oy = -limit; oy <= limit; oy += 1) {
+    for (let ox = -limit; ox <= limit; ox += 1) {
+      if (ox === 0 && oy === 0) continue;
+      if ((ox * ox) + (oy * oy) > limit * limit) continue;
+      const nx = x + ox;
+      const ny = y + oy;
+      if (nx < x1 || nx > x2 || ny < y1 || ny > y2 || nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+      const offset = ny * width + nx;
+      if (mask[offset] || candidate[offset]) continue;
+      const color = getColor(offset);
+      r += Number(color.r) || 0;
+      g += Number(color.g) || 0;
+      b += Number(color.b) || 0;
+      count += 1;
+    }
+  }
+  if (count === 0) return null;
+  return { r: r / count, g: g / count, b: b / count };
+}
+
+function getScienceAdvisorClearReplacementOffsets() {
+  const offsets = [
+    [0, -10], [0, 10], [-10, 0], [10, 0],
+    [0, -18], [0, 18], [-18, 0], [18, 0],
+    [-12, -12], [12, -12], [-12, 12], [12, 12],
+    [0, -26], [0, 26], [-26, 0], [26, 0]
+  ];
+  for (let radius = 4; radius <= 36; radius += 4) {
+    for (let oy = -radius; oy <= radius; oy += 2) {
+      const oxLimit = radius - Math.abs(oy);
+      if (oxLimit === 0) {
+        offsets.push([0, oy]);
+      } else {
+        offsets.push([-oxLimit, oy], [oxLimit, oy]);
+      }
+    }
+  }
+  return offsets;
+}
+
+const SCIENCE_ADVISOR_CLEAR_REPLACEMENT_OFFSETS = getScienceAdvisorClearReplacementOffsets();
+
+function findScienceAdvisorClearReplacementOffset({ x, y, width, height, x1, y1, x2, y2, mask, candidate, getColor }) {
+  const isCleanSource = (nx, ny) => {
+    if (nx < x1 || nx > x2 || ny < y1 || ny > y2 || nx < 0 || nx >= width || ny < 0 || ny >= height) return false;
+    const offset = ny * width + nx;
+    return !mask[offset] && !candidate[offset];
+  };
+  const context = collectScienceAdvisorClearContext({ x, y, width, height, x1, y1, x2, y2, mask, candidate, getColor });
+  let best = null;
+  let fallback = null;
+  for (const [ox, oy] of SCIENCE_ADVISOR_CLEAR_REPLACEMENT_OFFSETS) {
+    const nx = x + ox;
+    const ny = y + oy;
+    if (!isCleanSource(nx, ny)) continue;
+    if (!fallback) fallback = { x: nx, y: ny };
+    if (!context) return fallback;
+    const color = getColor(ny * width + nx);
+    const distancePenalty = (Math.abs(ox) + Math.abs(oy)) * 0.75;
+    const score = getRgbDistanceSquared(color, context) + distancePenalty;
+    if (!best || score < best.score) best = { x: nx, y: ny, score };
+  }
+  return best || fallback;
+}
+
 function clearScienceAdvisorArrowPixelsIndexed({ indices, palette, width, height, bounds }) {
   if (!indices || !palette || !width || !height) return;
   const clear = buildScienceAdvisorArrowClearMask({
@@ -444,35 +523,21 @@ function clearScienceAdvisorArrowPixelsIndexed({ indices, palette, width, height
     getColor: (offset) => getIndexedRgb(indices, palette, offset)
   });
   const { mask, candidate, x1, y1, x2, y2 } = clear;
-  const isCleanSource = (nx, ny) => {
-    if (nx < x1 || nx > x2 || ny < y1 || ny > y2) return false;
-    const offset = ny * width + nx;
-    return !mask[offset] && !candidate[offset];
-  };
   const findReplacement = (x, y) => {
-    const candidates = [
-      [0, -10], [0, 10], [-10, 0], [10, 0],
-      [0, -18], [0, 18], [-18, 0], [18, 0],
-      [-12, -12], [12, -12], [-12, 12], [12, 12],
-      [0, -26], [0, 26], [-26, 0], [26, 0]
-    ];
-    for (const [ox, oy] of candidates) {
-      const nx = x + ox;
-      const ny = y + oy;
-      if (isCleanSource(nx, ny)) return indices[ny * width + nx];
-    }
-    for (let radius = 4; radius <= 36; radius += 4) {
-      for (let oy = -radius; oy <= radius; oy += 2) {
-        const oxLimit = radius - Math.abs(oy);
-        const points = oxLimit === 0 ? [[0, oy]] : [[-oxLimit, oy], [oxLimit, oy]];
-        for (const [ox, py] of points) {
-          const nx = x + ox;
-          const ny = y + py;
-          if (isCleanSource(nx, ny)) return indices[ny * width + nx];
-        }
-      }
-    }
-    return indices[y * width + x];
+    const replacement = findScienceAdvisorClearReplacementOffset({
+      x,
+      y,
+      width,
+      height,
+      x1,
+      y1,
+      x2,
+      y2,
+      mask,
+      candidate,
+      getColor: (offset) => getIndexedRgb(indices, palette, offset)
+    });
+    return replacement ? indices[(replacement.y * width) + replacement.x] : indices[y * width + x];
   };
   for (let y = y1; y <= y2; y += 1) {
     for (let x = x1; x <= x2; x += 1) {
@@ -498,46 +563,33 @@ function clearScienceAdvisorArrowPixelsRgba({ rgba, width, height, bounds }) {
     }
   });
   const { mask, candidate, x1, y1, x2, y2 } = clear;
-  const isCleanSource = (nx, ny) => {
-    if (nx < x1 || nx > x2 || ny < y1 || ny > y2) return false;
-    const pixel = ny * width + nx;
-    return !mask[pixel] && !candidate[pixel];
-  };
   const copyFromNeighbor = (x, y, targetOff) => {
-    const candidates = [
-      [0, -10], [0, 10], [-10, 0], [10, 0],
-      [0, -18], [0, 18], [-18, 0], [18, 0],
-      [-12, -12], [12, -12], [-12, 12], [12, 12],
-      [0, -26], [0, 26], [-26, 0], [26, 0]
-    ];
-    for (const [ox, oy] of candidates) {
-      const nx = x + ox;
-      const ny = y + oy;
-      if (!isCleanSource(nx, ny)) continue;
-      const srcOff = (ny * width + nx) * 4;
-      rgba[targetOff] = rgba[srcOff];
-      rgba[targetOff + 1] = rgba[srcOff + 1];
-      rgba[targetOff + 2] = rgba[srcOff + 2];
-      rgba[targetOff + 3] = rgba[srcOff + 3];
-      return;
-    }
-    for (let radius = 4; radius <= 36; radius += 4) {
-      for (let oy = -radius; oy <= radius; oy += 2) {
-        const oxLimit = radius - Math.abs(oy);
-        const points = oxLimit === 0 ? [[0, oy]] : [[-oxLimit, oy], [oxLimit, oy]];
-        for (const [ox, py] of points) {
-          const nx = x + ox;
-          const ny = y + py;
-          if (!isCleanSource(nx, ny)) continue;
-          const srcOff = (ny * width + nx) * 4;
-          rgba[targetOff] = rgba[srcOff];
-          rgba[targetOff + 1] = rgba[srcOff + 1];
-          rgba[targetOff + 2] = rgba[srcOff + 2];
-          rgba[targetOff + 3] = rgba[srcOff + 3];
-          return;
-        }
+    const replacement = findScienceAdvisorClearReplacementOffset({
+      x,
+      y,
+      width,
+      height,
+      x1,
+      y1,
+      x2,
+      y2,
+      mask,
+      candidate,
+      getColor: (pixel) => {
+        const off = pixel * 4;
+        return {
+          r: Number(rgba[off]) || 0,
+          g: Number(rgba[off + 1]) || 0,
+          b: Number(rgba[off + 2]) || 0
+        };
       }
-    }
+    });
+    if (!replacement) return;
+    const srcOff = ((replacement.y * width) + replacement.x) * 4;
+    rgba[targetOff] = rgba[srcOff];
+    rgba[targetOff + 1] = rgba[srcOff + 1];
+    rgba[targetOff + 2] = rgba[srcOff + 2];
+    rgba[targetOff + 3] = rgba[srcOff + 3];
   };
   for (let y = y1; y <= y2; y += 1) {
     for (let x = x1; x <= x2; x += 1) {
