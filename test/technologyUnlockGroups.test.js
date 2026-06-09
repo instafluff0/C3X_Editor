@@ -96,3 +96,69 @@ test('Tech Tree marks techs not required for era advancement in the UI layer', (
   assert.match(styles, /\.tech-tree-node-era-optional-badge \{[\s\S]*?width: 18px;[\s\S]*?height: 18px;[\s\S]*?border: 2px solid #58789a/);
   assert.match(styles, /\.tech-tree-node-era-optional-badge::after \{[\s\S]*?transform: rotate\(45deg\)/);
 });
+
+test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer', () => {
+  const source = fs.readFileSync(RENDERER_PATH, 'utf8');
+  const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  const configCore = fs.readFileSync(path.join(__dirname, '..', 'src', 'configCore.js'), 'utf8');
+
+  assert.match(indexHtml, /<script src="\.\/scienceAdvisorArrows\.js"><\/script>[\s\S]*?<script src="\.\/renderer\.js"><\/script>/);
+  assert.match(
+    source,
+    /const scienceAdvisorArrows = \(typeof window !== 'undefined' && window\.ScienceAdvisorArrows\) \? window\.ScienceAdvisorArrows : null;/,
+    'Expected renderer to consume the shared Science Advisor arrow rasterer'
+  );
+  assert.match(
+    source,
+    /const lines = document\.createElement\('canvas'\);[\s\S]*?lines\.classList\.add\('tech-tree-lines'\)/,
+    'Expected generated-arrow preview to use a raster canvas layer'
+  );
+  assert.match(
+    source,
+    /assetPath,[\s\S]*?options: \{ returnIndexed: true \}/,
+    'Expected Science Advisor background previews to include palette data for matching raster colors'
+  );
+  assert.match(
+    source,
+    /scienceAdvisorArrows\.drawScienceAdvisorRoutesRgba\(\{[\s\S]*?palette,[\s\S]*?routes: allEdges\.map\(\(edgeObj\) => edgeObj\.route\)\.filter\(Boolean\),[\s\S]*?techBoxLayout[\s\S]*?\}\)/,
+    'Expected generated-arrow preview to draw with the same shared rasterer used for save output'
+  );
+  assert.match(
+    configCore,
+    /const scienceAdvisorArrows = require\('\.\/scienceAdvisorArrows'\);[\s\S]*?scienceAdvisorArrows\.drawScienceAdvisorRoutesIndexed\(\{ indices, palette: decoded\.palette, width, height, routes, techBoxLayout, eraIndex \}\)/,
+    'Expected save-time Science Advisor arrow writes to use the shared rasterer'
+  );
+  assert.match(
+    source,
+    /techTreeArrowDirtyEras: shouldUpdateScienceAdvisorArrows \? techTreeArrowDirtyEras : \[\]/,
+    'Expected generated Science Advisor arrow saves to carry the exact dirty eras instead of regenerating every era'
+  );
+  assert.match(
+    configCore,
+    /!decoded\.palette \|\| typeof decoded\.palette\.length !== 'number'/,
+    'Expected save-time Science Advisor arrow writes to accept Buffer and Uint8Array palettes'
+  );
+
+  const styles = fs.readFileSync(STYLES_PATH, 'utf8');
+  assert.doesNotMatch(styles, /\.tech-tree-lines-auto-preview \.tech-tree-link\.is-selected/);
+  assert.doesNotMatch(styles, /\.tech-tree-lines-auto-preview \.tech-tree-link-highlight\.is-selected/);
+});
+
+test('Tech Tree civ filter defaults to the first civilization when available', () => {
+  const source = fs.readFileSync(RENDERER_PATH, 'utf8');
+  assert.match(
+    source,
+    /const firstCivFilterValue = civOptions\.length > 0 \? String\(civOptions\[0\]\.value \|\| ''\) : '';/,
+    'Expected Tech Tree to derive a first-civ default from civ picker options'
+  );
+  assert.match(
+    source,
+    /let selectedCivFilterValue = String\(initialCivFilter \|\| firstCivFilterValue \|\| ''\);/,
+    'Expected blank Tech Tree civ filters to default to the first civilization'
+  );
+  assert.match(
+    source,
+    /currentValue: selectedCivFilterValue \|\| '-1'/,
+    'Expected All Techs to remain the fallback only when no civilization exists'
+  );
+});

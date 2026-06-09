@@ -7179,37 +7179,47 @@ details > summary:focus-visible {
   inset: 0;
   pointer-events: none;
   z-index: 2;
+  display: block;
+  image-rendering: auto;
 }
 
 .tech-tree-lines-hidden {
   display: none;
 }
 
-.tech-tree-link {
-  stroke: rgba(207, 78, 32, 0.86);
-  stroke-width: 2.3;
-  stroke-linejoin: round;
-  stroke-linecap: round;
+.tech-tree-route-handles-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: visible;
 }
 
-.tech-tree-link.is-selected {
-  stroke: rgba(232, 109, 24, 0.98);
-  stroke-width: 2.9;
+.tech-tree-route-handles-hidden {
+  display: none;
 }
 
-.tech-tree-lines-auto-preview .tech-tree-link {
-  stroke: rgba(126, 48, 18, 0.92);
-  stroke-width: 1.9;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  filter:
-    drop-shadow(1px -1px 0 rgba(229, 151, 83, 0.42))
-    drop-shadow(0 1px 0 rgba(75, 25, 12, 0.35));
+.tech-tree-route-hit {
+  pointer-events: stroke;
 }
 
-.tech-tree-lines-auto-preview .tech-tree-link.is-selected {
-  stroke: rgba(151, 58, 21, 0.98);
-  stroke-width: 2.2;
+.tech-tree-route-handle {
+  fill: rgba(255, 244, 214, 0.92);
+  stroke: #7c371d;
+  stroke-width: 1.5;
+  cursor: move;
+  pointer-events: all;
+  filter: drop-shadow(0 1px 2px rgba(42, 22, 8, 0.35));
+}
+
+.tech-tree-route-handle-endpoint {
+  stroke-width: 2;
+}
+
+.tech-tree-route-handle:hover,
+.tech-tree-route-handle.selected {
+  fill: #fff8df;
+  stroke: #d95a24;
 }
 
 .tech-tree-nodes {
