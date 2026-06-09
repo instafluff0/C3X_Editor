@@ -7870,7 +7870,7 @@ function buildScienceAdvisorArrowRoutesForEra({ nodes, byId, eraIndex, routeOver
     });
 }
 
-function prepareScienceAdvisorArrowArtWrites({ tabs, targetContentRoot, scenarioPath, scenarioRoots, civ3Path, routeOverrides = {}, dirtyEraIndexes = [] }) {
+function prepareScienceAdvisorArrowArtWrites({ tabs, targetContentRoot, scenarioPath, scenarioRoots, civ3Path, routeOverrides = {}, dirtyEraIndexes = [], arrowStyle = null }) {
   if (!targetContentRoot) return { ok: true, changed: false, writes: [] };
   const { nodes, byId } = collectScienceAdvisorTechNodes(tabs || {});
   if (nodes.length === 0) return { ok: true, changed: false, writes: [] };
@@ -7902,7 +7902,7 @@ function prepareScienceAdvisorArrowArtWrites({ tabs, targetContentRoot, scenario
     const indices = Uint8Array.from(decoded.indices);
     const bounds = getScienceAdvisorArrowBounds(eraNodes, width, height);
     scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({ indices, palette: decoded.palette, width, height, bounds });
-    scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex });
+    scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle });
     const targetPath = path.join(targetContentRoot, relativePath);
     try {
       const data = encodePcx(indices, decoded.palette, width, height);
@@ -9354,7 +9354,8 @@ function buildSavePlan(payload) {
         scenarioRoots: scenarioContext.searchRoots,
         civ3Path,
         routeOverrides: payload.techTreeArrowRouteOverrides || {},
-        dirtyEraIndexes: payload.techTreeArrowDirtyEras || []
+        dirtyEraIndexes: payload.techTreeArrowDirtyEras || [],
+        arrowStyle: payload.scienceAdvisorArrowStyle || null
       });
       if (scienceAdvisorWrites && !scienceAdvisorWrites.ok) {
         return { ok: false, error: scienceAdvisorWrites.error || 'Failed to update Science Advisor arrow art.' };

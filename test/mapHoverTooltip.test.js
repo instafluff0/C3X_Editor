@@ -1008,14 +1008,19 @@ test('Files modal tracks scenario district sidecar writes from map edits', () =>
   );
 });
 
-test('Unit Table header Save mirrors the main save button wiring', () => {
+test('modal header Save buttons mirror the main save button wiring', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
 
   assert.match(
     rendererText,
-    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn, mapModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
+    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, techTreeModal\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn, mapModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
     'modal Save buttons should share the main Save label, dirty class, disabled state, and validation title'
+  );
+  assert.match(
+    rendererText,
+    /function ensureTechTreeModalNode\(\) \{[\s\S]*?<button type="button" class="secondary tech-tree-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?techTreeModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(techTreeModal\.saveBtn\) \{[\s\S]*?techTreeModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);[\s\S]*?\}/,
+    'Tech Tree should expose a secondary Save button and route clicks through saveCurrentBundle'
   );
   assert.match(
     rendererText,
@@ -1024,8 +1029,8 @@ test('Unit Table header Save mirrors the main save button wiring', () => {
   );
   assert.match(
     stylesText,
-    /\.unit-table-modal-actions \.unit-table-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary:hover:not\(:disabled\),[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary\.dirty \{[\s\S]*?box-shadow: none;/,
-    'Unit Table Save should use the same no-shadow action styling as the main app Save button'
+    /\.tech-tree-modal-actions \.tech-tree-save-btn\.secondary,[\s\S]*?\.tech-tree-modal-actions \.tech-tree-save-btn\.secondary:hover:not\(:disabled\),[\s\S]*?\.tech-tree-modal-actions \.tech-tree-save-btn\.secondary\.dirty,[\s\S]*?\.unit-availability-modal-actions \.unit-availability-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary\.dirty \{[\s\S]*?box-shadow: none;/,
+    'Modal Save buttons should use the same no-shadow action styling as the main app Save button'
   );
 });
 

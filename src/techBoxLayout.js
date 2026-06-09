@@ -196,7 +196,9 @@ function chooseTechTreeArrowSides(sourceRect, targetRect) {
     const sourceSide = dy < 0 ? 'top' : 'bottom';
     const directVerticalThreshold = Math.min(source.w, target.w) * 0.35;
     const horizontalOverlap = getRangeOverlapAmount(source.x, source.x + source.w, target.x, target.x + target.w);
-    const strongVerticalStack = horizontalOverlap > 8 && verticalGap > Math.min(source.h, target.h) * 0.85;
+    const strongVerticalStack = horizontalOverlap > 8
+      && absDx <= Math.min(source.w, target.w) * 0.65
+      && verticalGap > Math.min(source.h, target.h) * 0.85;
     const targetSide = strongVerticalStack || absDx <= directVerticalThreshold
       ? (dy < 0 ? 'bottom' : 'top')
       : targetSideForHorizontal;
@@ -263,6 +265,342 @@ function layoutTechTreeArrowEdges(edges, options = {}) {
   groupAndAssign('source');
   groupAndAssign('target');
   return list;
+}
+
+function medianNumber(values) {
+  const nums = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (nums.length === 0) return null;
+  const mid = Math.floor(nums.length / 2);
+  return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+}
+
+function normalizeAutoLayoutNode(node, fallbackIndex) {
+  const id = node && node.id != null ? String(node.id) : String(fallbackIndex);
+  const w = Math.max(48, Number(node && (node.w || node.width)) || 136);
+  const h = Math.max(36, Number(node && (node.h || node.height)) || 64);
+  return {
+    id,
+    originalId: node && node.id,
+    label: String(node && (node.label || node.name) || id),
+    x: Math.max(0, Number(node && node.x) || 0),
+    y: Math.max(0, Number(node && node.y) || 0),
+    w,
+    h,
+    prereqs: Array.isArray(node && node.prereqs)
+      ? node.prereqs.map((value) => String(value)).filter((value, index, arr) => value !== id && arr.indexOf(value) === index)
+      : [],
+    _index: fallbackIndex
+  };
+}
+
+function compareAutoLayoutNodesByStableOrder(a, b) {
+  const ay = Number(a && a.y) || 0;
+  const by = Number(b && b.y) || 0;
+  if (Math.abs(ay - by) > 2) return ay - by;
+  const ax = Number(a && a.x) || 0;
+  const bx = Number(b && b.x) || 0;
+  if (Math.abs(ax - bx) > 2) return ax - bx;
+  const nameCmp = String(a && a.label || '').localeCompare(String(b && b.label || ''), 'en', { sensitivity: 'base' });
+  if (nameCmp) return nameCmp;
+  return (Number(a && a._index) || 0) - (Number(b && b._index) || 0);
+}
+
+function buildAutoLayoutRanks(nodes, edges) {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const childrenById = new Map(nodes.map((node) => [node.id, []]));
+  const indegree = new Map(nodes.map((node) => [node.id, 0]));
+  edges.forEach((edge) => {
+    childrenById.get(edge.source).push(edge.target);
+    indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
+  });
+  const queue = nodes
+    .filter((node) => (indegree.get(node.id) || 0) === 0)
+    .sort(compareAutoLayoutNodesByStableOrder)
+    .map((node) => node.id);
+  const rankById = new Map(nodes.map((node) => [node.id, 0]));
+  const visited = new Set();
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const rank = rankById.get(id) || 0;
+    (childrenById.get(id) || []).forEach((childId) => {
+      rankById.set(childId, Math.max(rankById.get(childId) || 0, rank + 1));
+      indegree.set(childId, Math.max(0, (indegree.get(childId) || 0) - 1));
+      if ((indegree.get(childId) || 0) === 0) queue.push(childId);
+    });
+    queue.sort((a, b) => compareAutoLayoutNodesByStableOrder(byId.get(a), byId.get(b)));
+  }
+  nodes.filter((node) => !visited.has(node.id)).forEach((node) => {
+    const parentRanks = edges
+      .filter((edge) => edge.target === node.id && rankById.has(edge.source))
+      .map((edge) => rankById.get(edge.source) + 1);
+    rankById.set(node.id, parentRanks.length > 0 ? Math.max(...parentRanks) : 0);
+  });
+  return rankById;
+}
+
+function getAutoLayoutOrderMap(columns) {
+  const order = new Map();
+  columns.forEach((column, columnIndex) => {
+    column.forEach((node, rowIndex) => {
+      order.set(node.id, { column: columnIndex, row: rowIndex });
+    });
+  });
+  return order;
+}
+
+function sortAutoLayoutColumnByNeighbors(column, edges, orderMap, direction) {
+  const edgeKey = direction === 'forward' ? 'target' : 'source';
+  const neighborKey = direction === 'forward' ? 'source' : 'target';
+  return column.slice().sort((a, b) => {
+    const av = medianNumber(edges
+      .filter((edge) => edge[edgeKey] === a.id && orderMap.has(edge[neighborKey]))
+      .map((edge) => orderMap.get(edge[neighborKey]).row));
+    const bv = medianNumber(edges
+      .filter((edge) => edge[edgeKey] === b.id && orderMap.has(edge[neighborKey]))
+      .map((edge) => orderMap.get(edge[neighborKey]).row));
+    const af = av == null ? Number.POSITIVE_INFINITY : av;
+    const bf = bv == null ? Number.POSITIVE_INFINITY : bv;
+    if (af !== bf) return af - bf;
+    return compareAutoLayoutNodesByStableOrder(a, b);
+  });
+}
+
+function pointIsInsideRect(point, rect, inset = 0) {
+  const x = Number(point && point.x);
+  const y = Number(point && point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  return x >= (rect.x - inset)
+    && x <= (rect.x + rect.w + inset)
+    && y >= (rect.y - inset)
+    && y <= (rect.y + rect.h + inset);
+}
+
+function countAutoLayoutRouteObstacleHits(layout, edges) {
+  const rects = Array.from(layout.rectById.entries()).map(([id, rect]) => ({ id, rect }));
+  let hits = 0;
+  const routed = layoutTechTreeArrowEdges(edges.map((edge) => ({
+    source: { id: edge.source },
+    target: { id: edge.target },
+    sourceRect: layout.rectById.get(edge.source),
+    targetRect: layout.rectById.get(edge.target)
+  })), { slotSpacing: 10 });
+  routed.forEach((edge) => {
+    const route = buildTechTreeArrowRoute(edge.sourceRect, edge.targetRect, {
+      sourceSide: edge.sourceSide,
+      targetSide: edge.targetSide,
+      sourceOffset: edge.sourceOffset,
+      targetOffset: edge.targetOffset,
+      horizontalTolerance: 18
+    });
+    const samples = sampleTechTreeArrowRoute(route, { curveSteps: 8, radius: 13 });
+    const hit = rects.some((item) => {
+      if (item.id === String(edge.source && edge.source.id) || item.id === String(edge.target && edge.target.id)) return false;
+      return samples.some((point) => pointIsInsideRect(point, item.rect, 4));
+    });
+    if (hit) hits += 1;
+  });
+  return hits;
+}
+
+function countAutoLayoutEdgeCrossings(layout, edges) {
+  let crossings = 0;
+  for (let i = 0; i < edges.length; i += 1) {
+    for (let j = i + 1; j < edges.length; j += 1) {
+      const a = edges[i];
+      const b = edges[j];
+      if (layout.rankById.get(a.source) !== layout.rankById.get(b.source)) continue;
+      if (layout.rankById.get(a.target) !== layout.rankById.get(b.target)) continue;
+      const ar = layout.rectById.get(a.source);
+      const br = layout.rectById.get(b.source);
+      const at = layout.rectById.get(a.target);
+      const bt = layout.rectById.get(b.target);
+      if (!ar || !br || !at || !bt) continue;
+      const sourceDelta = (ar.y + ar.h / 2) - (br.y + br.h / 2);
+      const targetDelta = (at.y + at.h / 2) - (bt.y + bt.h / 2);
+      if ((sourceDelta * targetDelta) < 0) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
+function scoreAutoLayout(layout, edges) {
+  let backwardEdges = 0;
+  let verticalSpan = 0;
+  edges.forEach((edge) => {
+    const source = layout.rectById.get(edge.source);
+    const target = layout.rectById.get(edge.target);
+    if (!source || !target) return;
+    if ((source.x + source.w) >= target.x) backwardEdges += 1;
+    verticalSpan += Math.abs((source.y + source.h / 2) - (target.y + target.h / 2));
+  });
+  const obstacleHits = countAutoLayoutRouteObstacleHits(layout, edges);
+  const edgeCrossings = countAutoLayoutEdgeCrossings(layout, edges);
+  return {
+    score: (backwardEdges * 100000) + (obstacleHits * 10000) + (edgeCrossings * 1200) + verticalSpan,
+    backwardEdges,
+    obstacleHits,
+    edgeCrossings,
+    verticalSpan
+  };
+}
+
+function buildAutoLayoutPositions(columns, rankById, options) {
+  const width = Math.max(480, Number(options.width) || 1024);
+  const height = Math.max(360, Number(options.height) || 768);
+  const rawBounds = options && options.bounds && typeof options.bounds === 'object' ? options.bounds : null;
+  const useBounds = rawBounds
+    && Number.isFinite(Number(rawBounds.x))
+    && Number.isFinite(Number(rawBounds.y))
+    && Number(rawBounds.w) > 0
+    && Number(rawBounds.h) > 0;
+  const grid = Math.max(1, Number(options.grid) || 16);
+  const paddingLeft = Math.max(0, Number(options.paddingLeft) || 72);
+  const paddingRight = Math.max(0, Number(options.paddingRight) || 72);
+  const paddingTop = Math.max(0, Number(options.paddingTop) || 56);
+  const paddingBottom = Math.max(0, Number(options.paddingBottom) || 56);
+  const minColumnGap = Math.max(24, Number(options.minColumnGap) || 64);
+  const minRowGap = Math.max(8, Number(options.minRowGap) || 20);
+  const layoutLeft = useBounds ? Math.max(0, Number(rawBounds.x) || 0) : paddingLeft;
+  const layoutTop = useBounds ? Math.max(0, Number(rawBounds.y) || 0) : paddingTop;
+  const availableWidth = useBounds
+    ? Math.max(1, Number(rawBounds.w) || 1)
+    : Math.max(1, width - paddingLeft - paddingRight);
+  const availableHeight = useBounds
+    ? Math.max(1, Number(rawBounds.h) || 1)
+    : Math.max(1, height - paddingTop - paddingBottom);
+  const columnWidths = columns.map((column) => column.reduce((max, node) => Math.max(max, node.w), 0));
+  const totalNodeWidth = columnWidths.reduce((sum, value) => sum + value, 0);
+  const columnCount = Math.max(1, columns.length);
+  const naturalGap = columnCount > 1
+    ? Math.floor((availableWidth - totalNodeWidth) / (columnCount - 1))
+    : 0;
+  const columnGap = columnCount > 1 ? Math.max(minColumnGap, naturalGap) : 0;
+  const totalWidth = totalNodeWidth + (columnGap * Math.max(0, columnCount - 1));
+  const scaledColumnStep = columnCount > 1
+    ? Math.max(1, (availableWidth - columnWidths[columnWidths.length - 1]) / (columnCount - 1))
+    : 0;
+  let x = Math.max(0, layoutLeft + Math.floor(Math.max(0, availableWidth - totalWidth) / 2));
+  const maxRows = columns.reduce((max, column) => Math.max(max, column.length), 1);
+  const maxNodeHeight = columns.reduce((max, column) => (
+    Math.max(max, column.reduce((colMax, node) => Math.max(colMax, node.h), 0))
+  ), 0);
+  const naturalRowStep = maxRows > 1 ? Math.floor(Math.max(1, availableHeight - maxNodeHeight) / (maxRows - 1)) : 0;
+  const rowStep = maxRows > 1
+    ? (useBounds ? Math.max(1, naturalRowStep) : Math.max(maxNodeHeight + minRowGap, naturalRowStep))
+    : 0;
+  const positions = [];
+  const rectById = new Map();
+  columns.forEach((column, columnIndex) => {
+    const columnWidth = columnWidths[columnIndex] || 0;
+    const columnMaxHeight = column.reduce((max, node) => Math.max(max, node.h), 0);
+    const columnSpan = column.length > 1 ? ((column.length - 1) * rowStep) + columnMaxHeight : columnMaxHeight;
+    let y = layoutTop + Math.max(0, Math.floor((availableHeight - columnSpan) / 2));
+    const columnLeft = totalWidth > availableWidth && columnCount > 1
+      ? layoutLeft + (columnIndex * scaledColumnStep)
+      : x;
+    column.forEach((node, rowIndex) => {
+      const align = String(options.columnAlign || 'left').toLowerCase();
+      const alignOffset = align === 'center' ? ((columnWidth - node.w) / 2) : 0;
+      const maxX = useBounds ? layoutLeft + availableWidth - node.w : Number.POSITIVE_INFINITY;
+      const maxY = useBounds ? layoutTop + availableHeight - node.h : Number.POSITIVE_INFINITY;
+      const rawX = Math.round(Math.min(maxX, columnLeft + alignOffset) / grid) * grid;
+      const rawY = Math.round((y + (rowIndex * rowStep) + ((columnMaxHeight - node.h) / 2)) / grid) * grid;
+      const px = Math.min(maxX, rawX);
+      const py = Math.min(maxY, rawY);
+      const position = {
+        id: node.originalId,
+        key: node.id,
+        x: Math.max(0, px),
+        y: Math.max(0, Math.min(maxY, py)),
+        w: node.w,
+        h: node.h,
+        rank: rankById.get(node.id) || 0,
+        row: rowIndex
+      };
+      positions.push(position);
+      rectById.set(node.id, { x: position.x, y: position.y, w: position.w, h: position.h });
+    });
+    x += columnWidth + columnGap;
+  });
+  return { positions, rectById, rankById };
+}
+
+function autoLayoutTechTreeNodes(inputNodes, options = {}) {
+  const nodes = (Array.isArray(inputNodes) ? inputNodes : [])
+    .map((node, index) => normalizeAutoLayoutNode(node, index));
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const edges = [];
+  nodes.forEach((node) => {
+    node.prereqs.forEach((sourceId) => {
+      if (!byId.has(sourceId)) return;
+      edges.push({ source: sourceId, target: node.id });
+    });
+  });
+  if (nodes.length === 0) {
+    return { positions: [], stats: { score: 0, obstacleHits: 0, edgeCrossings: 0, backwardEdges: 0 } };
+  }
+  const rankById = buildAutoLayoutRanks(nodes, edges);
+  const maxRank = nodes.reduce((max, node) => Math.max(max, rankById.get(node.id) || 0), 0);
+  let columns = [];
+  for (let rank = 0; rank <= maxRank; rank += 1) {
+    columns.push(nodes
+      .filter((node) => (rankById.get(node.id) || 0) === rank)
+      .sort(compareAutoLayoutNodesByStableOrder));
+  }
+  columns = columns.filter((column) => column.length > 0);
+  for (let pass = 0; pass < 4; pass += 1) {
+    let orderMap = getAutoLayoutOrderMap(columns);
+    for (let col = 1; col < columns.length; col += 1) {
+      columns[col] = sortAutoLayoutColumnByNeighbors(columns[col], edges, orderMap, 'forward');
+      orderMap = getAutoLayoutOrderMap(columns);
+    }
+    for (let col = columns.length - 2; col >= 0; col -= 1) {
+      columns[col] = sortAutoLayoutColumnByNeighbors(columns[col], edges, orderMap, 'backward');
+      orderMap = getAutoLayoutOrderMap(columns);
+    }
+  }
+
+  const makeLayout = () => buildAutoLayoutPositions(columns, rankById, options);
+  let bestLayout = makeLayout();
+  let bestStats = scoreAutoLayout(bestLayout, edges);
+  for (let pass = 0; pass < 3; pass += 1) {
+    let improved = false;
+    for (let col = 0; col < columns.length; col += 1) {
+      for (let row = 0; row < columns[col].length - 1; row += 1) {
+        const nextColumns = columns.map((column) => column.slice());
+        const tmp = nextColumns[col][row];
+        nextColumns[col][row] = nextColumns[col][row + 1];
+        nextColumns[col][row + 1] = tmp;
+        const previousColumns = columns;
+        columns = nextColumns;
+        const candidateLayout = makeLayout();
+        const candidateStats = scoreAutoLayout(candidateLayout, edges);
+        if (candidateStats.score + 0.01 < bestStats.score) {
+          bestLayout = candidateLayout;
+          bestStats = candidateStats;
+          improved = true;
+        } else {
+          columns = previousColumns;
+        }
+      }
+    }
+    if (!improved) break;
+  }
+
+  return {
+    positions: bestLayout.positions,
+    stats: {
+      ...bestStats,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      columnCount: columns.length
+    }
+  };
 }
 
 function pushDistinctPoint(points, point) {
@@ -425,13 +763,14 @@ function buildTechTreeArrowRouteForSides(sourceRect, targetRect, options = {}) {
   const end = getAttachmentPoint(target, targetSide, targetOffset, pad);
   const sourceHorizontal = sourceVector.x !== 0;
   const targetHorizontal = targetVector.x !== 0;
-  if (sourceHorizontal && targetHorizontal) {
+  const canSlideBothEndpoints = Math.abs(sourceOffset) < 0.01 && Math.abs(targetOffset) < 0.01;
+  if (canSlideBothEndpoints && sourceHorizontal && targetHorizontal) {
     const straightY = getOverlappingBorderAxisCoordinate(source, sourceSide, target, targetSide, start.y);
     if (straightY != null) {
       start.y = straightY;
       end.y = straightY;
     }
-  } else if (!sourceHorizontal && !targetHorizontal) {
+  } else if (canSlideBothEndpoints && !sourceHorizontal && !targetHorizontal) {
     const straightX = getOverlappingBorderAxisCoordinate(source, sourceSide, target, targetSide, end.x);
     if (straightX != null) {
       start.x = straightX;
@@ -440,6 +779,25 @@ function buildTechTreeArrowRouteForSides(sourceRect, targetRect, options = {}) {
   }
   const sourceExit = { x: start.x + (sourceVector.x * stem), y: start.y + (sourceVector.y * stem) };
   const targetApproach = { x: end.x + (targetVector.x * stem), y: end.y + (targetVector.y * stem) };
+  const sourceCenter = getRectCenter(source);
+  const targetCenter = getRectCenter(target);
+  if (!sourceHorizontal && targetHorizontal && Math.abs(sourceOffset) < 0.01) {
+    const sourceRange = getBorderAxisRange(source, sourceSide);
+    const axisDelta = targetApproach.x - start.x;
+    const targetDelta = targetCenter.x - sourceCenter.x;
+    if (axisDelta * targetDelta >= -0.01 && targetApproach.x >= sourceRange.min && targetApproach.x <= sourceRange.max) {
+      start.x = targetApproach.x;
+      sourceExit.x = targetApproach.x;
+    }
+  } else if (sourceHorizontal && !targetHorizontal && Math.abs(sourceOffset) < 0.01) {
+    const sourceRange = getBorderAxisRange(source, sourceSide);
+    const axisDelta = targetApproach.y - start.y;
+    const targetDelta = targetCenter.y - sourceCenter.y;
+    if (axisDelta * targetDelta >= -0.01 && targetApproach.y >= sourceRange.min && targetApproach.y <= sourceRange.max) {
+      start.y = targetApproach.y;
+      sourceExit.y = targetApproach.y;
+    }
+  }
   const points = [start];
   pushDistinctPoint(points, sourceExit);
   if (sourceHorizontal && targetHorizontal) {
@@ -451,7 +809,16 @@ function buildTechTreeArrowRouteForSides(sourceRect, targetRect, options = {}) {
       end.y = sourceExit.y;
     } else if ((dir > 0 && targetApproach.x > sourceExit.x) || (dir < 0 && targetApproach.x < sourceExit.x)) {
       const elbow = clamp(Math.abs(dx) * 0.46, 24, Math.max(24, Number(options.maxElbow) || 140));
-      const turnX = sourceExit.x + (elbow * dir);
+      let turnX = sourceExit.x + (elbow * dir);
+      if (dir > 0) {
+        turnX = Math.min(turnX, targetApproach.x);
+      } else {
+        turnX = Math.max(turnX, targetApproach.x);
+      }
+      if (Math.abs(turnX - sourceExit.x) <= 2) {
+        turnX = sourceExit.x;
+        targetApproach.x = turnX;
+      }
       pushDistinctPoint(points, { x: turnX, y: sourceExit.y });
       pushDistinctPoint(points, { x: turnX, y: targetApproach.y });
     } else {
@@ -596,6 +963,7 @@ return {
   parseTechBoxSheetLayout,
   getTechBoxFrame,
   chooseTechBoxSizeIndexForIconCount,
+  autoLayoutTechTreeNodes,
   layoutTechTreeArrowEdges,
   buildTechTreeArrowRoute,
   formatTechTreeArrowSvgPath,

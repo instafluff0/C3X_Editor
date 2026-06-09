@@ -125,6 +125,7 @@ const state = {
   techTreeArrowArtDirtyByEra: {},
   techTreeArrowRouteOverrides: {},
   techTreeSelectedArrowKey: '',
+  cleanScienceAdvisorArrowStyle: null,
   biqMapZoom: 6,
   biqMapLayer: 'terrain',
   biqMapShowGrid: false,
@@ -299,6 +300,7 @@ const state = {
     typeAnimationIni: false,
     typeText: true,
     typeBiq: true,
+    typeArtPcx: true,
     statusNew: false,
     statusChanged: false,
     statusUnchanged: false,
@@ -330,6 +332,8 @@ const techTreeModal = {
   node: null,
   body: null,
   title: null,
+  refreshBtn: null,
+  saveBtn: null,
   undoBtn: null,
   undoAllBtn: null,
   needsActiveTabRefresh: false,
@@ -642,6 +646,7 @@ const el = {
   filesFilterTypeAnimationIni: document.getElementById('files-filter-type-animation-ini'),
   filesFilterTypeText: document.getElementById('files-filter-type-text'),
   filesFilterTypeBiq: document.getElementById('files-filter-type-biq'),
+  filesFilterTypeArtPcx: document.getElementById('files-filter-type-art-pcx'),
   filesFilterStatusNew: document.getElementById('files-filter-status-new'),
   filesFilterStatusChanged: document.getElementById('files-filter-status-changed'),
   filesFilterStatusUnchanged: document.getElementById('files-filter-status-unchanged'),
@@ -1329,6 +1334,22 @@ function getPathBaseName(pathValue) {
   return String(parts[parts.length - 1] || '');
 }
 
+function getPathDirName(pathValue) {
+  const text = String(pathValue || '').trim().replace(/[\\/]+$/, '');
+  if (!text) return '';
+  const match = text.match(/^(.*)[\\/][^\\/]*$/u);
+  return match ? String(match[1] || '') : '';
+}
+
+function joinLocalPath(rootValue, relativeValue) {
+  const root = String(rootValue || '').trim().replace(/[\\/]+$/, '');
+  const relative = String(relativeValue || '').trim().replace(/^[\\/]+/, '');
+  if (!root) return relative;
+  if (!relative) return root;
+  const separator = root.includes('\\') && !root.includes('/') ? '\\' : '/';
+  return `${root}${separator}${relative.replace(/[\\/]/g, separator)}`;
+}
+
 function isOpenableFilesReadPath(pathValue) {
   const p = String(pathValue || '').trim().toLowerCase();
   return p.endsWith('.txt') || p.endsWith('.ini');
@@ -1532,6 +1553,36 @@ function collectPendingWritePathsFromDirtyTabs() {
   return pending;
 }
 
+function getScienceAdvisorArrowPendingWriteEntries() {
+  if (!isScenarioMode()) return [];
+  if (!(state.settings && state.settings.autoUpdateScienceAdvisorArrows === true)) return [];
+  const dirtyEraIndexes = Object.keys(state.techTreeArrowArtDirtyByEra || {})
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  if (dirtyEraIndexes.length === 0) return [];
+  const baseTargetPath = getActiveBaseTargetPath();
+  const targetContentRoot = getPathDirName(baseTargetPath) || getInferredScenarioContentRoot();
+  if (!targetContentRoot) return [];
+  const out = [];
+  dirtyEraIndexes.forEach((eraIndex) => {
+    const candidates = TECH_TREE_ERA_BACKGROUND_CANDIDATES[eraIndex] || [];
+    const relativePath = String(candidates[0] || '').trim();
+    if (!relativePath) return;
+    const targetPath = joinLocalPath(targetContentRoot, relativePath);
+    if (!targetPath) return;
+    out.push({
+      path: targetPath,
+      kind: 'write',
+      note: 'Generated Science Advisor arrow background',
+      potentialWrite: true,
+      changeCategory: 'changed',
+      generatedScienceAdvisorArt: true,
+      sourceCandidates: candidates.map((candidate) => joinLocalPath(targetContentRoot, candidate)).filter(Boolean)
+    });
+  });
+  return out;
+}
+
 function getFilesEntryChangeCategory(entry, access) {
   if (!entry) return '';
   if (!state.isDirty) return '';
@@ -1696,6 +1747,23 @@ function collectFilesModalEntries() {
     };
     out.push(pendingEntry);
     byPath.set(pathValue, pendingEntry);
+  });
+
+  getScienceAdvisorArrowPendingWriteEntries().forEach((scienceAdvisorEntry) => {
+    const pathValue = String(scienceAdvisorEntry && scienceAdvisorEntry.path || '').trim();
+    if (!pathValue) return;
+    const existing = byPath.get(pathValue);
+    if (existing) {
+      existing.kind = 'write';
+      existing.potentialWrite = true;
+      existing.changeCategory = 'changed';
+      existing.generatedScienceAdvisorArt = true;
+      existing.sourceCandidates = scienceAdvisorEntry.sourceCandidates;
+      existing.note = scienceAdvisorEntry.note;
+      return;
+    }
+    out.push(scienceAdvisorEntry);
+    byPath.set(pathValue, scienceAdvisorEntry);
   });
 
   const baseTargetPath = getActiveBaseTargetPath();
@@ -1885,6 +1953,7 @@ function getDefaultFilesReadFiltersForMode(mode) {
     typeAnimationIni: false,
     typeText: true,
     typeBiq: true,
+    typeArtPcx: true,
     statusNew: false,
     statusChanged: false,
     statusUnchanged: false,
@@ -1950,6 +2019,7 @@ function syncFilesReadFilterInputs() {
   if (el.filesFilterTypeAnimationIni) el.filesFilterTypeAnimationIni.checked = !!state.filesReadFilters.typeAnimationIni;
   if (el.filesFilterTypeText) el.filesFilterTypeText.checked = !!state.filesReadFilters.typeText;
   if (el.filesFilterTypeBiq) el.filesFilterTypeBiq.checked = !!state.filesReadFilters.typeBiq;
+  if (el.filesFilterTypeArtPcx) el.filesFilterTypeArtPcx.checked = !!state.filesReadFilters.typeArtPcx;
   if (el.filesFilterStatusNew) el.filesFilterStatusNew.checked = !!state.filesReadFilters.statusNew;
   if (el.filesFilterStatusChanged) el.filesFilterStatusChanged.checked = !!state.filesReadFilters.statusChanged;
   if (el.filesFilterStatusUnchanged) el.filesFilterStatusUnchanged.checked = !!state.filesReadFilters.statusUnchanged;
@@ -1962,6 +2032,7 @@ function getFilesEntryFileType(entry, classification) {
   if (isAnimationIniEntry(entry)) return 'animationIni';
   if (/\.txt$/i.test(pathValue)) return 'text';
   if (/\.ini$/i.test(pathValue)) return 'configIni';
+  if (/\.pcx$/i.test(pathValue)) return 'artPcx';
   return 'other';
 }
 
@@ -1996,6 +2067,7 @@ function shouldIncludeFilesEntryByFilter(entry) {
   if (f.typeAnimationIni) selectedTypes.push('animationIni');
   if (f.typeText) selectedTypes.push('text');
   if (f.typeBiq) selectedTypes.push('biq');
+  if (f.typeArtPcx) selectedTypes.push('artPcx');
   if (selectedTypes.length > 0 && !selectedTypes.includes(fileType)) return false;
 
   const selectedStatuses = [];
@@ -2243,11 +2315,11 @@ function openFilesReadModal() {
 }
 
 function getSaveButtons() {
-  return [el.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn, mapModal.saveBtn].filter((btn) => btn && btn.isConnected);
+  return [el.saveBtn, techTreeModal.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn, mapModal.saveBtn].filter((btn) => btn && btn.isConnected);
 }
 
 function getRefreshButtons() {
-  return [el.refreshBtn, mapModal.refreshBtn].filter((btn) => btn && btn.isConnected);
+  return [el.refreshBtn, techTreeModal.refreshBtn, mapModal.refreshBtn].filter((btn) => btn && btn.isConnected);
 }
 
 function updateRefreshButtonState() {
@@ -2419,7 +2491,7 @@ function refreshDirtyUi() {
   }
   const undoAllBtnDisabledBefore = !!(el.undoAllBtn && el.undoAllBtn.disabled);
   if (el.undoAllBtn) {
-    el.undoAllBtn.disabled = !state.isDirty || state.isLoading;
+    el.undoAllBtn.disabled = !hasEffectiveUnsavedChanges() || state.isLoading;
     undoAllBtnDisabledChanged = undoAllBtnDisabledBefore !== el.undoAllBtn.disabled;
   }
   const mapUndoButtonsStartedAt = shouldLogReferencePerf ? debugNowMs() : 0;
@@ -2455,6 +2527,18 @@ function getLatestUndoSnapshot() {
 function cloneUndoSnapshotEntry(entry) {
   if (entry == null) return null;
   if (typeof entry === 'string') return String(entry);
+  if (entry && typeof entry === 'object' && entry.kind === 'tech-tree-arrow-style') {
+    return {
+      kind: 'tech-tree-arrow-style',
+      scope: 'techtreearrowart',
+      hasScienceAdvisorArrowStyle: !!entry.hasScienceAdvisorArrowStyle,
+      scienceAdvisorArrowStyle: deepCloneUiValue(entry.scienceAdvisorArrowStyle),
+      techTreeArrowArtDirty: !!entry.techTreeArrowArtDirty,
+      techTreeArrowArtDirtyByEra: deepCloneUiValue(entry.techTreeArrowArtDirtyByEra || {}),
+      techTreeArrowRouteOverrides: deepCloneUiValue(entry.techTreeArrowRouteOverrides || {}),
+      techTreeSelectedArrowKey: String(entry.techTreeSelectedArrowKey || '')
+    };
+  }
   if (entry && typeof entry === 'object' && entry.kind === 'serialized-partial-tabs') {
     return {
       kind: 'serialized-partial-tabs',
@@ -2494,6 +2578,9 @@ function getUndoSnapshotSignature(snapshot) {
     const scope = String(snapshot.scope || '').trim().toLowerCase();
     return `serialized:${scope}:${String(snapshot.json || 'null')}`;
   }
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'tech-tree-arrow-style') {
+    return `tech-tree-arrow-style:${JSON.stringify(cloneUndoSnapshotEntry(snapshot))}`;
+  }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'map-record-diff') {
     const scope = String(snapshot.scope || '').trim().toLowerCase();
     return `map-record-diff:${scope}:${JSON.stringify(Array.isArray(snapshot.records) ? snapshot.records : [])}`;
@@ -2508,6 +2595,74 @@ function getUndoSnapshotSignature(snapshot) {
 function snapshotTabs() {
   if (!state.bundle || !state.bundle.tabs) return 'null';
   return snapshotEditableTabsFromBundle(state.bundle);
+}
+
+function getScienceAdvisorArrowStyleSnapshotValue() {
+  if (!state.settings || !Object.prototype.hasOwnProperty.call(state.settings, 'scienceAdvisorArrowStyle')) return null;
+  return deepCloneUiValue(state.settings.scienceAdvisorArrowStyle);
+}
+
+function getScienceAdvisorArrowStyleSignature(value = getScienceAdvisorArrowStyleSnapshotValue()) {
+  return JSON.stringify(value == null ? null : value);
+}
+
+function captureCleanScienceAdvisorArrowStyle() {
+  state.cleanScienceAdvisorArrowStyle = getScienceAdvisorArrowStyleSnapshotValue();
+}
+
+function hasUnsavedTechTreeArrowArtChanges() {
+  const dirtyEras = Object.keys(state.techTreeArrowArtDirtyByEra || {}).length > 0;
+  if (state.techTreeArrowArtDirty || dirtyEras) return true;
+  return getScienceAdvisorArrowStyleSignature() !== getScienceAdvisorArrowStyleSignature(state.cleanScienceAdvisorArrowStyle);
+}
+
+function snapshotTechTreeArrowStyleState() {
+  return {
+    kind: 'tech-tree-arrow-style',
+    scope: 'techtreearrowart',
+    hasScienceAdvisorArrowStyle: !!(state.settings && Object.prototype.hasOwnProperty.call(state.settings, 'scienceAdvisorArrowStyle')),
+    scienceAdvisorArrowStyle: getScienceAdvisorArrowStyleSnapshotValue(),
+    techTreeArrowArtDirty: !!state.techTreeArrowArtDirty,
+    techTreeArrowArtDirtyByEra: deepCloneUiValue(state.techTreeArrowArtDirtyByEra || {}),
+    techTreeArrowRouteOverrides: deepCloneUiValue(state.techTreeArrowRouteOverrides || {}),
+    techTreeSelectedArrowKey: String(state.techTreeSelectedArrowKey || '')
+  };
+}
+
+function persistSettingsForUndoRestore() {
+  if (state.settings && window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
+    window.c3xManager.setSettings(state.settings).catch(() => {});
+  }
+}
+
+function restoreTechTreeArrowStyleState(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || snapshot.kind !== 'tech-tree-arrow-style') return false;
+  if (!state.settings) state.settings = {};
+  if (snapshot.hasScienceAdvisorArrowStyle) {
+    state.settings.scienceAdvisorArrowStyle = deepCloneUiValue(snapshot.scienceAdvisorArrowStyle);
+  } else {
+    delete state.settings.scienceAdvisorArrowStyle;
+  }
+  state.techTreeArrowArtDirty = !!snapshot.techTreeArrowArtDirty;
+  state.techTreeArrowArtDirtyByEra = deepCloneUiValue(snapshot.techTreeArrowArtDirtyByEra || {});
+  state.techTreeArrowRouteOverrides = deepCloneUiValue(snapshot.techTreeArrowRouteOverrides || {});
+  state.techTreeSelectedArrowKey = String(snapshot.techTreeSelectedArrowKey || '');
+  persistSettingsForUndoRestore();
+  return true;
+}
+
+function restoreCleanTechTreeArrowStyleState() {
+  if (!state.settings) state.settings = {};
+  if (state.cleanScienceAdvisorArrowStyle == null) {
+    delete state.settings.scienceAdvisorArrowStyle;
+  } else {
+    state.settings.scienceAdvisorArrowStyle = deepCloneUiValue(state.cleanScienceAdvisorArrowStyle);
+  }
+  state.techTreeArrowArtDirty = false;
+  state.techTreeArrowArtDirtyByEra = {};
+  state.techTreeArrowRouteOverrides = {};
+  state.techTreeSelectedArrowKey = '';
+  persistSettingsForUndoRestore();
 }
 
 function snapshotEditableTabsFromBundle(bundle) {
@@ -2657,6 +2812,9 @@ function getUndoSnapshotForKey(key = '') {
       return snapshotSelectedEditableTabs({ tabKeys: [tabKey], scope: `tab:${tabKey}` });
     }
   }
+  if (normalizedKey === 'TECH_TREE_ARROW_STYLE') {
+    return snapshotTechTreeArrowStyleState();
+  }
   if (normalizedKey.startsWith('REFERENCE_TAB:')) {
     const parts = normalizedKey.split(':');
     const tabKey = String(parts[1] || '').trim().toLowerCase();
@@ -2730,6 +2888,9 @@ function getUndoSnapshotScope(snapshot) {
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'serialized-partial-tabs') {
     const explicitScope = String(snapshot.scope || '').trim().toLowerCase();
     if (explicitScope) return explicitScope;
+  }
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'tech-tree-arrow-style') {
+    return 'techtreearrowart';
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'map-record-diff') {
     const explicitScope = String(snapshot.scope || '').trim().toLowerCase();
@@ -3035,6 +3196,10 @@ function commitAllTrackedEditSessions() {
   });
 }
 
+function hasEffectiveUnsavedChanges() {
+  return !!state.isDirty || hasPendingTrackedEditSessions() || hasUnsavedTechTreeArrowArtChanges();
+}
+
 function getMapCityEditSessionKey(cityRef) {
   const ref = String(cityRef || '').trim();
   return ref ? `MAP:CITYSESSION:${ref}` : '';
@@ -3153,6 +3318,7 @@ function captureCleanSnapshot() {
   state.activeMapUnitEditSessionGetValue = null;
   state.cleanSnapshot = snapshotTabs();
   state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
+  captureCleanScienceAdvisorArrowStyle();
   clearCleanReferenceDirtySignatureCache();
   state.undoHistory = [];
   state.isDirty = false;
@@ -3943,6 +4109,9 @@ function rebuildDirtyTabCounts() {
     }
     setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   });
+  if (hasUnsavedTechTreeArrowArtChanges()) {
+    setTabDirtyCount('techtreearrowart', 1);
+  }
 }
 
 function rebuildReferenceDirtyCacheForTab(tabKey, tabOverride = null) {
@@ -10759,6 +10928,16 @@ function eraseTechTreeBackgroundArrowsFromCanvas(canvas) {
   const y1 = Math.max(0, Math.floor(height * 0.11));
   const x2 = Math.min(width - 1, Math.ceil(width * 0.94));
   const y2 = Math.min(height - 1, Math.ceil(height * 0.9));
+  if (scienceAdvisorArrows && typeof scienceAdvisorArrows.clearScienceAdvisorArrowPixelsRgba === 'function') {
+    scienceAdvisorArrows.clearScienceAdvisorArrowPixelsRgba({
+      rgba: data,
+      width,
+      height,
+      bounds: { x1, y1, x2, y2 }
+    });
+    ctx.putImageData(image, 0, 0);
+    return;
+  }
   const mask = new Uint8Array(width * height);
   for (let y = y1; y <= y2; y += 1) {
     for (let x = x1; x <= x2; x += 1) {
@@ -23994,6 +24173,51 @@ function getTechTreeBoxFrame(techBoxPreview, eraValue, node, unitCivFilter = nul
   return techBoxLayout.getTechBoxFrame(layout, eraValue, getTechTreeBoxSizeIndex(node, unitCivFilter), layout.defaultColumnIndex);
 }
 
+function getTechTreeAutoLayoutSourceCoordinate(entry, baseKey, fallback) {
+  const field = getTechField(entry, baseKey);
+  const original = parseIntFromDisplayValue(field && field.originalValue);
+  if (original != null) return Math.max(0, original);
+  const value = parseIntFromDisplayValue(field && field.value);
+  if (value != null) return Math.max(0, value);
+  return Math.max(0, Number(fallback) || 0);
+}
+
+function getTechTreeAutoLayoutBounds(nodes, techBoxPreview, eraValue, nativeW, nativeH) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  const width = Math.max(1, Number(nativeW) || 1024);
+  const height = Math.max(1, Number(nativeH) || 768);
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxRight = 0;
+  let maxBottom = 0;
+  list.forEach((node) => {
+    if (!node || !node.entry) return;
+    const frame = getTechTreeBoxFrame(techBoxPreview, eraValue, node, null);
+    const w = frame ? Math.max(1, Number(frame.w) || 136) : 136;
+    const h = frame ? Math.max(1, Number(frame.h) || 64) : 64;
+    const x = getTechTreeAutoLayoutSourceCoordinate(node.entry, 'x', node.x);
+    const y = getTechTreeAutoLayoutSourceCoordinate(node.entry, 'y', node.y);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxRight = Math.max(maxRight, x + w);
+    maxBottom = Math.max(maxBottom, y + h);
+  });
+  const fallback = {
+    x: 64,
+    y: 56,
+    w: Math.max(1, width - 128),
+    h: Math.max(1, height - 112)
+  };
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return fallback;
+  const left = Math.max(0, Math.min(width - 1, Math.floor(minX)));
+  const top = Math.max(0, Math.min(height - 1, Math.floor(minY)));
+  const right = Math.max(left + 1, Math.min(width, Math.ceil(maxRight)));
+  const bottom = Math.max(top + 1, Math.min(height, Math.ceil(maxBottom)));
+  const bounds = { x: left, y: top, w: right - left, h: bottom - top };
+  if (bounds.w < width * 0.45 || bounds.h < height * 0.45) return fallback;
+  return bounds;
+}
+
 function drawTechTreeBoxFrame(techBoxPreview, frame, canvas) {
   if (!techBoxPreview || !frame || !canvas) return false;
   const sheet = rgbaToCanvas(techBoxPreview);
@@ -24129,6 +24353,32 @@ function createTechLinkPills({ title, ids, byId, onJump }) {
   return wrap;
 }
 
+function clampTechTreeArrowStyleNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function rgbToHexColor(color) {
+  const toHex = (value) => {
+    const n = Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
+    return n.toString(16).padStart(2, '0');
+  };
+  return `#${toHex(color && color.r)}${toHex(color && color.g)}${toHex(color && color.b)}`;
+}
+
+function hexColorToRgb(hex, fallback) {
+  const text = String(hex || '').trim();
+  const match = /^#?([0-9a-f]{6})$/i.exec(text);
+  if (!match) return fallback;
+  const value = match[1];
+  return {
+    r: Number.parseInt(value.slice(0, 2), 16),
+    g: Number.parseInt(value.slice(2, 4), 16),
+    b: Number.parseInt(value.slice(4, 6), 16)
+  };
+}
+
 function createTechTreePanel({
   tab,
   tabKey,
@@ -24152,6 +24402,60 @@ function createTechTreePanel({
   const civOptions = getCivilizationTechTreeFilterOptions();
   const firstCivFilterValue = civOptions.length > 0 ? String(civOptions[0].value || '') : '';
   let selectedCivFilterValue = String(initialCivFilter || firstCivFilterValue || '');
+  let redrawCurrentTechTreeLines = null;
+  let arrowStylePreviewRaf = 0;
+  let arrowStylePreviewTimer = 0;
+  let latestTechTreeAutoLayoutContext = null;
+  const getCurrentTechTreeEraValue = () => Number.parseInt(eraSelect.value, 10) || 0;
+  const getStoredScienceAdvisorArrowStyle = () => {
+    const style = state.settings && state.settings.scienceAdvisorArrowStyle;
+    return style && typeof style === 'object' ? style : {};
+  };
+  const getEffectiveScienceAdvisorArrowStyle = (eraIndex = getCurrentTechTreeEraValue()) => {
+    if (scienceAdvisorArrows && typeof scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle === 'function') {
+      return scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle(getStoredScienceAdvisorArrowStyle(), { eraIndex });
+    }
+    return null;
+  };
+  const persistScienceAdvisorArrowStyleSettings = () => {
+    if (window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
+      window.c3xManager.setSettings(state.settings).catch(() => {});
+    }
+  };
+  const requestArrowStylePreviewRedraw = (delayMs = 0) => {
+    if (delayMs > 0) {
+      if (arrowStylePreviewTimer) window.clearTimeout(arrowStylePreviewTimer);
+      arrowStylePreviewTimer = window.setTimeout(() => {
+        arrowStylePreviewTimer = 0;
+        requestArrowStylePreviewRedraw(0);
+      }, delayMs);
+      return;
+    }
+    if (arrowStylePreviewRaf) return;
+    arrowStylePreviewRaf = window.requestAnimationFrame(() => {
+      arrowStylePreviewRaf = 0;
+      if (typeof redrawCurrentTechTreeLines === 'function') redrawCurrentTechTreeLines();
+    });
+  };
+  const flushArrowStylePreviewRedraw = () => {
+    if (arrowStylePreviewTimer) {
+      window.clearTimeout(arrowStylePreviewTimer);
+      arrowStylePreviewTimer = 0;
+    }
+    if (arrowStylePreviewRaf) {
+      window.cancelAnimationFrame(arrowStylePreviewRaf);
+      arrowStylePreviewRaf = 0;
+    }
+    if (typeof redrawCurrentTechTreeLines === 'function') redrawCurrentTechTreeLines();
+  };
+  const markScienceAdvisorArrowEraDirty = (eraIndex) => {
+    const key = String(Number.parseInt(String(eraIndex), 10) || 0);
+    if (!state.techTreeArrowArtDirtyByEra || typeof state.techTreeArrowArtDirtyByEra !== 'object') {
+      state.techTreeArrowArtDirtyByEra = {};
+    }
+    state.techTreeArrowArtDirtyByEra[key] = true;
+    state.techTreeArrowArtDirty = true;
+  };
 
   const controls = document.createElement('div');
   controls.className = 'tech-tree-controls';
@@ -24216,6 +24520,22 @@ function createTechTreePanel({
   snapWrap.appendChild(snapText);
   toolbarRow.appendChild(snapWrap);
 
+  const autoPositionBtn = document.createElement('button');
+  autoPositionBtn.type = 'button';
+  autoPositionBtn.className = 'ghost tech-tree-inline-btn tech-tree-auto-position-btn';
+  autoPositionBtn.title = referenceEditable
+    ? 'Automatically lay out all technologies in the selected era.'
+    : 'Tech Tree coordinates are read-only in this view.';
+  const autoPositionIcon = document.createElement('span');
+  autoPositionIcon.className = 'tech-tree-btn-icon';
+  autoPositionIcon.textContent = '⇄';
+  const autoPositionText = document.createElement('span');
+  autoPositionText.textContent = 'Auto-Position';
+  autoPositionBtn.appendChild(autoPositionIcon);
+  autoPositionBtn.appendChild(autoPositionText);
+  autoPositionBtn.disabled = !referenceEditable;
+  toolbarRow.appendChild(autoPositionBtn);
+
   const autoArrowWrap = document.createElement('label');
   autoArrowWrap.className = 'tech-tree-snap-toggle';
   const autoArrowCheck = document.createElement('input');
@@ -24234,13 +24554,244 @@ function createTechTreePanel({
     if (window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
       window.c3xManager.setSettings(state.settings).catch(() => {});
     }
+    syncArrowStylePanelState();
     void renderForEra();
     setStatus(autoArrowCheck.checked
       ? 'Science Advisor arrows will be regenerated for this scenario on save.'
       : 'Science Advisor background arrow generation disabled.');
   });
   toolbarRow.appendChild(autoArrowWrap);
+
+  const arrowStyleBtn = document.createElement('button');
+  arrowStyleBtn.type = 'button';
+  arrowStyleBtn.className = 'tech-tree-arrow-style-btn';
+  arrowStyleBtn.setAttribute('aria-expanded', 'false');
+  const arrowStyleBtnLabel = document.createElement('span');
+  arrowStyleBtnLabel.textContent = 'Arrow Style';
+  const arrowStyleBtnChevron = document.createElement('span');
+  arrowStyleBtnChevron.className = 'tech-tree-arrow-style-chevron';
+  arrowStyleBtnChevron.textContent = '▾';
+  arrowStyleBtn.appendChild(arrowStyleBtnLabel);
+  arrowStyleBtn.appendChild(arrowStyleBtnChevron);
+  toolbarRow.appendChild(arrowStyleBtn);
   controls.appendChild(toolbarRow);
+
+  const arrowStylePanel = document.createElement('div');
+  arrowStylePanel.className = 'tech-tree-arrow-style-panel hidden';
+  arrowStylePanel.setAttribute('aria-label', 'Generated arrow style controls');
+  controls.appendChild(arrowStylePanel);
+
+  const arrowStyleControls = [];
+  const formatArrowNumber = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '';
+    return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  };
+  const arrowStyleUndoSessionKey = 'TECH_TREE_ARROW_STYLE_SESSION';
+  const getArrowStyleEditSessionValue = () => JSON.stringify(snapshotTechTreeArrowStyleState());
+  const beginArrowStyleUndoSession = () => {
+    ensureTrackedEditSession(
+      arrowStyleUndoSessionKey,
+      getArrowStyleEditSessionValue(),
+      getArrowStyleEditSessionValue,
+      'TECH_TREE_ARROW_STYLE'
+    );
+  };
+  const commitArrowStyleUndoSession = () => {
+    commitTrackedEditSession(arrowStyleUndoSessionKey, getArrowStyleEditSessionValue());
+  };
+  const updateScienceAdvisorArrowStyle = (mutator, options = {}) => {
+    if (!state.settings) state.settings = {};
+    if (options.captureUndo !== false) beginArrowStyleUndoSession();
+    const eraValue = getCurrentTechTreeEraValue();
+    const wasPreviewActive = autoArrowCheck.checked === true
+      && !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[String(eraValue)]);
+    const nextStyle = deepCloneUiValue(getStoredScienceAdvisorArrowStyle());
+    mutator(nextStyle);
+    state.settings.scienceAdvisorArrowStyle = nextStyle;
+    markScienceAdvisorArrowEraDirty(eraValue);
+    setDirty(true, { knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-arrow-style' });
+    if (options.persist) persistScienceAdvisorArrowStyleSettings();
+    if (!wasPreviewActive) void renderForEra();
+    else requestArrowStylePreviewRedraw(Number(options.previewDelayMs) || 0);
+  };
+  const setArrowStyleSlider = ({ label, min, max, step, getValue, applyValue }) => {
+    const wrap = document.createElement('label');
+    wrap.className = 'tech-tree-arrow-style-control tech-tree-arrow-style-slider';
+    const title = document.createElement('span');
+    title.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    const output = document.createElement('span');
+    output.className = 'tech-tree-arrow-style-value';
+    const sync = () => {
+      const effective = getEffectiveScienceAdvisorArrowStyle();
+      const value = getValue(effective);
+      input.value = String(value);
+      output.textContent = formatArrowNumber(value);
+    };
+    input.addEventListener('input', () => {
+      const value = clampTechTreeArrowStyleNumber(input.value, Number(input.value) || min, min, max);
+      output.textContent = formatArrowNumber(value);
+      updateScienceAdvisorArrowStyle((style) => applyValue(style, value), { persist: false });
+    });
+    input.addEventListener('change', () => {
+      commitArrowStyleUndoSession();
+      persistScienceAdvisorArrowStyleSettings();
+    });
+    wrap.appendChild(title);
+    wrap.appendChild(input);
+    wrap.appendChild(output);
+    arrowStyleControls.push(sync);
+    return wrap;
+  };
+  const setArrowStyleColor = ({ label, key }) => {
+    const wrap = document.createElement('label');
+    wrap.className = 'tech-tree-arrow-style-control tech-tree-arrow-style-color';
+    const title = document.createElement('span');
+    title.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'color';
+    const sync = () => {
+      const effective = getEffectiveScienceAdvisorArrowStyle();
+      input.value = rgbToHexColor(effective && effective.colors ? effective.colors[key] : null);
+    };
+    input.addEventListener('input', () => {
+      const effective = getEffectiveScienceAdvisorArrowStyle();
+      const fallback = effective && effective.colors ? effective.colors[key] : { r: 0, g: 0, b: 0 };
+      updateScienceAdvisorArrowStyle((style) => {
+        if (!style.colors || typeof style.colors !== 'object') style.colors = {};
+        style.colors[key] = hexColorToRgb(input.value, fallback);
+      }, { persist: false, previewDelayMs: 80 });
+    });
+    input.addEventListener('change', () => {
+      commitArrowStyleUndoSession();
+      persistScienceAdvisorArrowStyleSettings();
+      flushArrowStylePreviewRedraw();
+    });
+    wrap.appendChild(title);
+    wrap.appendChild(input);
+    arrowStyleControls.push(sync);
+    return wrap;
+  };
+  const syncArrowStyleControls = () => {
+    arrowStyleControls.forEach((sync) => {
+      try { sync(); } catch (_err) { /* Ignore stale style controls. */ }
+    });
+  };
+  const resetArrowStyleBtn = document.createElement('button');
+  resetArrowStyleBtn.type = 'button';
+  resetArrowStyleBtn.className = 'ghost tech-tree-inline-btn';
+  resetArrowStyleBtn.textContent = 'Reset';
+  resetArrowStyleBtn.addEventListener('click', () => {
+    if (!(state.settings && Object.prototype.hasOwnProperty.call(state.settings, 'scienceAdvisorArrowStyle'))) {
+      syncArrowStyleControls();
+      return;
+    }
+    rememberUndoSnapshotForKey('TECH_TREE_ARROW_STYLE');
+    const eraValue = getCurrentTechTreeEraValue();
+    const wasPreviewActive = autoArrowCheck.checked === true
+      && !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[String(eraValue)]);
+    if (state.settings) delete state.settings.scienceAdvisorArrowStyle;
+    markScienceAdvisorArrowEraDirty(eraValue);
+    setDirty(true, { knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-arrow-style-reset' });
+    syncArrowStyleControls();
+    persistScienceAdvisorArrowStyleSettings();
+    if (!wasPreviewActive) void renderForEra();
+    else flushArrowStylePreviewRedraw();
+  });
+  const arrowStyleHeader = document.createElement('div');
+  arrowStyleHeader.className = 'tech-tree-arrow-style-header';
+  const arrowStyleTitle = document.createElement('strong');
+  arrowStyleTitle.textContent = 'Generated Arrow Style';
+  arrowStyleHeader.appendChild(arrowStyleTitle);
+  arrowStyleHeader.appendChild(resetArrowStyleBtn);
+  const arrowStyleGrid = document.createElement('div');
+  arrowStyleGrid.className = 'tech-tree-arrow-style-grid';
+  arrowStyleGrid.appendChild(setArrowStyleSlider({
+    label: 'Body Thickness',
+    min: 0.7,
+    max: 2.4,
+    step: 0.05,
+    getValue: (style) => style && style.body ? style.body.outlineRadius : 1.5,
+    applyValue: (style, value) => {
+      style.body = style.body && typeof style.body === 'object' ? style.body : {};
+      style.body.outlineRadius = value;
+    }
+  }));
+  arrowStyleGrid.appendChild(setArrowStyleSlider({
+    label: 'Edge Softness',
+    min: 1,
+    max: 8,
+    step: 1,
+    getValue: (style) => 9 - clampTechTreeArrowStyleNumber(style && style.coverageThreshold, 3, 1, 8),
+    applyValue: (style, value) => {
+      style.coverageThreshold = 9 - Math.round(value);
+    }
+  }));
+  arrowStyleGrid.appendChild(setArrowStyleSlider({
+    label: 'Head Height',
+    min: 3,
+    max: 9,
+    step: 0.25,
+    getValue: (style) => style && style.head && style.head.outline ? style.head.outline.half : 5,
+    applyValue: (style, value) => {
+      style.head = style.head && typeof style.head === 'object' ? style.head : {};
+      style.head.outline = style.head.outline && typeof style.head.outline === 'object' ? style.head.outline : {};
+      style.head.main = style.head.main && typeof style.head.main === 'object' ? style.head.main : {};
+      style.head.outline.half = value;
+      style.head.main.half = Math.max(1, value - 1);
+    }
+  }));
+  arrowStyleGrid.appendChild(setArrowStyleSlider({
+    label: 'Head Length',
+    min: 4,
+    max: 10,
+    step: 0.25,
+    getValue: (style) => style && style.head && style.head.outline ? style.head.outline.length : 6,
+    applyValue: (style, value) => {
+      style.head = style.head && typeof style.head === 'object' ? style.head : {};
+      style.head.outline = style.head.outline && typeof style.head.outline === 'object' ? style.head.outline : {};
+      style.head.main = style.head.main && typeof style.head.main === 'object' ? style.head.main : {};
+      style.head.outline.length = value;
+      style.head.main.length = Math.max(2, value - 1);
+    }
+  }));
+  arrowStyleGrid.appendChild(setArrowStyleSlider({
+    label: 'Curve Radius',
+    min: 4,
+    max: 24,
+    step: 1,
+    getValue: (style) => style ? style.curveRadius : 13,
+    applyValue: (style, value) => {
+      style.curveRadius = Math.round(value);
+    }
+  }));
+  arrowStyleGrid.appendChild(setArrowStyleColor({ label: 'Outline', key: 'outline' }));
+  arrowStyleGrid.appendChild(setArrowStyleColor({ label: 'Body Color', key: 'main' }));
+  arrowStyleGrid.appendChild(setArrowStyleColor({ label: 'Glint Color', key: 'highlight' }));
+  arrowStylePanel.appendChild(arrowStyleHeader);
+  arrowStylePanel.appendChild(arrowStyleGrid);
+  const syncArrowStylePanelState = () => {
+    const enabled = autoArrowCheck.checked === true && !autoArrowCheck.disabled && !!scienceAdvisorArrows;
+    arrowStyleBtn.disabled = !enabled;
+    if (!enabled) arrowStylePanel.classList.add('hidden');
+    const open = enabled && !arrowStylePanel.classList.contains('hidden');
+    arrowStyleBtn.classList.toggle('is-open', open);
+    arrowStyleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    arrowStyleBtnChevron.textContent = open ? '▴' : '▾';
+  };
+  arrowStyleBtn.addEventListener('click', () => {
+    if (arrowStyleBtn.disabled) return;
+    arrowStylePanel.classList.toggle('hidden');
+    if (!arrowStylePanel.classList.contains('hidden')) syncArrowStyleControls();
+    syncArrowStylePanelState();
+  });
+  syncArrowStylePanelState();
+  syncArrowStyleControls();
 
   const metaRow = document.createElement('div');
   metaRow.className = 'tech-tree-meta';
@@ -24311,7 +24862,7 @@ function createTechTreePanel({
   };
   const refreshUndoButton = () => {
     if (techTreeModal.undoBtn) techTreeModal.undoBtn.disabled = !getLatestUndoSnapshot();
-    if (techTreeModal.undoAllBtn) techTreeModal.undoAllBtn.disabled = !state.isDirty;
+    if (techTreeModal.undoAllBtn) techTreeModal.undoAllBtn.disabled = !hasEffectiveUnsavedChanges();
   };
   const reopenForCurrentSelection = () => {
     const currentTab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
@@ -24334,16 +24885,86 @@ function createTechTreePanel({
   };
   refreshUndoButton();
 
+  const removeStoredArrowOverridesForNode = (nodeId) => {
+    const idText = String(Number(nodeId));
+    let removed = false;
+    Object.keys(state.techTreeArrowRouteOverrides || {}).forEach((key) => {
+      if (key.includes(`:${idText}->`) || key.endsWith(`->${idText}`)) {
+        delete state.techTreeArrowRouteOverrides[key];
+        removed = true;
+      }
+    });
+    if (removed && state.techTreeSelectedArrowKey && !state.techTreeArrowRouteOverrides[state.techTreeSelectedArrowKey]) {
+      state.techTreeSelectedArrowKey = '';
+    }
+    return removed;
+  };
+
+  const applyTechTreeAutoLayout = () => {
+    const context = latestTechTreeAutoLayoutContext;
+    if (!referenceEditable || !context || !Array.isArray(context.nodes) || context.nodes.length === 0) return;
+    if (!techBoxLayout || typeof techBoxLayout.autoLayoutTechTreeNodes !== 'function') {
+      setStatus('Tech Tree auto-positioning is unavailable.', true);
+      return;
+    }
+    const result = techBoxLayout.autoLayoutTechTreeNodes(context.nodes, {
+      width: context.width,
+      height: context.height,
+      bounds: context.bounds,
+      columnAlign: 'left',
+      grid: snapCheck.checked ? 16 : 1,
+      paddingLeft: 72,
+      paddingRight: 72,
+      paddingTop: 56,
+      paddingBottom: 56
+    });
+    const positions = Array.isArray(result && result.positions) ? result.positions : [];
+    const positionById = new Map(positions.map((position) => [String(position.id), position]));
+    const changedNodes = [];
+    (context.sourceNodes || []).forEach((node) => {
+      const position = positionById.get(String(node && node.id));
+      if (!position || !node || !node.entry) return;
+      const nextX = Math.max(0, Math.round(Number(position.x) || 0));
+      const nextY = Math.max(0, Math.round(Number(position.y) || 0));
+      if (Math.round(Number(node.x) || 0) === nextX && Math.round(Number(node.y) || 0) === nextY) return;
+      changedNodes.push({ node, x: nextX, y: nextY });
+    });
+    if (changedNodes.length === 0) {
+      setStatus('Tech Tree auto-position is already up to date.');
+      return;
+    }
+    rememberUndoSnapshotForKey('REFERENCE_TAB:technologies');
+    let removedRouteOverrides = false;
+    changedNodes.forEach(({ node, x, y }) => {
+      node.x = x;
+      node.y = y;
+      setTechFieldInt(node.entry, 'x', 'X Position', x);
+      setTechFieldInt(node.entry, 'y', 'Y Position', y);
+      removedRouteOverrides = removeStoredArrowOverridesForNode(node.id) || removedRouteOverrides;
+    });
+    if (removedRouteOverrides) state.techTreeSelectedArrowKey = '';
+    setDirty(true, { knownDirtyTab: 'technologies', reason: 'tech-tree-auto-position' });
+    if (autoArrowCheck.checked === true) {
+      markScienceAdvisorArrowEraDirty(context.eraValue);
+      setDirty(true, { knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-auto-position' });
+    }
+    refreshUndoButton();
+    const stats = result && result.stats ? result.stats : {};
+    const routeText = Number(stats.obstacleHits) > 0
+      ? ` ${Number(stats.obstacleHits)} route${Number(stats.obstacleHits) === 1 ? '' : 's'} may still need manual cleanup.`
+      : '';
+    setStatus(`Auto-positioned ${changedNodes.length} tech${changedNodes.length === 1 ? '' : 's'} in this era.${routeText}`);
+    void renderForEra();
+  };
+
+  autoPositionBtn.addEventListener('click', applyTechTreeAutoLayout);
+
   const renderForEra = async () => {
     const renderToken = ++bgRenderToken;
     const eraValue = Number.parseInt(eraSelect.value, 10) || 0;
     const eraDirtyKey = String(eraValue);
     const markCurrentArrowEraDirty = () => {
-      if (!state.techTreeArrowArtDirtyByEra || typeof state.techTreeArrowArtDirtyByEra !== 'object') {
-        state.techTreeArrowArtDirtyByEra = {};
-      }
-      state.techTreeArrowArtDirtyByEra[eraDirtyKey] = true;
-      state.techTreeArrowArtDirty = true;
+      markScienceAdvisorArrowEraDirty(eraValue);
     };
     state.techTreeEraSelectionByTab[tabKey] = eraValue;
     const civFilterValue = String(selectedCivFilterValue || '');
@@ -24353,10 +24974,15 @@ function createTechTreePanel({
     nodesLayer.innerHTML = '';
     laneLayer.innerHTML = '';
     while (arrowHandles.firstChild) arrowHandles.removeChild(arrowHandles.firstChild);
-    const autoArrowPreviewActive = autoArrowCheck.checked === true && !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraDirtyKey]);
-    lines.classList.toggle('tech-tree-lines-auto-preview', autoArrowPreviewActive);
-    lines.classList.toggle('tech-tree-lines-hidden', !autoArrowPreviewActive);
-    arrowHandles.classList.toggle('tech-tree-route-handles-hidden', !autoArrowPreviewActive);
+    const isAutoArrowPreviewActive = () => autoArrowCheck.checked === true && !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraDirtyKey]);
+    const syncArrowPreviewVisibility = () => {
+      const active = isAutoArrowPreviewActive();
+      lines.classList.toggle('tech-tree-lines-auto-preview', active);
+      lines.classList.toggle('tech-tree-lines-hidden', !active);
+      arrowHandles.classList.toggle('tech-tree-route-handles-hidden', !active);
+      return active;
+    };
+    syncArrowPreviewVisibility();
 
     let bgPreview = null;
     const candidates = TECH_TREE_ERA_BACKGROUND_CANDIDATES[eraValue] || [];
@@ -24422,7 +25048,7 @@ function createTechTreePanel({
       c.height = Number(bgPreview.height) || baseH;
       c.className = 'tech-tree-bg-canvas';
       drawPreviewFrameToCanvas(bgPreview, c);
-      if (autoArrowPreviewActive) {
+      if (isAutoArrowPreviewActive()) {
         eraseTechTreeBackgroundArrowsFromCanvas(c);
       }
       bg.appendChild(c);
@@ -24442,6 +25068,7 @@ function createTechTreePanel({
     _dbgLog('INF', 'TechTree', `render:civ-free-techs civ=${selectedCivEntry ? String(selectedCivEntry.name || selectedCivEntry.civilopediaKey || selectedCivIndex) : '(none)'} ids=${civFreeTechIds.join(',') || '(none)'}`);
     const reachableTechIds = selectedCivEntry ? getReachableTechIdsForCivilization(nodes, selectedCivEntry) : null;
     state.techTreeShowNonEraByTab[tabKey] = !!showNonEraCheck.checked;
+    const allEraNodes = nodes.filter((node) => node.era === eraValue);
     const eraNodes = nodes.filter((node) => {
       if (node.era !== eraValue) return false;
       if (!reachableTechIds) return true;
@@ -24532,6 +25159,33 @@ function createTechTreePanel({
     const nativeEraH = Math.max(768, Math.round(baseH));
     const contentW = Math.max(Math.round(availableStageW), activeEraBaseX + nativeEraW);
     displayHorizontalFit = 1;
+    const autoLayoutBounds = getTechTreeAutoLayoutBounds(allEraNodes, techBoxPreview, eraValue, nativeEraW, nativeEraH);
+    latestTechTreeAutoLayoutContext = {
+      eraValue,
+      width: nativeEraW,
+      height: nativeEraH,
+      bounds: autoLayoutBounds,
+      sourceNodes: allEraNodes,
+      nodes: allEraNodes.map((node) => {
+        const frame = getTechTreeBoxFrame(techBoxPreview, eraValue, node, null);
+        return {
+          id: node.id,
+          label: String(node.entry && node.entry.name || `Tech ${node.id}`),
+          x: node.x,
+          y: node.y,
+          w: frame ? Math.max(1, Number(frame.w) || NODE_W) : NODE_W,
+          h: frame ? Math.max(1, Number(frame.h) || NODE_H) : NODE_H,
+          prereqs: node.prereqs.filter((sourceId) => {
+            const source = byId.get(sourceId);
+            return source && source.era === eraValue;
+          })
+        };
+      })
+    };
+    autoPositionBtn.disabled = !referenceEditable
+      || !techBoxLayout
+      || typeof techBoxLayout.autoLayoutTechTreeNodes !== 'function'
+      || latestTechTreeAutoLayoutContext.nodes.length === 0;
     eraNodes.forEach((node) => {
       node.vx = activeEraBaseX + (Number(node._rawDisplayX) || 0);
       node.vy = activeEraBaseY + (Number(node._rawDisplayY) || 0);
@@ -24713,12 +25367,7 @@ function createTechTreePanel({
       };
     };
     const removeArrowOverridesForNode = (nodeId) => {
-      const idText = String(Number(nodeId));
-      Object.keys(state.techTreeArrowRouteOverrides || {}).forEach((key) => {
-        if (key.includes(`:${idText}->`) || key.endsWith(`->${idText}`)) {
-          delete state.techTreeArrowRouteOverrides[key];
-        }
-      });
+      removeStoredArrowOverridesForNode(nodeId);
       if (selectedArrowKey && !state.techTreeArrowRouteOverrides[selectedArrowKey]) {
         selectedArrowKey = '';
         state.techTreeSelectedArrowKey = '';
@@ -24853,7 +25502,7 @@ function createTechTreePanel({
     };
     const renderArrowHandles = () => {
       while (arrowHandles.firstChild) arrowHandles.removeChild(arrowHandles.firstChild);
-      if (!autoArrowPreviewActive) return;
+      if (!isAutoArrowPreviewActive()) return;
       const activeKey = routeHandleDragActive ? selectedArrowKey : hoveredArrowKey;
       allEdges.forEach((edgeObj) => {
         if (!edgeObj || !edgeObj.route || !Array.isArray(edgeObj.route.points)) return;
@@ -24979,7 +25628,7 @@ function createTechTreePanel({
       const w = Math.max(1, Number(lines.width) || 0);
       const h = Math.max(1, Number(lines.height) || 0);
       ctx.clearRect(0, 0, w, h);
-      if (!autoArrowPreviewActive || !scienceAdvisorArrows || typeof scienceAdvisorArrows.drawScienceAdvisorRoutesRgba !== 'function') return;
+      if (!syncArrowPreviewVisibility() || !scienceAdvisorArrows || typeof scienceAdvisorArrows.drawScienceAdvisorRoutesRgba !== 'function') return;
       const image = ctx.createImageData(w, h);
       const palette = bgPreview && bgPreview.paletteBase64 ? fromBase64ToUint8(bgPreview.paletteBase64) : null;
       scienceAdvisorArrows.drawScienceAdvisorRoutesRgba({
@@ -24989,10 +25638,12 @@ function createTechTreePanel({
         height: h,
         routes: allEdges.map((edgeObj) => edgeObj.route).filter(Boolean),
         techBoxLayout,
-        eraIndex: eraValue
+        eraIndex: eraValue,
+        style: getStoredScienceAdvisorArrowStyle()
       });
       ctx.putImageData(image, 0, 0);
     };
+    redrawCurrentTechTreeLines = redrawLines;
     displayNodes.forEach((node) => {
       const elNode = document.createElement('button');
       elNode.type = 'button';
@@ -25277,6 +25928,8 @@ function ensureTechTreeModalNode() {
       <div class="tech-tree-modal-header">
         <strong id="tech-tree-modal-title">Tech Tree</strong>
         <div class="tech-tree-modal-actions">
+          <button type="button" class="ghost nav-btn refresh-btn tech-tree-refresh-btn" data-act="refresh" aria-label="Refresh from disk" title="Refresh from disk">⟳</button>
+          <button type="button" class="secondary tech-tree-save-btn" data-act="save"><span class="btn-icon">💾</span>Save</button>
           <button type="button" class="ghost tech-tree-inline-btn tech-tree-undo-btn" data-act="undo"><span class="tech-tree-btn-icon">↶</span><span>Undo</span></button>
           <button type="button" class="ghost tech-tree-inline-btn tech-tree-undo-all-btn" data-act="undo-all"><span class="tech-tree-btn-icon">↺</span><span>Undo All</span></button>
           <button type="button" class="ghost" data-act="close">Close</button>
@@ -25289,10 +25942,20 @@ function ensureTechTreeModalNode() {
   techTreeModal.node = overlay;
   techTreeModal.body = overlay.querySelector('#tech-tree-modal-body');
   techTreeModal.title = overlay.querySelector('#tech-tree-modal-title');
+  techTreeModal.refreshBtn = overlay.querySelector('[data-act="refresh"]');
+  techTreeModal.saveBtn = overlay.querySelector('[data-act="save"]');
   techTreeModal.undoBtn = overlay.querySelector('[data-act="undo"]');
   techTreeModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
   const closeBtn = overlay.querySelector('[data-act="close"]');
   if (closeBtn) closeBtn.addEventListener('click', () => closeTechTreeModal());
+  if (techTreeModal.refreshBtn) {
+    techTreeModal.refreshBtn.addEventListener('click', () => {
+      void refreshCurrentBundleFromDisk();
+    });
+  }
+  if (techTreeModal.saveBtn) {
+    techTreeModal.saveBtn.addEventListener('click', saveCurrentBundle);
+  }
   overlay.addEventListener('click', (ev) => {
     if (ev.target === overlay) closeTechTreeModal();
   });
@@ -25348,7 +26011,7 @@ function openTechTreeModal(config) {
   if (techTreeModal.undoAllBtn && !techTreeModal.undoAllBtn.dataset.bound) {
     techTreeModal.undoAllBtn.dataset.bound = '1';
     techTreeModal.undoAllBtn.addEventListener('click', async () => {
-      if (!state.isDirty) return;
+      if (!hasEffectiveUnsavedChanges()) return;
       await undoAllChanges();
       const currentTab = config && config.tabKey && state.bundle && state.bundle.tabs
         ? state.bundle.tabs[config.tabKey]
@@ -25366,6 +26029,7 @@ function openTechTreeModal(config) {
   }
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
+  refreshDirtyUi();
 }
 
 function ensureUnitAvailabilityModalNode() {
@@ -54127,6 +54791,7 @@ async function loadBundleAndRender(options = {}) {
     if (!preserveDirtyState) {
       state.cleanSnapshot = cleanSnapshotForLoadedBundle;
       state.cleanTabsCache = parseSnapshotTabs(cleanSnapshotForLoadedBundle);
+      captureCleanScienceAdvisorArrowStyle();
       clearCleanReferenceDirtySignatureCache();
     }
     clearLoadAuditState();
@@ -54152,6 +54817,7 @@ async function loadBundleAndRender(options = {}) {
       } else if (state.settings.mode === 'scenario' && scenarioSearchFolderOverride) {
         state.cleanSnapshot = cleanSnapshotForLoadedBundle;
         state.cleanTabsCache = parseSnapshotTabs(cleanSnapshotForLoadedBundle);
+        captureCleanScienceAdvisorArrowStyle();
         clearCleanReferenceDirtySignatureCache();
         state.undoHistory = [cleanSnapshotForLoadedBundle];
         state.trackDirty = true;
@@ -54484,6 +55150,9 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
     techTreeArrowRouteOverrides: shouldUpdateScienceAdvisorArrows
       ? deepCloneUiValue(state.techTreeArrowRouteOverrides || {})
       : {},
+    scienceAdvisorArrowStyle: shouldUpdateScienceAdvisorArrows && state.settings.scienceAdvisorArrowStyle
+      ? deepCloneUiValue(state.settings.scienceAdvisorArrowStyle)
+      : null,
     dirtyTabs,
     tabs: tabsToSave
   };
@@ -55268,9 +55937,12 @@ function markCurrentBundleCleanAfterSave(options = {}) {
   markScenarioDistrictsAsSaved();
   state.cleanSnapshot = snapshotTabs();
   state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
+  captureCleanScienceAdvisorArrowStyle();
   clearCleanReferenceDirtySignatureCache();
   state.undoHistory = [];
   state.isDirty = false;
+  state.techTreeArrowArtDirty = false;
+  state.techTreeArrowArtDirtyByEra = {};
   clearDirtyTabCounts();
   markFilesReadEntriesDirty();
   recomputeFilesReadIssueCount();
@@ -56042,6 +56714,11 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
   );
   const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot(targetSnapshot);
   const isScopedTabSnapshot = isScopedTabUndoSnapshot(targetSnapshot);
+  const isTechTreeArrowStyleSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'tech-tree-arrow-style'
+  );
   const restoredSearchFolder = Object.prototype.hasOwnProperty.call(restoredEditableTabs, 'scenarioSettings')
     ? getScenarioSearchFolderValueFromTabs(restoredEditableTabs)
     : getScenarioSearchFolderValueFromTabs(state.bundle && state.bundle.tabs ? state.bundle.tabs : {});
@@ -56051,6 +56728,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && !isSerializedSectionSnapshot
     && !isScopedSectionTabSnapshot
     && !isScopedTabSnapshot
+    && !isTechTreeArrowStyleSnapshot
     && state.settings
     && state.settings.mode === 'scenario'
     && state.settings.scenarioPath
@@ -56120,6 +56798,11 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   const isScopedBaseSnapshot = isScopedBaseUndoSnapshot(targetSnapshot);
   const isScopedSectionTabSnapshot = isScopedSectionTabUndoSnapshot(targetSnapshot);
   const isScopedTabSnapshot = isScopedTabUndoSnapshot(targetSnapshot);
+  const isTechTreeArrowStyleSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'tech-tree-arrow-style'
+  );
   const restoredEditableTabs = isSerializedReferenceEntrySnapshot ? {} : extractUndoSnapshotTabs(targetSnapshot);
   const isMapRecordDiffSnapshot = !!(
     targetSnapshot
@@ -56137,11 +56820,16 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   if (isSerializedSectionSnapshot) {
     applySerializedSectionSnapshotToTabs(mergedTabs, targetSnapshot);
   }
+  if (isTechTreeArrowStyleSnapshot) {
+    restoreTechTreeArrowStyleState(targetSnapshot);
+  }
   const restoredKeys = Object.keys(restoredEditableTabs || {});
   if (restoredKeys.length === 0) {
     if (isMapRecordDiffSnapshot) {
       state.bundle.tabs = mergedTabs;
     } else if (isSerializedReferenceEntrySnapshot || isSerializedSectionSnapshot) {
+      state.bundle.tabs = mergedTabs;
+    } else if (isTechTreeArrowStyleSnapshot) {
       state.bundle.tabs = mergedTabs;
     } else {
       EDITABLE_TAB_KEYS.forEach((key) => {
@@ -56197,6 +56885,8 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   );
   if (shouldDeferActiveTabRenderToTechTreeModal) {
     techTreeModal.needsActiveTabRefresh = true;
+    reopenTechTreeModalForCurrentState();
+  } else if (isTechTreeArrowStyleSnapshot && isTechTreeModalVisible()) {
     reopenTechTreeModalForCurrentState();
   } else if (shouldDeferActiveTabRenderToUnitTableModal) {
     unitTableModal.needsActiveTabRefresh = true;
@@ -56386,7 +57076,8 @@ async function undoMapOneStep() {
 async function undoAllChanges() {
   flushDirtyUiRefresh();
   commitAllTrackedEditSessions();
-  if (!state.bundle || !state.isDirty) {
+  recomputeDirtyStateFromBundle();
+  if (!state.bundle || !hasEffectiveUnsavedChanges()) {
     setStatus('No unsaved changes to undo.');
     return;
   }
@@ -56398,10 +57089,9 @@ async function undoAllChanges() {
       loadingText: 'Restoring clean state...',
       statusMessage: 'Undid all unsaved changes.'
     });
-    state.techTreeArrowArtDirty = false;
-    state.techTreeArrowArtDirtyByEra = {};
-    state.techTreeArrowRouteOverrides = {};
-    state.techTreeSelectedArrowKey = '';
+    restoreCleanTechTreeArrowStyleState();
+    recomputeDirtyStateFromBundle();
+    refreshDirtyUi();
   } catch (_err) {
     setStatus('Undo all failed.', true);
   }
@@ -56943,6 +57633,7 @@ async function init() {
     ['typeAnimationIni', el.filesFilterTypeAnimationIni],
     ['typeText', el.filesFilterTypeText],
     ['typeBiq', el.filesFilterTypeBiq],
+    ['typeArtPcx', el.filesFilterTypeArtPcx],
     ['statusNew', el.filesFilterStatusNew],
     ['statusChanged', el.filesFilterStatusChanged],
     ['statusUnchanged', el.filesFilterStatusUnchanged],

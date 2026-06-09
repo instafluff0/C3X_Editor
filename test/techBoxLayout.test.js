@@ -11,6 +11,7 @@ const {
   parseTechBoxSheetLayout,
   getTechBoxFrame,
   chooseTechBoxSizeIndexForIconCount,
+  autoLayoutTechTreeNodes,
   layoutTechTreeArrowEdges,
   buildTechTreeArrowRoute,
   formatTechTreeArrowSvgPath,
@@ -210,6 +211,59 @@ function endpointAxisValue(point, side) {
   return side === 'left' || side === 'right' ? point.y : point.x;
 }
 
+function rectsOverlap(a, b, gap = 0) {
+  return a.x < b.x + b.w + gap
+    && a.x + a.w + gap > b.x
+    && a.y < b.y + b.h + gap
+    && a.y + a.h + gap > b.y;
+}
+
+function pointInRect(point, rect, inset = 0) {
+  return point.x >= rect.x - inset
+    && point.x <= rect.x + rect.w + inset
+    && point.y >= rect.y - inset
+    && point.y <= rect.y + rect.h + inset;
+}
+
+function countRouteObstacleHits(nodes, positions) {
+  const byId = new Map(nodes.map((node) => [String(node.id), node]));
+  const rectById = new Map(positions.map((position) => [
+    String(position.id),
+    { x: position.x, y: position.y, w: position.w, h: position.h }
+  ]));
+  const edges = [];
+  nodes.forEach((node) => {
+    (node.prereqs || []).forEach((sourceId) => {
+      if (!byId.has(String(sourceId))) return;
+      edges.push({
+        source: { id: String(sourceId) },
+        target: { id: String(node.id) },
+        sourceRect: rectById.get(String(sourceId)),
+        targetRect: rectById.get(String(node.id))
+      });
+    });
+  });
+  const routed = layoutTechTreeArrowEdges(edges);
+  let hits = 0;
+  routed.forEach((edge) => {
+    const route = buildTechTreeArrowRoute(edge.sourceRect, edge.targetRect, {
+      sourceSide: edge.sourceSide,
+      targetSide: edge.targetSide,
+      sourceOffset: edge.sourceOffset,
+      targetOffset: edge.targetOffset,
+      horizontalTolerance: 18
+    });
+    const samples = sampleTechTreeArrowRoute(route, { curveSteps: 8 });
+    const hit = positions.some((position) => {
+      const id = String(position.id);
+      if (id === String(edge.source.id) || id === String(edge.target.id)) return false;
+      return samples.some((point) => pointInRect(point, position, 4));
+    });
+    if (hit) hits += 1;
+  });
+  return hits;
+}
+
 function getRouteForStockEdge(sourceName, targetName, bundle, techBoxLayout) {
   const sourceRect = getStockTechRect(bundle, techBoxLayout, sourceName);
   const targetRect = getStockTechRect(bundle, techBoxLayout, targetName);
@@ -351,9 +405,14 @@ test('stock Conquests Science Advisor routes keep tight Firaxis-like endpoint pl
   const biqPath = path.join(CIV3_ROOT, 'Conquests', 'conquests.biq');
   const fixtures = [
     { era: 0, file: 'science_ancient.pcx', source: 'Bronze Working', target: 'Iron Working', sides: ['right', 'left'], maxAxisDelta: 20 },
+    { era: 1, file: 'science_middle.pcx', source: 'Monotheism', target: 'Theology', sides: ['right', 'left'], maxAxisDelta: 20 },
+    { era: 1, file: 'science_middle.pcx', source: 'Monotheism', target: 'Chivalry', sides: ['right', 'left'], maxAxisDelta: 24 },
+    { era: 1, file: 'science_middle.pcx', source: 'Feudalism', target: 'Chivalry', sides: ['top', 'left'], maxAxisDelta: 24 },
+    { era: 1, file: 'science_middle.pcx', source: 'Feudalism', target: 'Invention', sides: ['bottom', 'left'], maxAxisDelta: 26 },
+    { era: 1, file: 'science_middle.pcx', source: 'Engineering', target: 'Invention', sides: ['right', 'left'], maxAxisDelta: 24 },
     { era: 1, file: 'science_middle.pcx', source: 'Theology', target: 'Printing Press', sides: ['right', 'left'], maxAxisDelta: 20 },
     { era: 1, file: 'science_middle.pcx', source: 'Theology', target: 'Education', sides: ['bottom', 'top'], maxAxisDelta: 24 },
-    { era: 2, file: 'science_industrial.pcx', source: 'Industrialization', target: 'The Corporation', sides: ['bottom', 'left'], maxAxisDelta: 28 },
+    { era: 2, file: 'science_industrial.pcx', source: 'Industrialization', target: 'The Corporation', sides: ['bottom', 'left'], maxAxisDelta: 30 },
     { era: 2, file: 'science_industrial.pcx', source: 'The Corporation', target: 'Steel', sides: ['bottom', 'left'], maxAxisDelta: 28 },
     { era: 3, file: 'science_modern.pcx', source: 'Rocketry', target: 'Space Flight', sides: ['right', 'left'], maxAxisDelta: 24 },
     { era: 3, file: 'science_modern.pcx', source: 'Space Flight', target: 'Satellites', sides: ['right', 'left'], maxAxisDelta: 28 }
@@ -402,6 +461,58 @@ test('techbox size tier selection matches Civ3 row use by icon count', () => {
   assert.equal(chooseTechBoxSizeIndexForIconCount(6), 2);
   assert.equal(chooseTechBoxSizeIndexForIconCount(7), 2);
   assert.equal(chooseTechBoxSizeIndexForIconCount(8), 3);
+});
+
+test('tech tree auto-layout produces deterministic left-to-right non-overlapping coordinates', () => {
+  const nodes = [
+    { id: 'alphabet', name: 'Alphabet', x: 80, y: 560, w: 98, h: 64, prereqs: [] },
+    { id: 'bronze', name: 'Bronze Working', x: 80, y: 100, w: 159, h: 70, prereqs: [] },
+    { id: 'writing', name: 'Writing', x: 240, y: 520, w: 159, h: 70, prereqs: ['alphabet'] },
+    { id: 'iron', name: 'Iron Working', x: 260, y: 90, w: 188, h: 70, prereqs: ['bronze'] },
+    { id: 'code', name: 'Code of Laws', x: 430, y: 500, w: 159, h: 70, prereqs: ['writing'] },
+    { id: 'philosophy', name: 'Philosophy', x: 430, y: 650, w: 159, h: 70, prereqs: ['writing'] },
+    { id: 'construction', name: 'Construction', x: 600, y: 120, w: 188, h: 70, prereqs: ['iron'] },
+    { id: 'republic', name: 'The Republic', x: 780, y: 520, w: 188, h: 70, prereqs: ['code', 'philosophy'] }
+  ];
+
+  const result = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16 });
+  const repeat = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16 });
+  assert.deepEqual(result.positions, repeat.positions);
+  assert.equal(result.stats.backwardEdges, 0);
+  assert.equal(result.stats.obstacleHits, 0);
+
+  const byId = new Map(result.positions.map((position) => [String(position.id), position]));
+  nodes.forEach((node) => {
+    (node.prereqs || []).forEach((sourceId) => {
+      assert.ok(
+        byId.get(String(sourceId)).x + byId.get(String(sourceId)).w < byId.get(String(node.id)).x,
+        `${sourceId} should be left of ${node.id}`
+      );
+    });
+  });
+  for (let i = 0; i < result.positions.length; i += 1) {
+    for (let j = i + 1; j < result.positions.length; j += 1) {
+      assert.equal(rectsOverlap(result.positions[i], result.positions[j], 12), false, `${result.positions[i].id} overlaps ${result.positions[j].id}`);
+    }
+  }
+  assert.equal(countRouteObstacleHits(nodes, result.positions), 0);
+});
+
+test('tech tree auto-layout improves route clearance for long prerequisite links', () => {
+  const nodes = [
+    { id: 'a', name: 'A', x: 80, y: 350, w: 120, h: 60, prereqs: [] },
+    { id: 'b', name: 'B', x: 360, y: 350, w: 160, h: 70, prereqs: ['a'] },
+    { id: 'c', name: 'C', x: 360, y: 470, w: 160, h: 70, prereqs: ['a'] },
+    { id: 'd', name: 'D', x: 700, y: 350, w: 180, h: 70, prereqs: ['a', 'b'] },
+    { id: 'e', name: 'E', x: 700, y: 470, w: 180, h: 70, prereqs: ['c'] }
+  ];
+
+  const result = autoLayoutTechTreeNodes(nodes, { width: 1024, height: 768, grid: 16 });
+  const byId = new Map(result.positions.map((position) => [String(position.id), position]));
+  assert.equal(result.stats.obstacleHits, 0);
+  assert.equal(countRouteObstacleHits(nodes, result.positions), 0);
+  assert.ok(byId.get('a').x < byId.get('d').x, 'long prerequisite edge still flows left to right');
+  assert.ok(Math.abs((byId.get('b').y + byId.get('b').h / 2) - (byId.get('d').y + byId.get('d').h / 2)) < 220);
 });
 
 test('science advisor arrow routes anchor to techbox edges and smooth corners', () => {
@@ -486,6 +597,104 @@ test('science advisor arrow routes snap nearly aligned side links flat', () => {
   assert.deepEqual(Array.from(ys), [130]);
 });
 
+test('science advisor arrow routes use off-center border anchors to keep straight links flat', () => {
+  const horizontal = buildTechTreeArrowRoute(
+    { x: 80, y: 100, w: 100, h: 60 },
+    { x: 260, y: 140, w: 100, h: 60 },
+    { sourceSide: 'right', targetSide: 'left', horizontalTolerance: 0 }
+  );
+  assert.deepEqual(horizontal.points[0], { x: 180, y: 145 });
+  assert.deepEqual(horizontal.points[horizontal.points.length - 1], { x: 260, y: 145 });
+  assert.deepEqual(Array.from(new Set(horizontal.points.map((point) => point.y))), [145]);
+
+  const vertical = buildTechTreeArrowRoute(
+    { x: 100, y: 80, w: 100, h: 60 },
+    { x: 140, y: 230, w: 100, h: 60 },
+    { sourceSide: 'bottom', targetSide: 'top' }
+  );
+  assert.deepEqual(vertical.points[0], { x: 190, y: 140 });
+  assert.deepEqual(vertical.points[vertical.points.length - 1], { x: 190, y: 230 });
+  assert.deepEqual(Array.from(new Set(vertical.points.map((point) => point.x))), [190]);
+});
+
+test('science advisor arrow routes preserve shared endpoint slot offsets while straightening', () => {
+  const target = { id: 'target' };
+  const routed = layoutTechTreeArrowEdges([
+    {
+      source: { id: 'source-a' },
+      target,
+      sourceRect: { x: 80, y: 100, w: 100, h: 60 },
+      targetRect: { x: 260, y: 140, w: 100, h: 60 }
+    },
+    {
+      source: { id: 'source-b' },
+      target,
+      sourceRect: { x: 80, y: 100, w: 100, h: 60 },
+      targetRect: { x: 260, y: 140, w: 100, h: 60 }
+    }
+  ]);
+  assert.deepEqual(routed.map((edge) => edge.targetOffset), [-5, 5]);
+  const routes = routed.map((edge) => buildTechTreeArrowRoute(edge.sourceRect, edge.targetRect, {
+    sourceSide: edge.sourceSide,
+    targetSide: edge.targetSide,
+    sourceOffset: edge.sourceOffset,
+    targetOffset: edge.targetOffset,
+    horizontalTolerance: 0
+  }));
+  const targetYs = routes.map((route) => route.points[route.points.length - 1].y);
+  assert.deepEqual(targetYs, [165, 175]);
+});
+
+test('science advisor arrow routes remove avoidable source doglegs on mixed side links', () => {
+  const route = buildTechTreeArrowRoute(
+    { x: 433, y: 245, w: 104, h: 67 },
+    { x: 518, y: 335, w: 158, h: 75 },
+    { sourceSide: 'bottom', targetSide: 'left', targetOffset: -5 }
+  );
+  assert.deepEqual(route.points, [
+    { x: 500, y: 312 },
+    { x: 500, y: 330 },
+    { x: 500, y: 367.5 },
+    { x: 518, y: 367.5 }
+  ]);
+});
+
+test('science advisor arrow routes do not overshoot short final target approaches', () => {
+  const monotheismToChivalry = buildTechTreeArrowRoute(
+    { x: 75, y: 180, w: 98, h: 64 },
+    { x: 210, y: 295, w: 188, h: 70 },
+    { sourceSide: 'right', targetSide: 'left', horizontalTolerance: 18 }
+  );
+  assert.deepEqual(monotheismToChivalry.points, [
+    { x: 173, y: 212 },
+    { x: 191, y: 212 },
+    { x: 191, y: 330 },
+    { x: 210, y: 330 }
+  ]);
+  assert.equal(countDominantAxisBacktracking(
+    monotheismToChivalry,
+    { x: 75, y: 180, w: 98, h: 64 },
+    { x: 210, y: 295, w: 188, h: 70 }
+  ), 0);
+
+  const engineeringToInvention = buildTechTreeArrowRoute(
+    { x: 73, y: 610, w: 98, h: 64 },
+    { x: 209, y: 531, w: 159, h: 71 },
+    { sourceSide: 'right', targetSide: 'left', horizontalTolerance: 18 }
+  );
+  assert.deepEqual(engineeringToInvention.points, [
+    { x: 171, y: 642 },
+    { x: 189, y: 642 },
+    { x: 189, y: 566.5 },
+    { x: 209, y: 566.5 }
+  ]);
+  assert.equal(countDominantAxisBacktracking(
+    engineeringToInvention,
+    { x: 73, y: 610, w: 98, h: 64 },
+    { x: 209, y: 531, w: 159, h: 71 }
+  ), 0);
+});
+
 test('science advisor arrow heuristics avoid double-back routes for close offset tech boxes', () => {
   const sourceRect = { x: 500, y: 230, w: 220, h: 70 };
   const targetRect = { x: 720, y: 120, w: 220, h: 70 };
@@ -500,7 +709,7 @@ test('science advisor arrow heuristics avoid double-back routes for close offset
   });
 
   assert.equal(countDominantAxisBacktracking(route, sourceRect, targetRect), 0);
-  assert.deepEqual(route.points[0], { x: 610, y: 230 });
+  assert.deepEqual(route.points[0], { x: 702, y: 230 });
   assert.deepEqual(route.points[route.points.length - 1], { x: 720, y: 155 });
 });
 

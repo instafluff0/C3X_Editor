@@ -120,19 +120,91 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /scienceAdvisorArrows\.drawScienceAdvisorRoutesRgba\(\{[\s\S]*?palette,[\s\S]*?routes: allEdges\.map\(\(edgeObj\) => edgeObj\.route\)\.filter\(Boolean\),[\s\S]*?techBoxLayout[\s\S]*?\}\)/,
+    /scienceAdvisorArrows\.drawScienceAdvisorRoutesRgba\(\{[\s\S]*?palette,[\s\S]*?routes: allEdges\.map\(\(edgeObj\) => edgeObj\.route\)\.filter\(Boolean\),[\s\S]*?techBoxLayout,[\s\S]*?style: getStoredScienceAdvisorArrowStyle\(\)[\s\S]*?\}\)/,
     'Expected generated-arrow preview to draw with the same shared rasterer used for save output'
   );
   assert.match(
     configCore,
-    /const scienceAdvisorArrows = require\('\.\/scienceAdvisorArrows'\);[\s\S]*?scienceAdvisorArrows\.drawScienceAdvisorRoutesIndexed\(\{ indices, palette: decoded\.palette, width, height, routes, techBoxLayout, eraIndex \}\)/,
+    /const scienceAdvisorArrows = require\('\.\/scienceAdvisorArrows'\);[\s\S]*?scienceAdvisorArrows\.drawScienceAdvisorRoutesIndexed\(\{ indices, palette: decoded\.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle \}\)/,
     'Expected save-time Science Advisor arrow writes to use the shared rasterer'
+  );
+  assert.match(
+    source,
+    /arrowStyleBtnLabel\.textContent = 'Arrow Style'[\s\S]*?arrowStyleBtnChevron\.textContent = '▾'[\s\S]*?Body Thickness[\s\S]*?Head Height[\s\S]*?Glint Color/,
+    'Expected Tech Tree to expose live generated-arrow style controls'
+  );
+  assert.match(
+    source,
+    /scienceAdvisorArrowStyle: shouldUpdateScienceAdvisorArrows && state\.settings\.scienceAdvisorArrowStyle[\s\S]*?deepCloneUiValue\(state\.settings\.scienceAdvisorArrowStyle\)/,
+    'Expected generated Science Advisor arrow saves to carry the selected style'
+  );
+  assert.match(
+    source,
+    /function getRefreshButtons\(\) \{[\s\S]*?return \[el\.refreshBtn, techTreeModal\.refreshBtn, mapModal\.refreshBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateRefreshButtonState\(\)/,
+    'Expected Tech Tree refresh to share the main Refresh disabled-state wiring'
+  );
+  assert.match(
+    source,
+    /<button type="button" class="ghost nav-btn refresh-btn tech-tree-refresh-btn" data-act="refresh" aria-label="Refresh from disk" title="Refresh from disk">⟳<\/button>[\s\S]*?<button type="button" class="secondary tech-tree-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?techTreeModal\.refreshBtn = overlay\.querySelector\('\[data-act="refresh"\]'\);[\s\S]*?techTreeModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?techTreeModal\.refreshBtn\.addEventListener\('click', \(\) => \{[\s\S]*?void refreshCurrentBundleFromDisk\(\);[\s\S]*?techTreeModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);/,
+    'Expected Tech Tree modal Save and Refresh to route through the main app handlers'
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(!autoArrowPreviewActive\) return;/,
+    'Expected route-handle rendering to use the live generated-arrow preview state'
   );
   assert.match(
     source,
     /techTreeArrowDirtyEras: shouldUpdateScienceAdvisorArrows \? techTreeArrowDirtyEras : \[\]/,
     'Expected generated Science Advisor arrow saves to carry the exact dirty eras instead of regenerating every era'
   );
+  assert.match(
+    indexHtml,
+    /id="files-filter-type-art-pcx"[\s\S]*?<span>Art PCX<\/span>/,
+    'Expected Files modal to expose generated Science Advisor PCX write targets'
+  );
+  assert.match(
+    source,
+    /function getScienceAdvisorArrowPendingWriteEntries\(\) \{[\s\S]*?state\.settings\.autoUpdateScienceAdvisorArrows === true[\s\S]*?Object\.keys\(state\.techTreeArrowArtDirtyByEra \|\| \{\}\)[\s\S]*?TECH_TREE_ERA_BACKGROUND_CANDIDATES\[eraIndex\][\s\S]*?Generated Science Advisor arrow background/,
+    'Expected Files modal to list dirty generated Science Advisor PCX write targets before saving'
+  );
+  assert.match(
+    source,
+    /function snapshotTechTreeArrowStyleState\(\) \{[\s\S]*?kind: 'tech-tree-arrow-style'[\s\S]*?scienceAdvisorArrowStyle: getScienceAdvisorArrowStyleSnapshotValue\(\)[\s\S]*?techTreeArrowArtDirtyByEra: deepCloneUiValue\(state\.techTreeArrowArtDirtyByEra \|\| \{\}\)/,
+    'Expected Tech Tree arrow style settings to have a dedicated undo snapshot'
+  );
+  assert.match(
+    source,
+    /const beginArrowStyleUndoSession = \(\) => \{[\s\S]*?ensureTrackedEditSession\([\s\S]*?'TECH_TREE_ARROW_STYLE'[\s\S]*?\);[\s\S]*?\};[\s\S]*?updateScienceAdvisorArrowStyle[\s\S]*?beginArrowStyleUndoSession\(\)/,
+    'Expected arrow style controls to activate Undo before mutating settings'
+  );
+  assert.match(
+    source,
+    /resetArrowStyleBtn\.addEventListener\('click', \(\) => \{[\s\S]*?hasOwnProperty\.call\(state\.settings, 'scienceAdvisorArrowStyle'\)[\s\S]*?return;[\s\S]*?rememberUndoSnapshotForKey\('TECH_TREE_ARROW_STYLE'\)/,
+    'Expected Reset to be a no-op without a custom style and undoable when it changes style'
+  );
+  assert.match(
+    source,
+    /if \(hasUnsavedTechTreeArrowArtChanges\(\)\) \{[\s\S]*?setTabDirtyCount\('techtreearrowart', 1\);[\s\S]*?\}/,
+    'Expected dirty recomputation to preserve style-only arrow art edits'
+  );
+  assert.match(
+    source,
+    /function hasEffectiveUnsavedChanges\(\) \{[\s\S]*?state\.isDirty[\s\S]*?hasPendingTrackedEditSessions\(\)[\s\S]*?hasUnsavedTechTreeArrowArtChanges\(\)[\s\S]*?\}/,
+    'Expected Undo All to use effective unsaved changes, including pending tracked edits'
+  );
+  assert.match(
+    source,
+    /if \(techTreeModal\.undoAllBtn\) techTreeModal\.undoAllBtn\.disabled = !hasEffectiveUnsavedChanges\(\);/,
+    'Expected Tech Tree Undo All to activate after the first effective change'
+  );
+  assert.match(
+    source,
+    /async function undoAllChanges\(\) \{[\s\S]*?commitAllTrackedEditSessions\(\);[\s\S]*?recomputeDirtyStateFromBundle\(\);[\s\S]*?if \(!state\.bundle \|\| !hasEffectiveUnsavedChanges\(\)\)/,
+    'Expected Undo All to recompute dirty state after committing pending edits'
+  );
+  assert.ok(source.includes("if (/\\.pcx$/i.test(pathValue)) return 'artPcx';"), 'Expected Files modal to classify PCX art files');
+  assert.ok(source.includes("if (f.typeArtPcx) selectedTypes.push('artPcx');"), 'Expected Files modal filters to include PCX art files');
   assert.match(
     configCore,
     /!decoded\.palette \|\| typeof decoded\.palette\.length !== 'number'/,

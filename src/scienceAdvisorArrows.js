@@ -48,9 +48,90 @@ const SCIENCE_ADVISOR_ARROW_COLOR_PROFILES = {
   }
 };
 
+function cloneArrowRgb(color) {
+  return {
+    r: Number(color && color.r) || 0,
+    g: Number(color && color.g) || 0,
+    b: Number(color && color.b) || 0
+  };
+}
+
+function clampNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function clampInteger(value, fallback, min, max) {
+  return Math.round(clampNumber(value, fallback, min, max));
+}
+
+function normalizeArrowRgb(input, fallback) {
+  const source = input && typeof input === 'object' ? input : null;
+  const fallbackColor = fallback && typeof fallback === 'object' ? fallback : { r: 0, g: 0, b: 0 };
+  return {
+    r: clampInteger(source ? source.r : undefined, fallbackColor.r, 0, 255),
+    g: clampInteger(source ? source.g : undefined, fallbackColor.g, 0, 255),
+    b: clampInteger(source ? source.b : undefined, fallbackColor.b, 0, 255)
+  };
+}
+
 function getScienceAdvisorArrowColorProfile(eraIndex) {
   const era = Number(eraIndex);
   return era >= 3 ? SCIENCE_ADVISOR_ARROW_COLOR_PROFILES.blue : SCIENCE_ADVISOR_ARROW_COLOR_PROFILES.red;
+}
+
+function normalizeScienceAdvisorArrowStyle(input = {}, options = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const defaults = SCIENCE_ADVISOR_ARROW_STYLE;
+  const profile = getScienceAdvisorArrowColorProfile(options && options.eraIndex);
+  const defaultColors = profile && profile.colors ? profile.colors : defaults.colors;
+  const colors = source.colors && typeof source.colors === 'object' ? source.colors : {};
+  const body = source.body && typeof source.body === 'object' ? source.body : {};
+  const head = source.head && typeof source.head === 'object' ? source.head : {};
+  const headOutline = head.outline && typeof head.outline === 'object' ? head.outline : {};
+  const headMain = head.main && typeof head.main === 'object' ? head.main : {};
+  const headGlint = head.glint && typeof head.glint === 'object' ? head.glint : {};
+  const offset = body.highlightOffset && typeof body.highlightOffset === 'object' ? body.highlightOffset : {};
+  const defaultHead = defaults.head;
+  return {
+    curveRadius: clampNumber(source.curveRadius, defaults.curveRadius, 2, 40),
+    curveSteps: clampInteger(source.curveSteps, defaults.curveSteps, 4, 64),
+    segmentStep: clampNumber(source.segmentStep, defaults.segmentStep, 0.2, 2),
+    rasterScale: clampInteger(source.rasterScale, defaults.rasterScale, 1, 6),
+    coverageThreshold: clampInteger(source.coverageThreshold, defaults.coverageThreshold, 1, 36),
+    colors: {
+      outline: normalizeArrowRgb(colors.outline, defaultColors.outline),
+      main: normalizeArrowRgb(colors.main, defaultColors.main),
+      highlight: normalizeArrowRgb(colors.highlight, defaultColors.highlight)
+    },
+    body: {
+      outlineRadius: clampNumber(body.outlineRadius, defaults.body.outlineRadius, 0.25, 3),
+      mainRadius: clampNumber(body.mainRadius, defaults.body.mainRadius, 0, 2),
+      highlightRadius: clampNumber(body.highlightRadius, defaults.body.highlightRadius, 0, 2),
+      highlightOffset: {
+        x: clampNumber(offset.x, defaults.body.highlightOffset.x, -4, 4),
+        y: clampNumber(offset.y, defaults.body.highlightOffset.y, -4, 4)
+      }
+    },
+    head: {
+      outline: {
+        length: clampNumber(headOutline.length, defaultHead.outline.length, 3, 14),
+        half: clampNumber(headOutline.half, defaultHead.outline.half, 2, 10)
+      },
+      main: {
+        length: clampNumber(headMain.length, defaultHead.main.length, 2, 13),
+        half: clampNumber(headMain.half, defaultHead.main.half, 1, 9)
+      },
+      glint: {
+        length: clampNumber(headGlint.length, defaultHead.glint.length, 0, 12),
+        offsetBack: clampNumber(headGlint.offsetBack, defaultHead.glint.offsetBack, -6, 8),
+        offsetPerp: clampNumber(headGlint.offsetPerp, defaultHead.glint.offsetPerp, -8, 8),
+        tipBack: clampNumber(headGlint.tipBack, defaultHead.glint.tipBack, -4, 8),
+        tipPerp: clampNumber(headGlint.tipPerp, defaultHead.glint.tipPerp, -8, 8)
+      }
+    }
+  };
 }
 
 function getNearestPaletteIndex(palette, target, fallback = 0, predicate = null) {
@@ -90,13 +171,16 @@ function getPaletteColor(palette, index, fallback) {
 
 function makePaletteStyle(palette, options = {}) {
   const profile = getScienceAdvisorArrowColorProfile(options && options.eraIndex);
-  const colors = profile && profile.colors ? profile.colors : SCIENCE_ADVISOR_ARROW_STYLE.colors;
+  const styleSource = options && options.style && typeof options.style === 'object' ? options.style : {};
+  const customColors = styleSource.colors && typeof styleSource.colors === 'object' ? styleSource.colors : {};
+  const normalizedStyle = normalizeScienceAdvisorArrowStyle(styleSource, { eraIndex: options && options.eraIndex });
+  const colors = normalizedStyle.colors || (profile && profile.colors ? profile.colors : SCIENCE_ADVISOR_ARROW_STYLE.colors);
   const arrowPredicate = profile && typeof profile.predicate === 'function'
     ? profile.predicate
     : ((r, g, b) => isScienceAdvisorArrowColor(r, g, b));
-  const outlineIndex = getNearestPaletteIndex(palette, colors.outline, 0, arrowPredicate);
-  const mainIndex = getNearestPaletteIndex(palette, colors.main, outlineIndex, arrowPredicate);
-  const highlightIndex = getNearestPaletteIndex(palette, colors.highlight, mainIndex, arrowPredicate);
+  const outlineIndex = getNearestPaletteIndex(palette, colors.outline, 0, customColors.outline ? null : arrowPredicate);
+  const mainIndex = getNearestPaletteIndex(palette, colors.main, outlineIndex, customColors.main ? null : arrowPredicate);
+  const highlightIndex = getNearestPaletteIndex(palette, colors.highlight, mainIndex, customColors.highlight ? null : arrowPredicate);
   return {
     outlineIndex,
     mainIndex,
@@ -127,6 +211,220 @@ function isScienceAdvisorArrowColor(r, g, b) {
   return isScienceAdvisorRedArrowColor(r, g, b) || isScienceAdvisorBlueArrowColor(r, g, b);
 }
 
+function isScienceAdvisorArrowFringeColor(r, g, b) {
+  const rn = Number(r) || 0;
+  const gn = Number(g) || 0;
+  const bn = Number(b) || 0;
+  const redFringe = rn >= 42 && rn <= 235
+    && gn >= 8 && gn <= 180
+    && bn <= 130
+    && rn >= gn + 4
+    && rn >= bn + 18
+    && gn >= bn - 26;
+  const blueFringe = bn >= 42 && bn <= 235
+    && gn >= 12 && gn <= 190
+    && rn <= 150
+    && bn >= rn + 16
+    && bn >= gn - 20;
+  return redFringe || blueFringe;
+}
+
+function expandArrowClearMask({ mask, candidate, width, height, x1, y1, x2, y2, iterations = 4 }) {
+  const out = new Uint8Array(mask);
+  const passes = Math.max(0, Number(iterations) || 0);
+  for (let pass = 0; pass < passes; pass += 1) {
+    const next = new Uint8Array(out);
+    let changed = false;
+    for (let y = y1; y <= y2; y += 1) {
+      for (let x = x1; x <= x2; x += 1) {
+        const offset = y * width + x;
+        if (out[offset] || !candidate[offset]) continue;
+        let touches = false;
+        for (let oy = -1; oy <= 1 && !touches; oy += 1) {
+          for (let ox = -1; ox <= 1; ox += 1) {
+            if (ox === 0 && oy === 0) continue;
+            const nx = x + ox;
+            const ny = y + oy;
+            if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
+            if (out[ny * width + nx]) {
+              touches = true;
+              break;
+            }
+          }
+        }
+        if (!touches) continue;
+        next[offset] = 1;
+        changed = true;
+      }
+    }
+    out.set(next);
+    if (!changed) break;
+  }
+  return out;
+}
+
+function dilateArrowClearMask({ mask, width, height, x1, y1, x2, y2, radius = 3 }) {
+  const out = new Uint8Array(mask);
+  const r = Math.max(0, Math.round(Number(radius) || 0));
+  for (let y = y1; y <= y2; y += 1) {
+    for (let x = x1; x <= x2; x += 1) {
+      const offset = y * width + x;
+      if (!mask[offset]) continue;
+      for (let oy = -r; oy <= r; oy += 1) {
+        for (let ox = -r; ox <= r; ox += 1) {
+          if ((ox * ox) + (oy * oy) > r * r) continue;
+          const nx = x + ox;
+          const ny = y + oy;
+          if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
+          out[ny * width + nx] = 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function includeNearbyArrowCandidates({ mask, candidate, width, height, x1, y1, x2, y2, radius = 8 }) {
+  const out = new Uint8Array(mask);
+  const r = Math.max(0, Math.round(Number(radius) || 0));
+  for (let y = y1; y <= y2; y += 1) {
+    for (let x = x1; x <= x2; x += 1) {
+      const offset = y * width + x;
+      if (!mask[offset]) continue;
+      for (let oy = -r; oy <= r; oy += 1) {
+        for (let ox = -r; ox <= r; ox += 1) {
+          if ((ox * ox) + (oy * oy) > r * r) continue;
+          const nx = x + ox;
+          const ny = y + oy;
+          if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
+          const candidateOffset = ny * width + nx;
+          if (candidate[candidateOffset]) out[candidateOffset] = 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function seedArrowCandidateRuns({ seed, candidate, width, height, x1, y1, x2, y2 }) {
+  const out = new Uint8Array(seed);
+  const maxGap = 2;
+  const minPixels = 10;
+  const minSpan = 20;
+  const minSeedSupport = 2;
+  const hasNearbySeedSupport = (sx1, sy1, sx2, sy2) => {
+    const left = Math.max(x1, sx1);
+    const top = Math.max(y1, sy1);
+    const right = Math.min(x2, sx2);
+    const bottom = Math.min(y2, sy2);
+    let seedPixels = 0;
+    for (let sy = top; sy <= bottom; sy += 1) {
+      for (let sx = left; sx <= right; sx += 1) {
+        if (!seed[sy * width + sx]) continue;
+        seedPixels += 1;
+        if (seedPixels >= minSeedSupport) return true;
+      }
+    }
+    return false;
+  };
+  const seedHorizontalRun = (y, startX, endX) => {
+    let pixels = 0;
+    for (let x = startX; x <= endX; x += 1) {
+      const offset = y * width + x;
+      if (candidate[offset]) pixels += 1;
+    }
+    if (pixels < minPixels || (endX - startX + 1) < minSpan) return;
+    if (!hasNearbySeedSupport(startX - 12, y - 6, endX + 12, y + 6)) return;
+    for (let x = startX; x <= endX; x += 1) {
+      const offset = y * width + x;
+      if (candidate[offset]) out[offset] = 1;
+    }
+  };
+  const seedVerticalRun = (x, startY, endY) => {
+    let pixels = 0;
+    for (let y = startY; y <= endY; y += 1) {
+      const offset = y * width + x;
+      if (candidate[offset]) pixels += 1;
+    }
+    if (pixels < minPixels || (endY - startY + 1) < minSpan) return;
+    if (!hasNearbySeedSupport(x - 6, startY - 12, x + 6, endY + 12)) return;
+    for (let y = startY; y <= endY; y += 1) {
+      const offset = y * width + x;
+      if (candidate[offset]) out[offset] = 1;
+    }
+  };
+  for (let y = y1; y <= y2; y += 1) {
+    let start = -1;
+    let lastCandidate = -1;
+    let gap = 0;
+    for (let x = x1; x <= x2 + 1; x += 1) {
+      const isCandidate = x <= x2 && candidate[y * width + x];
+      if (isCandidate) {
+        if (start < 0) start = x;
+        lastCandidate = x;
+        gap = 0;
+      } else if (start >= 0) {
+        gap += 1;
+        if (gap > maxGap || x > x2) {
+          seedHorizontalRun(y, start, lastCandidate);
+          start = -1;
+          lastCandidate = -1;
+          gap = 0;
+        }
+      }
+    }
+  }
+  for (let x = x1; x <= x2; x += 1) {
+    let start = -1;
+    let lastCandidate = -1;
+    let gap = 0;
+    for (let y = y1; y <= y2 + 1; y += 1) {
+      const isCandidate = y <= y2 && candidate[y * width + x];
+      if (isCandidate) {
+        if (start < 0) start = y;
+        lastCandidate = y;
+        gap = 0;
+      } else if (start >= 0) {
+        gap += 1;
+        if (gap > maxGap || y > y2) {
+          seedVerticalRun(x, start, lastCandidate);
+          start = -1;
+          lastCandidate = -1;
+          gap = 0;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function buildScienceAdvisorArrowClearMask({ width, height, bounds, getColor }) {
+  const safeBounds = bounds || { x1: 0, y1: 0, x2: width - 1, y2: height - 1 };
+  const x1 = Math.max(0, Math.min(width - 1, Math.floor(Number(safeBounds.x1) || 0)));
+  const y1 = Math.max(0, Math.min(height - 1, Math.floor(Number(safeBounds.y1) || 0)));
+  const x2 = Math.max(x1, Math.min(width - 1, Math.ceil(Number(safeBounds.x2) || 0)));
+  const y2 = Math.max(y1, Math.min(height - 1, Math.ceil(Number(safeBounds.y2) || 0)));
+  const seed = new Uint8Array(width * height);
+  const candidate = new Uint8Array(width * height);
+  for (let y = y1; y <= y2; y += 1) {
+    for (let x = x1; x <= x2; x += 1) {
+      const offset = y * width + x;
+      const color = getColor(offset);
+      if (isScienceAdvisorArrowColor(color.r, color.g, color.b)) {
+        seed[offset] = 1;
+        candidate[offset] = 1;
+      } else if (isScienceAdvisorArrowFringeColor(color.r, color.g, color.b)) {
+        candidate[offset] = 1;
+      }
+    }
+  }
+  const seededRuns = seedArrowCandidateRuns({ seed, candidate, width, height, x1, y1, x2, y2 });
+  const expanded = expandArrowClearMask({ mask: seededRuns, candidate, width, height, x1, y1, x2, y2, iterations: 5 });
+  const withNearbyFringe = includeNearbyArrowCandidates({ mask: expanded, candidate, width, height, x1, y1, x2, y2, radius: 8 });
+  const dilated = dilateArrowClearMask({ mask: withNearbyFringe, width, height, x1, y1, x2, y2, radius: 3 });
+  return { mask: dilated, candidate, x1, y1, x2, y2 };
+}
+
 function getIndexedRgb(indices, palette, offset) {
   const idx = indices[offset];
   const palOff = idx * 3;
@@ -139,53 +437,113 @@ function getIndexedRgb(indices, palette, offset) {
 
 function clearScienceAdvisorArrowPixelsIndexed({ indices, palette, width, height, bounds }) {
   if (!indices || !palette || !width || !height) return;
-  const safeBounds = bounds || { x1: 0, y1: 0, x2: width - 1, y2: height - 1 };
-  const x1 = Math.max(0, Math.min(width - 1, Math.floor(Number(safeBounds.x1) || 0)));
-  const y1 = Math.max(0, Math.min(height - 1, Math.floor(Number(safeBounds.y1) || 0)));
-  const x2 = Math.max(x1, Math.min(width - 1, Math.ceil(Number(safeBounds.x2) || 0)));
-  const y2 = Math.max(y1, Math.min(height - 1, Math.ceil(Number(safeBounds.y2) || 0)));
-  const mask = new Uint8Array(width * height);
-  for (let y = y1; y <= y2; y += 1) {
-    for (let x = x1; x <= x2; x += 1) {
-      const offset = y * width + x;
-      const color = getIndexedRgb(indices, palette, offset);
-      if (isScienceAdvisorArrowColor(color.r, color.g, color.b)) mask[offset] = 1;
-    }
-  }
-  const dilated = new Uint8Array(mask);
-  for (let y = y1; y <= y2; y += 1) {
-    for (let x = x1; x <= x2; x += 1) {
-      const offset = y * width + x;
-      if (!mask[offset]) continue;
-      for (let oy = -2; oy <= 2; oy += 1) {
-        for (let ox = -2; ox <= 2; ox += 1) {
-          const nx = x + ox;
-          const ny = y + oy;
-          if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
-          dilated[ny * width + nx] = 1;
-        }
-      }
-    }
-  }
+  const clear = buildScienceAdvisorArrowClearMask({
+    width,
+    height,
+    bounds,
+    getColor: (offset) => getIndexedRgb(indices, palette, offset)
+  });
+  const { mask, candidate, x1, y1, x2, y2 } = clear;
+  const isCleanSource = (nx, ny) => {
+    if (nx < x1 || nx > x2 || ny < y1 || ny > y2) return false;
+    const offset = ny * width + nx;
+    return !mask[offset] && !candidate[offset];
+  };
   const findReplacement = (x, y) => {
     const candidates = [
-      [0, -7], [0, 7], [-7, 0], [7, 0],
-      [0, -12], [0, 12], [-12, 0], [12, 0],
-      [-8, -8], [8, -8], [-8, 8], [8, 8]
+      [0, -10], [0, 10], [-10, 0], [10, 0],
+      [0, -18], [0, 18], [-18, 0], [18, 0],
+      [-12, -12], [12, -12], [-12, 12], [12, 12],
+      [0, -26], [0, 26], [-26, 0], [26, 0]
     ];
     for (const [ox, oy] of candidates) {
       const nx = x + ox;
       const ny = y + oy;
-      if (nx < x1 || nx > x2 || ny < y1 || ny > y2) continue;
-      const offset = ny * width + nx;
-      if (!dilated[offset]) return indices[offset];
+      if (isCleanSource(nx, ny)) return indices[ny * width + nx];
+    }
+    for (let radius = 4; radius <= 36; radius += 4) {
+      for (let oy = -radius; oy <= radius; oy += 2) {
+        const oxLimit = radius - Math.abs(oy);
+        const points = oxLimit === 0 ? [[0, oy]] : [[-oxLimit, oy], [oxLimit, oy]];
+        for (const [ox, py] of points) {
+          const nx = x + ox;
+          const ny = y + py;
+          if (isCleanSource(nx, ny)) return indices[ny * width + nx];
+        }
+      }
     }
     return indices[y * width + x];
   };
   for (let y = y1; y <= y2; y += 1) {
     for (let x = x1; x <= x2; x += 1) {
       const offset = y * width + x;
-      if (dilated[offset]) indices[offset] = findReplacement(x, y);
+      if (mask[offset]) indices[offset] = findReplacement(x, y);
+    }
+  }
+}
+
+function clearScienceAdvisorArrowPixelsRgba({ rgba, width, height, bounds }) {
+  if (!rgba || !width || !height) return;
+  const clear = buildScienceAdvisorArrowClearMask({
+    width,
+    height,
+    bounds,
+    getColor: (pixel) => {
+      const off = pixel * 4;
+      return {
+        r: Number(rgba[off]) || 0,
+        g: Number(rgba[off + 1]) || 0,
+        b: Number(rgba[off + 2]) || 0
+      };
+    }
+  });
+  const { mask, candidate, x1, y1, x2, y2 } = clear;
+  const isCleanSource = (nx, ny) => {
+    if (nx < x1 || nx > x2 || ny < y1 || ny > y2) return false;
+    const pixel = ny * width + nx;
+    return !mask[pixel] && !candidate[pixel];
+  };
+  const copyFromNeighbor = (x, y, targetOff) => {
+    const candidates = [
+      [0, -10], [0, 10], [-10, 0], [10, 0],
+      [0, -18], [0, 18], [-18, 0], [18, 0],
+      [-12, -12], [12, -12], [-12, 12], [12, 12],
+      [0, -26], [0, 26], [-26, 0], [26, 0]
+    ];
+    for (const [ox, oy] of candidates) {
+      const nx = x + ox;
+      const ny = y + oy;
+      if (!isCleanSource(nx, ny)) continue;
+      const srcOff = (ny * width + nx) * 4;
+      rgba[targetOff] = rgba[srcOff];
+      rgba[targetOff + 1] = rgba[srcOff + 1];
+      rgba[targetOff + 2] = rgba[srcOff + 2];
+      rgba[targetOff + 3] = rgba[srcOff + 3];
+      return;
+    }
+    for (let radius = 4; radius <= 36; radius += 4) {
+      for (let oy = -radius; oy <= radius; oy += 2) {
+        const oxLimit = radius - Math.abs(oy);
+        const points = oxLimit === 0 ? [[0, oy]] : [[-oxLimit, oy], [oxLimit, oy]];
+        for (const [ox, py] of points) {
+          const nx = x + ox;
+          const ny = y + py;
+          if (!isCleanSource(nx, ny)) continue;
+          const srcOff = (ny * width + nx) * 4;
+          rgba[targetOff] = rgba[srcOff];
+          rgba[targetOff + 1] = rgba[srcOff + 1];
+          rgba[targetOff + 2] = rgba[srcOff + 2];
+          rgba[targetOff + 3] = rgba[srcOff + 3];
+          return;
+        }
+      }
+    }
+  };
+  for (let y = y1; y <= y2; y += 1) {
+    for (let x = x1; x <= x2; x += 1) {
+      const pixel = y * width + x;
+      if (!mask[pixel]) continue;
+      copyFromNeighbor(x, y, pixel * 4);
     }
   }
 }
@@ -225,7 +583,7 @@ function getScaledRadius(radius, scale) {
   return r > 0 ? Math.max(1, Math.round(r * s)) : 0;
 }
 
-function drawSegment(setPixel, width, height, from, to, radius, value) {
+function drawSegment(setPixel, width, height, from, to, radius, value, style = SCIENCE_ADVISOR_ARROW_STYLE) {
   const fx = Number(from && from.x) || 0;
   const fy = Number(from && from.y) || 0;
   const txRaw = Number(to && to.x) || 0;
@@ -234,7 +592,7 @@ function drawSegment(setPixel, width, height, from, to, radius, value) {
   const rawDy = tyRaw - fy;
   if (Math.abs(rawDx) > 0.001 && Math.abs(rawDy) > 0.001) {
     const distance = Math.sqrt((rawDx * rawDx) + (rawDy * rawDy)) || 1;
-    const step = Math.max(0.2, Number(SCIENCE_ADVISOR_ARROW_STYLE.segmentStep) || 0.5);
+    const step = Math.max(0.2, Number(style && style.segmentStep) || 0.5);
     const samples = Math.max(1, Math.ceil(distance / step));
     for (let idx = 0; idx <= samples; idx += 1) {
       const t = idx / samples;
@@ -294,8 +652,8 @@ function drawArrowHead(setPixel, width, height, tip, unit, value, options = {}) 
   }
 }
 
-function drawArrowHeadGlint(setPixel, width, height, tip, unit, value, scale = 1) {
-  const glint = SCIENCE_ADVISOR_ARROW_STYLE.head.glint;
+function drawArrowHeadGlint(setPixel, width, height, tip, unit, value, scale = 1, style = SCIENCE_ADVISOR_ARROW_STYLE) {
+  const glint = style.head.glint;
   const s = Math.max(1, Number(scale) || 1);
   const from = {
     x: tip.x - (unit.ux * glint.length * s) - (unit.ux * glint.offsetBack * s) + (unit.px * glint.offsetPerp * s),
@@ -305,35 +663,36 @@ function drawArrowHeadGlint(setPixel, width, height, tip, unit, value, scale = 1
     x: tip.x - (unit.ux * glint.tipBack * s) + (unit.px * glint.tipPerp * s),
     y: tip.y - (unit.uy * glint.tipBack * s) + (unit.py * glint.tipPerp * s)
   };
-  drawSegment(setPixel, width, height, from, to, getScaledRadius(0, s), value);
+  drawSegment(setPixel, width, height, from, to, getScaledRadius(0, s), value, style);
 }
 
-function getRoutePoints(route, techBoxLayout) {
+function getRoutePoints(route, techBoxLayout, style = SCIENCE_ADVISOR_ARROW_STYLE) {
   if (techBoxLayout && typeof techBoxLayout.sampleTechTreeArrowRoute === 'function') {
     return techBoxLayout.sampleTechTreeArrowRoute(route, {
-      radius: SCIENCE_ADVISOR_ARROW_STYLE.curveRadius,
-      curveSteps: SCIENCE_ADVISOR_ARROW_STYLE.curveSteps
+      radius: style.curveRadius,
+      curveSteps: style.curveSteps
     });
   }
   return (route && Array.isArray(route.points)) ? route.points : [];
 }
 
-function drawRoute({ setPixel, width, height, route, techBoxLayout, values, scale = 1 }) {
+function drawRoute({ setPixel, width, height, route, techBoxLayout, values, scale = 1, style = SCIENCE_ADVISOR_ARROW_STYLE }) {
   const s = Math.max(1, Number(scale) || 1);
-  const points = getRoutePoints(route, techBoxLayout).map((point) => (
+  const activeStyle = style || SCIENCE_ADVISOR_ARROW_STYLE;
+  const points = getRoutePoints(route, techBoxLayout, activeStyle).map((point) => (
     s === 1 ? point : { x: point.x * s, y: point.y * s }
   ));
   if (points.length < 1) return;
-  const outlineRadius = getScaledRadius(SCIENCE_ADVISOR_ARROW_STYLE.body.outlineRadius, s);
-  const mainRadius = getScaledRadius(SCIENCE_ADVISOR_ARROW_STYLE.body.mainRadius, s);
-  const highlightRadius = getScaledRadius(SCIENCE_ADVISOR_ARROW_STYLE.body.highlightRadius, s);
+  const outlineRadius = getScaledRadius(activeStyle.body.outlineRadius, s);
+  const mainRadius = getScaledRadius(activeStyle.body.mainRadius, s);
+  const highlightRadius = getScaledRadius(activeStyle.body.highlightRadius, s);
   for (let idx = 1; idx < points.length; idx += 1) {
-    drawSegment(setPixel, width, height, points[idx - 1], points[idx], outlineRadius, values.outline);
+    drawSegment(setPixel, width, height, points[idx - 1], points[idx], outlineRadius, values.outline, activeStyle);
   }
   for (let idx = 1; idx < points.length; idx += 1) {
-    drawSegment(setPixel, width, height, points[idx - 1], points[idx], mainRadius, values.main);
+    drawSegment(setPixel, width, height, points[idx - 1], points[idx], mainRadius, values.main, activeStyle);
   }
-  const offset = SCIENCE_ADVISOR_ARROW_STYLE.body.highlightOffset;
+  const offset = activeStyle.body.highlightOffset;
   for (let idx = 1; idx < points.length; idx += 1) {
     drawSegment(
       setPixel,
@@ -342,25 +701,27 @@ function drawRoute({ setPixel, width, height, route, techBoxLayout, values, scal
       { x: points[idx - 1].x + (offset.x * s), y: points[idx - 1].y + (offset.y * s) },
       { x: points[idx].x + (offset.x * s), y: points[idx].y + (offset.y * s) },
       highlightRadius,
-      values.highlight
+      values.highlight,
+      activeStyle
     );
   }
   const tip = points[points.length - 1];
   const prev = points.length > 1 ? points[points.length - 2] : { x: tip.x - (route && route.dir || 1), y: tip.y };
   const unit = getUnitVector(route, tip, prev);
   drawArrowHead(setPixel, width, height, tip, unit, values.outline, {
-    length: SCIENCE_ADVISOR_ARROW_STYLE.head.outline.length * s,
-    half: SCIENCE_ADVISOR_ARROW_STYLE.head.outline.half * s
+    length: activeStyle.head.outline.length * s,
+    half: activeStyle.head.outline.half * s
   });
   drawArrowHead(setPixel, width, height, tip, unit, values.main, {
-    length: SCIENCE_ADVISOR_ARROW_STYLE.head.main.length * s,
-    half: SCIENCE_ADVISOR_ARROW_STYLE.head.main.half * s
+    length: activeStyle.head.main.length * s,
+    half: activeStyle.head.main.half * s
   });
-  drawArrowHeadGlint(setPixel, width, height, tip, unit, values.highlight, s);
+  drawArrowHeadGlint(setPixel, width, height, tip, unit, values.highlight, s, activeStyle);
 }
 
-function rasterizeRouteLayers({ width, height, routes, techBoxLayout }) {
-  const scale = Math.max(1, Math.round(Number(SCIENCE_ADVISOR_ARROW_STYLE.rasterScale) || 1));
+function rasterizeRouteLayers({ width, height, routes, techBoxLayout, style = SCIENCE_ADVISOR_ARROW_STYLE }) {
+  const activeStyle = style || SCIENCE_ADVISOR_ARROW_STYLE;
+  const scale = Math.max(1, Math.round(Number(activeStyle.rasterScale) || 1));
   const scaledWidth = Math.max(1, width * scale);
   const scaledHeight = Math.max(1, height * scale);
   const highRes = new Uint8Array(scaledWidth * scaledHeight);
@@ -378,12 +739,13 @@ function rasterizeRouteLayers({ width, height, routes, techBoxLayout }) {
       route,
       techBoxLayout,
       values: { outline: 1, main: 2, highlight: 3 },
-      scale
+      scale,
+      style: activeStyle
     });
   });
   const layerMap = new Uint8Array(width * height);
   const coverageMap = new Uint8Array(width * height);
-  const threshold = Math.max(1, Math.min(scale * scale, Math.round(Number(SCIENCE_ADVISOR_ARROW_STYLE.coverageThreshold) || 1)));
+  const threshold = Math.max(1, Math.min(scale * scale, Math.round(Number(activeStyle.coverageThreshold) || 1)));
   const maxCoverage = scale * scale;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -458,16 +820,17 @@ function applyLayerMapRgba({ rgba, paletteStyle, layerMap, coverageMap }) {
   }
 }
 
-function drawScienceAdvisorRouteIndexed({ indices, palette, width, height, route, techBoxLayout, eraIndex }) {
-  drawScienceAdvisorRoutesIndexed({ indices, palette, width, height, routes: route ? [route] : [], techBoxLayout, eraIndex });
+function drawScienceAdvisorRouteIndexed({ indices, palette, width, height, route, techBoxLayout, eraIndex, style }) {
+  drawScienceAdvisorRoutesIndexed({ indices, palette, width, height, routes: route ? [route] : [], techBoxLayout, eraIndex, style });
 }
 
-function drawScienceAdvisorRoutesIndexed({ indices, palette, width, height, routes, techBoxLayout, eraIndex }) {
+function drawScienceAdvisorRoutesIndexed({ indices, palette, width, height, routes, techBoxLayout, eraIndex, style }) {
   if (!indices || !width || !height) return;
   const routeList = (Array.isArray(routes) ? routes : []).filter(Boolean);
   if (routeList.length === 0) return;
-  const paletteStyle = makePaletteStyle(palette, { eraIndex });
-  const raster = rasterizeRouteLayers({ width, height, routes: routeList, techBoxLayout });
+  const activeStyle = normalizeScienceAdvisorArrowStyle(style, { eraIndex });
+  const paletteStyle = makePaletteStyle(palette, { eraIndex, style });
+  const raster = rasterizeRouteLayers({ width, height, routes: routeList, techBoxLayout, style: activeStyle });
   applyLayerMapIndexed({
     indices,
     palette,
@@ -477,16 +840,17 @@ function drawScienceAdvisorRoutesIndexed({ indices, palette, width, height, rout
   });
 }
 
-function drawScienceAdvisorRouteRgba({ rgba, palette, width, height, route, techBoxLayout, eraIndex }) {
-  drawScienceAdvisorRoutesRgba({ rgba, palette, width, height, routes: route ? [route] : [], techBoxLayout, eraIndex });
+function drawScienceAdvisorRouteRgba({ rgba, palette, width, height, route, techBoxLayout, eraIndex, style }) {
+  drawScienceAdvisorRoutesRgba({ rgba, palette, width, height, routes: route ? [route] : [], techBoxLayout, eraIndex, style });
 }
 
-function drawScienceAdvisorRoutesRgba({ rgba, palette, width, height, routes, techBoxLayout, eraIndex }) {
+function drawScienceAdvisorRoutesRgba({ rgba, palette, width, height, routes, techBoxLayout, eraIndex, style }) {
   if (!rgba || !width || !height) return;
   const routeList = (Array.isArray(routes) ? routes : []).filter(Boolean);
   if (routeList.length === 0) return;
-  const paletteStyle = makePaletteStyle(palette, { eraIndex });
-  const raster = rasterizeRouteLayers({ width, height, routes: routeList, techBoxLayout });
+  const activeStyle = normalizeScienceAdvisorArrowStyle(style, { eraIndex });
+  const paletteStyle = makePaletteStyle(palette, { eraIndex, style });
+  const raster = rasterizeRouteLayers({ width, height, routes: routeList, techBoxLayout, style: activeStyle });
   applyLayerMapRgba({
     rgba,
     paletteStyle,
@@ -498,13 +862,16 @@ function drawScienceAdvisorRoutesRgba({ rgba, palette, width, height, routes, te
 return {
   SCIENCE_ADVISOR_ARROW_STYLE,
   SCIENCE_ADVISOR_ARROW_COLOR_PROFILES,
+  normalizeScienceAdvisorArrowStyle,
   getNearestPaletteIndex,
   makePaletteStyle,
   getScienceAdvisorArrowColorProfile,
   isScienceAdvisorRedArrowColor,
   isScienceAdvisorBlueArrowColor,
   isScienceAdvisorArrowColor,
+  isScienceAdvisorArrowFringeColor,
   clearScienceAdvisorArrowPixelsIndexed,
+  clearScienceAdvisorArrowPixelsRgba,
   drawScienceAdvisorRouteIndexed,
   drawScienceAdvisorRoutesIndexed,
   drawScienceAdvisorRouteRgba,

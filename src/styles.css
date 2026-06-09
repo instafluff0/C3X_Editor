@@ -688,6 +688,9 @@ button:disabled {
 .actions #save-btn.secondary,
 .actions #save-btn.secondary:hover:not(:disabled),
 .actions #save-btn.secondary.dirty,
+.tech-tree-modal-actions .tech-tree-save-btn.secondary,
+.tech-tree-modal-actions .tech-tree-save-btn.secondary:hover:not(:disabled),
+.tech-tree-modal-actions .tech-tree-save-btn.secondary.dirty,
 .unit-availability-modal-actions .unit-availability-save-btn.secondary,
 .unit-availability-modal-actions .unit-availability-save-btn.secondary:hover:not(:disabled),
 .unit-availability-modal-actions .unit-availability-save-btn.secondary.dirty,
@@ -7087,6 +7090,128 @@ details > summary:focus-visible {
 
 .tech-tree-controls .tech-picker {
   min-width: 220px;
+}
+
+.tech-tree-arrow-style-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #4d587e;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tech-tree-arrow-style-btn:hover,
+.tech-tree-arrow-style-btn:focus-visible,
+.tech-tree-arrow-style-btn.is-open {
+  border-color: rgba(73, 69, 98, 0.16);
+  background: rgba(246, 248, 255, 0.88);
+  color: #1c1935;
+}
+
+.tech-tree-arrow-style-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tech-tree-arrow-style-chevron {
+  min-width: 10px;
+  text-align: center;
+  color: #6a7194;
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.tech-tree-arrow-style-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(73, 69, 98, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 8px 10px;
+}
+
+.tech-tree-arrow-style-panel.hidden {
+  display: none;
+}
+
+.tech-tree-arrow-style-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #263457;
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
+.tech-tree-arrow-style-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: start;
+}
+
+.tech-tree-controls .tech-tree-arrow-style-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label value"
+    "input input";
+  align-items: center;
+  gap: 3px 8px;
+  width: 136px;
+  min-width: 0;
+  font-size: 0.68rem;
+  line-height: 1.05;
+  color: #4d587e;
+}
+
+.tech-tree-arrow-style-control > span:first-child {
+  grid-area: label;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tech-tree-arrow-style-control input[type="range"] {
+  grid-area: input;
+  width: 100%;
+  min-width: 0;
+}
+
+.tech-tree-arrow-style-control input[type="color"] {
+  grid-area: value;
+  width: 38px;
+  height: 26px;
+  padding: 2px;
+  border: 1px solid rgba(73, 69, 98, 0.2);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.tech-tree-arrow-style-color {
+  width: 108px;
+}
+
+.tech-tree-arrow-style-value {
+  grid-area: value;
+  min-width: 32px;
+  padding: 2px 5px;
+  border: 1px solid rgba(73, 69, 98, 0.14);
+  border-radius: 999px;
+  background: rgba(246, 248, 255, 0.95);
+  text-align: center;
+  color: #263457;
+  font-variant-numeric: tabular-nums;
 }
 
 .tech-tree-stage-wrap {
