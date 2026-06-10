@@ -40,7 +40,7 @@ const BUILDING_CITY_ATLAS_GEOMETRY = {
 const SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS = [
   ['Art/Advisors/science_ancient.pcx'],
   ['Art/Advisors/science_middle.pcx', 'Art/Advisors/science_middle_ages.pcx'],
-  ['Art/Advisors/science_industrial.pcx'],
+  ['Art/Advisors/science_industrial_new.pcx', 'Art/Advisors/science_industrial.pcx'],
   ['Art/Advisors/science_modern.pcx']
 ];
 const SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH = 'Art/Advisors/techboxes.pcx';

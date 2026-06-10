@@ -195,18 +195,13 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /2: \['Art\/Advisors\/science_industrial\.pcx'\]/,
-    'Expected Industrial Science Advisor writes to target the game-recognized base PCX filename'
+    /2: \['Art\/Advisors\/science_industrial_new\.pcx', 'Art\/Advisors\/science_industrial\.pcx'\]/,
+    'Expected Industrial Science Advisor preview to prefer the scenario-used new PCX filename and fall back to the base filename'
   );
   assert.match(
     configCore,
-    /\['Art\/Advisors\/science_industrial\.pcx'\]/,
-    'Expected save-time Industrial Science Advisor writes to use the game-recognized base PCX filename'
-  );
-  assert.doesNotMatch(
-    `${source}\n${configCore}`,
-    /science_industrial_new\.pcx/,
-    'Expected Science Advisor paths to avoid non-game Industrial advisor filenames'
+    /\['Art\/Advisors\/science_industrial_new\.pcx', 'Art\/Advisors\/science_industrial\.pcx'\]/,
+    'Expected save-time Industrial Science Advisor writes to prefer the scenario-used new PCX filename and fall back to the base filename'
   );
   assert.match(
     source,

@@ -24144,7 +24144,7 @@ function createTechIdentityPicker(field, onChange, undoKey = '') {
 const TECH_TREE_ERA_BACKGROUND_CANDIDATES = {
   0: ['Art/Advisors/science_ancient.pcx'],
   1: ['Art/Advisors/science_middle.pcx'],
-  2: ['Art/Advisors/science_industrial.pcx'],
+  2: ['Art/Advisors/science_industrial_new.pcx', 'Art/Advisors/science_industrial.pcx'],
   3: ['Art/Advisors/science_modern.pcx']
 };
 const TECH_TREE_TECHBOX_CANDIDATES = ['Art/Advisors/techboxes.pcx'];
