@@ -1,7 +1,6 @@
 * RELEASE 27.15
 - Restored Industrial Science Advisor lookups to prefer `Art/Advisors/science_industrial_new.pcx`, matching common scenario art, while retaining `science_industrial.pcx` as fallback.
 - Restored fixed Science Advisor frame/shadow pixels from the original PCX after generated-arrow cleanup, using the same inner polygon for every era and scenario.
-- Scoped the local Conquests unit-resolution baseline assertions to the curated CCM3 and Tides of Crimson scenarios, so adding unrelated local scenarios no longer breaks the fixture-drift test while the broad resolution smoke check still scans them.
 - Persisted exact generated Tech Tree arrow route snapshots in the scenario-local sidecar so reopened Science Advisor previews match the saved PCX instead of recomputing slightly different routes.
 - Added background quality warnings for dangerous scenario-local Civilopedia/PediaIcons shapes, including damaged `#HomelessIcons`, LF-only text files, suspiciously tiny overrides, and missing fallback EraSplash sections that can cause Firaxis editor freezes or in-game crashes.
 - Documented the shared Save, Undo, and Undo All synchronization contract for the main UI and modal headers, including dirty badges, side-channel dirty state, and modal restore behavior.
@@ -18,8 +17,6 @@
 - Changed Tech Tree generated-arrow handles so previously saved scenario arrow metadata makes routes editable immediately when reopening that era.
 - Improved generated Science Advisor arrow erasing near advisor-frame edges so cleared old arrows are filled from matching local background instead of smearing nearby frame texture into the parchment.
 - Fixed generated Science Advisor arrow erasing so isolated fringe-colored background pixels are not cleared merely because they are near a real arrow.
-- Improved generated Science Advisor arrow erasing so stock Industrial pale arrow shadows and CCM3 dotted red arrow residue are removed without clearing ordinary frame or parchment texture.
-- Improved generated Science Advisor arrow erasing for root vanilla Modern pale blue arrow shadows and CCM3 dotted olive residue, including diagonal supported remnants.
 - Grouped Tech Tree header controls into soft Scope, Display, Layout, and Background Arrows sections for easier scanning.
 - Made the Tech Tree modal header more compact by removing redundant helper text and moving the live coordinate readout into the tree stage.
 - Synced modal Save, Undo, and Undo All enablement so modal Save cannot be active when the matching modal Undo action is inactive, and Undo/Undo All now share the same undoable-state predicate.
