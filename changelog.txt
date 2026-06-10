@@ -1,4 +1,7 @@
 * RELEASE 27.15
+- Added a Background Arrows `Snap drag` toggle so arrow route handles can either snap to nearby route axes or drag freely for more granular placement.
+- Kept Tech Tree modal Undo and Undo All on the currently viewed era, so reverting moved tech boxes restores data and arrow mode without navigating to a different era.
+- Kept untouched scenario Tech Tree eras on the original Science Advisor PCX arrows until the user edits that era, while still enabling generated-arrow handles immediately for eras loaded from the scenario arrow metadata sidecar.
 - Removed faint stock Ancient Science Advisor pale scratch remnants by filling small holes inside cleared arrow masks and avoiding same-color replacement fills for those masked pixels.
 - Restored broad generated Science Advisor arrow cleanup for stock and scenario backgrounds while keeping protected frame/chrome pixels out of the erase mask.
 - Protected fixed Science Advisor frame/chrome regions from generated-arrow cleanup so stock and scenario backgrounds keep border texture while still removing old arrow remnants in the tech graph.

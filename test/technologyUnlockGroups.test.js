@@ -165,13 +165,23 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /const hasKnownScienceAdvisorArrowRoutesForEra = \(\) => \{[\s\S]*?const prefix = `\$\{eraDirtyKey\}:`;[\s\S]*?state\.techTreeArrowRouteOverrides[\s\S]*?state\.techTreeArrowBaselineRouteHints[\s\S]*?\};[\s\S]*?const isAutoArrowPreviewActive = \(\) => autoArrowCheck\.checked === true && \([\s\S]*?state\.techTreeArrowArtDirtyByEra\[eraDirtyKey\][\s\S]*?\|\| hasKnownScienceAdvisorArrowRoutesForEra\(\)/,
-    'Expected saved scenario arrow metadata to make route handles available before an era is dirty'
+    /const hasLoadedScienceAdvisorArrowMetadataForEra = \(\) => !!\([\s\S]*?state\.techTreeArrowMetadataEraKeys[\s\S]*?state\.techTreeArrowMetadataEraKeys\[eraDirtyKey\][\s\S]*?\);[\s\S]*?const isAutoArrowPreviewActive = \(\) => autoArrowCheck\.checked === true && \([\s\S]*?state\.techTreeArrowArtDirtyByEra\[eraDirtyKey\][\s\S]*?\|\| hasLoadedScienceAdvisorArrowMetadataForEra\(\)/,
+    'Expected saved scenario arrow metadata, not transient route hints, to make route handles available before an era is dirty'
+  );
+  assert.match(
+    source,
+    /function applyLoadedScienceAdvisorArrowMetadata\(metadata\) \{[\s\S]*?state\.techTreeArrowMetadataEraKeys = source\.exists[\s\S]*?getScienceAdvisorArrowMetadataEraKeysFromMaps\(state\.techTreeArrowBaselineRouteHints, state\.techTreeArrowRouteOverrides\)[\s\S]*?: \{\};/,
+    'Expected scenario arrow metadata eras to be tracked only when the sidecar exists'
   );
   assert.match(
     source,
     /techTreeArrowDirtyEras: shouldUpdateScienceAdvisorArrows \? techTreeArrowDirtyEras : \[\]/,
     'Expected generated Science Advisor arrow saves to carry the exact dirty eras instead of regenerating every era'
+  );
+  assert.match(
+    source,
+    /const scienceAdvisorArrowMetadataEraKeys = shouldUpdateScienceAdvisorArrows[\s\S]*?getScienceAdvisorArrowMetadataEraKeysForSave\(techTreeArrowDirtyEras\)[\s\S]*?techTreeArrowRouteOverrides: shouldUpdateScienceAdvisorArrows[\s\S]*?filterScienceAdvisorArrowMetadataMapByEra\(state\.techTreeArrowRouteOverrides \|\| \{\}, scienceAdvisorArrowMetadataEraKeys\)[\s\S]*?techTreeArrowBaselineRouteHints: shouldUpdateScienceAdvisorArrows[\s\S]*?filterScienceAdvisorArrowMetadataMapByEra\(state\.techTreeArrowBaselineRouteHints \|\| \{\}, scienceAdvisorArrowMetadataEraKeys\)/,
+    'Expected scenario arrow metadata saves to exclude route caches for untouched, non-metadata eras'
   );
   assert.match(
     indexHtml,
@@ -185,8 +195,23 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /function snapshotTechTreeArrowStyleState\(\) \{[\s\S]*?kind: 'tech-tree-arrow-style'[\s\S]*?scienceAdvisorArrowStyle: getScienceAdvisorArrowStyleSnapshotValue\(\)[\s\S]*?techTreeArrowArtDirtyByEra: deepCloneUiValue\(state\.techTreeArrowArtDirtyByEra \|\| \{\}\)/,
-    'Expected Tech Tree arrow style settings to have a dedicated undo snapshot'
+    /2: \['Art\/Advisors\/science_industrial\.pcx'\]/,
+    'Expected Industrial Science Advisor writes to target the game-recognized base PCX filename'
+  );
+  assert.match(
+    configCore,
+    /\['Art\/Advisors\/science_industrial\.pcx'\]/,
+    'Expected save-time Industrial Science Advisor writes to use the game-recognized base PCX filename'
+  );
+  assert.doesNotMatch(
+    `${source}\n${configCore}`,
+    /science_industrial_new\.pcx/,
+    'Expected Science Advisor paths to avoid non-game Industrial advisor filenames'
+  );
+  assert.match(
+    source,
+    /function snapshotTechTreeArrowStyleState\(\) \{[\s\S]*?kind: 'tech-tree-arrow-style'[\s\S]*?scienceAdvisorArrowStyle: getScienceAdvisorArrowStyleSnapshotValue\(\)[\s\S]*?techTreeArrowArtDirtyByEra: deepCloneUiValue\(state\.techTreeArrowArtDirtyByEra \|\| \{\}\)[\s\S]*?techTreeArrowMetadataEraKeys: deepCloneUiValue\(state\.techTreeArrowMetadataEraKeys \|\| \{\}\)/,
+    'Expected Tech Tree arrow style settings and metadata-backed visual mode to have a dedicated undo snapshot'
   );
   assert.match(
     source,
@@ -215,8 +240,18 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /updateRouteOverridePoint\(edgeObj, drag\.pointIndex, drag\.latest, \{[\s\S]*?bypass: drag\.bypassSnap,[\s\S]*?routes: allEdges\.map\(\(candidateEdge\) => candidateEdge && candidateEdge\.route\)\.filter\(Boolean\)[\s\S]*?\}\)[\s\S]*?drag\.bypassSnap = !!moveEv\.altKey;/,
-    'Expected Alt/Option-drag to bypass route-handle snap when precision is needed'
+    /const isArrowRouteSnapEnabled = \(\) => !\(state\.settings && state\.settings\.scienceAdvisorArrowRouteSnap === false\);[\s\S]*?snapArrowText\.textContent = 'Snap drag'[\s\S]*?state\.settings\.scienceAdvisorArrowRouteSnap = snapArrowCheck\.checked === true;/,
+    'Expected Background Arrows to expose a persisted route-handle snap toggle'
+  );
+  assert.match(
+    source,
+    /updateRouteOverridePoint\(edgeObj, drag\.pointIndex, drag\.latest, \{[\s\S]*?bypass: drag\.bypassSnap,[\s\S]*?routes: allEdges\.map\(\(candidateEdge\) => candidateEdge && candidateEdge\.route\)\.filter\(Boolean\)[\s\S]*?\}\)[\s\S]*?drag\.bypassSnap = !isArrowRouteSnapEnabled\(\) \|\| !!moveEv\.altKey;/,
+    'Expected Alt/Option-drag and the snap toggle to bypass route-handle snap when precision is needed'
+  );
+  assert.match(
+    source,
+    /if \(typeof state\.settings\.scienceAdvisorArrowRouteSnap !== 'boolean'\) \{[\s\S]*?state\.settings\.scienceAdvisorArrowRouteSnap = true;[\s\S]*?\}/,
+    'Expected route-handle snapping to default on for existing users'
   );
   assert.match(
     source,
@@ -235,12 +270,22 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
+    /initialCivFilter = '',[\s\S]*?initialEra = null[\s\S]*?const requestedInitialEra = Number\.parseInt\(String\(initialEra\), 10\);[\s\S]*?const resolvedInitialEra = Number\.isFinite\(requestedInitialEra\) \? requestedInitialEra : selectedEraFromTech;[\s\S]*?eraSelect\.value = hasEra \? String\(resolvedInitialEra\)/,
+    'Expected Tech Tree modal rebuilds to support preserving the viewed era separately from the selected/restored tech'
+  );
+  assert.match(
+    source,
+    /const preservedEra = getTechTreeModalPreservedEra\(modalConfig\);[\s\S]*?await undoOneStep\(\{ suppressTechTreeModalRefresh: true \}\);[\s\S]*?reopenTechTreeModalAfterUndo\(modalConfig, preservedEra\);[\s\S]*?await undoAllChanges\(\{ suppressTechTreeModalRefresh: true \}\);[\s\S]*?reopenTechTreeModalAfterUndo\(modalConfig, preservedEra\);/,
+    'Expected Tech Tree modal Undo and Undo All to preserve the current era instead of navigating to the restored tech era'
+  );
+  assert.match(
+    source,
     /const isTechTreeOpen = !!\([\s\S]*?techTreeModal\.node[\s\S]*?!techTreeModal\.node\.classList\.contains\('hidden'\)[\s\S]*?activeTab === 'technologies'[\s\S]*?\);[\s\S]*?techTreeModalOpen: isTechTreeOpen,[\s\S]*?if \(\(!snapshot\.techTreeModalOpen \|\| state\.activeTab !== 'technologies'\) && techTreeModal\.node\) \{[\s\S]*?closeTechTreeModal\(\{ skipActiveTabRefresh: true \}\);[\s\S]*?\}[\s\S]*?if \(snapshot\.techTreeModalOpen && state\.activeTab === 'technologies'\) \{[\s\S]*?reopenTechTreeModalForCurrentState\(\);/,
     'Expected navigation history to restore an open Tech Tree modal'
   );
   assert.match(
     source,
-    /async function undoAllChanges\(\) \{[\s\S]*?commitAllTrackedEditSessions\(\);[\s\S]*?recomputeDirtyStateFromBundle\(\);[\s\S]*?if \(!state\.bundle \|\| !hasEffectiveUnsavedChanges\(\)\)/,
+    /async function undoAllChanges\(options = \{\}\) \{[\s\S]*?commitAllTrackedEditSessions\(\);[\s\S]*?recomputeDirtyStateFromBundle\(\);[\s\S]*?if \(!state\.bundle \|\| !hasEffectiveUnsavedChanges\(\)\)/,
     'Expected Undo All to recompute dirty state after committing pending edits'
   );
   assert.ok(source.includes("if (/\\.pcx$/i.test(pathValue)) return 'artPcx';"), 'Expected Files modal to classify PCX art files');
