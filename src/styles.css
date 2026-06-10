@@ -611,9 +611,8 @@ textarea {
 }
 
 .refresh-btn {
-  font-size: 1.8rem;
+  font-size: 1.4rem;
   font-weight: 300;
-  padding-bottom: 6px;
 }
 
 .nav-btn:hover:not(:disabled) {

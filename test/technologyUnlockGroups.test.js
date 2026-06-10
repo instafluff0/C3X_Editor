@@ -170,7 +170,7 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /function applyLoadedScienceAdvisorArrowMetadata\(metadata\) \{[\s\S]*?state\.techTreeArrowMetadataEraKeys = source\.exists[\s\S]*?getScienceAdvisorArrowMetadataEraKeysFromMaps\(state\.techTreeArrowBaselineRouteHints, state\.techTreeArrowRouteOverrides\)[\s\S]*?: \{\};/,
+    /function applyLoadedScienceAdvisorArrowMetadata\(metadata\) \{[\s\S]*?state\.techTreeArrowRouteSnapshots = getScienceAdvisorArrowMetadataSnapshotValue\(source\.routeSnapshots \|\| \{\}\);[\s\S]*?state\.techTreeArrowMetadataEraKeys = source\.exists[\s\S]*?getScienceAdvisorArrowMetadataEraKeysFromMaps\(state\.techTreeArrowBaselineRouteHints, state\.techTreeArrowRouteOverrides, state\.techTreeArrowRouteSnapshots\)[\s\S]*?: \{\};/,
     'Expected scenario arrow metadata eras to be tracked only when the sidecar exists'
   );
   assert.match(
@@ -180,7 +180,7 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /const scienceAdvisorArrowMetadataEraKeys = shouldUpdateScienceAdvisorArrows[\s\S]*?getScienceAdvisorArrowMetadataEraKeysForSave\(techTreeArrowDirtyEras\)[\s\S]*?techTreeArrowRouteOverrides: shouldUpdateScienceAdvisorArrows[\s\S]*?filterScienceAdvisorArrowMetadataMapByEra\(state\.techTreeArrowRouteOverrides \|\| \{\}, scienceAdvisorArrowMetadataEraKeys\)[\s\S]*?techTreeArrowBaselineRouteHints: shouldUpdateScienceAdvisorArrows[\s\S]*?filterScienceAdvisorArrowMetadataMapByEra\(state\.techTreeArrowBaselineRouteHints \|\| \{\}, scienceAdvisorArrowMetadataEraKeys\)/,
+    /const scienceAdvisorArrowMetadataEraKeys = shouldUpdateScienceAdvisorArrows[\s\S]*?getScienceAdvisorArrowMetadataEraKeysForSave\(techTreeArrowDirtyEras\)[\s\S]*?techTreeArrowRouteOverrides: shouldUpdateScienceAdvisorArrows[\s\S]*?filterScienceAdvisorArrowMetadataMapByEra\(state\.techTreeArrowRouteOverrides \|\| \{\}, scienceAdvisorArrowMetadataEraKeys\)[\s\S]*?techTreeArrowRouteSnapshots: shouldUpdateScienceAdvisorArrows[\s\S]*?filterScienceAdvisorArrowMetadataMapByEra\(state\.techTreeArrowRouteSnapshots \|\| \{\}, scienceAdvisorArrowMetadataEraKeys\)[\s\S]*?techTreeArrowBaselineRouteHints: shouldUpdateScienceAdvisorArrows[\s\S]*?filterScienceAdvisorArrowMetadataMapByEra\(state\.techTreeArrowBaselineRouteHints \|\| \{\}, scienceAdvisorArrowMetadataEraKeys\)/,
     'Expected scenario arrow metadata saves to exclude route caches for untouched, non-metadata eras'
   );
   assert.match(

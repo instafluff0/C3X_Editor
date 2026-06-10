@@ -48,6 +48,15 @@ const SCIENCE_ADVISOR_ARROW_COLOR_PROFILES = {
   }
 };
 
+const SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON = [
+  { x: 86, y: 89 },
+  { x: 800, y: 89 },
+  { x: 800, y: 238 },
+  { x: 959, y: 238 },
+  { x: 959, y: 690 },
+  { x: 86, y: 690 }
+];
+
 function cloneArrowRgb(color) {
   return {
     r: Number(color && color.r) || 0,
@@ -907,6 +916,53 @@ function clearScienceAdvisorArrowPixelsRgba({ rgba, width, height, bounds }) {
   }
 }
 
+function isPointInsideScienceAdvisorFrameRestorePolygon(x, y) {
+  const px = Number(x) + 0.5;
+  const py = Number(y) + 0.5;
+  let inside = false;
+  for (let i = 0, j = SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON.length - 1; i < SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON.length; j = i, i += 1) {
+    const a = SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON[i];
+    const b = SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON[j];
+    const intersects = ((a.y > py) !== (b.y > py))
+      && (px < ((b.x - a.x) * (py - a.y) / ((b.y - a.y) || 1)) + a.x);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function shouldRestoreScienceAdvisorFramePixel(x, y) {
+  return !isPointInsideScienceAdvisorFrameRestorePolygon(x, y);
+}
+
+function restoreScienceAdvisorFramePixelsIndexed({ indices, sourceIndices, width, height }) {
+  if (!indices || !sourceIndices || !width || !height) return;
+  const total = Math.min(indices.length, sourceIndices.length, Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0));
+  for (let offset = 0; offset < total; offset += 1) {
+    const x = offset % width;
+    const y = Math.floor(offset / width);
+    if (shouldRestoreScienceAdvisorFramePixel(x, y)) indices[offset] = sourceIndices[offset];
+  }
+}
+
+function restoreScienceAdvisorFramePixelsRgba({ rgba, sourceRgba, width, height }) {
+  if (!rgba || !sourceRgba || !width || !height) return;
+  const totalPixels = Math.min(
+    Math.floor(rgba.length / 4),
+    Math.floor(sourceRgba.length / 4),
+    Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0)
+  );
+  for (let pixel = 0; pixel < totalPixels; pixel += 1) {
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    if (!shouldRestoreScienceAdvisorFramePixel(x, y)) continue;
+    const off = pixel * 4;
+    rgba[off] = sourceRgba[off];
+    rgba[off + 1] = sourceRgba[off + 1];
+    rgba[off + 2] = sourceRgba[off + 2];
+    rgba[off + 3] = sourceRgba[off + 3];
+  }
+}
+
 function setIndexedPixel(indices, width, height, x, y, paletteIndex) {
   const ix = Math.round(x);
   const iy = Math.round(y);
@@ -1232,6 +1288,8 @@ return {
   isScienceAdvisorArrowResidueColor,
   clearScienceAdvisorArrowPixelsIndexed,
   clearScienceAdvisorArrowPixelsRgba,
+  restoreScienceAdvisorFramePixelsIndexed,
+  restoreScienceAdvisorFramePixelsRgba,
   drawScienceAdvisorRouteIndexed,
   drawScienceAdvisorRoutesIndexed,
   drawScienceAdvisorRouteRgba,

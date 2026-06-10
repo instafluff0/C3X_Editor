@@ -782,7 +782,7 @@ test('auditLoadedBundle warns about damaged scenario PediaIcons HomelessIcons be
   assert.match(result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-homeless-damaged').message, /Firaxis Conquests editor can freeze/);
 });
 
-test('auditLoadedBundle warns when scenario text overrides are missing fallback EraSplash and spaceship content', () => {
+test('auditLoadedBundle warns when scenario text overrides are missing fallback EraSplash or look suspiciously small', () => {
   const civ3Root = mkTmpDir();
   const scenarioRoot = mkTmpDir();
   const fallbackPediaIcons = path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt');
@@ -806,19 +806,15 @@ test('auditLoadedBundle warns when scenario text overrides are missing fallback 
   });
 
   const result = auditLoadedBundle(bundle);
-  const codes = new Set(result.tabs.civilizations.general.map((entry) => entry.code));
-  assert.equal(codes.has('scenario-pediaicons-era-splash-missing'), true);
-  assert.equal(codes.has('scenario-pediaicons-spaceship-icons-missing'), true);
-  assert.equal(codes.has('scenario-pediaicons-suspiciously-small'), true);
-  assert.equal(codes.has('scenario-civilopedia-spaceship-articles-missing'), true);
-  assert.equal(codes.has('scenario-civilopedia-suspiciously-small'), true);
+  const codes = result.tabs.civilizations.general.map((entry) => entry.code).sort();
+  assert.deepEqual(codes, [
+    'scenario-civilopedia-suspiciously-small',
+    'scenario-pediaicons-era-splash-missing',
+    'scenario-pediaicons-suspiciously-small'
+  ]);
   assert.match(
     result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-era-splash-missing').message,
     /crash the game on era transitions/
-  );
-  assert.match(
-    result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-spaceship-icons-missing').message,
-    /crash the Spaceship screen/
   );
 });
 

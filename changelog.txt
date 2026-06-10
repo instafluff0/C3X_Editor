@@ -1,5 +1,8 @@
 * RELEASE 27.15
-- Added background quality warnings for dangerous scenario-local Civilopedia/PediaIcons shapes, including damaged `#HomelessIcons`, LF-only text files, suspiciously tiny overrides, and missing fallback EraSplash/spaceship sections that can cause Firaxis editor freezes or in-game crashes.
+- Restored fixed Science Advisor frame/shadow pixels from the original PCX after generated-arrow cleanup, using the same inner polygon for every era and scenario.
+- Scoped the local Conquests unit-resolution baseline assertions to the curated CCM3 and Tides of Crimson scenarios, so adding unrelated local scenarios no longer breaks the fixture-drift test while the broad resolution smoke check still scans them.
+- Persisted exact generated Tech Tree arrow route snapshots in the scenario-local sidecar so reopened Science Advisor previews match the saved PCX instead of recomputing slightly different routes.
+- Added background quality warnings for dangerous scenario-local Civilopedia/PediaIcons shapes, including damaged `#HomelessIcons`, LF-only text files, suspiciously tiny overrides, and missing fallback EraSplash sections that can cause Firaxis editor freezes or in-game crashes.
 - Documented the shared Save, Undo, and Undo All synchronization contract for the main UI and modal headers, including dirty badges, side-channel dirty state, and modal restore behavior.
 - Fixed Tech Tree Auto-Position Undo so the main Save and Undo All buttons and Technologies dirty badges refresh after modal Undo returns the tree to its clean state.
 - Fixed Tech Tree Auto-Position Undo so technology dirty badges are recomputed from restored X/Y data instead of leaving stale row badges behind.

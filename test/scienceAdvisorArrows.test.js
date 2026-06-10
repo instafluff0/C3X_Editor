@@ -168,6 +168,15 @@ test('Science Advisor arrow metadata loads scenario-local route overrides', () =
         ]
       }
     },
+    routeSnapshots: {
+      '0:1->2': {
+        points: [
+          { x: 18.2, y: 22.8 },
+          { x: 44.6, y: 22.1 },
+          { x: 90.1, y: 28.9 }
+        ]
+      }
+    },
     baselineRouteHints: {
       '0:1->2': {
         sourceSide: 'right',
@@ -195,6 +204,15 @@ test('Science Advisor arrow metadata loads scenario-local route overrides', () =
       ]
     }
   });
+  assert.deepEqual(metadata.routeSnapshots, {
+    '0:1->2': {
+      points: [
+        { x: 18, y: 23 },
+        { x: 45, y: 22 },
+        { x: 90, y: 29 }
+      ]
+    }
+  });
   assert.deepEqual(metadata.baselineRouteHints, {
     '0:1->2': {
       sourceSide: 'right',
@@ -218,6 +236,15 @@ test('Science Advisor arrow metadata write is editor-only scenario sidecar JSON'
         ]
       }
     },
+    routeSnapshots: {
+      '2:10->11': {
+        points: [
+          { x: 22.4, y: 34.5 },
+          { x: 55.7, y: 34.2 },
+          { x: 66.2, y: 52.8 }
+        ]
+      }
+    },
     baselineRouteHints: {
       '2:10->11': {
         sourceSide: 'bottom',
@@ -237,6 +264,11 @@ test('Science Advisor arrow metadata write is editor-only scenario sidecar JSON'
   assert.deepEqual(parsed.routeOverrides['2:10->11'].points, [
     { x: 20, y: 31 },
     { x: 45, y: 52 }
+  ]);
+  assert.deepEqual(parsed.routeSnapshots['2:10->11'].points, [
+    { x: 22, y: 35 },
+    { x: 56, y: 34 },
+    { x: 66, y: 53 }
   ]);
   assert.equal(parsed.baselineRouteHints['2:10->11'].horizontalTolerance, 18);
 });
@@ -542,6 +574,34 @@ test('Science Advisor arrow clearing preserves stock Industrial outer chrome pix
   assert.ok(checked > 1000, 'Expected stock Industrial outer chrome regression coverage');
 });
 
+test('Science Advisor frame restore copies fixed outside-polygon pixels only', () => {
+  const width = 1024;
+  const height = 768;
+  const size = width * height;
+  const source = new Uint8Array(size).fill(7);
+  const target = new Uint8Array(size).fill(3);
+  const topStepOutside = (150 * width) + 850;
+  const rightFrameOutside = (400 * width) + 990;
+  const interior = (300 * width) + 850;
+  source[topStepOutside] = 21;
+  source[rightFrameOutside] = 22;
+  source[interior] = 23;
+  target[topStepOutside] = 31;
+  target[rightFrameOutside] = 32;
+  target[interior] = 33;
+
+  scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed({
+    indices: target,
+    sourceIndices: source,
+    width,
+    height
+  });
+
+  assert.equal(target[topStepOutside], 21);
+  assert.equal(target[rightFrameOutside], 22);
+  assert.equal(target[interior], 33);
+});
+
 test('Science Advisor arrow clearing removes stock Industrial pale arrow shadow remnants', (t) => {
   if (!fs.existsSync(STOCK_SCIENCE_INDUSTRIAL_PCX)) {
     t.skip('Stock Industrial Science Advisor art is not installed');
@@ -779,6 +839,43 @@ test('Science Advisor route builder uses cached router baseline hints until an e
     baselineRouteHints,
     dirtyEdgesByEra: { 0: { [routeKey]: true } }
   })[0];
+  assert.equal(Math.round(recomputed.points[0].x), source.x + source.w);
+  assert.equal(Math.round(recomputed.points[recomputed.points.length - 1].x), target.x);
+});
+
+test('Science Advisor route builder reuses exact route snapshots until an edge is dirty', () => {
+  const source = { id: 0, era: 0, x: 10, y: 10, w: 12, h: 12, prereqs: [] };
+  const target = { id: 1, era: 0, x: 50, y: 10, w: 12, h: 12, prereqs: [0] };
+  const nodes = [source, target];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const routeKey = '0:0->1';
+  const routeSnapshots = {
+    [routeKey]: {
+      points: [
+        { x: 22, y: 16 },
+        { x: 35, y: 16 },
+        { x: 35, y: 5 },
+        { x: 50, y: 5 }
+      ]
+    }
+  };
+
+  const inherited = buildScienceAdvisorArrowRoutesForEra({
+    nodes,
+    byId,
+    eraIndex: 0,
+    routeSnapshots
+  })[0];
+  assert.deepEqual(inherited.points, routeSnapshots[routeKey].points);
+
+  const recomputed = buildScienceAdvisorArrowRoutesForEra({
+    nodes,
+    byId,
+    eraIndex: 0,
+    routeSnapshots,
+    dirtyEdgesByEra: { 0: { [routeKey]: true } }
+  })[0];
+  assert.notDeepEqual(recomputed.points, routeSnapshots[routeKey].points);
   assert.equal(Math.round(recomputed.points[0].x), source.x + source.w);
   assert.equal(Math.round(recomputed.points[recomputed.points.length - 1].x), target.x);
 });

@@ -1381,15 +1381,6 @@ function collectPediaIconsKeys(doc, predicate) {
   return keys;
 }
 
-function collectCivilopediaKeys(doc, predicate) {
-  const keys = new Set();
-  (Array.isArray(doc && doc.items) ? doc.items : []).forEach((item) => {
-    const key = String(item && item.key || '').trim().toUpperCase();
-    if (key && (!predicate || predicate(key))) keys.add(key);
-  });
-  return keys;
-}
-
 function missingCountFromFallback(scenarioKeys, fallbackKeys) {
   let missing = 0;
   fallbackKeys.forEach((key) => {
@@ -1463,19 +1454,11 @@ function collectScenarioTextHealthIssues(paths) {
       const fallbackDoc = parsePediaIconsDocumentWithOrder(fallbackText);
       const scenarioKeys = collectPediaIconsKeys(scenarioDoc);
       const fallbackEraSplashKeys = collectPediaIconsKeys(fallbackDoc, (key) => key.startsWith('ERA_SPLASH_'));
-      const fallbackSpaceshipKeys = collectPediaIconsKeys(fallbackDoc, (key) => key.startsWith('ICON_SS_'));
       const missingEraSplash = missingCountFromFallback(scenarioKeys, fallbackEraSplashKeys);
-      const missingSpaceship = missingCountFromFallback(scenarioKeys, fallbackSpaceshipKeys);
       if (missingEraSplash > 0) {
         issues.push({
           code: 'scenario-pediaicons-era-splash-missing',
           message: `Scenario PediaIcons.txt is missing ${missingEraSplash} stock EraSplash block(s) that exist in the fallback PediaIcons.txt. This can crash the game on era transitions; saving after a relevant edit with this version preserves/restores fallback text instead of creating a tiny override.`
-        });
-      }
-      if (missingSpaceship > 0) {
-        issues.push({
-          code: 'scenario-pediaicons-spaceship-icons-missing',
-          message: `Scenario PediaIcons.txt is missing ${missingSpaceship} stock spaceship icon block(s) that exist in the fallback PediaIcons.txt. This can crash the Spaceship screen; saving after a relevant edit with this version preserves/restores fallback text instead of creating a tiny override.`
         });
       }
       if (hasSuspiciousTextOverrideSize(scenarioDoc, fallbackDoc)) {
@@ -1500,18 +1483,6 @@ function collectScenarioTextHealthIssues(paths) {
     if (paths.civilopediaFallback) {
       const fallbackText = readAuditTextFile(paths.civilopediaFallback);
       const fallbackDoc = parseCivilopediaDocumentWithOrder(fallbackText);
-      const scenarioKeys = collectCivilopediaKeys(scenarioDoc);
-      const fallbackSpaceshipKeys = collectCivilopediaKeys(
-        fallbackDoc,
-        (key) => /^DESC_BLDG_SS_|^BLDG_SS_/.test(key)
-      );
-      const missingSpaceship = missingCountFromFallback(scenarioKeys, fallbackSpaceshipKeys);
-      if (missingSpaceship > 0) {
-        issues.push({
-          code: 'scenario-civilopedia-spaceship-articles-missing',
-          message: `Scenario Civilopedia.txt is missing ${missingSpaceship} stock spaceship article section(s) that exist in the fallback Civilopedia.txt. This can crash related in-game screens; saving after a relevant Civilopedia edit with this version preserves/restores fallback text instead of creating a tiny override.`
-        });
-      }
       if (hasSuspiciousTextOverrideSize(scenarioDoc, fallbackDoc)) {
         issues.push({
           code: 'scenario-civilopedia-suspiciously-small',

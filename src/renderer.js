@@ -126,11 +126,13 @@ const state = {
   techTreeArrowDirtyEdgesByEra: {},
   techTreeArrowBaselineRouteHints: {},
   techTreeArrowRouteOverrides: {},
+  techTreeArrowRouteSnapshots: {},
   techTreeArrowMetadataEraKeys: {},
   techTreeSelectedArrowKey: '',
   cleanScienceAdvisorArrowStyle: null,
   cleanTechTreeArrowBaselineRouteHints: {},
   cleanTechTreeArrowRouteOverrides: {},
+  cleanTechTreeArrowRouteSnapshots: {},
   cleanTechTreeArrowMetadataEraKeys: {},
   biqMapZoom: 6,
   biqMapLayer: 'terrain',
@@ -2559,6 +2561,7 @@ function cloneUndoSnapshotEntry(entry) {
       techTreeArrowDirtyEdgesByEra: deepCloneUiValue(entry.techTreeArrowDirtyEdgesByEra || {}),
       techTreeArrowBaselineRouteHints: deepCloneUiValue(entry.techTreeArrowBaselineRouteHints || {}),
       techTreeArrowRouteOverrides: deepCloneUiValue(entry.techTreeArrowRouteOverrides || {}),
+      techTreeArrowRouteSnapshots: deepCloneUiValue(entry.techTreeArrowRouteSnapshots || {}),
       techTreeArrowMetadataEraKeys: deepCloneUiValue(entry.techTreeArrowMetadataEraKeys || {}),
       techTreeSelectedArrowKey: String(entry.techTreeSelectedArrowKey || '')
     };
@@ -2703,8 +2706,9 @@ function applyLoadedScienceAdvisorArrowMetadata(metadata) {
   const source = metadata && typeof metadata === 'object' ? metadata : {};
   state.techTreeArrowBaselineRouteHints = getScienceAdvisorArrowMetadataSnapshotValue(source.baselineRouteHints || {});
   state.techTreeArrowRouteOverrides = getScienceAdvisorArrowMetadataSnapshotValue(source.routeOverrides || {});
+  state.techTreeArrowRouteSnapshots = getScienceAdvisorArrowMetadataSnapshotValue(source.routeSnapshots || {});
   state.techTreeArrowMetadataEraKeys = source.exists
-    ? getScienceAdvisorArrowMetadataEraKeysFromMaps(state.techTreeArrowBaselineRouteHints, state.techTreeArrowRouteOverrides)
+    ? getScienceAdvisorArrowMetadataEraKeysFromMaps(state.techTreeArrowBaselineRouteHints, state.techTreeArrowRouteOverrides, state.techTreeArrowRouteSnapshots)
     : {};
   state.techTreeSelectedArrowKey = '';
 }
@@ -2713,6 +2717,7 @@ function captureCleanScienceAdvisorArrowStyle() {
   state.cleanScienceAdvisorArrowStyle = getScienceAdvisorArrowStyleSnapshotValue();
   state.cleanTechTreeArrowBaselineRouteHints = getScienceAdvisorArrowMetadataSnapshotValue(state.techTreeArrowBaselineRouteHints || {});
   state.cleanTechTreeArrowRouteOverrides = getScienceAdvisorArrowMetadataSnapshotValue(state.techTreeArrowRouteOverrides || {});
+  state.cleanTechTreeArrowRouteSnapshots = getScienceAdvisorArrowMetadataSnapshotValue(state.techTreeArrowRouteSnapshots || {});
   state.cleanTechTreeArrowMetadataEraKeys = getScienceAdvisorArrowMetadataSnapshotValue(state.techTreeArrowMetadataEraKeys || {});
 }
 
@@ -2733,6 +2738,7 @@ function snapshotTechTreeArrowStyleState() {
     techTreeArrowDirtyEdgesByEra: deepCloneUiValue(state.techTreeArrowDirtyEdgesByEra || {}),
     techTreeArrowBaselineRouteHints: deepCloneUiValue(state.techTreeArrowBaselineRouteHints || {}),
     techTreeArrowRouteOverrides: deepCloneUiValue(state.techTreeArrowRouteOverrides || {}),
+    techTreeArrowRouteSnapshots: deepCloneUiValue(state.techTreeArrowRouteSnapshots || {}),
     techTreeArrowMetadataEraKeys: deepCloneUiValue(state.techTreeArrowMetadataEraKeys || {}),
     techTreeSelectedArrowKey: String(state.techTreeSelectedArrowKey || '')
   };
@@ -2757,6 +2763,7 @@ function restoreTechTreeArrowStyleState(snapshot) {
   state.techTreeArrowDirtyEdgesByEra = deepCloneUiValue(snapshot.techTreeArrowDirtyEdgesByEra || {});
   state.techTreeArrowBaselineRouteHints = deepCloneUiValue(snapshot.techTreeArrowBaselineRouteHints || {});
   state.techTreeArrowRouteOverrides = deepCloneUiValue(snapshot.techTreeArrowRouteOverrides || {});
+  state.techTreeArrowRouteSnapshots = deepCloneUiValue(snapshot.techTreeArrowRouteSnapshots || {});
   state.techTreeArrowMetadataEraKeys = deepCloneUiValue(snapshot.techTreeArrowMetadataEraKeys || {});
   state.techTreeSelectedArrowKey = String(snapshot.techTreeSelectedArrowKey || '');
   persistSettingsForUndoRestore();
@@ -2775,6 +2782,7 @@ function restoreCleanTechTreeArrowStyleState() {
   state.techTreeArrowDirtyEdgesByEra = {};
   state.techTreeArrowBaselineRouteHints = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowBaselineRouteHints || {});
   state.techTreeArrowRouteOverrides = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowRouteOverrides || {});
+  state.techTreeArrowRouteSnapshots = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowRouteSnapshots || {});
   state.techTreeArrowMetadataEraKeys = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowMetadataEraKeys || {});
   state.techTreeSelectedArrowKey = '';
   persistSettingsForUndoRestore();
@@ -6562,10 +6570,12 @@ function clearBundleView() {
   state.techTreeArrowDirtyEdgesByEra = {};
   state.techTreeArrowBaselineRouteHints = {};
   state.techTreeArrowRouteOverrides = {};
+  state.techTreeArrowRouteSnapshots = {};
   state.techTreeArrowMetadataEraKeys = {};
   state.techTreeSelectedArrowKey = '';
   state.cleanTechTreeArrowBaselineRouteHints = {};
   state.cleanTechTreeArrowRouteOverrides = {};
+  state.cleanTechTreeArrowRouteSnapshots = {};
   state.cleanTechTreeArrowMetadataEraKeys = {};
   clearDirtyTabCounts();
   refreshDirtyUi();
@@ -11168,6 +11178,7 @@ function eraseTechTreeBackgroundArrowsFromCanvas(canvas) {
     return;
   }
   const { data, width, height } = image;
+  const sourceRgba = new Uint8ClampedArray(data);
   const x1 = Math.max(0, Math.floor(width * 0.04));
   const y1 = Math.max(0, Math.floor(height * 0.11));
   const x2 = Math.min(width - 1, Math.ceil(width * 0.94));
@@ -11179,6 +11190,14 @@ function eraseTechTreeBackgroundArrowsFromCanvas(canvas) {
       height,
       bounds: { x1, y1, x2, y2 }
     });
+    if (typeof scienceAdvisorArrows.restoreScienceAdvisorFramePixelsRgba === 'function') {
+      scienceAdvisorArrows.restoreScienceAdvisorFramePixelsRgba({
+        rgba: data,
+        sourceRgba,
+        width,
+        height
+      });
+    }
     ctx.putImageData(image, 0, 0);
     return;
   }
@@ -25222,6 +25241,12 @@ function createTechTreePanel({
         removed = true;
       }
     });
+    Object.keys(state.techTreeArrowRouteSnapshots || {}).forEach((key) => {
+      if (key.includes(`:${idText}->`) || key.endsWith(`->${idText}`)) {
+        delete state.techTreeArrowRouteSnapshots[key];
+        removed = true;
+      }
+    });
     if (removed && state.techTreeSelectedArrowKey && !state.techTreeArrowRouteOverrides[state.techTreeSelectedArrowKey]) {
       state.techTreeSelectedArrowKey = '';
     }
@@ -25812,9 +25837,9 @@ function createTechTreePanel({
         normal: { x: 0, y: 1 }
       };
     };
-    const getDisplayOverrideRoute = (key) => {
-      const override = state.techTreeArrowRouteOverrides && state.techTreeArrowRouteOverrides[key];
-      const rawPoints = Array.isArray(override && override.points) ? override.points : [];
+    const getDisplayRouteFromRawMap = (map, key) => {
+      const entry = map && map[key];
+      const rawPoints = Array.isArray(entry && entry.points) ? entry.points : [];
       const points = rawPoints
         .map((point) => ({
           x: (Number(point && point.x) || 0) + activeEraBaseX,
@@ -25830,6 +25855,8 @@ function createTechTreePanel({
         points
       };
     };
+    const getDisplayOverrideRoute = (key) => getDisplayRouteFromRawMap(state.techTreeArrowRouteOverrides || {}, key);
+    const getDisplayRouteSnapshot = (key) => getDisplayRouteFromRawMap(state.techTreeArrowRouteSnapshots || {}, key);
     const setRawOverrideFromDisplayRoute = (key, route) => {
       if (!key || !route || !Array.isArray(route.points) || route.points.length < 2) return;
       if (!state.techTreeArrowRouteOverrides || typeof state.techTreeArrowRouteOverrides !== 'object') {
@@ -25841,6 +25868,23 @@ function createTechTreePanel({
           y: Math.round((Number(point.y) || 0) - activeEraBaseY)
         }))
       };
+    };
+    const setRawSnapshotFromDisplayRoute = (key, route) => {
+      if (!key || !route || !Array.isArray(route.points) || route.points.length < 2) return;
+      if (!state.techTreeArrowRouteSnapshots || typeof state.techTreeArrowRouteSnapshots !== 'object') {
+        state.techTreeArrowRouteSnapshots = {};
+      }
+      state.techTreeArrowRouteSnapshots[key] = {
+        points: route.points.map((point) => ({
+          x: Math.round((Number(point.x) || 0) - activeEraBaseX),
+          y: Math.round((Number(point.y) || 0) - activeEraBaseY)
+        }))
+      };
+    };
+    const cacheRouteSnapshotForEdge = (edgeObj) => {
+      if (!edgeObj || !edgeObj.key || !edgeObj.route || autoArrowCheck.checked !== true) return;
+      if (state.techTreeArrowRouteOverrides && state.techTreeArrowRouteOverrides[edgeObj.key]) return;
+      setRawSnapshotFromDisplayRoute(edgeObj.key, edgeObj.route);
     };
     const removeArrowOverridesForNode = (nodeId) => {
       removeStoredArrowOverridesForNode(nodeId);
@@ -25953,7 +25997,8 @@ function createTechTreePanel({
         ? edgeObj.baselineRouteOptions
         : (edgeObj.routeOptions || {});
       const overrideRoute = getDisplayOverrideRoute(edgeObj.key);
-      const route = overrideRoute || (techBoxLayout && typeof techBoxLayout.buildTechTreeArrowRoute === 'function'
+      const snapshotRoute = !isArrowEdgeDirty(edgeObj.key) ? getDisplayRouteSnapshot(edgeObj.key) : null;
+      const route = overrideRoute || snapshotRoute || (techBoxLayout && typeof techBoxLayout.buildTechTreeArrowRoute === 'function'
         ? techBoxLayout.buildTechTreeArrowRoute(
           {
             x: Number.isFinite(src.vx) ? src.vx : src.x,
@@ -25979,6 +26024,7 @@ function createTechTreePanel({
         )
         : null);
       edgeObj.route = route;
+      cacheRouteSnapshotForEdge(edgeObj);
     };
     const renderArrowHandles = () => {
       while (arrowHandles.firstChild) arrowHandles.removeChild(arrowHandles.firstChild);
@@ -55681,6 +55727,9 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
     techTreeArrowRouteOverrides: shouldUpdateScienceAdvisorArrows
       ? filterScienceAdvisorArrowMetadataMapByEra(state.techTreeArrowRouteOverrides || {}, scienceAdvisorArrowMetadataEraKeys)
       : {},
+    techTreeArrowRouteSnapshots: shouldUpdateScienceAdvisorArrows
+      ? filterScienceAdvisorArrowMetadataMapByEra(state.techTreeArrowRouteSnapshots || {}, scienceAdvisorArrowMetadataEraKeys)
+      : {},
     techTreeArrowDirtyEdgesByEra: shouldUpdateScienceAdvisorArrows
       ? deepCloneUiValue(state.techTreeArrowDirtyEdgesByEra || {})
       : {},
@@ -57599,6 +57648,7 @@ async function undoOneStep(options = {}) {
       state.techTreeArrowDirtyEdgesByEra = {};
       state.techTreeArrowBaselineRouteHints = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowBaselineRouteHints || {});
       state.techTreeArrowRouteOverrides = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowRouteOverrides || {});
+      state.techTreeArrowRouteSnapshots = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowRouteSnapshots || {});
       state.techTreeArrowMetadataEraKeys = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowMetadataEraKeys || {});
       state.techTreeSelectedArrowKey = '';
       refreshDirtyUi();

@@ -198,7 +198,10 @@ function uniqueNormalizedEntries(values) {
 
 function uniqueNormalizedBaselineEntries(values) {
   return uniqueNormalizedEntries(values)
-    .filter((entry) => !entry.startsWith('Scenarios/Fallout/'));
+    .filter((entry) => {
+      return entry.startsWith('Scenarios/CCM3/')
+        || entry.startsWith('Scenarios/Tides of Crimson/');
+    });
 }
 
 test('Conquests unit INI resolution works across base and all scenario folders', () => {

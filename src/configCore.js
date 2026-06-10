@@ -7924,6 +7924,7 @@ function loadScienceAdvisorArrowMetadata(targetContentRoot) {
       path: '',
       exists: false,
       routeOverrides: {},
+      routeSnapshots: {},
       baselineRouteHints: {}
     };
   }
@@ -7942,17 +7943,19 @@ function loadScienceAdvisorArrowMetadata(targetContentRoot) {
     format: parsed && typeof parsed === 'object' ? String(parsed.format || '') : '',
     version: parsed && typeof parsed === 'object' ? Number(parsed.version) || 0 : 0,
     routeOverrides: normalizeScienceAdvisorRouteOverrides(parsed && parsed.routeOverrides),
+    routeSnapshots: normalizeScienceAdvisorRouteOverrides(parsed && parsed.routeSnapshots),
     baselineRouteHints: normalizeScienceAdvisorRouteHints(parsed && parsed.baselineRouteHints)
   };
 }
 
-function buildScienceAdvisorArrowMetadataWrite({ targetContentRoot, routeOverrides = {}, baselineRouteHints = {} }) {
+function buildScienceAdvisorArrowMetadataWrite({ targetContentRoot, routeOverrides = {}, routeSnapshots = {}, baselineRouteHints = {} }) {
   const root = String(targetContentRoot || '').trim();
   if (!root) return null;
   const metadata = {
     format: SCIENCE_ADVISOR_ARROW_METADATA_FORMAT,
     version: 1,
     routeOverrides: normalizeScienceAdvisorRouteOverrides(routeOverrides),
+    routeSnapshots: normalizeScienceAdvisorRouteOverrides(routeSnapshots),
     baselineRouteHints: normalizeScienceAdvisorRouteHints(baselineRouteHints)
   };
   return {
@@ -7960,7 +7963,7 @@ function buildScienceAdvisorArrowMetadataWrite({ targetContentRoot, routeOverrid
     path: path.join(root, SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH),
     data: `${JSON.stringify(metadata, null, 2)}\n`,
     encoding: 'utf8',
-    applied: Object.keys(metadata.routeOverrides).length + Object.keys(metadata.baselineRouteHints).length,
+    applied: Object.keys(metadata.routeOverrides).length + Object.keys(metadata.routeSnapshots).length + Object.keys(metadata.baselineRouteHints).length,
     detail: 'Saved generated Science Advisor arrow routing metadata'
   };
 }
@@ -7977,6 +7980,7 @@ function buildScienceAdvisorArrowRoutesForEra({
   byId,
   eraIndex,
   routeOverrides = {},
+  routeSnapshots = {},
   baselineRouteHints = {},
   dirtyEdgesByEra = {}
 }) {
@@ -8007,6 +8011,18 @@ function buildScienceAdvisorArrowRoutesForEra({
           dir: tip.x >= prev.x ? 1 : -1,
           headVector: { x: tip.x - prev.x, y: tip.y - prev.y },
           points: override
+        };
+      }
+      const snapshot = !dirtyEdgeSet.has(routeKey)
+        ? normalizeScienceAdvisorOverrideRoute(routeSnapshots[routeKey])
+        : null;
+      if (snapshot) {
+        const tip = snapshot[snapshot.length - 1];
+        const prev = snapshot.length > 1 ? snapshot[snapshot.length - 2] : { x: tip.x - 1, y: tip.y };
+        return {
+          dir: tip.x >= prev.x ? 1 : -1,
+          headVector: { x: tip.x - prev.x, y: tip.y - prev.y },
+          points: snapshot
         };
       }
       const baselineHint = !dirtyEdgeSet.has(routeKey)
@@ -8042,6 +8058,7 @@ function prepareScienceAdvisorArrowArtWrites({
   scenarioRoots,
   civ3Path,
   routeOverrides = {},
+  routeSnapshots = {},
   baselineRouteHints = {},
   dirtyEdgesByEra = {},
   dirtyEraIndexes = [],
@@ -8066,6 +8083,7 @@ function prepareScienceAdvisorArrowArtWrites({
       byId,
       eraIndex,
       routeOverrides,
+      routeSnapshots,
       baselineRouteHints,
       dirtyEdgesByEra
     });
@@ -8083,10 +8101,14 @@ function prepareScienceAdvisorArrowArtWrites({
     if (!decoded || !decoded.indices || !decoded.palette || typeof decoded.palette.length !== 'number') return;
     const width = Number(decoded.width) || 0;
     const height = Number(decoded.height) || 0;
-    const indices = Uint8Array.from(decoded.indices);
+    const sourceIndices = decoded.indices;
+    const indices = Uint8Array.from(sourceIndices);
     const bounds = getScienceAdvisorArrowBounds(eraNodes, width, height);
     scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({ indices, palette: decoded.palette, width, height, bounds });
     scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle });
+    if (typeof scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed === 'function') {
+      scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed({ indices, sourceIndices, width, height });
+    }
     const targetPath = path.join(targetContentRoot, relativePath);
     try {
       const data = encodePcx(indices, decoded.palette, width, height);
@@ -9538,6 +9560,7 @@ function buildSavePlan(payload) {
         scenarioRoots: scenarioContext.searchRoots,
         civ3Path,
         routeOverrides: payload.techTreeArrowRouteOverrides || {},
+        routeSnapshots: payload.techTreeArrowRouteSnapshots || {},
         baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {},
         dirtyEdgesByEra: payload.techTreeArrowDirtyEdgesByEra || {},
         dirtyEraIndexes: payload.techTreeArrowDirtyEras || [],
@@ -9565,6 +9588,7 @@ function buildSavePlan(payload) {
       const metadataWrite = buildScienceAdvisorArrowMetadataWrite({
         targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
         routeOverrides: payload.techTreeArrowRouteOverrides || {},
+        routeSnapshots: payload.techTreeArrowRouteSnapshots || {},
         baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {}
       });
       if (metadataWrite) {
