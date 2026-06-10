@@ -373,8 +373,8 @@ test('Tech Tree Auto-Position is wired into undo, dirty state, and save payloads
   );
   assert.match(
     source,
-    /rememberUndoSnapshotForKey\('TECH_TREE_AUTO_POSITION'\);[\s\S]*?setTechFieldInt\(node\.entry, 'x', 'X Position', x\);[\s\S]*?setTechFieldInt\(node\.entry, 'y', 'Y Position', y\);[\s\S]*?setDirty\(true, \{ knownDirtyTab: 'technologies', reason: 'tech-tree-auto-position' \}\);/,
-    'Expected Auto-Position to capture undo before mutating BIQ coordinates and dirty the Technologies tab'
+    /rememberUndoSnapshotForKey\('TECH_TREE_AUTO_POSITION'\);[\s\S]*?setTechFieldInt\(node\.entry, 'x', 'X Position', x\);[\s\S]*?setTechFieldInt\(node\.entry, 'y', 'Y Position', y\);[\s\S]*?setDirty\(true, \{ knownDirtyTab: 'technologies', reason: 'tech-tree-auto-position' \}\);[\s\S]*?rebuildReferenceDirtyCacheForTab\('technologies'\);/,
+    'Expected Auto-Position to capture undo, dirty Technologies, and refresh per-tech dirty badges for every moved tech'
   );
   assert.match(
     source,
@@ -385,6 +385,11 @@ test('Tech Tree Auto-Position is wired into undo, dirty state, and save payloads
     source,
     /if \(isTechTreeAutoPositionSnapshot\) \{[\s\S]*?restoreTechTreeArrowStyleState\(targetSnapshot\.arrowState\);[\s\S]*?\}/,
     'Expected Undo to restore Auto-Position arrow route and dirty-era state with the coordinates'
+  );
+  assert.match(
+    source,
+    /function recomputeDirtyStateForScopedTabSnapshot\(snapshot\) \{[\s\S]*?if \(tab && tab\.type === 'reference' && Array\.isArray\(tab\.entries\)\) \{[\s\S]*?rebuildReferenceDirtyCacheForTab\(tabKey\);[\s\S]*?return true;[\s\S]*?\}/,
+    'Expected Undo for scoped reference-tab snapshots to rebuild per-row dirty badges'
   );
   assert.match(
     source,

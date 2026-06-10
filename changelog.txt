@@ -1,4 +1,7 @@
 * RELEASE 27.15
+- Fixed Tech Tree Auto-Position Undo so technology dirty badges are recomputed from restored X/Y data instead of leaving stale row badges behind.
+- Fixed Tech Tree Auto-Position dirty badges so every moved technology row is marked based on changed X/Y coordinates, instead of only the selected tech.
+- Fixed generated Industrial Science Advisor arrow art to target `Art/Advisors/science_industrial.pcx` instead of a non-game `science_industrial_new.pcx` filename.
 - Added a Background Arrows `Snap drag` toggle so arrow route handles can either snap to nearby route axes or drag freely for more granular placement.
 - Kept Tech Tree modal Undo and Undo All on the currently viewed era, so reverting moved tech boxes restores data and arrow mode without navigating to a different era.
 - Kept untouched scenario Tech Tree eras on the original Science Advisor PCX arrows until the user edits that era, while still enabling generated-arrow handles immediately for eras loaded from the scenario arrow metadata sidecar.

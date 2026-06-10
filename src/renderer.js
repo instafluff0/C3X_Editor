@@ -4432,6 +4432,12 @@ function recomputeDirtyStateForScopedTabSnapshot(snapshot) {
   const scope = String(snapshot.scope || '').trim().toLowerCase();
   const tabKey = scope.slice('tab:'.length).trim();
   if (!tabKey || !state.bundle.tabs[tabKey]) return false;
+  const tab = state.bundle.tabs[tabKey];
+  if (tab && tab.type === 'reference' && Array.isArray(tab.entries)) {
+    rebuildReferenceDirtyCacheForTab(tabKey);
+    state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    return true;
+  }
   setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
   return true;
@@ -25266,10 +25272,11 @@ function createTechTreePanel({
       setTechFieldInt(node.entry, 'x', 'X Position', x);
       setTechFieldInt(node.entry, 'y', 'Y Position', y);
       removedRouteOverrides = removeStoredArrowOverridesForNode(node.id) || removedRouteOverrides;
-    });
-    if (removedRouteOverrides) state.techTreeSelectedArrowKey = '';
-    setDirty(true, { knownDirtyTab: 'technologies', reason: 'tech-tree-auto-position' });
-    if (autoArrowCheck.checked === true) {
+	    });
+	    if (removedRouteOverrides) state.techTreeSelectedArrowKey = '';
+	    setDirty(true, { knownDirtyTab: 'technologies', reason: 'tech-tree-auto-position' });
+	    rebuildReferenceDirtyCacheForTab('technologies');
+	    if (autoArrowCheck.checked === true) {
       markScienceAdvisorArrowEraDirty(context.eraValue);
       const changedIds = changedNodes.map(({ node }) => node && node.id).filter((id) => id != null);
       changedIds.forEach((id) => {
