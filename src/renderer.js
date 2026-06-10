@@ -57470,6 +57470,7 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   } else if (isTechTreeArrowStyleSnapshot && isTechTreeModalVisible()) {
     if (!options.suppressTechTreeModalRefresh) reopenTechTreeModalForCurrentState();
   } else if (isTechTreeAutoPositionSnapshot && isTechTreeModalVisible()) {
+    techTreeModal.needsActiveTabRefresh = true;
     if (!options.suppressTechTreeModalRefresh) reopenTechTreeModalForCurrentState();
   } else if (shouldDeferActiveTabRenderToUnitTableModal) {
     unitTableModal.needsActiveTabRefresh = true;
@@ -57600,6 +57601,10 @@ async function undoOneStep(options = {}) {
       state.techTreeArrowRouteOverrides = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowRouteOverrides || {});
       state.techTreeArrowMetadataEraKeys = getScienceAdvisorArrowMetadataSnapshotValue(state.cleanTechTreeArrowMetadataEraKeys || {});
       state.techTreeSelectedArrowKey = '';
+      refreshDirtyUi();
+      refreshTabDirtyBadges();
+      refreshActiveReferenceListDirtyBadges();
+      refreshActiveBiqRecordListDirtyBadges();
     }
   } catch (err) {
     setStatus('Undo failed.', true);

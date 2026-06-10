@@ -447,13 +447,29 @@ function loadRendererNoReloadCleanHelpers(targetBundle) {
     'markMapTabAsSaved',
     'markReferenceTabEntryOriginals',
     'markReferenceTabsAsSaved',
+    'getScienceAdvisorArrowStyleSnapshotValue',
+    'getScienceAdvisorArrowMetadataSnapshotValue',
+    'getScienceAdvisorArrowMetadataEraKeysForSave',
+    'markScienceAdvisorArrowMetadataErasSaved',
+    'captureCleanScienceAdvisorArrowStyle',
     'markCurrentBundleCleanAfterSave'
   ];
   const sandbox = {
     state: {
       bundle: targetBundle,
+      settings: {},
       cleanSnapshot: '',
       cleanTabsCache: null,
+      techTreeArrowArtDirty: true,
+      techTreeArrowArtDirtyByEra: { 1: true },
+      techTreeArrowDirtyEdgesByEra: { 1: { edge: true } },
+      techTreeArrowMetadataEraKeys: { 0: true },
+      techTreeArrowBaselineRouteHints: { '0:TECH_A->TECH_B': { points: [[0, 0], [1, 1]] } },
+      techTreeArrowRouteOverrides: { '1:TECH_C->TECH_D': { points: [[2, 2], [3, 3]] } },
+      cleanScienceAdvisorArrowStyle: null,
+      cleanTechTreeArrowBaselineRouteHints: {},
+      cleanTechTreeArrowRouteOverrides: {},
+      cleanTechTreeArrowMetadataEraKeys: {},
       dirtyTabCounts: {
         technologies: 1,
         scenarioSettings: 1,
@@ -1641,6 +1657,10 @@ test('no-reload save clean-state matrix covers BIQ reference, structure, and map
   assert.equal(Array.isArray(state.undoHistory), true);
   assert.equal(state.undoHistory.length, 0);
   assert.ok(state.cleanSnapshot && state.cleanTabsCache, 'expected clean snapshot/cache to be rebuilt');
+  assert.deepEqual(Object.keys(state.techTreeArrowArtDirtyByEra), []);
+  assert.deepEqual(Object.keys(state.techTreeArrowDirtyEdgesByEra), []);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.techTreeArrowMetadataEraKeys)), { 0: true, 1: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(state.cleanTechTreeArrowMetadataEraKeys)), { 0: true, 1: true });
 
   assert.equal(bundle.tabs.technologies.recordOps.length, 0);
   assert.equal(bundle.tabs.technologies.entries[0].isNew, false);

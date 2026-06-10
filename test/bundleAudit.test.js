@@ -15,6 +15,83 @@ function touch(filePath) {
   fs.writeFileSync(filePath, '');
 }
 
+function writeFile(filePath, text) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, text, 'latin1');
+}
+
+function writeSafePediaIcons(filePath) {
+  writeFile(filePath, [
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'));
+}
+
+function buildFallbackPediaIconsText() {
+  const lines = [
+    '#ERA_SPLASH_ERAS_Ancient_Times',
+    'art\\erasplash\\ancient.pcx',
+    '#ERA_SPLASH_ERAS_Middle_Ages',
+    'art\\erasplash\\middle.pcx',
+    '#ICON_SS_Planetary_Party_Lounge',
+    'art\\civilopedia\\icons\\buildings\\spaceshiplarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\spaceshipsmall.pcx'
+  ];
+  for (let i = 0; i < 55; i += 1) {
+    lines.push(`#ICON_BLDG_STOCK_${i}`);
+    lines.push(`art\\civilopedia\\icons\\buildings\\stock${i}large.pcx`);
+    lines.push(`art\\civilopedia\\icons\\buildings\\stock${i}small.pcx`);
+  }
+  lines.push(
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  );
+  return lines.join('\r\n');
+}
+
+function buildFallbackCivilopediaText() {
+  const lines = [
+    '#BLDG_SS_Planetary_Party_Lounge',
+    '^Planetary Party Lounge',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    '^A spaceship component.'
+  ];
+  for (let i = 0; i < 55; i += 1) {
+    lines.push(`#BLDG_STOCK_${i}`);
+    lines.push(`^Stock article ${i}.`);
+  }
+  lines.push('');
+  return lines.join('\r\n');
+}
+
+function attachScenarioTextSourceDetails(bundle, paths) {
+  bundle.tabs.civilizations.sourceDetails = {
+    civilopediaScenario: paths.civilopediaScenario || '',
+    civilopediaConquests: paths.civilopediaFallback || '',
+    pediaIconsScenario: paths.pediaIconsScenario || '',
+    pediaIconsConquests: paths.pediaIconsFallback || ''
+  };
+  return bundle;
+}
+
 function makeSection(fields) {
   return {
     marker: '#Section',
@@ -498,7 +575,7 @@ test('auditLoadedBundle reports BIQ improvements missing from scenario PediaIcon
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  touch(scenarioPediaIcons);
+  writeSafePediaIcons(scenarioPediaIcons);
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
@@ -559,7 +636,7 @@ test('auditLoadedBundle ignores missing scenario Civilopedia entries and non-imp
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  touch(scenarioPediaIcons);
+  writeSafePediaIcons(scenarioPediaIcons);
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
@@ -632,7 +709,7 @@ test('auditLoadedBundle accepts BIQ improvements covered by scenario PediaIcons 
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  touch(scenarioPediaIcons);
+  writeSafePediaIcons(scenarioPediaIcons);
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
@@ -673,6 +750,97 @@ test('auditLoadedBundle accepts BIQ improvements covered by scenario PediaIcons 
       wonders: { model: { sections: [] } },
       naturalWonders: { model: { sections: [] } }
     }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
+test('auditLoadedBundle warns about damaged scenario PediaIcons HomelessIcons before Firaxis editor freezes', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  writeFile(scenarioPediaIcons, [
+    '#ICON_BLDG_Temple',
+    'art\\civilopedia\\icons\\buildings\\templelarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\templesmall.pcx',
+    '#HomelessIcons',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\n'));
+
+  const bundle = attachScenarioTextSourceDetails(makeBundle(civ3Root), {
+    pediaIconsScenario: scenarioPediaIcons
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const codes = result.tabs.civilizations.general.map((entry) => entry.code);
+  assert.deepEqual(codes.sort(), [
+    'scenario-pediaicons-homeless-damaged',
+    'scenario-pediaicons-lf-only'
+  ]);
+  assert.match(result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-homeless-damaged').message, /Firaxis Conquests editor can freeze/);
+});
+
+test('auditLoadedBundle warns when scenario text overrides are missing fallback EraSplash and spaceship content', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const fallbackPediaIcons = path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt');
+  const fallbackCivilopedia = path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  writeFile(fallbackPediaIcons, buildFallbackPediaIconsText());
+  writeFile(fallbackCivilopedia, buildFallbackCivilopediaText());
+  writeSafePediaIcons(scenarioPediaIcons);
+  writeFile(scenarioCivilopedia, [
+    '#PRTO_Custom_Jet',
+    '^Custom jet.',
+    ''
+  ].join('\r\n'));
+
+  const bundle = attachScenarioTextSourceDetails(makeBundle(civ3Root), {
+    civilopediaScenario: scenarioCivilopedia,
+    civilopediaFallback: fallbackCivilopedia,
+    pediaIconsScenario: scenarioPediaIcons,
+    pediaIconsFallback: fallbackPediaIcons
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const codes = new Set(result.tabs.civilizations.general.map((entry) => entry.code));
+  assert.equal(codes.has('scenario-pediaicons-era-splash-missing'), true);
+  assert.equal(codes.has('scenario-pediaicons-spaceship-icons-missing'), true);
+  assert.equal(codes.has('scenario-pediaicons-suspiciously-small'), true);
+  assert.equal(codes.has('scenario-civilopedia-spaceship-articles-missing'), true);
+  assert.equal(codes.has('scenario-civilopedia-suspiciously-small'), true);
+  assert.match(
+    result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-era-splash-missing').message,
+    /crash the game on era transitions/
+  );
+  assert.match(
+    result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-spaceship-icons-missing').message,
+    /crash the Spaceship screen/
+  );
+});
+
+test('auditLoadedBundle accepts healthy scenario-local Civilopedia and PediaIcons text', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const fallbackPediaIcons = path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt');
+  const fallbackCivilopedia = path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  const pediaText = buildFallbackPediaIconsText();
+  const civilopediaText = buildFallbackCivilopediaText();
+  writeFile(fallbackPediaIcons, pediaText);
+  writeFile(fallbackCivilopedia, civilopediaText);
+  writeFile(scenarioPediaIcons, pediaText);
+  writeFile(scenarioCivilopedia, civilopediaText);
+
+  const bundle = attachScenarioTextSourceDetails(makeBundle(civ3Root), {
+    civilopediaScenario: scenarioCivilopedia,
+    civilopediaFallback: fallbackCivilopedia,
+    pediaIconsScenario: scenarioPediaIcons,
+    pediaIconsFallback: fallbackPediaIcons
   });
 
   const result = auditLoadedBundle(bundle);

@@ -1,7 +1,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadBundle } = require('./configCore');
+const {
+  loadBundle,
+  parseCivilopediaDocumentWithOrder,
+  parsePediaIconsDocumentWithOrder,
+  readTextFileWithEncodingInfoIfExists
+} = require('./configCore');
 const { resolveConquestsAssetPath, resolvePcxPath } = require('./artPreview');
 const C3X_BASE_MANIFEST = require('./c3xBaseManifest');
 
@@ -83,6 +88,27 @@ const REFERENCE_ART_TABS = [
   'governments',
   'improvements',
   'units'
+];
+
+const FIRAXIS_HOMELESS_PLACEHOLDER_LINES = [
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverssmall.pcx'
+];
+
+const PEDIAICONS_REAL_BLOCK_PREFIXES = [
+  'ANIMNAME_',
+  'ERA_SPLASH_',
+  'ICON_',
+  'LARGE_',
+  'SMALL_',
+  'TECH_',
+  'WON_SPLASH_'
 ];
 
 const TERRAIN_OPTIONS = [
@@ -1309,9 +1335,192 @@ function getReferenceTextSourceDetails(bundle) {
 function getScenarioTextAuditPaths(bundle) {
   const details = getReferenceTextSourceDetails(bundle);
   const pediaIconsScenario = String(details.pediaIconsScenario || '').trim();
+  const civilopediaScenario = String(details.civilopediaScenario || '').trim();
   return {
-    pediaIcons: fileExists(pediaIconsScenario) ? pediaIconsScenario : ''
+    civilopedia: fileExists(civilopediaScenario) ? civilopediaScenario : '',
+    civilopediaFallback: getFirstExistingPath([
+      details.civilopediaConquests,
+      details.civilopediaPtw,
+      details.civilopediaVanilla
+    ]),
+    pediaIcons: fileExists(pediaIconsScenario) ? pediaIconsScenario : '',
+    pediaIconsFallback: getFirstExistingPath([
+      details.pediaIconsConquests,
+      details.pediaIconsPtw,
+      details.pediaIconsVanilla
+    ])
   };
+}
+
+function getFirstExistingPath(paths) {
+  return (Array.isArray(paths) ? paths : [])
+    .map((value) => String(value || '').trim())
+    .find((value) => fileExists(value)) || '';
+}
+
+function readAuditTextFile(filePath) {
+  const info = readTextFileWithEncodingInfoIfExists(filePath, { preferredEncoding: 'windows-1252' });
+  return info ? String(info.text || '') : '';
+}
+
+function hasLfOnlyLineEndings(text) {
+  const src = String(text || '');
+  return src.includes('\n') && !src.includes('\r\n');
+}
+
+function normalizePediaIconLineForAudit(line) {
+  return String(line || '').trim().replace(/\//g, '\\').toLowerCase();
+}
+
+function collectPediaIconsKeys(doc, predicate) {
+  const keys = new Set();
+  (Array.isArray(doc && doc.items) ? doc.items : []).forEach((item) => {
+    const key = String(item && item.key || '').trim().toUpperCase();
+    if (key && (!predicate || predicate(key))) keys.add(key);
+  });
+  return keys;
+}
+
+function collectCivilopediaKeys(doc, predicate) {
+  const keys = new Set();
+  (Array.isArray(doc && doc.items) ? doc.items : []).forEach((item) => {
+    const key = String(item && item.key || '').trim().toUpperCase();
+    if (key && (!predicate || predicate(key))) keys.add(key);
+  });
+  return keys;
+}
+
+function missingCountFromFallback(scenarioKeys, fallbackKeys) {
+  let missing = 0;
+  fallbackKeys.forEach((key) => {
+    if (!scenarioKeys.has(key)) missing += 1;
+  });
+  return missing;
+}
+
+function hasSuspiciousTextOverrideSize(scenarioDoc, fallbackDoc) {
+  const scenarioCount = Array.isArray(scenarioDoc && scenarioDoc.items) ? scenarioDoc.items.length : 0;
+  const fallbackCount = Array.isArray(fallbackDoc && fallbackDoc.items) ? fallbackDoc.items.length : 0;
+  return fallbackCount >= 50 && scenarioCount > 0 && scenarioCount < 20 && scenarioCount < Math.ceil(fallbackCount * 0.1);
+}
+
+function isPediaIconsRealBlockKeyForAudit(key) {
+  const normalized = String(key || '').trim().toUpperCase();
+  if (!normalized || normalized === 'END CIVILOPEDIA ART' || normalized === 'HOMELESSICONS') return false;
+  return PEDIAICONS_REAL_BLOCK_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+    || /^RACE_|^PRTO_|^BLDG_|^GOOD_|^GOVT_/.test(normalized);
+}
+
+function pediaIconsHasFiraxisHomelessPlaceholders(homelessItem) {
+  const actual = (Array.isArray(homelessItem && homelessItem.rawLines) ? homelessItem.rawLines : [])
+    .map(normalizePediaIconLineForAudit)
+    .filter(Boolean);
+  if (actual.length <= 0) return false;
+  let cursor = 0;
+  for (const expectedLine of FIRAXIS_HOMELESS_PLACEHOLDER_LINES) {
+    const expected = normalizePediaIconLineForAudit(expectedLine);
+    const found = actual.slice(cursor).findIndex((line) => line === expected);
+    if (found < 0) return false;
+    cursor += found + 1;
+  }
+  return true;
+}
+
+function collectScenarioTextHealthIssues(paths) {
+  const issues = [];
+  if (paths.pediaIcons) {
+    const scenarioText = readAuditTextFile(paths.pediaIcons);
+    const scenarioDoc = parsePediaIconsDocumentWithOrder(scenarioText);
+    if (hasLfOnlyLineEndings(scenarioText)) {
+      issues.push({
+        code: 'scenario-pediaicons-lf-only',
+        message: 'Scenario PediaIcons.txt uses LF-only line endings. Firaxis tools are safest with Windows CRLF text files; saving with this version will normalize repaired PediaIcons writes.'
+      });
+    }
+
+    const homelessItem = (Array.isArray(scenarioDoc.items) ? scenarioDoc.items : [])
+      .find((item) => String(item && item.key || '').trim().toUpperCase() === 'HOMELESSICONS');
+    if (!homelessItem) {
+      issues.push({
+        code: 'scenario-pediaicons-homeless-missing',
+        message: 'Scenario PediaIcons.txt is missing #HomelessIcons. Firaxis Conquests editor can freeze on Improvements and Wonders when this section is damaged; saving with this version will restore the safe placeholder block.'
+      });
+    } else {
+      const misplaced = (Array.isArray(homelessItem.rawLines) ? homelessItem.rawLines : [])
+        .filter((line) => String(line || '').trim().startsWith('#'))
+        .map((line) => String(line || '').trim().slice(1).trim().toUpperCase())
+        .filter(isPediaIconsRealBlockKeyForAudit);
+      if (misplaced.length > 0 || !pediaIconsHasFiraxisHomelessPlaceholders(homelessItem)) {
+        issues.push({
+          code: 'scenario-pediaicons-homeless-damaged',
+          message: 'Scenario PediaIcons.txt has a damaged #HomelessIcons section. Firaxis Conquests editor can freeze on Improvements and Wonders when real icon blocks are moved there or the safe placeholder rows are missing; saving with this version will repair it.'
+        });
+      }
+    }
+
+    if (paths.pediaIconsFallback) {
+      const fallbackText = readAuditTextFile(paths.pediaIconsFallback);
+      const fallbackDoc = parsePediaIconsDocumentWithOrder(fallbackText);
+      const scenarioKeys = collectPediaIconsKeys(scenarioDoc);
+      const fallbackEraSplashKeys = collectPediaIconsKeys(fallbackDoc, (key) => key.startsWith('ERA_SPLASH_'));
+      const fallbackSpaceshipKeys = collectPediaIconsKeys(fallbackDoc, (key) => key.startsWith('ICON_SS_'));
+      const missingEraSplash = missingCountFromFallback(scenarioKeys, fallbackEraSplashKeys);
+      const missingSpaceship = missingCountFromFallback(scenarioKeys, fallbackSpaceshipKeys);
+      if (missingEraSplash > 0) {
+        issues.push({
+          code: 'scenario-pediaicons-era-splash-missing',
+          message: `Scenario PediaIcons.txt is missing ${missingEraSplash} stock EraSplash block(s) that exist in the fallback PediaIcons.txt. This can crash the game on era transitions; saving after a relevant edit with this version preserves/restores fallback text instead of creating a tiny override.`
+        });
+      }
+      if (missingSpaceship > 0) {
+        issues.push({
+          code: 'scenario-pediaicons-spaceship-icons-missing',
+          message: `Scenario PediaIcons.txt is missing ${missingSpaceship} stock spaceship icon block(s) that exist in the fallback PediaIcons.txt. This can crash the Spaceship screen; saving after a relevant edit with this version preserves/restores fallback text instead of creating a tiny override.`
+        });
+      }
+      if (hasSuspiciousTextOverrideSize(scenarioDoc, fallbackDoc)) {
+        issues.push({
+          code: 'scenario-pediaicons-suspiciously-small',
+          message: 'Scenario PediaIcons.txt is much smaller than its fallback source file. That often means stock entries were accidentally dropped; review the file or save after a PediaIcons-related edit with this version so it can be rebuilt from fallback text.'
+        });
+      }
+    }
+  }
+
+  if (paths.civilopedia) {
+    const scenarioText = readAuditTextFile(paths.civilopedia);
+    const scenarioDoc = parseCivilopediaDocumentWithOrder(scenarioText);
+    if (hasLfOnlyLineEndings(scenarioText)) {
+      issues.push({
+        code: 'scenario-civilopedia-lf-only',
+        message: 'Scenario Civilopedia.txt uses LF-only line endings. Firaxis tools are safest with Windows CRLF text files; saving Civilopedia edits with this version preserves the source line-ending style.'
+      });
+    }
+
+    if (paths.civilopediaFallback) {
+      const fallbackText = readAuditTextFile(paths.civilopediaFallback);
+      const fallbackDoc = parseCivilopediaDocumentWithOrder(fallbackText);
+      const scenarioKeys = collectCivilopediaKeys(scenarioDoc);
+      const fallbackSpaceshipKeys = collectCivilopediaKeys(
+        fallbackDoc,
+        (key) => /^DESC_BLDG_SS_|^BLDG_SS_/.test(key)
+      );
+      const missingSpaceship = missingCountFromFallback(scenarioKeys, fallbackSpaceshipKeys);
+      if (missingSpaceship > 0) {
+        issues.push({
+          code: 'scenario-civilopedia-spaceship-articles-missing',
+          message: `Scenario Civilopedia.txt is missing ${missingSpaceship} stock spaceship article section(s) that exist in the fallback Civilopedia.txt. This can crash related in-game screens; saving after a relevant Civilopedia edit with this version preserves/restores fallback text instead of creating a tiny override.`
+        });
+      }
+      if (hasSuspiciousTextOverrideSize(scenarioDoc, fallbackDoc)) {
+        issues.push({
+          code: 'scenario-civilopedia-suspiciously-small',
+          message: 'Scenario Civilopedia.txt is much smaller than its fallback source file. That often means stock articles were accidentally dropped; review the file or save after a Civilopedia-related edit with this version so it can be rebuilt from fallback text.'
+        });
+      }
+    }
+  }
+  return issues;
 }
 
 function readPathMatchesScenario(readPath, scenarioPath) {
@@ -1368,6 +1577,13 @@ function auditScenarioTextCoverage(bundle, result) {
         }
       }
     );
+  });
+}
+
+function auditScenarioTextHealth(bundle, result) {
+  const scenarioTextPaths = getScenarioTextAuditPaths(bundle);
+  collectScenarioTextHealthIssues(scenarioTextPaths).forEach((issue) => {
+    addGeneralIssue(result, 'civilizations', issue.message, issue.code);
   });
 }
 
@@ -1491,6 +1707,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditDayNightAssets(bundle, result);
   auditReferenceArt(bundle, result);
   auditScenarioTextCoverage(bundle, result);
+  auditScenarioTextHealth(bundle, result);
   auditCivilopediaLinkCase(bundle, result);
   auditScenarioPlayableCivilizationSlots(bundle, result);
   return result;

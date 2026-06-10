@@ -29,6 +29,17 @@ Stable UI behavior contracts agents should preserve during implementation change
   - `Rolled Back`
   - `Failed`
 
+## Save, Undo, and Undo All Synchronization
+- Main UI and modal header actions must reflect the same underlying dirty and undo state. Do not maintain modal-only Save, Undo, or Undo All truth sources.
+- Save is enabled only when there is saveable dirty data, the app is not loading/saving, a bundle is loaded, and validation is clear. Modal Save buttons must share the main Save handler and disabled-state rules.
+- Undo is enabled only when there is an immediate undoable action, including pending grouped edit sessions that have not yet committed a snapshot.
+- Undo All is enabled when there are effective unsaved changes, including normal dirty tabs, pending grouped edit sessions, and side-channel save state such as generated art or modal-managed metadata.
+- Modal Save must not be active when the matching modal Undo action is inactive. If a modal exposes Save, Undo, and Undo All together, derive all three from the same immediate/effective predicates used by the main UI.
+- After any Undo, Undo All, Save, no-reload clean-state update, or modal-local restore, recompute dirty state before refreshing buttons and badges. If later cleanup clears side-channel dirty state, refresh the main toolbar and active tab badges again after that cleanup.
+- Dirty badges must describe actual pending data differences, not merely the currently selected row. Reference-tab restores should rebuild the row dirty cache for the affected tab when entries are replaced from a snapshot.
+- Modal Undo should restore data without surprising navigation. Preserve the user's current modal view, filter, selected era, scroll anchor, or active pane unless the action explicitly changes navigation.
+- Closing a modal after an in-modal restore must leave the main UI already consistent. If modal refresh is intentionally suppressed, mark the owning main tab for refresh on close.
+
 ## Reference CRUD and Undo
 - Visible reference-tab state and hidden pending BIQ `recordOps` must move together.
 - Capture Undo before mutating Add/Copy/Import/Delete `recordOps`; otherwise Undo can restore the visible list while leaving hidden pending BIQ operations behind.

@@ -388,8 +388,18 @@ test('Tech Tree Auto-Position is wired into undo, dirty state, and save payloads
   );
   assert.match(
     source,
+    /else if \(isTechTreeAutoPositionSnapshot && isTechTreeModalVisible\(\)\) \{[\s\S]*?techTreeModal\.needsActiveTabRefresh = true;[\s\S]*?if \(!options\.suppressTechTreeModalRefresh\) reopenTechTreeModalForCurrentState\(\);[\s\S]*?\}/,
+    'Expected modal Auto-Position Undo to refresh the main Technologies tab after the modal closes'
+  );
+  assert.match(
+    source,
     /function recomputeDirtyStateForScopedTabSnapshot\(snapshot\) \{[\s\S]*?if \(tab && tab\.type === 'reference' && Array\.isArray\(tab\.entries\)\) \{[\s\S]*?rebuildReferenceDirtyCacheForTab\(tabKey\);[\s\S]*?return true;[\s\S]*?\}/,
     'Expected Undo for scoped reference-tab snapshots to rebuild per-row dirty badges'
+  );
+  assert.match(
+    source,
+    /async function undoOneStep\(options = \{\}\) \{[\s\S]*?if \(!state\.isDirty\) \{[\s\S]*?state\.techTreeArrowArtDirty = false;[\s\S]*?state\.techTreeArrowArtDirtyByEra = \{\};[\s\S]*?refreshDirtyUi\(\);[\s\S]*?refreshActiveReferenceListDirtyBadges\(\);[\s\S]*?\}/,
+    'Expected single Undo to refresh main dirty controls after clearing clean Tech Tree arrow state'
   );
   assert.match(
     source,
