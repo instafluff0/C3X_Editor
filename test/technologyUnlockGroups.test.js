@@ -420,4 +420,9 @@ test('Tech Tree civ filter defaults to the first civilization when available', (
     /currentValue: selectedCivFilterValue \|\| '-1'/,
     'Expected All Techs to remain the fallback only when no civilization exists'
   );
+  assert.match(
+    source,
+    /displayNodes\.forEach\(\(target\) => \{[\s\S]*?target\.prereqs\.forEach\(\(sourceId\) => \{[\s\S]*?if \(target\.autoLayout \|\| target\.era !== eraValue\) return;[\s\S]*?const source = byId\.get\(sourceId\);[\s\S]*?if \(!source \|\| !displayNodeIdSet\.has\(source\.id\)\) return;[\s\S]*?if \(source\.autoLayout \|\| source\.era !== eraValue\) return;[\s\S]*?visibleEdges\.push/,
+    'Expected era-less gutter techs to remain visually unconnected from era techs'
+  );
 });

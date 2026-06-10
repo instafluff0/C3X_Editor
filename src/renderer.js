@@ -26399,8 +26399,10 @@ function createTechTreePanel({
     const visibleEdges = [];
     displayNodes.forEach((target) => {
       target.prereqs.forEach((sourceId) => {
+        if (target.autoLayout || target.era !== eraValue) return;
         const source = byId.get(sourceId);
         if (!source || !displayNodeIdSet.has(source.id)) return;
+        if (source.autoLayout || source.era !== eraValue) return;
         const srcSize = getNodeSize(source.id);
         const dstSize = getNodeSize(target.id);
         visibleEdges.push({

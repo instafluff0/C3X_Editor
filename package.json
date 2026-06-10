@@ -1,7 +1,7 @@
 {
   "name": "civ3-c3x-modern-config-manager",
   "productName": "Civ 3 C3X Modern Editor",
-  "version": "27.15.0",
+  "version": "27.15.1",
   "description": "Modern config manager for C3X",
   "main": "main.js",
   "scripts": {

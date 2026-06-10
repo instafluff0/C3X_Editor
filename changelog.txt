@@ -1,3 +1,6 @@
+* RELEASE 27.15.1
+- Kept era-less Tech Tree gutter technologies visually unconnected, so prerequisite arrows are only drawn between techs in the selected era.
+
 * RELEASE 27.15
 - Restored Industrial Science Advisor lookups to prefer `Art/Advisors/science_industrial_new.pcx`, matching common scenario art, while retaining `science_industrial.pcx` as fallback.
 - Restored fixed Science Advisor frame/shadow pixels from the original PCX after generated-arrow cleanup, using the same inner polygon for every era and scenario.
