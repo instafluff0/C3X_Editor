@@ -1564,7 +1564,6 @@ function collectPendingWritePathsFromDirtyTabs() {
 
 function getScienceAdvisorArrowPendingWriteEntries() {
   if (!isScenarioMode()) return [];
-  if (!(state.settings && state.settings.autoUpdateScienceAdvisorArrows === true)) return [];
   const dirtyEraIndexes = Object.keys(state.techTreeArrowArtDirtyByEra || {})
     .map((value) => Number(value))
     .filter((value) => Number.isInteger(value) && value >= 0);
@@ -2689,6 +2688,22 @@ function filterScienceAdvisorArrowMetadataMapByEra(source, eraKeys) {
   return out;
 }
 
+function filterScienceAdvisorDirtyEdgesForSave(dirtyEdgesByEra, routeOverrides, routeSnapshots) {
+  const root = dirtyEdgesByEra && typeof dirtyEdgesByEra === 'object' ? dirtyEdgesByEra : {};
+  const overrides = routeOverrides && typeof routeOverrides === 'object' ? routeOverrides : {};
+  const out = {};
+  Object.entries(root).forEach(([eraKey, edgeMap]) => {
+    if (!edgeMap || typeof edgeMap !== 'object') return;
+    Object.keys(edgeMap).forEach((key) => {
+      if (!edgeMap[key]) return;
+      if (overrides[key]) return;
+      if (!out[eraKey]) out[eraKey] = {};
+      out[eraKey][key] = true;
+    });
+  });
+  return out;
+}
+
 function getScienceAdvisorArrowMetadataEraKeysForSave(dirtyEraIndexes = []) {
   const out = deepCloneUiValue(state.techTreeArrowMetadataEraKeys || {});
   dirtyEraIndexes.forEach((eraIndex) => {
@@ -2696,6 +2711,11 @@ function getScienceAdvisorArrowMetadataEraKeysForSave(dirtyEraIndexes = []) {
     out[eraKey] = true;
   });
   return out;
+}
+
+function hasScienceAdvisorArrowMetadataForEra(eraValue) {
+  const eraKey = String(Number.parseInt(String(eraValue), 10) || 0);
+  return !!(state.techTreeArrowMetadataEraKeys && state.techTreeArrowMetadataEraKeys[eraKey]);
 }
 
 function markScienceAdvisorArrowMetadataErasSaved(dirtyEraIndexes = []) {
@@ -24154,6 +24174,7 @@ const TECH_TREE_NON_ERA_GUTTER_LEFT = 18;
 const TECH_TREE_NON_ERA_MIN_VERTICAL_GAP = 14;
 const TECH_TREE_ERA_PANE_LEFT_PADDING = 28;
 const TECH_TREE_STAGE_SIDE_PADDING = 24;
+const TECH_TREE_GAME_BOX_RENDER_Y_OFFSET = 4;
 
 function getEraOptionsForTechTree() {
   const fromBiq = makeBiqSectionIndexOptions('ERAS', false);
@@ -24438,6 +24459,18 @@ function getTechTreeBoxFrame(techBoxPreview, eraValue, node, unitCivFilter = nul
   return techBoxLayout.getTechBoxFrame(layout, eraValue, getTechTreeBoxSizeIndex(node, unitCivFilter), layout.defaultColumnIndex);
 }
 
+function getTechTreeGameBoxRenderYOffset(node) {
+  return node && node.autoLayout ? 0 : TECH_TREE_GAME_BOX_RENDER_Y_OFFSET;
+}
+
+function getTechTreeDisplayYFromStoredY(storedY, baseY = 0, node = null) {
+  return (Number(baseY) || 0) + (Number(storedY) || 0) + getTechTreeGameBoxRenderYOffset(node);
+}
+
+function getTechTreeStoredYFromDisplayY(displayY, baseY = 0, node = null) {
+  return Math.max(0, (Number(displayY) || 0) - (Number(baseY) || 0) - getTechTreeGameBoxRenderYOffset(node));
+}
+
 function getTechTreeAutoLayoutSourceCoordinate(entry, baseKey, fallback) {
   const field = getTechField(entry, baseKey);
   const original = parseIntFromDisplayValue(field && field.originalValue);
@@ -24450,16 +24483,73 @@ function getTechTreeAutoLayoutSourceCoordinate(entry, baseKey, fallback) {
 function getTechTreeAdvisorFaceExclusionZones(nativeW, nativeH) {
   const width = Math.max(1, Number(nativeW) || 1024);
   const height = Math.max(1, Number(nativeH) || 768);
+  if (scienceAdvisorArrows && typeof scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea === 'function') {
+    const area = scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea(width, height);
+    return Array.isArray(area && area.exclusionZones) ? area.exclusionZones : [];
+  }
   const left = Math.max(0, Math.floor(width - Math.max(216, width * 0.21)));
   const bottom = Math.min(height, Math.ceil(Math.max(260, height * 0.35)));
   return [{ x: left, y: 0, w: width - left, h: bottom }];
+}
+
+function getTechTreeAdvisorFrameLayoutArea(nativeW, nativeH) {
+  const width = Math.max(1, Number(nativeW) || 1024);
+  const height = Math.max(1, Number(nativeH) || 768);
+  if (scienceAdvisorArrows && typeof scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea === 'function') {
+    const area = scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea(width, height);
+    const bounds = area && area.bounds;
+    if (bounds && Number(bounds.w) > 0 && Number(bounds.h) > 0) {
+      return {
+        bounds: {
+          x: Math.max(0, Number(bounds.x) || 0),
+          y: Math.max(0, Number(bounds.y) || 0),
+          w: Math.max(1, Number(bounds.w) || 1),
+          h: Math.max(1, Number(bounds.h) || 1)
+        },
+        exclusionZones: Array.isArray(area.exclusionZones) ? area.exclusionZones : []
+      };
+    }
+  }
+  const innerBottom = Math.max(1, Math.min(height, Math.floor(height - Math.max(88, height * 0.115))));
+  return {
+    bounds: {
+      x: 64,
+      y: 56,
+      w: Math.max(1, width - 128),
+      h: Math.max(1, innerBottom - 56)
+    },
+    exclusionZones: getTechTreeAdvisorFaceExclusionZones(width, height)
+  };
+}
+
+function getTechTreeArrowRouteConstraintArea(nativeW, nativeH, offsetX = 0, offsetY = 0) {
+  const area = getTechTreeAdvisorFrameLayoutArea(nativeW, nativeH);
+  const dx = Number(offsetX) || 0;
+  const dy = Number(offsetY) || 0;
+  const bounds = area && area.bounds ? area.bounds : { x: 0, y: 0, w: Math.max(1, Number(nativeW) || 1024), h: Math.max(1, Number(nativeH) || 768) };
+  return {
+    bounds: {
+      x: (Number(bounds.x) || 0) + dx,
+      y: (Number(bounds.y) || 0) + dy,
+      w: Math.max(1, Number(bounds.w) || 1),
+      h: Math.max(1, Number(bounds.h) || 1)
+    },
+    exclusionZones: (Array.isArray(area && area.exclusionZones) ? area.exclusionZones : []).map((zone) => ({
+      x: (Number(zone && zone.x) || 0) + dx,
+      y: (Number(zone && zone.y) || 0) + dy,
+      w: Math.max(1, Number(zone && (zone.w || zone.width)) || 1),
+      h: Math.max(1, Number(zone && (zone.h || zone.height)) || 1)
+    })),
+    margin: 10
+  };
 }
 
 function getTechTreeAutoLayoutBounds(nodes, techBoxPreview, eraValue, nativeW, nativeH) {
   const list = Array.isArray(nodes) ? nodes : [];
   const width = Math.max(1, Number(nativeW) || 1024);
   const height = Math.max(1, Number(nativeH) || 768);
-  const innerBottom = Math.max(1, Math.min(height, Math.floor(height - Math.max(88, height * 0.115))));
+  const frameArea = getTechTreeAdvisorFrameLayoutArea(width, height);
+  const frameBounds = frameArea.bounds;
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxRight = 0;
@@ -24470,27 +24560,29 @@ function getTechTreeAutoLayoutBounds(nodes, techBoxPreview, eraValue, nativeW, n
     const w = frame ? Math.max(1, Number(frame.w) || 136) : 136;
     const h = frame ? Math.max(1, Number(frame.h) || 64) : 64;
     const x = getTechTreeAutoLayoutSourceCoordinate(node.entry, 'x', node.x);
-    const y = getTechTreeAutoLayoutSourceCoordinate(node.entry, 'y', node.y);
+    const y = getTechTreeDisplayYFromStoredY(getTechTreeAutoLayoutSourceCoordinate(node.entry, 'y', node.y), 0, node);
     minX = Math.min(minX, x);
     minY = Math.min(minY, y);
     maxRight = Math.max(maxRight, x + w);
     maxBottom = Math.max(maxBottom, y + h);
   });
   const fallback = {
-    x: 64,
-    y: 56,
-    w: Math.max(1, width - 128),
-    h: Math.max(1, innerBottom - 56)
+    x: frameBounds.x,
+    y: frameBounds.y,
+    w: frameBounds.w,
+    h: frameBounds.h,
+    exclusionZones: frameArea.exclusionZones
   };
   if (!Number.isFinite(minX) || !Number.isFinite(minY)) return fallback;
-  const left = Math.max(0, Math.min(width - 1, Math.floor(minX)));
-  const top = Math.max(0, Math.min(height - 1, Math.floor(minY)));
-  const right = Math.max(left + 1, Math.min(width, Math.ceil(maxRight)));
-  const bottom = Math.max(top + 1, Math.min(innerBottom, Math.ceil(maxBottom)));
+  const frameRight = frameBounds.x + frameBounds.w;
+  const frameBottom = frameBounds.y + frameBounds.h;
+  const left = Math.max(frameBounds.x, Math.min(frameRight - 1, Math.floor(minX)));
+  const top = Math.max(frameBounds.y, Math.min(frameBottom - 1, Math.floor(minY)));
+  const right = Math.max(left + 1, Math.min(frameRight, Math.ceil(maxRight)));
+  const bottom = Math.max(top + 1, Math.min(frameBottom, Math.ceil(maxBottom)));
   const bounds = { x: left, y: top, w: right - left, h: bottom - top };
-  bounds.exclusionZones = getTechTreeAdvisorFaceExclusionZones(width, height);
-  if (bounds.w < width * 0.45 || bounds.h < height * 0.45) {
-    fallback.exclusionZones = getTechTreeAdvisorFaceExclusionZones(width, height);
+  bounds.exclusionZones = frameArea.exclusionZones;
+  if (bounds.w < frameBounds.w * 0.45 || bounds.h < frameBounds.h * 0.45) {
     return fallback;
   }
   return bounds;
@@ -24679,6 +24771,8 @@ function createTechTreePanel({
   const firstCivFilterValue = civOptions.length > 0 ? String(civOptions[0].value || '') : '';
   let selectedCivFilterValue = String(initialCivFilter || firstCivFilterValue || '');
   let redrawCurrentTechTreeLines = null;
+  let deleteSelectedArrowHandle = null;
+  let syncRouteHandleDeleteButtonState = () => {};
   let arrowStylePreviewRaf = 0;
   let arrowStylePreviewTimer = 0;
   let latestTechTreeAutoLayoutContext = null;
@@ -24746,6 +24840,17 @@ function createTechTreePanel({
       state.techTreeArrowDirtyEdgesByEra[eraKey] = {};
     }
     state.techTreeArrowDirtyEdgesByEra[eraKey][text] = true;
+  };
+  const clearScienceAdvisorArrowEdgeKeyDirty = (key) => {
+    const text = String(key || '').trim();
+    if (!text) return;
+    const eraText = text.split(':')[0];
+    const eraIndex = Number.parseInt(eraText, 10) || 0;
+    const eraKey = String(eraIndex);
+    const root = state.techTreeArrowDirtyEdgesByEra;
+    if (!root || typeof root !== 'object' || !root[eraKey] || typeof root[eraKey] !== 'object') return;
+    delete root[eraKey][text];
+    if (Object.keys(root[eraKey]).length === 0) delete root[eraKey];
   };
 
   const controls = document.createElement('div');
@@ -24884,7 +24989,7 @@ function createTechTreePanel({
 	  autoArrowCheck.checked = state.settings && state.settings.autoUpdateScienceAdvisorArrows === true;
   autoArrowCheck.disabled = !(state.settings && state.settings.mode === 'scenario');
   const autoArrowText = document.createElement('span');
-  autoArrowText.textContent = 'Auto-update on move';
+  autoArrowText.textContent = 'Auto-update';
   autoArrowWrap.title = autoArrowCheck.disabled
     ? 'Available in Scenario mode only.'
     : 'Writes scenario-local Tech Tree background PCX arrows during Save.';
@@ -24919,10 +25024,30 @@ function createTechTreePanel({
 	    if (window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
 	      window.c3xManager.setSettings(state.settings).catch(() => {});
 	    }
-	  });
-	  arrowGroup.appendChild(snapArrowWrap);
+		  });
+		  arrowGroup.appendChild(snapArrowWrap);
 
-	  const arrowStyleBtn = document.createElement('button');
+  const routeHandleDeleteBtn = document.createElement('button');
+  routeHandleDeleteBtn.type = 'button';
+  routeHandleDeleteBtn.className = 'ghost tech-tree-inline-btn tech-tree-handle-delete-btn';
+  withRemoveIcon(routeHandleDeleteBtn, 'Delete handle');
+  const setRouteHandleDeleteButtonState = (canDelete) => {
+    routeHandleDeleteBtn.disabled = !canDelete;
+    routeHandleDeleteBtn.setAttribute('aria-disabled', canDelete ? 'false' : 'true');
+    routeHandleDeleteBtn.title = canDelete
+      ? 'Delete the selected route handle.'
+      : 'Select a non-endpoint arrow handle to delete.';
+  };
+  setRouteHandleDeleteButtonState(false);
+  routeHandleDeleteBtn.addEventListener('click', () => {
+    if (routeHandleDeleteBtn.disabled || typeof deleteSelectedArrowHandle !== 'function') return;
+    if (deleteSelectedArrowHandle() && typeof stage.focus === 'function') {
+      stage.focus({ preventScroll: true });
+    }
+  });
+  arrowGroup.appendChild(routeHandleDeleteBtn);
+
+		  const arrowStyleBtn = document.createElement('button');
   arrowStyleBtn.type = 'button';
   arrowStyleBtn.className = 'tech-tree-arrow-style-btn';
   arrowStyleBtn.setAttribute('aria-expanded', 'false');
@@ -24964,8 +25089,8 @@ function createTechTreePanel({
     if (!state.settings) state.settings = {};
     if (options.captureUndo !== false) beginArrowStyleUndoSession();
     const eraValue = getCurrentTechTreeEraValue();
-    const wasPreviewActive = autoArrowCheck.checked === true
-      && !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[String(eraValue)]);
+    const wasPreviewActive = hasScienceAdvisorArrowMetadataForEra(eraValue)
+      || !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[String(eraValue)]);
     const nextStyle = deepCloneUiValue(getStoredScienceAdvisorArrowStyle());
     mutator(nextStyle);
     state.settings.scienceAdvisorArrowStyle = nextStyle;
@@ -25053,8 +25178,8 @@ function createTechTreePanel({
     }
     rememberUndoSnapshotForKey('TECH_TREE_ARROW_STYLE');
     const eraValue = getCurrentTechTreeEraValue();
-    const wasPreviewActive = autoArrowCheck.checked === true
-      && !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[String(eraValue)]);
+    const wasPreviewActive = hasScienceAdvisorArrowMetadataForEra(eraValue)
+      || !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[String(eraValue)]);
     if (state.settings) delete state.settings.scienceAdvisorArrowStyle;
     markScienceAdvisorArrowEraDirty(eraValue);
     setDirty(true, { knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-arrow-style-reset' });
@@ -25163,6 +25288,7 @@ function createTechTreePanel({
   stageWrap.appendChild(coordsChip);
   const stage = document.createElement('div');
   stage.className = 'tech-tree-stage';
+  stage.tabIndex = 0;
   const bg = document.createElement('div');
   bg.className = 'tech-tree-bg';
   const laneLayer = document.createElement('div');
@@ -25173,17 +25299,23 @@ function createTechTreePanel({
   arrowHandles.classList.add('tech-tree-route-handles-layer');
   const nodesLayer = document.createElement('div');
   nodesLayer.className = 'tech-tree-nodes';
+  const selectedArrowLines = document.createElement('canvas');
+  selectedArrowLines.classList.add('tech-tree-selected-arrow-lines');
+  const selectedArrowHandles = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  selectedArrowHandles.classList.add('tech-tree-selected-route-handles-layer');
   stage.appendChild(bg);
   stage.appendChild(laneLayer);
   stage.appendChild(lines);
   stage.appendChild(arrowHandles);
   stage.appendChild(nodesLayer);
+  stage.appendChild(selectedArrowLines);
+  stage.appendChild(selectedArrowHandles);
   stageWrap.appendChild(stage);
   section.appendChild(stageWrap);
 
   const { nodes, byId, dependents } = getTechTreeData(allEntries);
   const civEntries = getCivilizationEntries();
-  let selectedId = Number.isFinite(selectedEntry && selectedEntry.biqIndex) ? selectedEntry.biqIndex : selectedBaseIndex;
+  let selectedId = null;
   let bgRenderToken = 0;
   const NODE_W = 136;
   const NODE_H = 44;
@@ -25247,6 +25379,12 @@ function createTechTreePanel({
         removed = true;
       }
     });
+    Object.keys(state.techTreeArrowBaselineRouteHints || {}).forEach((key) => {
+      if (key.includes(`:${idText}->`) || key.endsWith(`->${idText}`)) {
+        delete state.techTreeArrowBaselineRouteHints[key];
+        removed = true;
+      }
+    });
     if (removed && state.techTreeSelectedArrowKey && !state.techTreeArrowRouteOverrides[state.techTreeSelectedArrowKey]) {
       state.techTreeSelectedArrowKey = '';
     }
@@ -25281,7 +25419,7 @@ function createTechTreePanel({
       const position = positionById.get(String(node && node.id));
       if (!position || !node || !node.entry) return;
       const nextX = Math.max(0, Math.round(Number(position.x) || 0));
-      const nextY = Math.max(0, Math.round(Number(position.y) || 0));
+      const nextY = Math.round(getTechTreeStoredYFromDisplayY(position.y, 0, node));
       if (Math.round(Number(node.x) || 0) === nextX && Math.round(Number(node.y) || 0) === nextY) return;
       changedNodes.push({ node, x: nextX, y: nextY });
     });
@@ -25297,30 +25435,25 @@ function createTechTreePanel({
       setTechFieldInt(node.entry, 'x', 'X Position', x);
       setTechFieldInt(node.entry, 'y', 'Y Position', y);
       removedRouteOverrides = removeStoredArrowOverridesForNode(node.id) || removedRouteOverrides;
-	    });
-	    if (removedRouteOverrides) state.techTreeSelectedArrowKey = '';
-	    setDirty(true, { knownDirtyTab: 'technologies', reason: 'tech-tree-auto-position' });
-	    rebuildReferenceDirtyCacheForTab('technologies');
-	    if (autoArrowCheck.checked === true) {
+    });
+    if (removedRouteOverrides) state.techTreeSelectedArrowKey = '';
+    setDirty(true, { knownDirtyTab: 'technologies', reason: 'tech-tree-auto-position' });
+    rebuildReferenceDirtyCacheForTab('technologies');
+    if (autoArrowCheck.checked === true) {
       markScienceAdvisorArrowEraDirty(context.eraValue);
-      const changedIds = changedNodes.map(({ node }) => node && node.id).filter((id) => id != null);
-      changedIds.forEach((id) => {
-        const current = byId.get(id);
-        if (current && current.era === context.eraValue) {
-          current.prereqs.forEach((sourceId) => {
-            const source = byId.get(sourceId);
-            if (source && source.era === context.eraValue) {
-              markScienceAdvisorArrowEdgeKeyDirty(getTechTreeArrowRouteKeyForEra(context.eraValue, sourceId, id));
-            }
-          });
-        }
-        (dependents.get(id) || []).forEach((targetId) => {
-          const target = byId.get(targetId);
-          if (target && target.era === context.eraValue) {
-            markScienceAdvisorArrowEdgeKeyDirty(getTechTreeArrowRouteKeyForEra(context.eraValue, id, targetId));
-          }
+      let dirtyEdgeCount = 0;
+      (context.nodes || []).forEach((target) => {
+        const targetId = Number(target && target.id);
+        if (!Number.isFinite(targetId)) return;
+        (Array.isArray(target && target.prereqs) ? target.prereqs : []).forEach((sourceId) => {
+          const source = byId.get(sourceId);
+          const current = byId.get(targetId);
+          if (!source || !current || source.era !== context.eraValue || current.era !== context.eraValue) return;
+          markScienceAdvisorArrowEdgeKeyDirty(getTechTreeArrowRouteKeyForEra(context.eraValue, sourceId, targetId));
+          dirtyEdgeCount += 1;
         });
       });
+      _dbgLog('INF', 'TechTree', `auto-position:arrow-routes-dirtied era=${context.eraValue} edges=${dirtyEdgeCount} moved=${changedNodes.length}`);
       setDirty(true, { knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-auto-position' });
     }
     refreshUndoButton();
@@ -25336,6 +25469,8 @@ function createTechTreePanel({
 
   const renderForEra = async () => {
     const renderToken = ++bgRenderToken;
+    deleteSelectedArrowHandle = null;
+    setRouteHandleDeleteButtonState(false);
     const eraValue = Number.parseInt(eraSelect.value, 10) || 0;
     const eraDirtyKey = String(eraValue);
     const markCurrentArrowEraDirty = () => {
@@ -25349,21 +25484,18 @@ function createTechTreePanel({
     nodesLayer.innerHTML = '';
     laneLayer.innerHTML = '';
     while (arrowHandles.firstChild) arrowHandles.removeChild(arrowHandles.firstChild);
-    const hasLoadedScienceAdvisorArrowMetadataForEra = () => !!(
-      state.techTreeArrowMetadataEraKeys
-      && typeof state.techTreeArrowMetadataEraKeys === 'object'
-      && state.techTreeArrowMetadataEraKeys[eraDirtyKey]
-    );
-    const isAutoArrowPreviewActive = () => autoArrowCheck.checked === true && (
-      !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraDirtyKey])
-      || hasLoadedScienceAdvisorArrowMetadataForEra()
-    );
+    while (selectedArrowHandles.firstChild) selectedArrowHandles.removeChild(selectedArrowHandles.firstChild);
+    const isGeneratedArrowPreviewActive = () => !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraDirtyKey]);
+    const isRouteHandlePreviewActive = () => isGeneratedArrowPreviewActive() || hasScienceAdvisorArrowMetadataForEra(eraValue);
     const syncArrowPreviewVisibility = () => {
-      const active = isAutoArrowPreviewActive();
-      lines.classList.toggle('tech-tree-lines-auto-preview', active);
-      lines.classList.toggle('tech-tree-lines-hidden', !active);
-      arrowHandles.classList.toggle('tech-tree-route-handles-hidden', !active);
-      return active;
+      const generatedActive = isGeneratedArrowPreviewActive();
+      const handlesActive = isRouteHandlePreviewActive();
+      lines.classList.toggle('tech-tree-lines-auto-preview', generatedActive);
+      lines.classList.toggle('tech-tree-lines-hidden', !generatedActive);
+      arrowHandles.classList.toggle('tech-tree-route-handles-hidden', !handlesActive);
+      selectedArrowLines.classList.toggle('tech-tree-lines-hidden', !handlesActive);
+      selectedArrowHandles.classList.toggle('tech-tree-route-handles-hidden', !handlesActive);
+      return generatedActive;
     };
     syncArrowPreviewVisibility();
 
@@ -25431,7 +25563,7 @@ function createTechTreePanel({
       c.height = Number(bgPreview.height) || baseH;
       c.className = 'tech-tree-bg-canvas';
       drawPreviewFrameToCanvas(bgPreview, c);
-      if (isAutoArrowPreviewActive()) {
+      if (isGeneratedArrowPreviewActive()) {
         eraseTechTreeBackgroundArrowsFromCanvas(c);
       }
       bg.appendChild(c);
@@ -25561,7 +25693,7 @@ function createTechTreePanel({
           id: node.id,
           label: String(node.entry && node.entry.name || `Tech ${node.id}`),
           x: node.x,
-          y: node.y,
+          y: getTechTreeDisplayYFromStoredY(node.y, 0, node),
           w: frame ? Math.max(1, Number(frame.w) || NODE_W) : NODE_W,
           h: frame ? Math.max(1, Number(frame.h) || NODE_H) : NODE_H,
           prereqs: node.prereqs.filter((sourceId) => {
@@ -25577,7 +25709,7 @@ function createTechTreePanel({
       || latestTechTreeAutoLayoutContext.nodes.length === 0;
     eraNodes.forEach((node) => {
       node.vx = activeEraBaseX + (Number(node._rawDisplayX) || 0);
-      node.vy = activeEraBaseY + (Number(node._rawDisplayY) || 0);
+      node.vy = getTechTreeDisplayYFromStoredY(node._rawDisplayY, activeEraBaseY, node);
     });
     const minEraDisplayY = eraNodes.reduce((m, n) => Math.min(m, Number(n.vy) || 0), Number.POSITIVE_INFINITY);
     const maxEraDisplayY = eraNodes.reduce((m, n) => Math.max(m, Number(n.vy) || 0), 0);
@@ -25615,9 +25747,15 @@ function createTechTreePanel({
     bg.style.height = `${nativeEraH}px`;
     lines.width = Math.max(1, Math.round(contentW));
     lines.height = Math.max(1, Math.round(contentH));
+    selectedArrowLines.width = Math.max(1, Math.round(contentW));
+    selectedArrowLines.height = Math.max(1, Math.round(contentH));
     arrowHandles.setAttribute('width', String(contentW));
     arrowHandles.setAttribute('height', String(contentH));
     arrowHandles.setAttribute('viewBox', `0 0 ${contentW} ${contentH}`);
+    selectedArrowHandles.setAttribute('width', String(contentW));
+    selectedArrowHandles.setAttribute('height', String(contentH));
+    selectedArrowHandles.setAttribute('viewBox', `0 0 ${contentW} ${contentH}`);
+    const routeConstraintArea = getTechTreeArrowRouteConstraintArea(nativeEraW, nativeEraH, activeEraBaseX, activeEraBaseY);
     const showLaneSplit = !!showNonEraCheck.checked;
     if (showLaneSplit) {
       const dividerX = Math.max(168, activeGutterOffset);
@@ -25658,6 +25796,8 @@ function createTechTreePanel({
     if (selectedNode) {
       setCoordsFromNode(selectedNode);
       setModalTitleForNode(selectedNode);
+    } else {
+      selectedId = null;
     }
 
     const edgeByNodeId = new Map();
@@ -25665,8 +25805,10 @@ function createTechTreePanel({
     const nodeSizeById = new Map();
     const allEdges = [];
     let selectedArrowKey = String(state.techTreeSelectedArrowKey || '');
+    let selectedArrowHandleIndex = null;
     let hoveredArrowKey = '';
     let routeHandleDragActive = false;
+    let lastArrowPointerClick = null;
     const getArrowRouteKey = (sourceId, targetId) => getTechTreeArrowRouteKeyForEra(eraValue, sourceId, targetId);
     const getEraDirtyEdgeMap = () => {
       const root = state.techTreeArrowDirtyEdgesByEra && typeof state.techTreeArrowDirtyEdgesByEra === 'object'
@@ -25704,8 +25846,11 @@ function createTechTreePanel({
       if (!edge) return null;
       const cache = getBaselineRouteHintCache();
       const key = edge && edge.key ? edge.key : getArrowRouteKey(edge.source.id, edge.target.id);
+      if (isArrowEdgeDirty(key)) {
+        delete cache[key];
+        return null;
+      }
       if (cache[key]) return cache[key];
-      if (isArrowEdgeDirty(key)) return null;
       if (!edge.sourceSide || !edge.targetSide) return null;
       cache[key] = {
         sourceSide: edge.sourceSide,
@@ -25717,13 +25862,64 @@ function createTechTreePanel({
       return cache[key];
     };
     const getSvgPointFromEvent = (ev) => {
-      const pt = arrowHandles.createSVGPoint();
+      const svg = ev && ev.currentTarget && typeof ev.currentTarget.ownerSVGElement !== 'undefined' && ev.currentTarget.ownerSVGElement
+        ? ev.currentTarget.ownerSVGElement
+        : arrowHandles;
+      const pt = svg.createSVGPoint();
       pt.x = ev.clientX;
       pt.y = ev.clientY;
-      const ctm = arrowHandles.getScreenCTM();
+      const ctm = svg.getScreenCTM();
       if (!ctm) return { x: 0, y: 0 };
       const out = pt.matrixTransform(ctm.inverse());
       return { x: out.x, y: out.y };
+    };
+    const formatTechTreeArrowDebugPoint = (point) => {
+      const x = Math.round(Number(point && point.x) || 0);
+      const y = Math.round(Number(point && point.y) || 0);
+      return `${x},${y}`;
+    };
+    const formatTechTreeArrowDebugRoute = (route) => {
+      const points = Array.isArray(route && route.points) ? route.points : [];
+      return points.map(formatTechTreeArrowDebugPoint).join(' ');
+    };
+    const getTechTreeArrowDebugName = (node) => {
+      const entry = node && node.entry;
+      return String((entry && (entry.name || entry.civilopediaKey)) || (node && node.id) || '');
+    };
+    const summarizeTechTreeArrowEdgeForDebug = (edgeObj) => {
+      if (!edgeObj) return 'key=(none)';
+      const route = edgeObj.route;
+      const points = Array.isArray(route && route.points) ? route.points : [];
+      return [
+        `key=${edgeObj.key || '(none)'}`,
+        `source="${getTechTreeArrowDebugName(edgeObj.source)}"`,
+        `target="${getTechTreeArrowDebugName(edgeObj.target)}"`,
+        `points=${points.length}`,
+        `route=[${formatTechTreeArrowDebugRoute(route)}]`
+      ].join(' ');
+    };
+    const logTechTreeArrowInteraction = (eventName, edgeObj, details = '') => {
+      const suffix = details ? ` ${details}` : '';
+      appendDebugLog(`[DBG][TechTree] arrow-${eventName} ${summarizeTechTreeArrowEdgeForDebug(edgeObj)}${suffix}`, null, {
+        external: true,
+        level: 'debug',
+        category: 'TechTree'
+      });
+    };
+    const isRepeatedArrowPointerClick = (edgeObj, point) => {
+      const now = (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+      const previous = lastArrowPointerClick;
+      lastArrowPointerClick = {
+        key: edgeObj && edgeObj.key,
+        time: now,
+        x: Number(point && point.x) || 0,
+        y: Number(point && point.y) || 0
+      };
+      if (!previous || !edgeObj || previous.key !== edgeObj.key) return false;
+      if (now - previous.time > 450) return false;
+      const dx = ((Number(point && point.x) || 0) - previous.x);
+      const dy = ((Number(point && point.y) || 0) - previous.y);
+      return ((dx * dx) + (dy * dy)) <= 144;
     };
     const snapRouteDragPoint = (route, pointIndex, point, options = {}) => {
       if (options && options.bypass) return point;
@@ -25787,6 +25983,62 @@ function createTechTreePanel({
       return {
         x: pickAxis('x'),
         y: pickAxis('y')
+      };
+    };
+    const getTechTreeSelectedRouteColors = (role) => {
+      if (role === 'incoming') {
+        return {
+          outline: { r: 70, g: 36, b: 118 },
+          main: { r: 176, g: 80, b: 232 },
+          highlight: { r: 176, g: 80, b: 232 }
+        };
+      }
+      if (role === 'outgoing') {
+        return {
+          outline: { r: 18, g: 78, b: 43 },
+          main: { r: 38, g: 214, b: 82 },
+          highlight: { r: 38, g: 214, b: 82 }
+        };
+      }
+      if (role === 'selected') {
+        return {
+          outline: { r: 8, g: 58, b: 126 },
+          main: { r: 38, g: 164, b: 255 },
+          highlight: { r: 38, g: 164, b: 255 }
+        };
+      }
+      return {
+        outline: { r: 19, g: 83, b: 78 },
+        main: { r: 246, g: 198, b: 55 },
+        highlight: { r: 246, g: 198, b: 55 }
+      };
+    };
+    const getHighlightedScienceAdvisorArrowStyle = (role = 'selected') => {
+      const source = getStoredScienceAdvisorArrowStyle();
+      const base = scienceAdvisorArrows && typeof scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle === 'function'
+        ? scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle(source, { eraIndex: eraValue })
+        : deepCloneUiValue(source || {});
+      const body = base.body && typeof base.body === 'object' ? base.body : {};
+      const head = base.head && typeof base.head === 'object' ? base.head : {};
+      return {
+        ...base,
+        coverageThreshold: Math.max(1, (Number(base.coverageThreshold) || 3) - 1),
+        colors: getTechTreeSelectedRouteColors(role),
+        body: {
+          ...body,
+          outlineRadius: Math.min(3, (Number(body.outlineRadius) || 1.5) + 0.45)
+        },
+        head: {
+          ...head,
+          outline: {
+            ...(head.outline && typeof head.outline === 'object' ? head.outline : {}),
+            half: Math.min(10, (Number(head.outline && head.outline.half) || 5) + 0.75)
+          },
+          main: {
+            ...(head.main && typeof head.main === 'object' ? head.main : {}),
+            half: Math.min(9, (Number(head.main && head.main.half) || 4) + 0.5)
+          }
+        }
       };
     };
     const getDisplayNodeRect = (node) => {
@@ -25881,15 +26133,18 @@ function createTechTreePanel({
         }))
       };
     };
-    const cacheRouteSnapshotForEdge = (edgeObj) => {
+    const cacheRouteSnapshotForEdge = (edgeObj, options = {}) => {
       if (!edgeObj || !edgeObj.key || !edgeObj.route || autoArrowCheck.checked !== true) return;
+      if (options.skipSnapshot === true) return;
       if (state.techTreeArrowRouteOverrides && state.techTreeArrowRouteOverrides[edgeObj.key]) return;
       setRawSnapshotFromDisplayRoute(edgeObj.key, edgeObj.route);
+      if (options.keepDirty !== true) clearScienceAdvisorArrowEdgeKeyDirty(edgeObj.key);
     };
     const removeArrowOverridesForNode = (nodeId) => {
       removeStoredArrowOverridesForNode(nodeId);
       if (selectedArrowKey && !state.techTreeArrowRouteOverrides[selectedArrowKey]) {
         selectedArrowKey = '';
+        selectedArrowHandleIndex = null;
         state.techTreeSelectedArrowKey = '';
       }
     };
@@ -25905,6 +26160,7 @@ function createTechTreePanel({
       if (existing) return existing;
       if (!edgeObj.route || !Array.isArray(edgeObj.route.points) || edgeObj.route.points.length < 2) return null;
       setRawOverrideFromDisplayRoute(edgeObj.key, edgeObj.route);
+      logTechTreeArrowInteraction('override-created', edgeObj);
       return getDisplayOverrideRoute(edgeObj.key);
     };
     const updateRouteOverridePoint = (edgeObj, pointIndex, point, options = {}) => {
@@ -25917,35 +26173,18 @@ function createTechTreePanel({
         x: Math.max(0, Math.min(contentW, Number(snappedPoint && snappedPoint.x) || 0)),
         y: Math.max(0, Math.min(contentH, Number(snappedPoint && snappedPoint.y) || 0))
       };
-      let adjacentPoint = null;
-      const endpointStem = 18;
       if (idx === 0 && edgeObj && edgeObj.source) {
         const projected = projectPointToRectBorder(getDisplayNodeRect(edgeObj.source), nextPoint);
         nextPoint = projected.point;
-        adjacentPoint = {
-          index: 1,
-          point: {
-            x: nextPoint.x + (projected.normal.x * endpointStem),
-            y: nextPoint.y + (projected.normal.y * endpointStem)
-          }
-        };
       } else if (idx === route.points.length - 1 && edgeObj && edgeObj.target) {
         const projected = projectPointToRectBorder(getDisplayNodeRect(edgeObj.target), nextPoint);
         nextPoint = projected.point;
-        adjacentPoint = {
-          index: route.points.length - 2,
-          point: {
-            x: nextPoint.x + (projected.normal.x * endpointStem),
-            y: nextPoint.y + (projected.normal.y * endpointStem)
-          }
-        };
       }
       const nextRoute = {
         dir: route.dir,
         headVector: route.headVector,
         points: route.points.map((routePoint, routeIndex) => {
           if (routeIndex === idx) return nextPoint;
-          if (adjacentPoint && routeIndex === adjacentPoint.index) return adjacentPoint.point;
           return routePoint;
         })
       };
@@ -25965,21 +26204,231 @@ function createTechTreePanel({
       });
     };
     const getNodeSize = (nodeId) => nodeSizeById.get(nodeId) || { width: NODE_W, height: NODE_H };
+    const getSelectedTechRouteRole = (edgeObj, activeId) => {
+      if (!edgeObj || activeId == null) return '';
+      if (edgeObj.target && edgeObj.target.id === activeId) return 'incoming';
+      if (edgeObj.source && edgeObj.source.id === activeId) return 'outgoing';
+      return '';
+    };
+    let selectionFocusActive = false;
+    let selectionFocusNodeIds = new Set();
+    let selectionFocusEdgeKeys = new Set();
+    let selectionFocusRepaintTimer = 0;
+    const scheduleSelectionFocusRepaint = (options = {}) => {
+      if (options.renderHandles !== false) renderArrowHandles();
+      const run = () => {
+        selectionFocusRepaintTimer = 0;
+        if (!stage || !stage.isConnected) return;
+        redrawLines({ recomputeRoutes: false });
+      };
+      if (selectionFocusRepaintTimer) window.clearTimeout(selectionFocusRepaintTimer);
+      if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+        selectionFocusRepaintTimer = window.setTimeout(run, 0);
+      } else {
+        run();
+      }
+    };
+    const getSelectedArrowEdge = () => {
+      if (!selectedArrowKey) return null;
+      return allEdges.find((edgeObj) => edgeObj && edgeObj.key === selectedArrowKey) || null;
+    };
+    const getClosestRouteSegmentInsert = (route, point) => {
+      const points = Array.isArray(route && route.points) ? route.points : [];
+      if (points.length < 2) return null;
+      const px = Number(point && point.x) || 0;
+      const py = Number(point && point.y) || 0;
+      let best = null;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const ax = Number(a && a.x) || 0;
+        const ay = Number(a && a.y) || 0;
+        const bx = Number(b && b.x) || 0;
+        const by = Number(b && b.y) || 0;
+        const dx = bx - ax;
+        const dy = by - ay;
+        const lenSq = (dx * dx) + (dy * dy);
+        const t = lenSq > 0 ? Math.max(0, Math.min(1, (((px - ax) * dx) + ((py - ay) * dy)) / lenSq)) : 0;
+        const x = ax + (dx * t);
+        const y = ay + (dy * t);
+        const distSq = ((px - x) * (px - x)) + ((py - y) * (py - y));
+        if (!best || distSq < best.distSq) best = { segmentIndex: i, point: { x, y }, distSq };
+      }
+      return best;
+    };
+    const setRouteOverridePoints = (edgeObj, points) => {
+      if (!edgeObj || !edgeObj.key || !Array.isArray(points) || points.length < 2) return false;
+      const safePoints = points.map((point) => ({
+        x: Math.max(0, Math.min(contentW, Number(point && point.x) || 0)),
+        y: Math.max(0, Math.min(contentH, Number(point && point.y) || 0))
+      }));
+      const tip = safePoints[safePoints.length - 1];
+      const prev = safePoints[Math.max(0, safePoints.length - 2)];
+      setRawOverrideFromDisplayRoute(edgeObj.key, {
+        dir: tip.x >= prev.x ? 1 : -1,
+        headVector: { x: tip.x - prev.x, y: tip.y - prev.y },
+        points: safePoints
+      });
+      placeEdge(edgeObj);
+      return true;
+    };
+    const insertArrowRouteHandle = (edgeObj, point) => {
+      if (!edgeObj || !edgeObj.key) return false;
+      const undoSnapshot = snapshotTechTreeArrowStyleState();
+      const route = ensureRouteOverrideForEdge(edgeObj);
+      if (!route || !Array.isArray(route.points) || route.points.length < 2) return false;
+      const insert = getClosestRouteSegmentInsert(route, point);
+      if (!insert) return false;
+      const nextPoints = route.points.map((routePoint) => ({
+        x: Number(routePoint && routePoint.x) || 0,
+        y: Number(routePoint && routePoint.y) || 0
+      }));
+      const nextIndex = insert.segmentIndex + 1;
+      nextPoints.splice(nextIndex, 0, {
+        x: Math.round(Number(insert.point && insert.point.x) || 0),
+        y: Math.round(Number(insert.point && insert.point.y) || 0)
+      });
+      if (!setRouteOverridePoints(edgeObj, nextPoints)) return false;
+      selectedArrowKey = edgeObj.key;
+      selectedArrowHandleIndex = nextIndex;
+      state.techTreeSelectedArrowKey = edgeObj.key;
+      hoveredArrowKey = edgeObj.key;
+      selectedId = null;
+      refreshSelectedVisuals(null);
+      rememberUndoSnapshotValue(undoSnapshot, 'TECH_TREE_ARROW_ROUTE');
+      markArrowRouteDirty(edgeObj.key);
+      redrawLines({ recomputeRoutes: false, dynamicEdgeKeys: [edgeObj.key] });
+      renderArrowHandles();
+      logTechTreeArrowInteraction('handle-insert', edgeObj, `pointIndex=${nextIndex} pointer=${formatTechTreeArrowDebugPoint(point)}`);
+      return true;
+    };
+    const getSelectedArrowRouteHandleDeleteState = () => {
+      const edgeObj = selectedArrowKey
+        ? allEdges.find((candidate) => candidate && candidate.key === selectedArrowKey)
+        : null;
+      const idx = Number(selectedArrowHandleIndex);
+      if (!edgeObj || !Number.isInteger(idx) || !referenceEditable || !isRouteHandlePreviewActive()) {
+        return { edgeObj, idx, points: [], canDelete: false };
+      }
+      const sourceRoute = getDisplayOverrideRoute(edgeObj.key) || edgeObj.route;
+      const points = Array.isArray(sourceRoute && sourceRoute.points) ? sourceRoute.points : [];
+      return {
+        edgeObj,
+        idx,
+        points,
+        canDelete: idx > 0 && idx < points.length - 1 && points.length > 2
+      };
+    };
+    syncRouteHandleDeleteButtonState = () => {
+      setRouteHandleDeleteButtonState(getSelectedArrowRouteHandleDeleteState().canDelete);
+    };
+    const removeSelectedArrowRouteHandle = () => {
+      const { edgeObj, idx, points, canDelete } = getSelectedArrowRouteHandleDeleteState();
+      if (!canDelete) return false;
+      const undoSnapshot = snapshotTechTreeArrowStyleState();
+      const nextPoints = points
+        .filter((_point, pointIndex) => pointIndex !== idx)
+        .map((routePoint) => ({
+          x: Number(routePoint && routePoint.x) || 0,
+          y: Number(routePoint && routePoint.y) || 0
+        }));
+      if (!setRouteOverridePoints(edgeObj, nextPoints)) return false;
+      selectedArrowHandleIndex = Math.min(idx, nextPoints.length - 2);
+      rememberUndoSnapshotValue(undoSnapshot, 'TECH_TREE_ARROW_ROUTE');
+      markArrowRouteDirty(edgeObj.key);
+      redrawLines({ recomputeRoutes: false, dynamicEdgeKeys: [edgeObj.key] });
+      renderArrowHandles();
+      syncRouteHandleDeleteButtonState();
+      logTechTreeArrowInteraction('handle-delete', edgeObj, `pointIndex=${idx}`);
+      return true;
+    };
+    deleteSelectedArrowHandle = removeSelectedArrowRouteHandle;
+    const clearSelectedArrowRouteOverride = () => {
+      const edgeObj = getSelectedArrowEdge();
+      if (!edgeObj || !edgeObj.key || !state.techTreeArrowRouteOverrides || !state.techTreeArrowRouteOverrides[edgeObj.key]) return false;
+      const undoSnapshot = snapshotTechTreeArrowStyleState();
+      delete state.techTreeArrowRouteOverrides[edgeObj.key];
+      if (state.techTreeArrowRouteSnapshots && state.techTreeArrowRouteSnapshots[edgeObj.key]) {
+        delete state.techTreeArrowRouteSnapshots[edgeObj.key];
+      }
+      selectedArrowHandleIndex = null;
+      markArrowRouteDirty(edgeObj.key);
+      placeEdge(edgeObj, { ignoreStoredRoutes: true, skipSnapshot: true, keepDirty: true });
+      rememberUndoSnapshotValue(undoSnapshot, 'TECH_TREE_ARROW_ROUTE');
+      redrawLines({ recomputeRoutes: false, dynamicEdgeKeys: [edgeObj.key] });
+      renderArrowHandles();
+      logTechTreeArrowInteraction('override-clear', edgeObj);
+      return true;
+    };
     const refreshSelectedVisuals = (activeId) => {
+      const prereqIds = new Set();
+      const dependentIds = new Set();
+      const focusNodeIds = new Set();
+      const focusEdgeKeys = new Set();
+      const selectedArrowEdge = getSelectedArrowEdge();
+      if (activeId != null) {
+        focusNodeIds.add(activeId);
+        allEdges.forEach((edgeObj) => {
+          if (!edgeObj) return;
+          if (edgeObj.target && edgeObj.target.id === activeId && edgeObj.source) {
+            prereqIds.add(edgeObj.source.id);
+            focusNodeIds.add(edgeObj.source.id);
+            focusEdgeKeys.add(edgeObj.key);
+          }
+          if (edgeObj.source && edgeObj.source.id === activeId && edgeObj.target) {
+            dependentIds.add(edgeObj.target.id);
+            focusNodeIds.add(edgeObj.target.id);
+            focusEdgeKeys.add(edgeObj.key);
+          }
+        });
+      } else if (selectedArrowEdge) {
+        focusEdgeKeys.add(selectedArrowEdge.key);
+        if (selectedArrowEdge.source) focusNodeIds.add(selectedArrowEdge.source.id);
+        if (selectedArrowEdge.target) focusNodeIds.add(selectedArrowEdge.target.id);
+      }
+      selectionFocusActive = activeId != null || !!selectedArrowEdge;
+      selectionFocusNodeIds = focusNodeIds;
+      selectionFocusEdgeKeys = focusEdgeKeys;
       nodeElById.forEach((el, id) => {
         if (!el) return;
         el.classList.toggle('selected', id === activeId);
+        el.classList.toggle('is-prereq', id !== activeId && prereqIds.has(id));
+        el.classList.toggle('is-dependent', id !== activeId && dependentIds.has(id));
+        el.classList.toggle('is-focus-dimmed', selectionFocusActive && !focusNodeIds.has(id));
       });
       allEdges.forEach((edgeObj) => {
-        edgeObj.selected = edgeObj.source.id === activeId || edgeObj.target.id === activeId;
+        edgeObj.highlightRole = getSelectedTechRouteRole(edgeObj, activeId);
+        edgeObj.selected = !!edgeObj.highlightRole;
+        edgeObj.dimmed = selectionFocusActive && !focusEdgeKeys.has(edgeObj.key);
       });
+    };
+    const clearSelectedArrow = (options = {}) => {
+      if (!selectedArrowKey && !hoveredArrowKey && !state.techTreeSelectedArrowKey) return;
+      selectedArrowKey = '';
+      selectedArrowHandleIndex = null;
+      hoveredArrowKey = '';
+      state.techTreeSelectedArrowKey = '';
+      refreshSelectedVisuals(null);
+      if (options.deferRender) return;
+      scheduleSelectionFocusRepaint();
+    };
+    const clearSelectedTechHighlight = (options = {}) => {
+      if (selectedId == null && !allEdges.some((edgeObj) => edgeObj && (edgeObj.selected || edgeObj.highlightRole))) return;
+      selectedId = null;
+      refreshSelectedVisuals(null);
+      if (options.deferRender) return;
+      scheduleSelectionFocusRepaint();
     };
     const selectNodeInPlace = (node) => {
       if (!node) return;
       selectedId = node.id;
+      selectedArrowKey = '';
+      selectedArrowHandleIndex = null;
+      state.techTreeSelectedArrowKey = '';
       setCoordsFromNode(node);
       setModalTitleForNode(node);
       refreshSelectedVisuals(selectedId);
+      scheduleSelectionFocusRepaint();
       if (typeof onSelectBaseIndex === 'function') onSelectBaseIndex(node.index);
     };
     const getNodeCenter = (node) => {
@@ -25988,17 +26437,19 @@ function createTechTreePanel({
       const ny = Number.isFinite(node.vy) ? node.vy : node.y;
       return { x: nx + (size.width / 2), y: ny + (size.height / 2) };
     };
-    const placeEdge = (edgeObj) => {
+    const placeEdge = (edgeObj, options = {}) => {
       const src = edgeObj.source;
       const dst = edgeObj.target;
       const srcSize = getNodeSize(src.id);
       const dstSize = getNodeSize(dst.id);
-      const routeOptions = (!isArrowEdgeDirty(edgeObj.key) && edgeObj.baselineRouteOptions)
+      const edgeDirty = isArrowEdgeDirty(edgeObj.key);
+      const useStoredRoute = options.ignoreStoredRoutes !== true;
+      const routeOptions = (!edgeDirty && edgeObj.baselineRouteOptions)
         ? edgeObj.baselineRouteOptions
         : (edgeObj.routeOptions || {});
-      const overrideRoute = getDisplayOverrideRoute(edgeObj.key);
-      const snapshotRoute = !isArrowEdgeDirty(edgeObj.key) ? getDisplayRouteSnapshot(edgeObj.key) : null;
-      const route = overrideRoute || snapshotRoute || (techBoxLayout && typeof techBoxLayout.buildTechTreeArrowRoute === 'function'
+      const overrideRoute = useStoredRoute ? getDisplayOverrideRoute(edgeObj.key) : null;
+      const snapshotRoute = useStoredRoute && !edgeDirty ? getDisplayRouteSnapshot(edgeObj.key) : null;
+      let route = overrideRoute || snapshotRoute || (techBoxLayout && typeof techBoxLayout.buildTechTreeArrowRoute === 'function'
         ? techBoxLayout.buildTechTreeArrowRoute(
           {
             x: Number.isFinite(src.vx) ? src.vx : src.x,
@@ -26023,19 +26474,43 @@ function createTechTreePanel({
           }
         )
         : null);
+      if (!overrideRoute && route && techBoxLayout && typeof techBoxLayout.constrainTechTreeArrowRoute === 'function') {
+        route = techBoxLayout.constrainTechTreeArrowRoute(route, routeConstraintArea);
+      }
       edgeObj.route = route;
-      cacheRouteSnapshotForEdge(edgeObj);
+      cacheRouteSnapshotForEdge(edgeObj, options);
     };
     const renderArrowHandles = () => {
       while (arrowHandles.firstChild) arrowHandles.removeChild(arrowHandles.firstChild);
-      if (!isAutoArrowPreviewActive()) return;
-      const activeKey = routeHandleDragActive ? selectedArrowKey : hoveredArrowKey;
-      allEdges.forEach((edgeObj) => {
+      while (selectedArrowHandles.firstChild) selectedArrowHandles.removeChild(selectedArrowHandles.firstChild);
+      syncArrowPreviewVisibility();
+      syncRouteHandleDeleteButtonState();
+      if (!isRouteHandlePreviewActive()) return;
+      const activeKey = selectedArrowKey || hoveredArrowKey;
+      const orderedEdges = [
+        ...allEdges.filter((edgeObj) => edgeObj && edgeObj.key !== selectedArrowKey && edgeObj.key !== hoveredArrowKey),
+        ...allEdges.filter((edgeObj) => edgeObj && edgeObj.key === hoveredArrowKey && edgeObj.key !== selectedArrowKey),
+        ...allEdges.filter((edgeObj) => edgeObj && edgeObj.key === selectedArrowKey)
+      ];
+      const activeEdge = activeKey ? orderedEdges.find((edgeObj) => edgeObj && edgeObj.key === activeKey) : null;
+      if (activeEdge) {
+        logTechTreeArrowInteraction(
+          'handles-render',
+          activeEdge,
+          `selected=${selectedArrowKey || '(none)'} hovered=${hoveredArrowKey || '(none)'} layer=top totalEdges=${allEdges.length}`
+        );
+      }
+      orderedEdges.forEach((edgeObj) => {
         if (!edgeObj || !edgeObj.route || !Array.isArray(edgeObj.route.points)) return;
         const points = edgeObj.route.points;
         if (points.length < 2) return;
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('tech-tree-route-control');
+        if (edgeObj.key === selectedArrowKey) group.classList.add('selected');
+        else if (edgeObj.key === hoveredArrowKey) group.classList.add('hovered');
+        if (edgeObj.selected) group.classList.add('related');
+        if (edgeObj.highlightRole) group.classList.add(`related-${edgeObj.highlightRole}`);
+        if (edgeObj.dimmed) group.classList.add('is-focus-dimmed');
         const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         hitPath.classList.add('tech-tree-route-hit');
         if (techBoxLayout && typeof techBoxLayout.formatTechTreeArrowSvgPath === 'function') {
@@ -26043,14 +26518,13 @@ function createTechTreePanel({
         }
         hitPath.setAttribute('fill', 'none');
         hitPath.setAttribute('stroke', 'transparent');
-        hitPath.setAttribute('stroke-width', '14');
+        hitPath.setAttribute('stroke-width', edgeObj.key === selectedArrowKey ? '24' : (edgeObj.key === hoveredArrowKey ? '18' : '10'));
         hitPath.setAttribute('stroke-linecap', 'round');
         hitPath.setAttribute('stroke-linejoin', 'round');
         group.addEventListener('pointerenter', () => {
           if (hoveredArrowKey === edgeObj.key) return;
           hoveredArrowKey = edgeObj.key;
-          selectedArrowKey = edgeObj.key;
-          state.techTreeSelectedArrowKey = edgeObj.key;
+          logTechTreeArrowInteraction('hover', edgeObj);
           renderArrowHandles();
         });
         group.addEventListener('pointerleave', () => {
@@ -26059,127 +26533,370 @@ function createTechTreePanel({
           hoveredArrowKey = '';
           renderArrowHandles();
         });
+        group.addEventListener('pointerdown', (ev) => {
+          if (ev.button !== 0) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (typeof stage.focus === 'function') stage.focus({ preventScroll: true });
+          const pointerPoint = getSvgPointFromEvent(ev);
+          if (isRepeatedArrowPointerClick(edgeObj, pointerPoint)) {
+            insertArrowRouteHandle(edgeObj, pointerPoint);
+            return;
+          }
+          selectedArrowKey = edgeObj.key;
+          selectedArrowHandleIndex = null;
+          state.techTreeSelectedArrowKey = edgeObj.key;
+          hoveredArrowKey = edgeObj.key;
+          selectedId = null;
+          refreshSelectedVisuals(null);
+          logTechTreeArrowInteraction('click', edgeObj, `pointer=${formatTechTreeArrowDebugPoint(pointerPoint)}`);
+          scheduleSelectionFocusRepaint();
+        });
+        group.addEventListener('dblclick', (ev) => {
+          if (ev.button !== 0) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+        });
         group.appendChild(hitPath);
         if (edgeObj.key === activeKey) {
-        points.forEach((point, pointIndex) => {
-          const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          handle.classList.add('tech-tree-route-handle');
-          if (pointIndex === 0 || pointIndex === points.length - 1) handle.classList.add('tech-tree-route-handle-endpoint');
-          if (edgeObj.key === selectedArrowKey) handle.classList.add('selected');
-          handle.setAttribute('cx', String(Number(point.x) || 0));
-          handle.setAttribute('cy', String(Number(point.y) || 0));
-          handle.setAttribute('r', pointIndex === 0 || pointIndex === points.length - 1 ? '6' : '5');
-          handle.setAttribute('tabindex', '0');
-          handle.setAttribute('role', 'button');
-          const handleName = pointIndex === 0 ? 'start point' : (pointIndex === points.length - 1 ? 'arrowhead' : 'route point');
-          handle.setAttribute('aria-label', `Adjust ${handleName} from ${edgeObj.source && edgeObj.source.entry ? edgeObj.source.entry.name : 'source'} to ${edgeObj.target && edgeObj.target.entry ? edgeObj.target.entry.name : 'target'}`);
-          handle.addEventListener('pointerdown', (ev) => {
-            if (ev.button !== 0) return;
-            ev.preventDefault();
-            ev.stopPropagation();
-            const undoSnapshot = snapshotTechTreeArrowStyleState();
-            const route = ensureRouteOverrideForEdge(edgeObj);
-            if (!route) return;
-            selectedArrowKey = edgeObj.key;
-            state.techTreeSelectedArrowKey = edgeObj.key;
-            hoveredArrowKey = edgeObj.key;
-            routeHandleDragActive = true;
-            handle.classList.add('selected');
-            const drag = {
-              pointerId: ev.pointerId,
-              pointIndex,
-	              dirty: false,
-	              undoSnapshot,
-	              latest: getSvgPointFromEvent(ev),
-	              bypassSnap: !isArrowRouteSnapEnabled() || !!ev.altKey,
-	              rafId: 0
-	            };
-            const applyDragPoint = () => {
-              const nextPoint = updateRouteOverridePoint(edgeObj, drag.pointIndex, drag.latest, {
-	                bypass: drag.bypassSnap,
-	                routes: allEdges.map((candidateEdge) => candidateEdge && candidateEdge.route).filter(Boolean)
-	              });
-              if (!nextPoint) return;
-              placeEdge(edgeObj);
-              redrawLines();
-              handle.setAttribute('cx', String(Math.round(nextPoint.x)));
-              handle.setAttribute('cy', String(Math.round(nextPoint.y)));
-              if (!drag.dirty) {
-                drag.dirty = true;
-                rememberUndoSnapshotValue(drag.undoSnapshot, 'TECH_TREE_ARROW_ROUTE');
-                markArrowRouteDirty(edgeObj.key);
-              }
-            };
-            const onMove = (moveEv) => {
-              if (moveEv.pointerId !== drag.pointerId) return;
-	              moveEv.preventDefault();
-	              drag.latest = getSvgPointFromEvent(moveEv);
-	              drag.bypassSnap = !isArrowRouteSnapEnabled() || !!moveEv.altKey;
-	              if (drag.rafId) return;
-              drag.rafId = window.requestAnimationFrame(() => {
-                drag.rafId = 0;
-                applyDragPoint();
-              });
-            };
-            const onDone = (doneEv) => {
-              if (doneEv.pointerId !== drag.pointerId) return;
-              doneEv.preventDefault();
-              if (drag.rafId) {
-                window.cancelAnimationFrame(drag.rafId);
-                drag.rafId = 0;
-	              }
-	              drag.latest = getSvgPointFromEvent(doneEv);
-	              drag.bypassSnap = !isArrowRouteSnapEnabled() || !!doneEv.altKey;
-	              applyDragPoint();
-              handle.releasePointerCapture(drag.pointerId);
-              handle.removeEventListener('pointermove', onMove);
-              handle.removeEventListener('pointerup', onDone);
-              handle.removeEventListener('pointercancel', onDone);
-              routeHandleDragActive = false;
-              renderArrowHandles();
-            };
-            handle.setPointerCapture(ev.pointerId);
-            handle.addEventListener('pointermove', onMove);
-            handle.addEventListener('pointerup', onDone);
-            handle.addEventListener('pointercancel', onDone);
+          if (edgeObj.key === selectedArrowKey
+            && selectedArrowHandleIndex !== null
+            && selectedArrowHandleIndex !== undefined
+            && (!Number.isInteger(Number(selectedArrowHandleIndex)) || Number(selectedArrowHandleIndex) < 0 || Number(selectedArrowHandleIndex) >= points.length)) {
+            selectedArrowHandleIndex = null;
+          }
+          points.forEach((point, pointIndex) => {
+            const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            handle.classList.add('tech-tree-route-handle');
+            if (pointIndex === 0 || pointIndex === points.length - 1) handle.classList.add('tech-tree-route-handle-endpoint');
+            if (edgeObj.key === selectedArrowKey) handle.classList.add('selected');
+            if (edgeObj.key === selectedArrowKey && selectedArrowHandleIndex === pointIndex) handle.classList.add('selected-handle');
+            handle.setAttribute('cx', String(Number(point.x) || 0));
+            handle.setAttribute('cy', String(Number(point.y) || 0));
+            handle.setAttribute('r', pointIndex === 0 || pointIndex === points.length - 1 ? '6' : '5');
+            handle.setAttribute('tabindex', '0');
+            handle.setAttribute('role', 'button');
+            const handleName = pointIndex === 0 ? 'start point' : (pointIndex === points.length - 1 ? 'arrowhead' : 'route point');
+            handle.setAttribute('aria-label', `Adjust ${handleName} from ${edgeObj.source && edgeObj.source.entry ? edgeObj.source.entry.name : 'source'} to ${edgeObj.target && edgeObj.target.entry ? edgeObj.target.entry.name : 'target'}`);
+            handle.addEventListener('dblclick', (ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+            });
+            handle.addEventListener('pointerdown', (ev) => {
+              if (ev.button !== 0) return;
+              ev.preventDefault();
+              ev.stopPropagation();
+              if (typeof stage.focus === 'function') stage.focus({ preventScroll: true });
+              const undoSnapshot = snapshotTechTreeArrowStyleState();
+              const startPoint = getSvgPointFromEvent(ev);
+              selectedArrowKey = edgeObj.key;
+              selectedArrowHandleIndex = pointIndex;
+              state.techTreeSelectedArrowKey = edgeObj.key;
+              hoveredArrowKey = edgeObj.key;
+              selectedId = null;
+              refreshSelectedVisuals(null);
+              syncRouteHandleDeleteButtonState();
+              routeHandleDragActive = true;
+              handle.classList.add('selected');
+              handle.classList.add('selected-handle');
+              scheduleSelectionFocusRepaint({ renderHandles: false });
+              logTechTreeArrowInteraction('handle-down', edgeObj, `pointIndex=${pointIndex} pointer=${formatTechTreeArrowDebugPoint(startPoint)}`);
+              const drag = {
+                pointerId: ev.pointerId,
+                pointIndex,
+                dirty: false,
+                moved: false,
+                routeReady: false,
+                undoSnapshot,
+                start: startPoint,
+                latest: startPoint,
+                bypassSnap: !isArrowRouteSnapEnabled() || !!ev.altKey,
+                rafId: 0
+              };
+              const hasMovedEnough = () => {
+                const dx = (Number(drag.latest && drag.latest.x) || 0) - (Number(drag.start && drag.start.x) || 0);
+                const dy = (Number(drag.latest && drag.latest.y) || 0) - (Number(drag.start && drag.start.y) || 0);
+                return Math.abs(dx) > 2 || Math.abs(dy) > 2;
+              };
+              const ensureDragRouteOverride = () => {
+                if (drag.routeReady) return true;
+                const route = ensureRouteOverrideForEdge(edgeObj);
+                if (!route) return false;
+                drag.routeReady = true;
+                return true;
+              };
+              const applyDragPoint = () => {
+                if (!drag.moved) {
+                  if (!hasMovedEnough()) return false;
+                  drag.moved = true;
+                }
+                if (!ensureDragRouteOverride()) return false;
+                const nextPoint = updateRouteOverridePoint(edgeObj, drag.pointIndex, drag.latest, {
+                  bypass: drag.bypassSnap,
+                  routes: allEdges.map((candidateEdge) => candidateEdge && candidateEdge.route).filter(Boolean)
+                });
+                if (!nextPoint) return false;
+                placeEdge(edgeObj);
+                redrawLines({ recomputeRoutes: false, dynamicEdgeKeys: [edgeObj.key] });
+                handle.setAttribute('cx', String(Math.round(nextPoint.x)));
+                handle.setAttribute('cy', String(Math.round(nextPoint.y)));
+                if (!drag.dirty) {
+                  drag.dirty = true;
+                  rememberUndoSnapshotValue(drag.undoSnapshot, 'TECH_TREE_ARROW_ROUTE');
+                  markArrowRouteDirty(edgeObj.key);
+                }
+                return true;
+              };
+              const onMove = (moveEv) => {
+                if (moveEv.pointerId !== drag.pointerId) return;
+                moveEv.preventDefault();
+                drag.latest = getSvgPointFromEvent(moveEv);
+                drag.bypassSnap = !isArrowRouteSnapEnabled() || !!moveEv.altKey;
+                if (drag.rafId) return;
+                drag.rafId = window.requestAnimationFrame(() => {
+                  drag.rafId = 0;
+                  applyDragPoint();
+                });
+              };
+              const onDone = (doneEv) => {
+                if (doneEv.pointerId !== drag.pointerId) return;
+                doneEv.preventDefault();
+                if (drag.rafId) {
+                  window.cancelAnimationFrame(drag.rafId);
+                  drag.rafId = 0;
+                }
+                drag.latest = getSvgPointFromEvent(doneEv);
+                drag.bypassSnap = !isArrowRouteSnapEnabled() || !!doneEv.altKey;
+                if (hasMovedEnough()) applyDragPoint();
+                logTechTreeArrowInteraction('handle-done', edgeObj, `pointIndex=${drag.pointIndex} dirty=${drag.dirty ? 1 : 0}`);
+                handle.releasePointerCapture(drag.pointerId);
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onDone);
+                handle.removeEventListener('pointercancel', onDone);
+                routeHandleDragActive = false;
+                renderArrowHandles();
+              };
+              handle.setPointerCapture(ev.pointerId);
+              handle.addEventListener('pointermove', onMove);
+              handle.addEventListener('pointerup', onDone);
+              handle.addEventListener('pointercancel', onDone);
+            });
+            group.appendChild(handle);
           });
-          group.appendChild(handle);
-        });
         }
-        arrowHandles.appendChild(group);
+        (edgeObj.key === activeKey ? selectedArrowHandles : arrowHandles).appendChild(group);
       });
+      syncRouteHandleDeleteButtonState();
     };
-    const redrawLines = () => {
-      const seen = new Set();
-      edgeByNodeId.forEach((arr) => {
-        arr.forEach((edgeObj) => {
-          if (seen.has(edgeObj)) return;
-          seen.add(edgeObj);
-          placeEdge(edgeObj);
+    let arrowBaseLayerCache = null;
+    let arrowScratchCanvas = null;
+    const getArrowScratchContext = (w, h) => {
+      if (!arrowScratchCanvas) arrowScratchCanvas = document.createElement('canvas');
+      if (arrowScratchCanvas.width !== w) arrowScratchCanvas.width = w;
+      if (arrowScratchCanvas.height !== h) arrowScratchCanvas.height = h;
+      return arrowScratchCanvas.getContext('2d');
+    };
+    const normalizeArrowDynamicEdgeKeys = (value) => {
+      const keys = new Set();
+      if (value instanceof Set) {
+        value.forEach((key) => {
+          const text = String(key || '').trim();
+          if (text) keys.add(text);
         });
+        return keys;
+      }
+      (Array.isArray(value) ? value : []).forEach((key) => {
+        const text = String(key || '').trim();
+        if (text) keys.add(text);
       });
+      return keys;
+    };
+    const getArrowRoutesForKeys = (keys) => {
+      if (!keys || keys.size === 0) return [];
+      return allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.route && keys.has(edgeObj.key))
+        .map((edgeObj) => edgeObj.route);
+    };
+    const getStaticArrowBaseSignature = (w, h, dynamicKeys, styleKey) => {
+      const parts = [String(w), String(h), String(eraValue), styleKey];
+      allEdges.forEach((edgeObj) => {
+        if (!edgeObj || !edgeObj.route || dynamicKeys.has(edgeObj.key)) return;
+        const points = Array.isArray(edgeObj.route.points) ? edgeObj.route.points : [];
+        parts.push(`${edgeObj.key}:${points.map((point) => `${Math.round(Number(point.x) || 0)},${Math.round(Number(point.y) || 0)}`).join(';')}`);
+      });
+      return parts.join('|');
+    };
+    const renderArrowRoutesToCanvas = (targetCanvas, w, h, routes, palette, style) => {
+      if (!targetCanvas) return;
+      if (targetCanvas.width !== w) targetCanvas.width = w;
+      if (targetCanvas.height !== h) targetCanvas.height = h;
+      const targetCtx = targetCanvas.getContext('2d');
+      if (!targetCtx) return;
+      const image = targetCtx.createImageData(w, h);
+      if (Array.isArray(routes) && routes.length > 0) {
+        scienceAdvisorArrows.drawScienceAdvisorRoutesRgba({
+          rgba: image.data,
+          palette,
+          width: w,
+          height: h,
+          routes,
+          techBoxLayout,
+          eraIndex: eraValue,
+          style
+        });
+      }
+      targetCtx.putImageData(image, 0, 0);
+    };
+    const getArrowBaseLayerCanvas = (w, h, dynamicKeys, palette, style, styleKey) => {
+      const signature = getStaticArrowBaseSignature(w, h, dynamicKeys, styleKey);
+      if (arrowBaseLayerCache
+        && arrowBaseLayerCache.signature === signature
+        && arrowBaseLayerCache.canvas
+        && arrowBaseLayerCache.canvas.width === w
+        && arrowBaseLayerCache.canvas.height === h) {
+        return arrowBaseLayerCache.canvas;
+      }
+      const canvas = document.createElement('canvas');
+      const routes = allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.route && !dynamicKeys.has(edgeObj.key))
+        .map((edgeObj) => edgeObj.route);
+      renderArrowRoutesToCanvas(canvas, w, h, routes, palette, style);
+      arrowBaseLayerCache = { signature, canvas };
+      return canvas;
+    };
+    const drawArrowRouteOverlay = (ctx, w, h, routes, palette, style) => {
+      if (!ctx || !Array.isArray(routes) || routes.length === 0) return;
+      const scratchCtx = getArrowScratchContext(w, h);
+      if (!scratchCtx || !arrowScratchCanvas) return;
+      renderArrowRoutesToCanvas(arrowScratchCanvas, w, h, routes, palette, style);
+      ctx.drawImage(arrowScratchCanvas, 0, 0);
+    };
+    const tintExistingArrowPixels = (ctx, w, h, color = 'rgba(166, 166, 154, 0.76)') => {
+      if (!ctx) return;
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    };
+    const getDimmedScienceAdvisorArrowStyle = () => {
+      const source = getStoredScienceAdvisorArrowStyle();
+      const base = scienceAdvisorArrows && typeof scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle === 'function'
+        ? scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle(source, { eraIndex: eraValue })
+        : deepCloneUiValue(source || {});
+      const body = base.body && typeof base.body === 'object' ? base.body : {};
+      const head = base.head && typeof base.head === 'object' ? base.head : {};
+      return {
+        ...base,
+        colors: {
+          outline: { r: 126, g: 126, b: 118 },
+          main: { r: 164, g: 164, b: 154 },
+          highlight: { r: 196, g: 196, b: 184 }
+        },
+        body: {
+          ...body,
+          outlineRadius: Math.max(0.75, (Number(body.outlineRadius) || 1.5) - 0.25),
+          mainRadius: Math.max(0, Number(body.mainRadius) || 0),
+          highlightRadius: Math.max(0, Number(body.highlightRadius) || 0)
+        },
+        head: {
+          ...head,
+          outline: {
+            ...(head.outline && typeof head.outline === 'object' ? head.outline : {}),
+            half: Math.max(2, (Number(head.outline && head.outline.half) || 5) - 1)
+          },
+          main: {
+            ...(head.main && typeof head.main === 'object' ? head.main : {}),
+            half: Math.max(1, (Number(head.main && head.main.half) || 4) - 1)
+          }
+        }
+      };
+    };
+    const redrawLines = (options = {}) => {
+      if (options.recomputeRoutes !== false) {
+        const seen = new Set();
+        edgeByNodeId.forEach((arr) => {
+          arr.forEach((edgeObj) => {
+            if (seen.has(edgeObj)) return;
+            seen.add(edgeObj);
+            placeEdge(edgeObj);
+          });
+        });
+      }
       const ctx = lines.getContext('2d');
       if (!ctx) return;
+      const selectedCtx = selectedArrowLines.getContext('2d');
       const w = Math.max(1, Number(lines.width) || 0);
       const h = Math.max(1, Number(lines.height) || 0);
       ctx.clearRect(0, 0, w, h);
-      if (!syncArrowPreviewVisibility() || !scienceAdvisorArrows || typeof scienceAdvisorArrows.drawScienceAdvisorRoutesRgba !== 'function') return;
-      ensureArrowlessBackgroundPreview();
-      const image = ctx.createImageData(w, h);
+      if (selectedCtx) selectedCtx.clearRect(0, 0, w, h);
+      const generatedActive = syncArrowPreviewVisibility();
+      if (!scienceAdvisorArrows || typeof scienceAdvisorArrows.drawScienceAdvisorRoutesRgba !== 'function') return;
       const palette = bgPreview && bgPreview.paletteBase64 ? fromBase64ToUint8(bgPreview.paletteBase64) : null;
-      scienceAdvisorArrows.drawScienceAdvisorRoutesRgba({
-        rgba: image.data,
-        palette,
-        width: w,
-        height: h,
-        routes: allEdges.map((edgeObj) => edgeObj.route).filter(Boolean),
-        techBoxLayout,
-        eraIndex: eraValue,
-        style: getStoredScienceAdvisorArrowStyle()
-      });
-      ctx.putImageData(image, 0, 0);
+      const baseStyle = getStoredScienceAdvisorArrowStyle();
+      const dynamicKeys = normalizeArrowDynamicEdgeKeys(options.dynamicEdgeKeys);
+      const drawableEdges = allEdges.filter((edgeObj) => edgeObj && edgeObj.route);
+      const routeListFor = (edges) => edges.map((edgeObj) => edgeObj.route).filter(Boolean);
+      if (generatedActive) {
+        ensureArrowlessBackgroundPreview();
+        const styleKey = `${bgPreview && bgPreview.paletteBase64 ? bgPreview.paletteBase64 : ''}|${JSON.stringify(baseStyle || {})}`;
+        const baseLayer = getArrowBaseLayerCanvas(w, h, dynamicKeys, palette, baseStyle, styleKey);
+        if (selectionFocusActive) {
+          const focusedEdges = drawableEdges.filter((edgeObj) => !dynamicKeys.has(edgeObj.key) && !edgeObj.dimmed);
+          const dynamicDimmedEdges = drawableEdges.filter((edgeObj) => dynamicKeys.has(edgeObj.key) && edgeObj.dimmed);
+          const dynamicFocusedEdges = drawableEdges.filter((edgeObj) => dynamicKeys.has(edgeObj.key) && !edgeObj.dimmed);
+          if (baseLayer) ctx.drawImage(baseLayer, 0, 0);
+          tintExistingArrowPixels(ctx, w, h);
+          drawArrowRouteOverlay(ctx, w, h, routeListFor(focusedEdges), palette, baseStyle);
+          drawArrowRouteOverlay(ctx, w, h, routeListFor(dynamicDimmedEdges), null, getDimmedScienceAdvisorArrowStyle());
+          drawArrowRouteOverlay(ctx, w, h, routeListFor(dynamicFocusedEdges), palette, baseStyle);
+        } else {
+          if (baseLayer) ctx.drawImage(baseLayer, 0, 0);
+          drawArrowRouteOverlay(ctx, w, h, getArrowRoutesForKeys(dynamicKeys), palette, baseStyle);
+        }
+      }
+      const highlightCtx = isRouteHandlePreviewActive() ? (selectedCtx || ctx) : null;
+      const drawHighlightedRoutes = (routes, role) => {
+        if (!highlightCtx || !Array.isArray(routes) || routes.length === 0) return;
+        drawArrowRouteOverlay(highlightCtx, w, h, routes, null, getHighlightedScienceAdvisorArrowStyle(role));
+      };
+      const incomingHighlightedRoutes = allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.route && edgeObj.highlightRole === 'incoming')
+        .map((edgeObj) => edgeObj.route);
+      const outgoingHighlightedRoutes = allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.route && edgeObj.highlightRole === 'outgoing')
+        .map((edgeObj) => edgeObj.route);
+      const selectedArrowRoutes = allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.route && edgeObj.key === selectedArrowKey)
+        .map((edgeObj) => edgeObj.route);
+      drawHighlightedRoutes(incomingHighlightedRoutes, 'incoming');
+      drawHighlightedRoutes(outgoingHighlightedRoutes, 'outgoing');
+      drawHighlightedRoutes(selectedArrowRoutes, 'selected');
     };
     redrawCurrentTechTreeLines = redrawLines;
+    stage.onpointerdown = (ev) => {
+      if (!ev || ev.button !== 0) return;
+      const target = ev.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (target.closest('.tech-tree-node') || target.closest('.tech-tree-route-control') || target.closest('.tech-tree-route-handle')) return;
+      clearSelectedArrow({ deferRender: true });
+      clearSelectedTechHighlight({ deferRender: true });
+      scheduleSelectionFocusRepaint();
+    };
+    stage.onkeydown = (ev) => {
+      if (!ev || (ev.key !== 'Delete' && ev.key !== 'Backspace')) return;
+      if (!selectedArrowKey) return;
+      if (selectedArrowHandleIndex !== null && selectedArrowHandleIndex !== undefined && Number.isInteger(Number(selectedArrowHandleIndex))) {
+        if (!removeSelectedArrowRouteHandle()) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      if (clearSelectedArrowRouteOverride()) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    };
     displayNodes.forEach((node) => {
       const elNode = document.createElement('button');
       elNode.type = 'button';
@@ -26294,11 +27011,18 @@ function createTechTreePanel({
         elNode.style.top = `${nextY}px`;
         setCoordsText(
           Math.max(0, nextX - activeEraBaseX),
-          Math.max(0, nextY - activeEraBaseY)
+          getTechTreeStoredYFromDisplayY(nextY, activeEraBaseY, node)
         );
         const linked = edgeByNodeId.get(node.id) || [];
-        linked.forEach((edgeObj) => placeEdge(edgeObj));
-        redrawLines();
+        linked.forEach((edgeObj) => placeEdge(edgeObj, {
+          ignoreStoredRoutes: true,
+          keepDirty: true,
+          skipSnapshot: true
+        }));
+        redrawLines({
+          recomputeRoutes: false,
+          dynamicEdgeKeys: linked.map((edgeObj) => edgeObj && edgeObj.key).filter(Boolean)
+        });
         return true;
       };
       elNode.addEventListener('pointerdown', (ev) => {
@@ -26349,15 +27073,15 @@ function createTechTreePanel({
         }
         if (!referenceEditable || !moved) return;
         const finalDisplayX = Number.isFinite(node.vx) ? node.vx : (activeEraBaseX + node.x);
-        const finalDisplayY = Number.isFinite(node.vy) ? node.vy : (activeEraBaseY + node.y);
+        const finalDisplayY = Number.isFinite(node.vy) ? node.vy : getTechTreeDisplayYFromStoredY(node.y, activeEraBaseY, node);
         const finalX = Math.max(0, Math.round(finalDisplayX - activeEraBaseX));
-        const finalY = Math.max(0, Math.round(finalDisplayY - activeEraBaseY));
+        const finalY = Math.round(getTechTreeStoredYFromDisplayY(finalDisplayY, activeEraBaseY, node));
         const snappedX = Math.round(finalX);
         const snappedY = Math.round(finalY);
         node.x = snappedX;
         node.y = snappedY;
         node.vx = activeEraBaseX + snappedX;
-        node.vy = activeEraBaseY + snappedY;
+        node.vy = getTechTreeDisplayYFromStoredY(snappedY, activeEraBaseY, node);
         setTechFieldInt(node.entry, 'x', 'X Position', snappedX);
         setTechFieldInt(node.entry, 'y', 'Y Position', snappedY);
         elNode.style.left = `${node.vx}px`;
@@ -26371,7 +27095,7 @@ function createTechTreePanel({
           markCurrentArrowEraDirty();
           setDirty(true, { knownDirtyTab: 'techtreearrowart', reason: 'tech-tree-node-drag' });
         }
-        redrawLines();
+        redrawLines({ recomputeRoutes: false });
         renderArrowHandles();
         setDirty(true, { knownDirtyTab: 'technologies', reason: 'tech-tree-node-drag' });
       };
@@ -26428,11 +27152,13 @@ function createTechTreePanel({
       : visibleEdges;
     routedEdges.forEach((edge) => {
         const key = getArrowRouteKey(edge.source.id, edge.target.id);
+        const highlightRole = getSelectedTechRouteRole(edge, selectedId);
         const edgeObj = {
           key,
           source: edge.source,
           target: edge.target,
-          selected: !!(selectedNode && (edge.source.id === selectedNode.id || edge.target.id === selectedNode.id)),
+          selected: !!highlightRole,
+          highlightRole,
           route: null,
           baselineRouteOptions: cacheAlgorithmBaselineRouteHint({ ...edge, key }),
           routeOptions: {
@@ -26448,6 +27174,12 @@ function createTechTreePanel({
         registerEdge(edge.target.id, edgeObj);
         allEdges.push(edgeObj);
     });
+    if (selectedArrowKey && !allEdges.some((edgeObj) => edgeObj && edgeObj.key === selectedArrowKey)) {
+      selectedArrowKey = '';
+      selectedArrowHandleIndex = null;
+      state.techTreeSelectedArrowKey = '';
+    }
+    refreshSelectedVisuals(selectedId);
     redrawLines();
     renderArrowHandles();
     _dbgLog('INF', 'TechTree', `render:edges rasterRoutes=${allEdges.length}`);
@@ -26455,6 +27187,8 @@ function createTechTreePanel({
   };
 
   eraSelect.addEventListener('change', () => {
+    selectedId = null;
+    state.techTreeSelectedArrowKey = '';
     void renderForEra();
   });
   showNonEraCheck.addEventListener('change', () => {
@@ -26555,9 +27289,7 @@ function openTechTreeModal(config) {
   const overlay = ensureTechTreeModalNode();
   techTreeModal.lastConfig = config && typeof config === 'object' ? Object.assign({}, config) : null;
   if (techTreeModal.title) {
-    const selected = config && config.selectedEntry;
-    const label = selected && selected.name ? `Tech Tree - ${selected.name}` : 'Tech Tree';
-    techTreeModal.title.textContent = label;
+    techTreeModal.title.textContent = 'Tech Tree';
   }
   if (techTreeModal.body) {
     techTreeModal.body.innerHTML = '';
@@ -55350,6 +56082,13 @@ async function loadBundleAndRender(options = {}) {
     clearLoadAuditState();
     renderTabs();
     renderActiveTab(persistedView ? { preserveTabScroll: true } : {});
+    if (persistedView && persistedView.techTreeModalOpen && state.activeTab === 'technologies') {
+      window.requestAnimationFrame(() => {
+        if (state.activeTab === 'technologies') reopenTechTreeModalForCurrentState();
+      });
+    } else if (techTreeModal.node && !techTreeModal.node.classList.contains('hidden')) {
+      closeTechTreeModal({ skipActiveTabRefresh: true });
+    }
     if (persistedView && persistedView.mapModalOpen && state.activeTab === 'map') {
       reopenMapModalForTab(state.bundle.tabs.map);
     } else {
@@ -55710,7 +56449,7 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
   const techTreeArrowDirtyEras = Object.keys(state.techTreeArrowArtDirtyByEra || {})
     .map((value) => Number(value))
     .filter((value) => Number.isInteger(value) && value >= 0);
-  const shouldUpdateScienceAdvisorArrows = state.settings.autoUpdateScienceAdvisorArrows === true
+  const shouldUpdateScienceAdvisorArrows = state.settings.mode === 'scenario'
     && techTreeArrowDirtyEras.length > 0;
   const scienceAdvisorArrowMetadataEraKeys = shouldUpdateScienceAdvisorArrows
     ? getScienceAdvisorArrowMetadataEraKeysForSave(techTreeArrowDirtyEras)
@@ -55733,7 +56472,11 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
       ? filterScienceAdvisorArrowMetadataMapByEra(state.techTreeArrowRouteSnapshots || {}, scienceAdvisorArrowMetadataEraKeys)
       : {},
     techTreeArrowDirtyEdgesByEra: shouldUpdateScienceAdvisorArrows
-      ? deepCloneUiValue(state.techTreeArrowDirtyEdgesByEra || {})
+      ? filterScienceAdvisorDirtyEdgesForSave(
+          state.techTreeArrowDirtyEdgesByEra || {},
+          state.techTreeArrowRouteOverrides || {},
+          state.techTreeArrowRouteSnapshots || {}
+        )
       : {},
     techTreeArrowBaselineRouteHints: shouldUpdateScienceAdvisorArrows
       ? filterScienceAdvisorArrowMetadataMapByEra(state.techTreeArrowBaselineRouteHints || {}, scienceAdvisorArrowMetadataEraKeys)
@@ -56539,6 +57282,12 @@ function markCurrentBundleCleanAfterSave(options = {}) {
   state.techTreeArrowArtDirty = false;
   state.techTreeArrowArtDirtyByEra = {};
   state.techTreeArrowDirtyEdgesByEra = {};
+  if (savedScienceAdvisorArrowDirtyEras.length > 0 && isTechTreeModalVisible()) {
+    const modalConfig = getCurrentTechTreeModalConfig();
+    const preservedEra = getTechTreeModalPreservedEra(modalConfig);
+    invalidatePreviewStateForReload();
+    reopenTechTreeModalAfterUndo(modalConfig, preservedEra);
+  }
   clearDirtyTabCounts();
   markFilesReadEntriesDirty();
   recomputeFilesReadIssueCount();

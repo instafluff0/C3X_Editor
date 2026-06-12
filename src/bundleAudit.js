@@ -464,6 +464,20 @@ function getBiqRecordFieldValue(record, key) {
   return field ? String(field.value == null ? '' : field.value).trim() : '';
 }
 
+function getReferenceEntryField(entry, key) {
+  const target = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  return fields.find((field) => {
+    const fieldKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return fieldKey === target;
+  }) || null;
+}
+
+function getReferenceEntryFieldValue(entry, key) {
+  const field = getReferenceEntryField(entry, key);
+  return field ? String(field.value == null ? '' : field.value).trim() : '';
+}
+
 function parseBiqReferenceIndex(value, fallback = NaN) {
   const raw = String(value == null ? '' : value).trim();
   if (!raw) return fallback;
@@ -1197,6 +1211,151 @@ function lintSectionedTab(bundle, result, tabKey) {
   });
 }
 
+function getTechnologyAuditName(node) {
+  return String(
+    node
+    && node.entry
+    && (
+      node.entry.name
+      || getReferenceEntryFieldValue(node.entry, 'name')
+      || node.entry.civilopediaKey
+    )
+    || `Technology ${node.index}`
+  ).trim() || `Technology ${node.index}`;
+}
+
+function getTechnologyPrerequisiteIndexes(entry) {
+  const out = [];
+  ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'].forEach((key) => {
+    const idx = parseBiqReferenceIndex(getReferenceEntryFieldValue(entry, key), NaN);
+    if (Number.isFinite(idx) && idx >= 0 && !out.includes(idx)) out.push(idx);
+  });
+  return out;
+}
+
+function buildTechnologyPrerequisiteGraph(bundle) {
+  const entries = ((((bundle || {}).tabs || {}).technologies || {}).entries) || [];
+  const nodes = [];
+  const byIndex = new Map();
+  (Array.isArray(entries) ? entries : []).forEach((entry, fallbackIndex) => {
+    const parsedIndex = Number.parseInt(String(entry && entry.biqIndex != null ? entry.biqIndex : fallbackIndex), 10);
+    const index = Number.isFinite(parsedIndex) && parsedIndex >= 0 ? parsedIndex : fallbackIndex;
+    const node = {
+      entry,
+      sectionIndex: fallbackIndex,
+      index,
+      prerequisites: getTechnologyPrerequisiteIndexes(entry)
+    };
+    nodes.push(node);
+    if (!byIndex.has(index)) byIndex.set(index, node);
+  });
+  return { nodes, byIndex };
+}
+
+function canonicalizeTechCycle(cycleIndexes) {
+  const cycle = Array.isArray(cycleIndexes) ? cycleIndexes.slice() : [];
+  if (cycle.length > 1 && cycle[0] === cycle[cycle.length - 1]) cycle.pop();
+  if (cycle.length <= 0) return '';
+  let best = null;
+  for (let i = 0; i < cycle.length; i += 1) {
+    const rotated = cycle.slice(i).concat(cycle.slice(0, i));
+    const key = rotated.join('>');
+    if (best == null || key < best) best = key;
+  }
+  return best || '';
+}
+
+function formatTechCycle(nodesByIndex, cycleIndexes) {
+  const cycle = Array.isArray(cycleIndexes) ? cycleIndexes.slice() : [];
+  return cycle.map((idx) => getTechnologyAuditName(nodesByIndex.get(idx) || { index: idx })).join(' -> ');
+}
+
+function auditTechnologyPrerequisiteCycles(bundle, result) {
+  const { nodes, byIndex } = buildTechnologyPrerequisiteGraph(bundle);
+  if (nodes.length <= 0) return;
+
+  let selfReferenceCount = 0;
+  nodes.forEach((node) => {
+    if (!node.prerequisites.includes(node.index)) return;
+    selfReferenceCount += 1;
+    addSectionIssue(
+      result,
+      'technologies',
+      node.sectionIndex,
+      `${getTechnologyAuditName(node)} lists itself as a prerequisite. Civ3 can crash when opening the Tech Tree if a technology depends on itself.`,
+      'tech-self-prerequisite'
+    );
+  });
+
+  const graph = new Map();
+  nodes.forEach((node) => {
+    graph.set(
+      node.index,
+      node.prerequisites.filter((idx) => idx !== node.index && byIndex.has(idx))
+    );
+  });
+
+  const state = new Map();
+  const stack = [];
+  const stackPos = new Map();
+  const seenCycles = new Set();
+  const cycles = [];
+
+  const visit = (idx) => {
+    state.set(idx, 1);
+    stackPos.set(idx, stack.length);
+    stack.push(idx);
+    (graph.get(idx) || []).forEach((nextIdx) => {
+      const nextState = state.get(nextIdx) || 0;
+      if (nextState === 0) {
+        visit(nextIdx);
+        return;
+      }
+      if (nextState !== 1 || !stackPos.has(nextIdx)) return;
+      const cycle = stack.slice(stackPos.get(nextIdx)).concat(nextIdx);
+      const key = canonicalizeTechCycle(cycle);
+      if (!key || seenCycles.has(key)) return;
+      seenCycles.add(key);
+      cycles.push(cycle);
+    });
+    stack.pop();
+    stackPos.delete(idx);
+    state.set(idx, 2);
+  };
+
+  nodes.forEach((node) => {
+    if ((state.get(node.index) || 0) === 0) visit(node.index);
+  });
+
+  cycles.forEach((cycle) => {
+    const display = formatTechCycle(byIndex, cycle);
+    const uniqueIndexes = Array.from(new Set(cycle.slice(0, -1)));
+    uniqueIndexes.forEach((idx) => {
+      const node = byIndex.get(idx);
+      if (!node) return;
+      addSectionIssue(
+        result,
+        'technologies',
+        node.sectionIndex,
+        `Circular technology prerequisite chain detected: ${display}. Civ3 can crash when opening the Tech Tree because this loop cannot be completed.`,
+        'tech-prerequisite-cycle'
+      );
+    });
+  });
+
+  if (selfReferenceCount > 0 || cycles.length > 0) {
+    const parts = [];
+    if (selfReferenceCount > 0) parts.push(`${selfReferenceCount} self-prerequisite tech${selfReferenceCount === 1 ? '' : 's'}`);
+    if (cycles.length > 0) parts.push(`${cycles.length} circular prerequisite chain${cycles.length === 1 ? '' : 's'}`);
+    addGeneralIssue(
+      result,
+      'technologies',
+      `Technology prerequisite logic has ${parts.join(' and ')}. Fix these before opening the in-game Tech Tree.`,
+      'tech-prerequisite-logic'
+    );
+  }
+}
+
 function auditDayNightAssets(bundle, result) {
   const mode = String(getBaseRowValue(bundle, 'day_night_cycle_mode') || '').trim().toLowerCase();
   if (!mode || mode === 'off') return;
@@ -1363,11 +1522,6 @@ function readAuditTextFile(filePath) {
   return info ? String(info.text || '') : '';
 }
 
-function hasLfOnlyLineEndings(text) {
-  const src = String(text || '');
-  return src.includes('\n') && !src.includes('\r\n');
-}
-
 function normalizePediaIconLineForAudit(line) {
   return String(line || '').trim().replace(/\//g, '\\').toLowerCase();
 }
@@ -1422,12 +1576,6 @@ function collectScenarioTextHealthIssues(paths) {
   if (paths.pediaIcons) {
     const scenarioText = readAuditTextFile(paths.pediaIcons);
     const scenarioDoc = parsePediaIconsDocumentWithOrder(scenarioText);
-    if (hasLfOnlyLineEndings(scenarioText)) {
-      issues.push({
-        code: 'scenario-pediaicons-lf-only',
-        message: 'Scenario PediaIcons.txt uses LF-only line endings. Firaxis tools are safest with Windows CRLF text files; saving with this version will normalize repaired PediaIcons writes.'
-      });
-    }
 
     const homelessItem = (Array.isArray(scenarioDoc.items) ? scenarioDoc.items : [])
       .find((item) => String(item && item.key || '').trim().toUpperCase() === 'HOMELESSICONS');
@@ -1473,12 +1621,6 @@ function collectScenarioTextHealthIssues(paths) {
   if (paths.civilopedia) {
     const scenarioText = readAuditTextFile(paths.civilopedia);
     const scenarioDoc = parseCivilopediaDocumentWithOrder(scenarioText);
-    if (hasLfOnlyLineEndings(scenarioText)) {
-      issues.push({
-        code: 'scenario-civilopedia-lf-only',
-        message: 'Scenario Civilopedia.txt uses LF-only line endings. Firaxis tools are safest with Windows CRLF text files; saving Civilopedia edits with this version preserves the source line-ending style.'
-      });
-    }
 
     if (paths.civilopediaFallback) {
       const fallbackText = readAuditTextFile(paths.civilopediaFallback);
@@ -1676,6 +1818,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditCurrentWonderArt(bundle, result);
   auditCurrentNaturalWonderArt(bundle, result);
   auditDayNightAssets(bundle, result);
+  auditTechnologyPrerequisiteCycles(bundle, result);
   auditReferenceArt(bundle, result);
   auditScenarioTextCoverage(bundle, result);
   auditScenarioTextHealth(bundle, result);

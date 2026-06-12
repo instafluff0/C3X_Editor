@@ -93,6 +93,101 @@ test('previewFileDiff returns surgical Civilopedia hunk with line numbers', () =
   assert.ok(res.diffRows.length < 15, 'diff should be local to changed section');
 });
 
+test('previewFileDiff keeps line-ending-only Civilopedia normalization silent', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  seedDefaultFiles(root);
+
+  const civPath = path.join(textDir, 'Civilopedia.txt');
+  fs.writeFileSync(civPath, Buffer.from([
+    '#RACE_TEST',
+    'Legacy overview',
+    ''
+  ].join('\n'), 'latin1'));
+
+  const res = previewFileDiff({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civPath
+        }
+      }
+    },
+    targetPath: civPath
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.found, true);
+  assert.equal(res.kind, 'civilopedia');
+  assert.equal(res.lineEndingOnlyChange, true);
+  assert.match(res.diffRows[0].text, /No textual differences/);
+  assert.equal((res.newText.match(/(?<!\r)\n/g) || []).length, 0);
+});
+
+test('previewFileDiff shows only Civilopedia content edits when line endings are also normalized', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  seedDefaultFiles(root);
+
+  const civPath = path.join(textDir, 'Civilopedia.txt');
+  fs.writeFileSync(civPath, Buffer.from([
+    '#DESC_TECH_POLYTHEISM',
+    '^Polytheism original text.',
+    '^More original text.',
+    ''
+  ].join('\n'), 'latin1'));
+
+  const res = previewFileDiff({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civPath
+        }
+      },
+      technologies: {
+        title: 'Technologies',
+        type: 'reference',
+        entries: [{
+          civilopediaKey: 'TECH_POLYTHEISM',
+          civilopediaSection1: '',
+          originalCivilopediaSection1: '',
+          civilopediaSection2: '^Polytheism original text. ',
+          originalCivilopediaSection2: '^Polytheism original text.',
+          iconPaths: [],
+          originalIconPaths: [],
+          racePaths: [],
+          originalRacePaths: [],
+          animationName: '',
+          originalAnimationName: '',
+          biqFields: []
+        }]
+      }
+    },
+    targetPath: civPath
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.found, true);
+  assert.equal(res.kind, 'civilopedia');
+  assert.equal(res.lineEndingsNormalized, true);
+  assert.equal(res.lineEndingOnlyChange, false);
+  assert.equal(res.diffRows.some((row) => row.kind === 'del' && row.text === '^Polytheism original text.'), true);
+  assert.equal(res.diffRows.some((row) => row.kind === 'add' && row.text === '^Polytheism original text. '), true);
+  assert.equal((res.newText.match(/(?<!\r)\n/g) || []).length, 0);
+});
+
 test('previewFileDiff is case-sensitive for text changes', () => {
   const root = mkTmpDir();
   const scenario = mkTmpDir();

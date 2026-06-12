@@ -6,8 +6,10 @@ const os = require('node:os');
 
 const {
   saveBundle,
+  previewSavePlan,
   buildReferenceTabs,
   buildScenarioCivilopediaEditResult,
+  buildScenarioCivilopediaRepairResult,
   buildScenarioPediaIconsEditResult,
   parseCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder
@@ -378,6 +380,8 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
 
   const civilopediaSaved = fs.readFileSync(civilopediaPath).toString('latin1');
   const pediaSaved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.equal((civilopediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
+  assert.equal((pediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
   const civDoc = parseCivilopediaDocumentWithOrder(civilopediaSaved);
   const pediaDoc = parsePediaIconsDocumentWithOrder(pediaSaved);
 
@@ -424,6 +428,74 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
     'art/civilopedia/icons/races/untouched-large.pcx',
     'art/civilopedia/icons/races/untouched-small.pcx'
   ]);
+});
+
+test('scenario Civilopedia save normalizes existing LF-only files without content edits', () => {
+  const { root, scenario, civilopediaPath } = setupScenarioTextFiles();
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civilopediaPath
+        }
+      }
+    }
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal((result.saveReport || []).some((row) => row.kind === 'civilopedia' && row.lineEndingsNormalized), true);
+  const saved = fs.readFileSync(civilopediaPath).toString('latin1');
+  assert.equal((saved.match(/(?<!\r)\n/g) || []).length, 0);
+  assert.match(saved, /^#RACE_TEST_CIV\r\nOriginal civ overview line\./);
+
+  const second = buildScenarioCivilopediaRepairResult({ targetPath: civilopediaPath });
+  assert.equal(second.ok, true, String(second.error || 'repair failed'));
+  assert.equal(second.applied, 0);
+  assert.equal(second.buffer, null);
+});
+
+test('scenario text save plan skips PediaIcons and Civilopedia when generated output already matches disk', () => {
+  const { root, scenario, civilopediaPath, pediaIconsPath } = setupScenarioTextFiles();
+
+  const first = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civilopediaPath,
+          pediaIconsScenarioWrite: pediaIconsPath
+        }
+      }
+    }
+  });
+  assert.equal(first.ok, true, String(first.error || 'first save failed'));
+
+  const plan = previewSavePlan({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civilopediaPath,
+          pediaIconsScenarioWrite: pediaIconsPath
+        }
+      }
+    }
+  });
+
+  assert.equal(plan.ok, true, String(plan.error || 'preview failed'));
+  const textWrites = (plan.writes || []).filter((row) => /(?:PediaIcons|Civilopedia)\.txt$/i.test(String(row.path || '')));
+  assert.deepEqual(textWrites, []);
 });
 
 test('large Civilopedia file: single-entry edit keeps all other entries parseable and unchanged', () => {
@@ -640,8 +712,8 @@ test('new mixed-case Civilopedia section keeps user-entered header and terminal 
 
   assert.equal(result.ok, true, String(result.error || 'civilopedia edit failed'));
   const saved = result.buffer.toString('latin1');
-  assert.equal(saved.includes('#BLDG_Resin_Shop\nHere is the Resin shop.'), true);
-  assert.equal(saved.includes('#BLDG_RESIN_SHOP\nHere is the Resin shop.'), false);
+  assert.equal(saved.includes('#BLDG_Resin_Shop\r\nHere is the Resin shop.'), true);
+  assert.equal(saved.includes('#BLDG_RESIN_SHOP\r\nHere is the Resin shop.'), false);
   assert.equal((saved.match(/^#EOF$/gm) || []).length, 1);
   assert.ok(saved.indexOf('#BLDG_Resin_Shop') < saved.indexOf('#EOF'));
   assert.ok(saved.trimEnd().endsWith('#EOF'));
@@ -875,7 +947,8 @@ test('building PediaIcons structured blocks load metadata and save complete Resi
     }
   });
   assert.equal(unchanged.ok, true, String(unchanged.error || 'unchanged save failed'));
-  assert.equal((unchanged.saveReport || []).some((row) => /PediaIcons\.txt$/i.test(String(row.path || ''))), false);
+  assert.equal((unchanged.saveReport || []).some((row) => /PediaIcons\.txt$/i.test(String(row.path || '')) && row.lineEndingsNormalized), true);
+  assert.equal((fs.readFileSync(pediaIconsPath).toString('latin1').match(/(?<!\r)\n/g) || []).length, 0);
 
   const edited = {
     ...JSON.parse(JSON.stringify(resin)),

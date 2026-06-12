@@ -146,6 +146,26 @@ function makeBundle(c3xPath, overrides = {}) {
   };
 }
 
+function makeTechEntry(name, biqIndex, prereqs = []) {
+  const fields = [
+    { key: 'name', baseKey: 'name', label: 'name', value: String(name || '') }
+  ];
+  for (let i = 0; i < 4; i += 1) {
+    fields.push({
+      key: `prerequisite${i + 1}`,
+      baseKey: `prerequisite${i + 1}`,
+      label: `Prerequisite ${i + 1}`,
+      value: prereqs[i] == null ? 'None' : String(prereqs[i])
+    });
+  }
+  return {
+    name,
+    civilopediaKey: `TECH_${String(name || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+    biqIndex,
+    biqFields: fields
+  };
+}
+
 function makeScenarioPlayersBundle(c3xPath, { playableIds, leadRows, civNames }) {
   const bundle = makeBundle(c3xPath);
   bundle.tabs.civilizations = {
@@ -170,6 +190,73 @@ function makeScenarioPlayersBundle(c3xPath, { playableIds, leadRows, civNames })
   };
   return bundle;
 }
+
+test('auditLoadedBundle reports technologies that list themselves as prerequisites', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['Pottery (0)']),
+          makeTechEntry('Cultivation', 1, ['None'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.match(result.tabs.technologies.sections['0'][0].message, /Pottery lists itself as a prerequisite/);
+  assert.equal(result.tabs.technologies.sections['0'][0].code, 'tech-self-prerequisite');
+  assert.match(result.tabs.technologies.general[0].message, /self-prerequisite tech/);
+});
+
+test('auditLoadedBundle reports circular technology prerequisite chains on every affected tech', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['Barding (1)']),
+          makeTechEntry('Barding', 1, ['The Saddle (2)']),
+          makeTechEntry('The Saddle', 2, ['Spoked Wheel (3)']),
+          makeTechEntry('Spoked Wheel', 3, ['Pottery (0)']),
+          makeTechEntry('Fermentation', 4, ['Cultivation (5)']),
+          makeTechEntry('Cultivation', 5, ['None'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  ['0', '1', '2', '3'].forEach((idx) => {
+    assert.equal(result.tabs.technologies.sections[idx][0].code, 'tech-prerequisite-cycle');
+    assert.match(result.tabs.technologies.sections[idx][0].message, /Pottery -> Barding -> The Saddle -> Spoked Wheel -> Pottery/);
+  });
+  assert.equal(result.tabs.technologies.sections['4'], undefined);
+  assert.equal(result.tabs.technologies.sections['5'], undefined);
+  assert.match(result.tabs.technologies.general[0].message, /1 circular prerequisite chain/);
+});
+
+test('auditLoadedBundle accepts acyclic technology prerequisite chains', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['None']),
+          makeTechEntry('Cultivation', 1, ['Pottery (0)']),
+          makeTechEntry('Fermentation', 2, ['Cultivation (1)'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.technologies, undefined);
+});
 
 test('auditLoadedBundle reports playable civs that have no fixed Scenario Player slot', () => {
   const c3xRoot = mkTmpDir();
@@ -775,10 +862,7 @@ test('auditLoadedBundle warns about damaged scenario PediaIcons HomelessIcons be
 
   const result = auditLoadedBundle(bundle);
   const codes = result.tabs.civilizations.general.map((entry) => entry.code);
-  assert.deepEqual(codes.sort(), [
-    'scenario-pediaicons-homeless-damaged',
-    'scenario-pediaicons-lf-only'
-  ]);
+  assert.deepEqual(codes.sort(), ['scenario-pediaicons-homeless-damaged']);
   assert.match(result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-homeless-damaged').message, /Firaxis Conquests editor can freeze/);
 });
 

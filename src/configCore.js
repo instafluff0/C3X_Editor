@@ -3754,6 +3754,25 @@ function detectDominantLineEnding(text) {
   return '\n';
 }
 
+function normalizeTextLineEndingsToCrlf(text) {
+  return String(text == null ? '' : text).replace(/\r\n|\r|\n/g, '\r\n');
+}
+
+function hasNonCrlfLineEndings(text) {
+  const src = String(text == null ? '' : text);
+  return normalizeTextLineEndingsToCrlf(src) !== src;
+}
+
+function bufferMatchesExistingFile(filePath, data) {
+  const target = String(filePath || '').trim();
+  if (!target || !Buffer.isBuffer(data) || !fs.existsSync(target)) return false;
+  try {
+    return Buffer.compare(fs.readFileSync(target), data) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
 const PEDIA_HOMELESS_PLACEHOLDER_LINES = [
   '#',
   'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
@@ -6727,6 +6746,7 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
   try {
     const existingInfo = readEncodedTextWithFallbackInfo(targetPath, sourcePath, preferredEncoding);
     const existing = existingInfo ? existingInfo.text || '' : '';
+    const existingTargetHasLineEndingRepair = fs.existsSync(targetPath) && hasNonCrlfLineEndings(existing);
     const doc = parsePediaIconsDocumentWithOrder(existing);
     let applied = 0;
     edits.forEach((edit) => {
@@ -6783,7 +6803,8 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
     });
     const repair = repairPediaIconsDocumentForFiraxis(doc);
     if (repair.changed) applied += 1;
-    if (applied === 0) return { ok: true, applied: 0, buffer: null };
+    if (applied > 0 || existingTargetHasLineEndingRepair) doc.lineEnding = '\r\n';
+    if (applied === 0 && !existingTargetHasLineEndingRepair) return { ok: true, applied: 0, buffer: null };
     const serialized = serializePediaIconsDocumentWithOrder(doc);
     const resolvedEncoding = resolveScenarioTextWriteEncoding({
       targetPath,
@@ -6793,10 +6814,11 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
     });
     return {
       ok: true,
-      applied,
+      applied: existingTargetHasLineEndingRepair ? Math.max(applied, 1) : applied,
       repaired: !!repair.changed,
       movedHomelessBlocks: repair.moved || 0,
       restoredHomeless: !!repair.restoredHomeless,
+      lineEndingsNormalized: existingTargetHasLineEndingRepair,
       buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
       encoding: resolvedEncoding.encoding,
       bom: bom || resolvedEncoding.bom
@@ -6812,10 +6834,14 @@ function buildScenarioPediaIconsRepairResult({ targetPath, sourcePath = '', enco
   }
   try {
     const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    const lineEndingsNormalized = hasNonCrlfLineEndings(existing);
     const doc = parsePediaIconsDocumentWithOrder(existing);
     const repair = repairPediaIconsDocumentForFiraxis(doc);
-    if (!repair.changed) return { ok: true, applied: 0, buffer: null };
-    const serialized = serializePediaIconsDocumentWithOrder(doc);
+    if (repair.changed || lineEndingsNormalized) doc.lineEnding = '\r\n';
+    if (!repair.changed && !lineEndingsNormalized) return { ok: true, applied: 0, buffer: null };
+    const serialized = repair.changed
+      ? serializePediaIconsDocumentWithOrder(doc)
+      : normalizeTextLineEndingsToCrlf(existing);
     const resolvedEncoding = resolveScenarioTextWriteEncoding({
       targetPath,
       sourcePath,
@@ -6825,9 +6851,10 @@ function buildScenarioPediaIconsRepairResult({ targetPath, sourcePath = '', enco
     return {
       ok: true,
       applied: 1,
-      repaired: true,
+      repaired: !!repair.changed,
       movedHomelessBlocks: repair.moved || 0,
       restoredHomeless: !!repair.restoredHomeless,
+      lineEndingsNormalized,
       buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
       encoding: resolvedEncoding.encoding,
       bom: bom || resolvedEncoding.bom
@@ -6844,6 +6871,7 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = ''
   try {
     const existingInfo = readEncodedTextWithFallbackInfo(targetPath, sourcePath, preferredEncoding);
     const existing = existingInfo ? existingInfo.text || '' : '';
+    const existingTargetHasLineEndingRepair = fs.existsSync(targetPath) && hasNonCrlfLineEndings(existing);
     const doc = parseCivilopediaDocumentWithOrder(existing);
     const items = Array.isArray(doc.items) ? doc.items.slice() : [];
     let applied = 0;
@@ -6920,7 +6948,8 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = ''
       }
       applied += 1;
     });
-    if (applied === 0) return { ok: true, applied: 0, buffer: null };
+    if (applied > 0 || existingTargetHasLineEndingRepair) doc.lineEnding = '\r\n';
+    if (applied === 0 && !existingTargetHasLineEndingRepair) return { ok: true, applied: 0, buffer: null };
     if (items.length > 0) {
       const eofItems = [];
       for (let i = items.length - 1; i >= 0; i -= 1) {
@@ -6950,13 +6979,40 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = ''
     });
     return {
       ok: true,
-      applied,
+      applied: existingTargetHasLineEndingRepair ? Math.max(applied, 1) : applied,
+      lineEndingsNormalized: existingTargetHasLineEndingRepair,
       buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
       encoding: resolvedEncoding.encoding,
       bom: bom || resolvedEncoding.bom
     };
   } catch (err) {
     return { ok: false, error: `Failed to save Civilopedia edits: ${err.message}` };
+  }
+}
+
+function buildScenarioCivilopediaRepairResult({ targetPath, sourcePath = '', encoding = DEFAULT_TEXT_FILE_ENCODING, bom = false, preferredEncoding = DEFAULT_TEXT_FILE_ENCODING }) {
+  if (!targetPath || !fs.existsSync(targetPath)) {
+    return { ok: true, applied: 0, buffer: null };
+  }
+  try {
+    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    if (!hasNonCrlfLineEndings(existing)) return { ok: true, applied: 0, buffer: null };
+    const resolvedEncoding = resolveScenarioTextWriteEncoding({
+      targetPath,
+      sourcePath,
+      explicitEncoding: encoding,
+      preferredEncoding
+    });
+    return {
+      ok: true,
+      applied: 1,
+      lineEndingsNormalized: true,
+      buffer: encodeTextBuffer(normalizeTextLineEndingsToCrlf(existing), resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
+      encoding: resolvedEncoding.encoding,
+      bom: bom || resolvedEncoding.bom
+    };
+  } catch (err) {
+    return { ok: false, error: `Failed to repair Civilopedia: ${err.message}` };
   }
 }
 
@@ -7863,6 +7919,204 @@ function getScienceAdvisorArrowBounds(nodes, width, height) {
   };
 }
 
+function normalizeScienceAdvisorArrowBounds(bounds, width, height) {
+  const w = Math.max(0, Number(width) || 0);
+  const h = Math.max(0, Number(height) || 0);
+  if (!w || !h) return { x1: 0, y1: 0, x2: -1, y2: -1 };
+  return {
+    x1: Math.max(0, Math.min(w - 1, Math.floor(Number(bounds && bounds.x1) || 0))),
+    y1: Math.max(0, Math.min(h - 1, Math.floor(Number(bounds && bounds.y1) || 0))),
+    x2: Math.max(0, Math.min(w - 1, Math.ceil(Number(bounds && bounds.x2) || 0))),
+    y2: Math.max(0, Math.min(h - 1, Math.ceil(Number(bounds && bounds.y2) || 0)))
+  };
+}
+
+function getScienceAdvisorPreviewClearBounds(width, height) {
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  return {
+    x1: Math.max(0, Math.floor(w * 0.04)),
+    y1: Math.max(0, Math.floor(h * 0.11)),
+    x2: Math.min(w - 1, Math.ceil(w * 0.94)),
+    y2: Math.min(h - 1, Math.ceil(h * 0.9))
+  };
+}
+
+function getScienceAdvisorArrowRouteConstraintArea(width, height) {
+  const w = Math.max(1, Number(width) || 1024);
+  const h = Math.max(1, Number(height) || 768);
+  if (scienceAdvisorArrows && typeof scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea === 'function') {
+    const area = scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea(w, h);
+    const bounds = area && area.bounds;
+    if (bounds && Number(bounds.w) > 0 && Number(bounds.h) > 0) {
+      return {
+        bounds: {
+          x: Math.max(0, Number(bounds.x) || 0),
+          y: Math.max(0, Number(bounds.y) || 0),
+          w: Math.max(1, Number(bounds.w) || 1),
+          h: Math.max(1, Number(bounds.h) || 1)
+        },
+        exclusionZones: Array.isArray(area.exclusionZones) ? area.exclusionZones : [],
+        margin: 10
+      };
+    }
+  }
+  return { bounds: { x: 0, y: 0, w, h }, exclusionZones: [], margin: 10 };
+}
+
+function isScienceAdvisorArrowPixelIndexed(indices, palette, offset) {
+  if (!indices || !palette || offset < 0 || offset >= indices.length) return false;
+  const idx = Number(indices[offset]) || 0;
+  const paletteOffset = idx * 3;
+  if (paletteOffset + 2 >= palette.length) return false;
+  return scienceAdvisorArrows.isScienceAdvisorArrowColor(
+    Number(palette[paletteOffset]) || 0,
+    Number(palette[paletteOffset + 1]) || 0,
+    Number(palette[paletteOffset + 2]) || 0
+  );
+}
+
+function collectScienceAdvisorResidualArrowDiagnostics({ indices, palette, width, height, bounds, clusterLimit = 8 }) {
+  const normalizedBounds = normalizeScienceAdvisorArrowBounds(bounds, width, height);
+  if (!indices || !palette || normalizedBounds.x2 < normalizedBounds.x1 || normalizedBounds.y2 < normalizedBounds.y1) {
+    return { count: 0, bounds: null, clusters: [], omittedClusters: 0 };
+  }
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  const visited = new Uint8Array(Math.max(0, w * h));
+  const queue = new Int32Array(Math.max(1, w * h));
+  const clusters = [];
+  let total = 0;
+  let globalBounds = null;
+  const addGlobal = (x, y) => {
+    if (!globalBounds) globalBounds = { x1: x, y1: y, x2: x, y2: y };
+    else {
+      globalBounds.x1 = Math.min(globalBounds.x1, x);
+      globalBounds.y1 = Math.min(globalBounds.y1, y);
+      globalBounds.x2 = Math.max(globalBounds.x2, x);
+      globalBounds.y2 = Math.max(globalBounds.y2, y);
+    }
+  };
+  for (let y = normalizedBounds.y1; y <= normalizedBounds.y2; y += 1) {
+    for (let x = normalizedBounds.x1; x <= normalizedBounds.x2; x += 1) {
+      const start = (y * w) + x;
+      if (visited[start] || !isScienceAdvisorArrowPixelIndexed(indices, palette, start)) continue;
+      let head = 0;
+      let tail = 0;
+      let count = 0;
+      const cluster = { count: 0, x1: x, y1: y, x2: x, y2: y };
+      visited[start] = 1;
+      queue[tail] = start;
+      tail += 1;
+      while (head < tail) {
+        const pixel = queue[head];
+        head += 1;
+        const px = pixel % w;
+        const py = Math.floor(pixel / w);
+        count += 1;
+        addGlobal(px, py);
+        cluster.x1 = Math.min(cluster.x1, px);
+        cluster.y1 = Math.min(cluster.y1, py);
+        cluster.x2 = Math.max(cluster.x2, px);
+        cluster.y2 = Math.max(cluster.y2, py);
+        for (let oy = -1; oy <= 1; oy += 1) {
+          for (let ox = -1; ox <= 1; ox += 1) {
+            if (ox === 0 && oy === 0) continue;
+            const nx = px + ox;
+            const ny = py + oy;
+            if (nx < normalizedBounds.x1 || nx > normalizedBounds.x2 || ny < normalizedBounds.y1 || ny > normalizedBounds.y2) continue;
+            const next = (ny * w) + nx;
+            if (visited[next] || !isScienceAdvisorArrowPixelIndexed(indices, palette, next)) continue;
+            visited[next] = 1;
+            queue[tail] = next;
+            tail += 1;
+          }
+        }
+      }
+      cluster.count = count;
+      total += count;
+      clusters.push(cluster);
+    }
+  }
+  clusters.sort((a, b) => b.count - a.count);
+  const limit = Math.max(0, Number(clusterLimit) || 0);
+  return {
+    count: total,
+    bounds: globalBounds,
+    clusters: clusters.slice(0, limit),
+    omittedClusters: Math.max(0, clusters.length - limit)
+  };
+}
+
+function compareScienceAdvisorIndexedPixels(a, b, width, height) {
+  const total = Math.min(
+    a && a.length ? a.length : 0,
+    b && b.length ? b.length : 0,
+    Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0)
+  );
+  const w = Math.max(1, Number(width) || 1);
+  let count = 0;
+  let bounds = null;
+  for (let offset = 0; offset < total; offset += 1) {
+    if (a[offset] === b[offset]) continue;
+    count += 1;
+    const x = offset % w;
+    const y = Math.floor(offset / w);
+    if (!bounds) bounds = { x1: x, y1: y, x2: x, y2: y };
+    else {
+      bounds.x1 = Math.min(bounds.x1, x);
+      bounds.y1 = Math.min(bounds.y1, y);
+      bounds.x2 = Math.max(bounds.x2, x);
+      bounds.y2 = Math.max(bounds.y2, y);
+    }
+  }
+  return { count, bounds };
+}
+
+function formatScienceAdvisorBoundsForLog(bounds) {
+  if (!bounds) return 'none';
+  return `${bounds.x1},${bounds.y1}-${bounds.x2},${bounds.y2}`;
+}
+
+function formatScienceAdvisorClustersForLog(clusters, omittedClusters = 0) {
+  const list = Array.isArray(clusters) ? clusters : [];
+  if (list.length === 0) return 'none';
+  const text = list.map((cluster) => (
+    `${cluster.count}@${formatScienceAdvisorBoundsForLog(cluster)}`
+  )).join(';');
+  return omittedClusters > 0 ? `${text};+${omittedClusters} more` : text;
+}
+
+function formatScienceAdvisorRectForLog(rect) {
+  if (!rect) return 'none';
+  return `${Math.round(Number(rect.x) || 0)},${Math.round(Number(rect.y) || 0)},${Math.round(Number(rect.w) || 0)}x${Math.round(Number(rect.h) || 0)}`;
+}
+
+function formatScienceAdvisorRoutePointsForLog(points) {
+  const list = Array.isArray(points) ? points : [];
+  if (list.length === 0) return 'none';
+  return list.map((point) => `${Math.round(Number(point.x) || 0)},${Math.round(Number(point.y) || 0)}`).join(';');
+}
+
+function getScienceAdvisorRouteNodeName(node) {
+  return String((node && (node.name || node.title || node.label)) || '').trim() || 'unknown';
+}
+
+function getScienceAdvisorRoutePointSide(rect, point) {
+  if (!rect || !point) return '';
+  const x = Number(point.x) || 0;
+  const y = Number(point.y) || 0;
+  const left = Math.abs(x - (Number(rect.x) || 0));
+  const right = Math.abs(x - ((Number(rect.x) || 0) + (Number(rect.w) || 0)));
+  const top = Math.abs(y - (Number(rect.y) || 0));
+  const bottom = Math.abs(y - ((Number(rect.y) || 0) + (Number(rect.h) || 0)));
+  const min = Math.min(left, right, top, bottom);
+  if (min === left) return 'left';
+  if (min === right) return 'right';
+  if (min === top) return 'top';
+  return 'bottom';
+}
+
 function buildScienceAdvisorArrowRouteKey(eraIndex, sourceId, targetId) {
   return `${Number(eraIndex) || 0}:${Number(sourceId)}->${Number(targetId)}`;
 }
@@ -8000,34 +8254,52 @@ function buildScienceAdvisorArrowRoutesForEra({
       });
     });
   const dirtyEdgeSet = getScienceAdvisorEraDirtyEdgeSet(dirtyEdgesByEra, eraIndex);
+  const makeRouteDebug = (edge, routeKey, routeSource, points, extra = {}) => {
+    const first = Array.isArray(points) && points.length > 0 ? points[0] : null;
+    const last = Array.isArray(points) && points.length > 0 ? points[points.length - 1] : null;
+    return {
+      key: routeKey,
+      sourceId: edge.source.id,
+      targetId: edge.target.id,
+      sourceName: getScienceAdvisorRouteNodeName(edge.source),
+      targetName: getScienceAdvisorRouteNodeName(edge.target),
+      sourceRect: edge.sourceRect,
+      targetRect: edge.targetRect,
+      edgeSourceSide: edge.sourceSide || '',
+      edgeTargetSide: edge.targetSide || '',
+      routeSource,
+      routeSourceSide: extra.routeSourceSide || getScienceAdvisorRoutePointSide(edge.sourceRect, first),
+      routeTargetSide: extra.routeTargetSide || getScienceAdvisorRoutePointSide(edge.targetRect, last),
+      dirty: extra.dirty === true,
+      ignoredSnapshot: extra.ignoredSnapshot === true,
+      ignoredHint: extra.ignoredHint === true
+    };
+  };
+  const makeRouteFromPoints = (points, edge, routeKey, routeSource, extra = {}) => {
+    const tip = points[points.length - 1];
+    const prev = points.length > 1 ? points[points.length - 2] : { x: tip.x - 1, y: tip.y };
+    return {
+      dir: tip.x >= prev.x ? 1 : -1,
+      headVector: { x: tip.x - prev.x, y: tip.y - prev.y },
+      points,
+      debug: makeRouteDebug(edge, routeKey, routeSource, points, extra)
+    };
+  };
   return techBoxLayout.layoutTechTreeArrowEdges(edges, { slotSpacing: 10 })
     .map((edge) => {
       const routeKey = edge.key || buildScienceAdvisorArrowRouteKey(eraIndex, edge.source.id, edge.target.id);
+      const isDirtyEdge = dirtyEdgeSet.has(routeKey);
       const override = normalizeScienceAdvisorOverrideRoute(routeOverrides[routeKey]);
       if (override) {
-        const tip = override[override.length - 1];
-        const prev = override.length > 1 ? override[override.length - 2] : { x: tip.x - 1, y: tip.y };
-        return {
-          dir: tip.x >= prev.x ? 1 : -1,
-          headVector: { x: tip.x - prev.x, y: tip.y - prev.y },
-          points: override
-        };
+        return makeRouteFromPoints(override, edge, routeKey, 'override', { dirty: isDirtyEdge });
       }
-      const snapshot = !dirtyEdgeSet.has(routeKey)
-        ? normalizeScienceAdvisorOverrideRoute(routeSnapshots[routeKey])
-        : null;
+      const rawSnapshot = normalizeScienceAdvisorOverrideRoute(routeSnapshots[routeKey]);
+      const snapshot = !isDirtyEdge ? rawSnapshot : null;
       if (snapshot) {
-        const tip = snapshot[snapshot.length - 1];
-        const prev = snapshot.length > 1 ? snapshot[snapshot.length - 2] : { x: tip.x - 1, y: tip.y };
-        return {
-          dir: tip.x >= prev.x ? 1 : -1,
-          headVector: { x: tip.x - prev.x, y: tip.y - prev.y },
-          points: snapshot
-        };
+        return makeRouteFromPoints(snapshot, edge, routeKey, 'snapshot', { dirty: false });
       }
-      const baselineHint = !dirtyEdgeSet.has(routeKey)
-        ? normalizeScienceAdvisorRouteHint(baselineRouteHints[routeKey])
-        : null;
+      const rawBaselineHint = normalizeScienceAdvisorRouteHint(baselineRouteHints[routeKey]);
+      const baselineHint = !isDirtyEdge ? rawBaselineHint : null;
       const routeOptions = baselineHint || {
         sourceSide: edge.sourceSide,
         targetSide: edge.targetSide,
@@ -8035,7 +8307,7 @@ function buildScienceAdvisorArrowRoutesForEra({
         targetOffset: edge.targetOffset,
         horizontalTolerance: 18
       };
-      return techBoxLayout.buildTechTreeArrowRoute(
+      const route = techBoxLayout.buildTechTreeArrowRoute(
         edge.sourceRect,
         edge.targetRect,
         {
@@ -8048,6 +8320,22 @@ function buildScienceAdvisorArrowRoutesForEra({
           horizontalTolerance: routeOptions.horizontalTolerance
         }
       );
+      return {
+        ...route,
+        debug: makeRouteDebug(
+          edge,
+          routeKey,
+          baselineHint ? 'baseline-hint' : 'generated',
+          route.points,
+          {
+            routeSourceSide: routeOptions.sourceSide,
+            routeTargetSide: routeOptions.targetSide,
+            dirty: isDirtyEdge,
+            ignoredSnapshot: isDirtyEdge && !!rawSnapshot,
+            ignoredHint: isDirtyEdge && !!rawBaselineHint
+          }
+        )
+      };
     });
 }
 
@@ -8078,7 +8366,7 @@ function prepareScienceAdvisorArrowArtWrites({
     if (dirtyEraSet.size > 0 && !dirtyEraSet.has(eraIndex)) return;
     const eraNodes = nodes.filter((node) => node.era === eraIndex);
     if (eraNodes.length === 0) return;
-    const routes = buildScienceAdvisorArrowRoutesForEra({
+    let routes = buildScienceAdvisorArrowRoutesForEra({
       nodes,
       byId,
       eraIndex,
@@ -8101,15 +8389,77 @@ function prepareScienceAdvisorArrowArtWrites({
     if (!decoded || !decoded.indices || !decoded.palette || typeof decoded.palette.length !== 'number') return;
     const width = Number(decoded.width) || 0;
     const height = Number(decoded.height) || 0;
+    if (techBoxLayout && typeof techBoxLayout.constrainTechTreeArrowRoute === 'function') {
+      const routeConstraintArea = getScienceAdvisorArrowRouteConstraintArea(width, height);
+      routes = routes.map((route) => (
+        route && route.debug && route.debug.routeSource === 'override'
+          ? route
+          : techBoxLayout.constrainTechTreeArrowRoute(route, routeConstraintArea)
+      ));
+    }
     const sourceIndices = decoded.indices;
     const indices = Uint8Array.from(sourceIndices);
     const bounds = getScienceAdvisorArrowBounds(eraNodes, width, height);
+    const broadBounds = getScienceAdvisorPreviewClearBounds(width, height);
     scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({ indices, palette: decoded.palette, width, height, bounds });
-    scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle });
+    const residualAfterCurrentClear = collectScienceAdvisorResidualArrowDiagnostics({
+      indices,
+      palette: decoded.palette,
+      width,
+      height,
+      bounds: broadBounds
+    });
+    const broadIndices = Uint8Array.from(sourceIndices);
+    scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({ indices: broadIndices, palette: decoded.palette, width, height, bounds: broadBounds });
+    const residualAfterBroadClear = collectScienceAdvisorResidualArrowDiagnostics({
+      indices: broadIndices,
+      palette: decoded.palette,
+      width,
+      height,
+      bounds: broadBounds
+    });
     if (typeof scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed === 'function') {
+      scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed({ indices: broadIndices, sourceIndices, width, height });
       scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed({ indices, sourceIndices, width, height });
     }
+    scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices: broadIndices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle });
+    scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle });
+    const broadOutputDiff = compareScienceAdvisorIndexedPixels(indices, broadIndices, width, height);
     const targetPath = path.join(targetContentRoot, relativePath);
+    routes.forEach((route) => {
+      const debug = route && route.debug;
+      if (!debug) return;
+      log.info(
+        'ScienceAdvisor',
+        `arrow-route era=${eraIndex} key=${debug.key} target=${log.rel(targetPath)} `
+          + `source="${String(debug.sourceName || '').replace(/"/g, "'")}"(${debug.sourceId}) `
+          + `dest="${String(debug.targetName || '').replace(/"/g, "'")}"(${debug.targetId}) `
+          + `routeSource=${debug.routeSource} dirty=${debug.dirty ? 1 : 0} `
+          + `edgeSides=${debug.edgeSourceSide || ''}->${debug.edgeTargetSide || ''} `
+          + `routeSides=${debug.routeSourceSide || ''}->${debug.routeTargetSide || ''} `
+          + `ignoredSnapshot=${debug.ignoredSnapshot ? 1 : 0} ignoredHint=${debug.ignoredHint ? 1 : 0} `
+          + `sourceRect=${formatScienceAdvisorRectForLog(debug.sourceRect)} `
+          + `targetRect=${formatScienceAdvisorRectForLog(debug.targetRect)} `
+          + `points=${formatScienceAdvisorRoutePointsForLog(route.points)}`
+      );
+    });
+    const clearDiagnostics = {
+      clearBounds: bounds,
+      residualAfterCurrentClear,
+      broadClearBounds: broadBounds,
+      residualAfterBroadClear,
+      broadOutputDiff
+    };
+    log.info(
+      'ScienceAdvisor',
+      `arrow-clear era=${eraIndex} routes=${routes.length} source=${log.rel(sourcePath)} target=${log.rel(targetPath)} `
+        + `clearBounds=${formatScienceAdvisorBoundsForLog(bounds)} residual=${residualAfterCurrentClear.count} `
+        + `residualBounds=${formatScienceAdvisorBoundsForLog(residualAfterCurrentClear.bounds)} `
+        + `clusters=${formatScienceAdvisorClustersForLog(residualAfterCurrentClear.clusters, residualAfterCurrentClear.omittedClusters)} `
+        + `broadBounds=${formatScienceAdvisorBoundsForLog(broadBounds)} broadResidual=${residualAfterBroadClear.count} `
+        + `broadClusters=${formatScienceAdvisorClustersForLog(residualAfterBroadClear.clusters, residualAfterBroadClear.omittedClusters)} `
+        + `broadOutputDiff=${broadOutputDiff.count} diffBounds=${formatScienceAdvisorBoundsForLog(broadOutputDiff.bounds)}`
+    );
     try {
       const data = encodePcx(indices, decoded.palette, width, height);
       writes.push({
@@ -8118,7 +8468,8 @@ function prepareScienceAdvisorArrowArtWrites({
         sourcePath,
         data,
         eraIndex,
-        applied: routes.length
+        applied: routes.length,
+        clearDiagnostics
       });
     } catch (_err) {
       // Skip this era; other scenario saves should not be blocked by one unreadable advisor PCX.
@@ -9416,7 +9767,7 @@ function buildSavePlan(payload) {
       if (!pediaSave.ok) {
         return { ok: false, error: pediaSave.error || 'Failed to save PediaIcons edits.' };
       }
-      if (pediaSave.applied > 0) {
+      if (pediaSave.applied > 0 && !bufferMatchesExistingFile(targetPath, pediaSave.buffer)) {
         plannedWrites.push({
           kind: 'pediaIcons',
           path: targetPath,
@@ -9430,13 +9781,14 @@ function buildSavePlan(payload) {
           applied: pediaSave.applied,
           repaired: !!pediaSave.repaired,
           movedHomelessBlocks: pediaSave.movedHomelessBlocks || 0,
-          restoredHomeless: !!pediaSave.restoredHomeless
+          restoredHomeless: !!pediaSave.restoredHomeless,
+          lineEndingsNormalized: !!pediaSave.lineEndingsNormalized
         });
       }
     }
 
     const civilopediaEdits = collectCivilopediaReferenceEdits(payload.tabs || {});
-    if (civilopediaEdits.length > 0) {
+    {
       const sourceDetails = (((payload.tabs || {}).civilizations || {}).sourceDetails || {});
       const explicitTarget = (sourceDetails.civilopediaScenario || '').trim();
       const targetPath = explicitTarget || path.join(scenarioContext.contentWriteRoot || scenarioDir, 'Text', 'Civilopedia.txt');
@@ -9446,18 +9798,26 @@ function buildSavePlan(payload) {
         || String(sourceDetails.civilopediaConquests || '').trim()
         || String(sourceDetails.civilopediaPtw || '').trim()
         || String(sourceDetails.civilopediaVanilla || '').trim();
-      const civilopediaSave = buildScenarioCivilopediaEditResult({
-        targetPath,
-        sourcePath: civilopediaSourcePath,
-        edits: civilopediaEdits,
-        encoding: String(sourceDetails.civilopediaScenarioEncoding || sourceDetails.civilopediaActiveEncoding || ''),
-        bom: !!sourceDetails.civilopediaScenarioBom,
-        preferredEncoding: textFileEncoding
-      });
+      const civilopediaSave = civilopediaEdits.length > 0
+        ? buildScenarioCivilopediaEditResult({
+          targetPath,
+          sourcePath: civilopediaSourcePath,
+          edits: civilopediaEdits,
+          encoding: String(sourceDetails.civilopediaScenarioEncoding || sourceDetails.civilopediaActiveEncoding || ''),
+          bom: !!sourceDetails.civilopediaScenarioBom,
+          preferredEncoding: textFileEncoding
+        })
+        : buildScenarioCivilopediaRepairResult({
+          targetPath,
+          sourcePath: civilopediaSourcePath,
+          encoding: String(sourceDetails.civilopediaScenarioEncoding || sourceDetails.civilopediaActiveEncoding || ''),
+          bom: !!sourceDetails.civilopediaScenarioBom,
+          preferredEncoding: textFileEncoding
+        });
       if (!civilopediaSave.ok) {
         return { ok: false, error: civilopediaSave.error || 'Failed to save Civilopedia edits.' };
       }
-      if (civilopediaSave.applied > 0) {
+      if (civilopediaSave.applied > 0 && !bufferMatchesExistingFile(targetPath, civilopediaSave.buffer)) {
         plannedWrites.push({
           kind: 'civilopedia',
           path: targetPath,
@@ -9465,7 +9825,12 @@ function buildSavePlan(payload) {
           encoding: civilopediaSave.encoding,
           bom: civilopediaSave.bom
         });
-        saveReport.push({ kind: 'civilopedia', path: targetPath, applied: civilopediaSave.applied });
+        saveReport.push({
+          kind: 'civilopedia',
+          path: targetPath,
+          applied: civilopediaSave.applied,
+          lineEndingsNormalized: !!civilopediaSave.lineEndingsNormalized
+        });
       }
     }
 
@@ -9582,6 +9947,7 @@ function buildSavePlan(payload) {
           path: write.path,
           sourcePath: write.sourcePath,
           applied: write.applied || 0,
+          clearDiagnostics: write.clearDiagnostics || null,
           detail: `Regenerated ${write.applied || 0} Science Advisor arrow connector${(write.applied || 0) === 1 ? '' : 's'}`
         });
       }
@@ -9843,6 +10209,9 @@ function previewFileDiff(payload) {
     prevText = '';
     exists = false;
   }
+  const lineEndingsNormalized = hasNonCrlfLineEndings(prevText) && !hasNonCrlfLineEndings(nextText);
+  const lineEndingOnlyChange = lineEndingsNormalized
+    && normalizeTextLineEndingsToCrlf(prevText) === normalizeTextLineEndingsToCrlf(nextText);
   const diffRows = buildUnifiedDiffRows(prevText, nextText, { context: 3 });
   return {
     ok: true,
@@ -9853,6 +10222,8 @@ function previewFileDiff(payload) {
     encoding,
     oldText: prevText,
     newText: nextText,
+    lineEndingsNormalized,
+    lineEndingOnlyChange,
     diffRows
   };
 }
@@ -12625,6 +12996,7 @@ module.exports = {
   parseIniSectionMap,
   parseSectionFieldDocs,
   buildScenarioCivilopediaEditResult,
+  buildScenarioCivilopediaRepairResult,
   parseCivilopediaDocumentWithOrder,
   serializeCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder,

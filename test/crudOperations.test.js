@@ -482,6 +482,15 @@ function loadRendererNoReloadCleanHelpers(targetBundle) {
       undoHistory: [{ label: 'before save' }]
     },
     el: {},
+    isTechTreeModalVisible: () => true,
+    getCurrentTechTreeModalConfig: () => ({ tabKey: 'technologies' }),
+    getTechTreeModalPreservedEra: () => 1,
+    invalidatePreviewStateForReload: () => {
+      sandbox.state.previewInvalidatedAfterTechTreeArrowSave = true;
+    },
+    reopenTechTreeModalAfterUndo: (_config, preservedEra) => {
+      sandbox.state.reopenedTechTreeEraAfterArrowSave = preservedEra;
+    },
     deepCloneUiValue: (value) => JSON.parse(JSON.stringify(value)),
     snapshotTabs: () => JSON.stringify(sandbox.state.bundle.tabs),
     parseSnapshotTabs: (snapshot) => JSON.parse(snapshot),
@@ -1661,6 +1670,8 @@ test('no-reload save clean-state matrix covers BIQ reference, structure, and map
   assert.deepEqual(Object.keys(state.techTreeArrowDirtyEdgesByEra), []);
   assert.deepEqual(JSON.parse(JSON.stringify(state.techTreeArrowMetadataEraKeys)), { 0: true, 1: true });
   assert.deepEqual(JSON.parse(JSON.stringify(state.cleanTechTreeArrowMetadataEraKeys)), { 0: true, 1: true });
+  assert.equal(state.previewInvalidatedAfterTechTreeArrowSave, true);
+  assert.equal(state.reopenedTechTreeEraAfterArrowSave, 1);
 
   assert.equal(bundle.tabs.technologies.recordOps.length, 0);
   assert.equal(bundle.tabs.technologies.entries[0].isNew, false);

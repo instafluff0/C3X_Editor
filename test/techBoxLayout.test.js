@@ -14,6 +14,7 @@ const {
   autoLayoutTechTreeNodes,
   layoutTechTreeArrowEdges,
   buildTechTreeArrowRoute,
+  constrainTechTreeArrowRoute,
   formatTechTreeArrowSvgPath,
   sampleTechTreeArrowRoute
 } = require('../src/techBoxLayout');
@@ -344,10 +345,38 @@ function getAxisClusters(values, threshold = 36) {
   return clusters;
 }
 
+function getAdvisorFrameLayoutArea(width = 1024, height = 768) {
+  return scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea(width, height);
+}
+
 function getAdvisorFaceExclusionZones(width = 1024, height = 768) {
-  const left = Math.max(0, Math.floor(width - Math.max(216, width * 0.21)));
-  const bottom = Math.min(height, Math.ceil(Math.max(260, height * 0.35)));
-  return [{ x: left, y: 0, w: width - left, h: bottom }];
+  return getAdvisorFrameLayoutArea(width, height).exclusionZones;
+}
+
+function getAdvisorFrameBoundsForNodes(nodes, width = 1024, height = 768) {
+  const area = getAdvisorFrameLayoutArea(width, height);
+  const frame = area.bounds;
+  const fallback = {
+    x: frame.x,
+    y: frame.y,
+    w: frame.w,
+    h: frame.h,
+    exclusionZones: area.exclusionZones
+  };
+  if (!Array.isArray(nodes) || nodes.length === 0) return fallback;
+  const minX = Math.min(...nodes.map((node) => Number(node.x) || 0));
+  const minY = Math.min(...nodes.map((node) => Number(node.y) || 0));
+  const maxRight = Math.max(...nodes.map((node) => (Number(node.x) || 0) + (Number(node.w) || 0)));
+  const maxBottom = Math.max(...nodes.map((node) => (Number(node.y) || 0) + (Number(node.h) || 0)));
+  const frameRight = frame.x + frame.w;
+  const frameBottom = frame.y + frame.h;
+  const left = Math.max(frame.x, Math.min(frameRight - 1, Math.floor(minX)));
+  const top = Math.max(frame.y, Math.min(frameBottom - 1, Math.floor(minY)));
+  const right = Math.max(left + 1, Math.min(frameRight, Math.ceil(maxRight)));
+  const bottom = Math.max(top + 1, Math.min(frameBottom, Math.ceil(maxBottom)));
+  const bounds = { x: left, y: top, w: right - left, h: bottom - top, exclusionZones: area.exclusionZones };
+  if (bounds.w < frame.w * 0.45 || bounds.h < frame.h * 0.45) return fallback;
+  return bounds;
 }
 
 function rectOverlapArea(a, b) {
@@ -405,19 +434,7 @@ function getStockEraLayoutFixture(t, eraIndex) {
       prereqs: prereqsByTarget.get(tech.biqIndex) || []
     };
   });
-  const boundsLeft = Math.min(...nodes.map((node) => node.x));
-  const boundsTop = Math.min(...nodes.map((node) => node.y));
-  const boundsRight = Math.max(...nodes.map((node) => node.x + node.w));
-  const rawBoundsBottom = Math.max(...nodes.map((node) => node.y + node.h));
-  const innerArtBottom = Math.floor(768 - Math.max(88, 768 * 0.115));
-  const boundsBottom = Math.min(rawBoundsBottom, innerArtBottom);
-  const bounds = {
-    x: boundsLeft,
-    y: boundsTop,
-    w: boundsRight - boundsLeft,
-    h: boundsBottom - boundsTop,
-    exclusionZones: getAdvisorFaceExclusionZones(1024, 768)
-  };
+  const bounds = getAdvisorFrameBoundsForNodes(nodes, 1024, 768);
   return { nodes, bounds };
 }
 
@@ -669,6 +686,42 @@ test('tech tree rebuild auto-layout ignores cramped input and keeps breathing ro
     });
 });
 
+test('tech tree tidy auto-layout repairs dense overlapping clusters inside bounds', () => {
+  const bounds = { x: 0, y: 0, w: 400, h: 220 };
+  const nodes = [
+    { id: 'a', name: 'A', x: 0, y: 0, w: 150, h: 70, prereqs: [] },
+    { id: 'b', name: 'B', x: 20, y: 20, w: 150, h: 70, prereqs: [] },
+    { id: 'c', name: 'C', x: 40, y: 40, w: 150, h: 70, prereqs: [] },
+    { id: 'd', name: 'D', x: 60, y: 60, w: 150, h: 70, prereqs: [] },
+    { id: 'e', name: 'E', x: 240, y: 130, w: 150, h: 70, prereqs: [] }
+  ];
+
+  const result = autoLayoutTechTreeNodes(nodes, {
+    width: 400,
+    height: 220,
+    bounds,
+    preserveExisting: true,
+    grid: 1,
+    minColumnGap: 40,
+    minRowGap: 10
+  });
+
+  assert.equal(result.stats.boxOverlaps, 0);
+  assert.equal(result.stats.boundsOverflow, 0);
+  result.positions.forEach((position) => {
+    assert.ok(position.x >= bounds.x, `${position.id} stays inside left bound`);
+    assert.ok(position.y >= bounds.y, `${position.id} stays inside top bound`);
+    assert.ok(position.x + position.w <= bounds.x + bounds.w, `${position.id} stays inside right bound`);
+    assert.ok(position.y + position.h <= bounds.y + bounds.h, `${position.id} stays inside bottom bound`);
+  });
+  for (let i = 0; i < result.positions.length; i += 1) {
+    for (let j = i + 1; j < result.positions.length; j += 1) {
+      assert.equal(rectsOverlap(result.positions[i], result.positions[j], 0), false, `${result.positions[i].id} overlaps ${result.positions[j].id}`);
+    }
+  }
+  assert.ok(new Set(result.positions.map((position) => Math.round(position.x))).size > 1, 'dense cluster uses horizontal room instead of stacking into overlap');
+});
+
 test('tech tree auto-layout avoids the advisor face exclusion zone', () => {
   const bounds = {
     x: 64,
@@ -696,6 +749,37 @@ test('tech tree auto-layout avoids the advisor face exclusion zone', () => {
   assert.equal(result.stats.exclusionOverlap, 0);
   result.positions.forEach((position) => {
     assert.equal(rectOverlapsAnyZone(position, bounds.exclusionZones), false, `${position.id} avoids the advisor face zone`);
+  });
+});
+
+test('tech tree auto-layout keeps boxes inside the Science Advisor restored frame', () => {
+  const area = getAdvisorFrameLayoutArea(1024, 768);
+  const bounds = { ...area.bounds, exclusionZones: area.exclusionZones };
+  const nodes = [
+    { id: 'top', label: 'Top', x: 90, y: 28, w: 120, h: 64, prereqs: [] },
+    { id: 'middle', label: 'Middle', x: 360, y: 220, w: 160, h: 70, prereqs: ['top'] },
+    { id: 'notch', label: 'Notch', x: 830, y: 120, w: 120, h: 64, prereqs: ['middle'] },
+    { id: 'bottom', label: 'Bottom', x: 700, y: 676, w: 188, h: 70, prereqs: ['middle'] }
+  ];
+  const result = autoLayoutTechTreeNodes(nodes, {
+    width: 1024,
+    height: 768,
+    bounds,
+    columnAlign: 'left',
+    preserveExisting: true,
+    grid: 16,
+    minColumnGap: 96,
+    minRowGap: 32
+  });
+
+  assert.equal(result.stats.boundsOverflow, 0);
+  assert.equal(result.stats.exclusionOverlap, 0);
+  result.positions.forEach((position) => {
+    assert.ok(position.x >= bounds.x, `${position.id} stays inside left frame`);
+    assert.ok(position.y >= bounds.y, `${position.id} stays inside top frame`);
+    assert.ok(position.x + position.w <= bounds.x + bounds.w, `${position.id} stays inside right frame`);
+    assert.ok(position.y + position.h <= bounds.y + bounds.h, `${position.id} stays inside bottom frame`);
+    assert.equal(rectOverlapsAnyZone(position, bounds.exclusionZones), false, `${position.id} avoids the restored top-right notch`);
   });
 });
 
@@ -756,19 +840,7 @@ test('stock Conquests Industrial auto-layout stays inside the existing art envel
       prereqs: prereqsByTarget.get(tech.biqIndex) || []
     };
   });
-  const boundsLeft = Math.min(...nodes.map((node) => node.x));
-  const boundsTop = Math.min(...nodes.map((node) => node.y));
-  const boundsRight = Math.max(...nodes.map((node) => node.x + node.w));
-  const rawBoundsBottom = Math.max(...nodes.map((node) => node.y + node.h));
-  const innerArtBottom = Math.floor(768 - Math.max(88, 768 * 0.115));
-  const boundsBottom = Math.min(rawBoundsBottom, innerArtBottom);
-  const bounds = {
-    x: boundsLeft,
-    y: boundsTop,
-    w: boundsRight - boundsLeft,
-    h: boundsBottom - boundsTop,
-    exclusionZones: getAdvisorFaceExclusionZones(1024, 768)
-  };
+  const bounds = getAdvisorFrameBoundsForNodes(nodes, 1024, 768);
   const result = autoLayoutTechTreeNodes(nodes, {
     width: 1024,
     height: 768,
@@ -1210,6 +1282,39 @@ test('science advisor arrow heuristics mimic Firaxis default route classes', () 
   });
 });
 
+test('science advisor arrow route constraint detours around restored frame exclusion zones', () => {
+  const area = scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea(1024, 768);
+  const route = {
+    points: [
+      { x: 720, y: 126 },
+      { x: 860, y: 126 },
+      { x: 860, y: 390 },
+      { x: 760, y: 390 }
+    ],
+    headVector: { x: -1, y: 0 }
+  };
+  const constrained = constrainTechTreeArrowRoute(route, {
+    bounds: area.bounds,
+    exclusionZones: area.exclusionZones,
+    margin: 10
+  });
+  const forbidden = {
+    x: area.exclusionZones[0].x - 10,
+    y: area.exclusionZones[0].y - 10,
+    w: area.exclusionZones[0].w + 20,
+    h: area.exclusionZones[0].h + 20
+  };
+  const samples = sampleTechTreeArrowRoute(constrained, { radius: 0 });
+
+  assert.ok(constrained.points.length > route.points.length, 'Expected route to insert detour points');
+  samples.forEach((point) => {
+    assert.ok(
+      point.x < forbidden.x || point.x > forbidden.x + forbidden.w || point.y < forbidden.y || point.y > forbidden.y + forbidden.h,
+      `Expected constrained route sample ${point.x},${point.y} to stay out of restored frame exclusion`
+    );
+  });
+});
+
 test('science advisor arrow smoothing avoids rounded reverse turns', () => {
   const pathText = formatTechTreeArrowSvgPath({
     points: [
@@ -1221,4 +1326,24 @@ test('science advisor arrow smoothing avoids rounded reverse turns', () => {
     headVector: { x: 0, y: 1 }
   });
   assert.match(pathText, /^M 0 0 L 20 0 L 10 0 L/);
+});
+
+test('science advisor arrow smoothing removes immediate out-and-back route stubs', () => {
+  const route = {
+    points: [
+      { x: 100, y: 100 },
+      { x: 118, y: 100 },
+      { x: 100, y: 100 },
+      { x: 100, y: 180 },
+      { x: 118, y: 180 }
+    ],
+    headVector: { x: 18, y: 0 }
+  };
+
+  assert.equal(formatTechTreeArrowSvgPath(route, { radius: 0 }), 'M 100 100 L 100 180 L 118 180');
+  assert.deepEqual(sampleTechTreeArrowRoute(route, { radius: 0 }), [
+    { x: 100, y: 100 },
+    { x: 100, y: 180 },
+    { x: 118, y: 180 }
+  ]);
 });

@@ -196,6 +196,30 @@ test('buildScenarioPediaIconsRepairResult moves app-damaged HomelessIcons blocks
   assert.equal((saved.match(/(?<!\r)\n/g) || []).length, 0);
 });
 
+test('buildScenarioPediaIconsRepairResult normalizes LF-only line endings without content damage', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-pediaicons-'));
+  const targetPath = path.join(dir, 'PediaIcons.txt');
+  fs.writeFileSync(targetPath, [
+    '#ICON_BLDG_GRANARY',
+    'SINGLE',
+    '10',
+    'art\\civilopedia\\icons\\buildings\\granarylarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\granarysmall.pcx',
+    ...HOMELESS_BLOCK,
+    ''
+  ].join('\n'), 'latin1');
+
+  const result = buildScenarioPediaIconsRepairResult({ targetPath });
+
+  assert.equal(result.ok, true, String(result.error || 'repair failed'));
+  assert.equal(result.applied, 1);
+  assert.equal(result.repaired, false);
+  assert.equal(result.lineEndingsNormalized, true);
+  const saved = result.buffer.toString('latin1');
+  assert.equal((saved.match(/(?<!\r)\n/g) || []).length, 0);
+  assert.ok(saved.includes(HOMELESS_BLOCK.join('\r\n')));
+});
+
 test('collectPediaIconsReferenceEdits writes civ racePaths back to the RACE block', () => {
   const edits = collectPediaIconsReferenceEdits({
     civilizations: {

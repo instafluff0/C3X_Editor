@@ -7148,6 +7148,20 @@ details > summary:focus-visible {
   cursor: default;
 }
 
+.tech-tree-handle-delete-btn {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tech-tree-handle-delete-btn .remove-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 0;
+  font-size: 0.66rem;
+}
+
 .tech-tree-arrow-style-chevron {
   min-width: 10px;
   text-align: center;
@@ -7363,7 +7377,24 @@ details > summary:focus-visible {
 .tech-tree-route-handles-layer {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 3;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.tech-tree-selected-arrow-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  display: block;
+  image-rendering: auto;
+}
+
+.tech-tree-selected-route-handles-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
   pointer-events: none;
   overflow: visible;
 }
@@ -7374,6 +7405,7 @@ details > summary:focus-visible {
 
 .tech-tree-route-hit {
   pointer-events: stroke;
+  cursor: pointer;
 }
 
 .tech-tree-route-handle {
@@ -7395,14 +7427,34 @@ details > summary:focus-visible {
   stroke: #d95a24;
 }
 
+.tech-tree-route-control.selected .tech-tree-route-handle {
+  fill: #fff3c8;
+  stroke: #d95a24;
+  stroke-width: 2;
+}
+
+.tech-tree-route-control.selected .tech-tree-route-handle.selected-handle {
+  fill: #eaf4ff;
+  stroke: #2a73b8;
+  stroke-width: 2.5;
+}
+
+.tech-tree-route-control.is-focus-dimmed .tech-tree-route-handle {
+  fill: rgba(232, 232, 220, 0.82);
+  stroke: rgba(126, 126, 118, 0.86);
+  filter: none;
+}
+
 .tech-tree-nodes {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
+  pointer-events: none;
 }
 
 .tech-tree-node {
   position: absolute;
+  pointer-events: auto;
   display: inline-grid;
   grid-template-columns: 32px 1fr;
   align-items: center;
@@ -7693,12 +7745,18 @@ details > summary:focus-visible {
 .tech-tree-node.selected {
   border-color: rgba(210, 98, 30, 0.72);
   background: rgba(255, 239, 224, 0.95);
-  box-shadow: 0 8px 18px rgba(130, 66, 26, 0.24);
+  box-shadow:
+    0 0 0 2px rgba(232, 109, 24, 0.24),
+    0 0 22px rgba(232, 126, 54, 0.24),
+    0 8px 18px rgba(130, 66, 26, 0.24);
 }
 
 .tech-tree-node-game-box.selected {
   background: transparent;
-  box-shadow: 0 0 0 2px rgba(232, 109, 24, 0.9), 0 8px 18px rgba(130, 66, 26, 0.2);
+  box-shadow:
+    0 0 0 2px rgba(232, 109, 24, 0.9),
+    0 0 18px rgba(232, 126, 54, 0.26),
+    0 8px 18px rgba(130, 66, 26, 0.2);
 }
 
 .tech-tree-node-auto-layout {
@@ -7708,13 +7766,43 @@ details > summary:focus-visible {
 }
 
 .tech-tree-node.is-prereq {
-  border-color: rgba(54, 112, 198, 0.52);
-  background: rgba(237, 246, 255, 0.95);
+  border-color: rgba(176, 80, 232, 0.74);
+  background: rgba(247, 236, 255, 0.95);
+  box-shadow:
+    0 0 0 2px rgba(176, 80, 232, 0.42),
+    0 0 22px rgba(176, 80, 232, 0.24),
+    0 7px 16px rgba(70, 36, 118, 0.16);
 }
 
 .tech-tree-node.is-dependent {
-  border-color: rgba(120, 78, 186, 0.52);
-  background: rgba(246, 240, 255, 0.95);
+  border-color: rgba(38, 214, 82, 0.74);
+  background: rgba(235, 255, 240, 0.95);
+  box-shadow:
+    0 0 0 2px rgba(38, 214, 82, 0.38),
+    0 0 22px rgba(38, 214, 82, 0.22),
+    0 7px 16px rgba(18, 78, 43, 0.15);
+}
+
+.tech-tree-node-game-box.is-prereq {
+  background: transparent;
+  box-shadow:
+    0 0 0 2px rgba(176, 80, 232, 0.92),
+    0 0 18px rgba(176, 80, 232, 0.28),
+    0 7px 16px rgba(70, 36, 118, 0.2);
+}
+
+.tech-tree-node-game-box.is-dependent {
+  background: transparent;
+  box-shadow:
+    0 0 0 2px rgba(38, 214, 82, 0.92),
+    0 0 18px rgba(38, 214, 82, 0.26),
+    0 7px 16px rgba(18, 78, 43, 0.18);
+}
+
+.tech-tree-node.is-focus-dimmed {
+  opacity: 0.46;
+  filter: grayscale(0.72) saturate(0.58);
+  box-shadow: none;
 }
 
 .tech-tree-summary {

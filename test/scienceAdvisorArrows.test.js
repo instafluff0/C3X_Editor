@@ -6,7 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { decodePcx } = require('../src/artPreview');
+const { decodePcx, encodePcx } = require('../src/artPreview');
 const {
   buildScienceAdvisorArrowRoutesForEra,
   prepareScienceAdvisorArrowArtWrites,
@@ -17,6 +17,7 @@ const {
 const techBoxLayout = require('../src/techBoxLayout');
 const scienceAdvisorArrows = require('../src/scienceAdvisorArrows');
 
+const CONFIG_CORE_PATH = path.resolve(__dirname, '..', 'src', 'configCore.js');
 const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
 const STOCK_SCIENCE_MODERN_PCX = path.join(CIV3_ROOT, 'Art', 'Advisors', 'science_modern.pcx');
 const STOCK_SCIENCE_ANCIENT_PCX = path.join(CIV3_ROOT, 'Conquests', 'Art', 'Advisors', 'science_ancient.pcx');
@@ -602,6 +603,13 @@ test('Science Advisor frame restore copies fixed outside-polygon pixels only', (
   assert.equal(target[interior], 33);
 });
 
+test('Science Advisor frame layout area matches the fixed restore polygon', () => {
+  const area = scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea(1024, 768);
+
+  assert.deepEqual(area.bounds, { x: 86, y: 89, w: 873, h: 601 });
+  assert.deepEqual(area.exclusionZones, [{ x: 800, y: 89, w: 159, h: 149 }]);
+});
+
 test('Science Advisor arrow clearing removes stock Industrial pale arrow shadow remnants', (t) => {
   if (!fs.existsSync(STOCK_SCIENCE_INDUSTRIAL_PCX)) {
     t.skip('Stock Industrial Science Advisor art is not installed');
@@ -831,6 +839,9 @@ test('Science Advisor route builder uses cached router baseline hints until an e
   })[0];
   assert.equal(Math.round(inherited.points[0].y), source.y + source.h);
   assert.equal(Math.round(inherited.points[inherited.points.length - 1].y), target.y);
+  assert.equal(inherited.debug.routeSource, 'baseline-hint');
+  assert.equal(inherited.debug.dirty, false);
+  assert.equal(inherited.debug.ignoredHint, false);
 
   const recomputed = buildScienceAdvisorArrowRoutesForEra({
     nodes,
@@ -841,6 +852,9 @@ test('Science Advisor route builder uses cached router baseline hints until an e
   })[0];
   assert.equal(Math.round(recomputed.points[0].x), source.x + source.w);
   assert.equal(Math.round(recomputed.points[recomputed.points.length - 1].x), target.x);
+  assert.equal(recomputed.debug.routeSource, 'generated');
+  assert.equal(recomputed.debug.dirty, true);
+  assert.equal(recomputed.debug.ignoredHint, true);
 });
 
 test('Science Advisor route builder reuses exact route snapshots until an edge is dirty', () => {
@@ -867,6 +881,9 @@ test('Science Advisor route builder reuses exact route snapshots until an edge i
     routeSnapshots
   })[0];
   assert.deepEqual(inherited.points, routeSnapshots[routeKey].points);
+  assert.equal(inherited.debug.routeSource, 'snapshot');
+  assert.equal(inherited.debug.dirty, false);
+  assert.equal(inherited.debug.ignoredSnapshot, false);
 
   const recomputed = buildScienceAdvisorArrowRoutesForEra({
     nodes,
@@ -878,6 +895,18 @@ test('Science Advisor route builder reuses exact route snapshots until an edge i
   assert.notDeepEqual(recomputed.points, routeSnapshots[routeKey].points);
   assert.equal(Math.round(recomputed.points[0].x), source.x + source.w);
   assert.equal(Math.round(recomputed.points[recomputed.points.length - 1].x), target.x);
+  assert.equal(recomputed.debug.routeSource, 'generated');
+  assert.equal(recomputed.debug.dirty, true);
+  assert.equal(recomputed.debug.ignoredSnapshot, true);
+});
+
+test('Science Advisor save diagnostics log per-route geometry sources', () => {
+  const source = fs.readFileSync(CONFIG_CORE_PATH, 'utf8');
+  assert.match(
+    source,
+    /arrow-route era=\$\{eraIndex\} key=\$\{debug\.key\}[\s\S]*?routeSource=\$\{debug\.routeSource\} dirty=\$\{debug\.dirty \? 1 : 0\}[\s\S]*?ignoredSnapshot=\$\{debug\.ignoredSnapshot \? 1 : 0\} ignoredHint=\$\{debug\.ignoredHint \? 1 : 0\}[\s\S]*?points=\$\{formatScienceAdvisorRoutePointsForLog\(route\.points\)\}/,
+    'Expected Science Advisor PCX saves to log route source, dirty state, ignored metadata, and exact drawn points'
+  );
 });
 
 test('Science Advisor arrow rasterer uses identical palette colors for indexed save and RGBA preview', () => {
@@ -1044,6 +1073,187 @@ test('Science Advisor saved PCX arrows match the palette-quantized generated pre
     compared += 1;
   }
   assert.ok(compared > 40, 'Expected preview/save equivalence test to compare visible arrow pixels');
+});
+
+test('Science Advisor save diagnostics report residual arrow pixels missed by narrow clear bounds', () => {
+  const civ3Root = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-diag-civ3-'));
+  const targetContentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-diag-target-'));
+  const advisorDir = path.join(civ3Root, 'Conquests', 'Art', 'Advisors');
+  fs.mkdirSync(advisorDir, { recursive: true });
+  const width = 300;
+  const height = 200;
+  const palette = new Uint8Array(256 * 3);
+  palette[0] = 212;
+  palette[1] = 198;
+  palette[2] = 166;
+  palette[3] = 160;
+  palette[4] = 45;
+  palette[5] = 34;
+  const indices = new Uint8Array(width * height);
+  for (let x = 268; x <= 274; x += 1) {
+    indices[(100 * width) + x] = 1;
+  }
+  fs.writeFileSync(path.join(advisorDir, 'science_ancient.pcx'), encodePcx(indices, palette, width, height));
+
+  const tabs = {
+    technologies: {
+      entries: [
+        makeTechEntry({ biqIndex: 0, name: 'Source', era: 0, x: 10, y: 20 }),
+        makeTechEntry({ biqIndex: 1, name: 'Target', era: 0, x: 30, y: 20, prereq: 0 })
+      ]
+    }
+  };
+  const result = prepareScienceAdvisorArrowArtWrites({
+    tabs,
+    targetContentRoot,
+    scenarioPath: '',
+    scenarioRoots: [],
+    civ3Path: civ3Root,
+    dirtyEraIndexes: [0]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'science advisor save preparation failed'));
+  assert.equal(result.writes.length, 1);
+  const diagnostics = result.writes[0].clearDiagnostics;
+  assert.ok(diagnostics, 'Expected Science Advisor save to attach clear diagnostics');
+  assert.equal(diagnostics.residualAfterCurrentClear.count, 7);
+  assert.equal(diagnostics.residualAfterCurrentClear.clusters.length, 1);
+  assert.deepEqual(diagnostics.residualAfterCurrentClear.clusters[0], {
+    count: 7,
+    x1: 268,
+    y1: 100,
+    x2: 274,
+    y2: 100
+  });
+  assert.equal(diagnostics.residualAfterBroadClear.count, 0);
+  assert.ok(diagnostics.broadOutputDiff.count >= 7, 'Expected broad-clear comparison to differ where stale arrow pixels were removed');
+});
+
+test('Science Advisor saved PCX draws generated arrows after restoring fixed frame pixels', () => {
+  const civ3Root = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-frame-order-civ3-'));
+  const targetContentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-frame-order-target-'));
+  const advisorDir = path.join(civ3Root, 'Conquests', 'Art', 'Advisors');
+  fs.mkdirSync(advisorDir, { recursive: true });
+  const width = 300;
+  const height = 200;
+  const palette = new Uint8Array(256 * 3);
+  palette[0] = 212;
+  palette[1] = 198;
+  palette[2] = 166;
+  palette[3] = 103;
+  palette[4] = 28;
+  palette[5] = 18;
+  palette[6] = 160;
+  palette[7] = 45;
+  palette[8] = 34;
+  palette[9] = 218;
+  palette[10] = 116;
+  palette[11] = 76;
+  const indices = new Uint8Array(width * height);
+  fs.writeFileSync(path.join(advisorDir, 'science_ancient.pcx'), encodePcx(indices, palette, width, height));
+
+  const routePoints = [
+    { x: 120, y: 120 },
+    { x: 210, y: 120 }
+  ];
+  const result = prepareScienceAdvisorArrowArtWrites({
+    tabs: {
+      technologies: {
+        entries: [
+          makeTechEntry({ biqIndex: 0, name: 'Source', era: 0, x: 80, y: 102 }),
+          makeTechEntry({ biqIndex: 1, name: 'Target', era: 0, x: 205, y: 102, prereq: 0 })
+        ]
+      }
+    },
+    targetContentRoot,
+    scenarioPath: '',
+    scenarioRoots: [],
+    civ3Path: civ3Root,
+    routeOverrides: {
+      '0:0->1': { points: routePoints }
+    },
+    dirtyEraIndexes: [0]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'science advisor save preparation failed'));
+  assert.equal(result.writes.length, 1);
+  const saved = decodePcx(result.writes[0].data, { returnIndexed: true, transparentIndexes: [] });
+  let arrowPixels = 0;
+  for (let x = 120; x <= 210; x += 1) {
+    const idx = saved.indices[(120 * width) + x];
+    const off = idx * 3;
+    if (scienceAdvisorArrows.isScienceAdvisorArrowColor(saved.palette[off], saved.palette[off + 1], saved.palette[off + 2])) {
+      arrowPixels += 1;
+    }
+  }
+  assert.ok(arrowPixels > 20, 'Expected generated top-edge arrow pixels to survive frame restoration');
+});
+
+test('Science Advisor saved PCX preserves explicit route overrides outside generated-arrow constraints', () => {
+  const civ3Root = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-override-constraint-civ3-'));
+  const targetContentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-override-constraint-target-'));
+  const advisorDir = path.join(civ3Root, 'Conquests', 'Art', 'Advisors');
+  fs.mkdirSync(advisorDir, { recursive: true });
+  const width = 300;
+  const height = 200;
+  const palette = new Uint8Array(256 * 3);
+  palette[0] = 212;
+  palette[1] = 198;
+  palette[2] = 166;
+  palette[3] = 103;
+  palette[4] = 28;
+  palette[5] = 18;
+  palette[6] = 160;
+  palette[7] = 45;
+  palette[8] = 34;
+  palette[9] = 218;
+  palette[10] = 116;
+  palette[11] = 76;
+  const indices = new Uint8Array(width * height);
+  fs.writeFileSync(path.join(advisorDir, 'science_ancient.pcx'), encodePcx(indices, palette, width, height));
+
+  const routePoints = [
+    { x: 120, y: 60 },
+    { x: 210, y: 60 }
+  ];
+  const result = prepareScienceAdvisorArrowArtWrites({
+    tabs: {
+      technologies: {
+        entries: [
+          makeTechEntry({ biqIndex: 0, name: 'Source', era: 0, x: 80, y: 42 }),
+          makeTechEntry({ biqIndex: 1, name: 'Target', era: 0, x: 205, y: 42, prereq: 0 })
+        ]
+      }
+    },
+    targetContentRoot,
+    scenarioPath: '',
+    scenarioRoots: [],
+    civ3Path: civ3Root,
+    routeOverrides: {
+      '0:0->1': { points: routePoints }
+    },
+    dirtyEraIndexes: [0]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'science advisor save preparation failed'));
+  assert.equal(result.writes.length, 1);
+  const saved = decodePcx(result.writes[0].data, { returnIndexed: true, transparentIndexes: [] });
+  let approvedRowArrowPixels = 0;
+  let constrainedRowArrowPixels = 0;
+  for (let x = 120; x <= 210; x += 1) {
+    const approvedIdx = saved.indices[(60 * width) + x];
+    const approvedOff = approvedIdx * 3;
+    if (scienceAdvisorArrows.isScienceAdvisorArrowColor(saved.palette[approvedOff], saved.palette[approvedOff + 1], saved.palette[approvedOff + 2])) {
+      approvedRowArrowPixels += 1;
+    }
+    const constrainedIdx = saved.indices[(99 * width) + x];
+    const constrainedOff = constrainedIdx * 3;
+    if (scienceAdvisorArrows.isScienceAdvisorArrowColor(saved.palette[constrainedOff], saved.palette[constrainedOff + 1], saved.palette[constrainedOff + 2])) {
+      constrainedRowArrowPixels += 1;
+    }
+  }
+  assert.ok(approvedRowArrowPixels > 20, 'Expected explicit user-approved override route to stay on its saved row');
+  assert.equal(constrainedRowArrowPixels, 0, 'Expected explicit override route not to be pushed into the generated-arrow constraint area');
 });
 
 test('Science Advisor arrow rasterer uses modern blue palette colors in the modern era', () => {

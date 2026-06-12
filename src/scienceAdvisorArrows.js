@@ -57,6 +57,52 @@ const SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON = [
   { x: 86, y: 690 }
 ];
 
+function cloneScienceAdvisorFrameRestorePolygon() {
+  return SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON.map((point) => ({ x: point.x, y: point.y }));
+}
+
+function clipScienceAdvisorRectToImage(rect, width, height) {
+  const maxW = Math.max(1, Math.floor(Number(width) || 1024));
+  const maxH = Math.max(1, Math.floor(Number(height) || 768));
+  const x1 = Math.max(0, Math.min(maxW, Math.floor(Number(rect && rect.x) || 0)));
+  const y1 = Math.max(0, Math.min(maxH, Math.floor(Number(rect && rect.y) || 0)));
+  const x2 = Math.max(x1, Math.min(maxW, Math.ceil((Number(rect && rect.x) || 0) + (Number(rect && rect.w) || 0))));
+  const y2 = Math.max(y1, Math.min(maxH, Math.ceil((Number(rect && rect.y) || 0) + (Number(rect && rect.h) || 0))));
+  if (x2 <= x1 || y2 <= y1) return null;
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
+function getScienceAdvisorFrameInnerLayoutArea(width, height) {
+  const maxW = Math.max(1, Math.floor(Number(width) || 1024));
+  const maxH = Math.max(1, Math.floor(Number(height) || 768));
+  const points = SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON;
+  const xs = Array.from(new Set(points.map((point) => point.x))).sort((a, b) => a - b);
+  const ys = Array.from(new Set(points.map((point) => point.y))).sort((a, b) => a - b);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  const bounds = clipScienceAdvisorRectToImage({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, maxW, maxH)
+    || { x: 0, y: 0, w: maxW, h: maxH };
+  const exclusionZones = [];
+  for (let yIndex = 0; yIndex < ys.length - 1; yIndex += 1) {
+    for (let xIndex = 0; xIndex < xs.length - 1; xIndex += 1) {
+      const cell = {
+        x: xs[xIndex],
+        y: ys[yIndex],
+        w: xs[xIndex + 1] - xs[xIndex],
+        h: ys[yIndex + 1] - ys[yIndex]
+      };
+      if (cell.w <= 0 || cell.h <= 0) continue;
+      if (isRawPointInsideScienceAdvisorFrameRestorePolygon(cell.x + (cell.w / 2), cell.y + (cell.h / 2))) continue;
+      const clipped = clipScienceAdvisorRectToImage(cell, maxW, maxH);
+      if (!clipped) continue;
+      exclusionZones.push(clipped);
+    }
+  }
+  return { bounds, exclusionZones };
+}
+
 function cloneArrowRgb(color) {
   return {
     r: Number(color && color.r) || 0,
@@ -916,9 +962,7 @@ function clearScienceAdvisorArrowPixelsRgba({ rgba, width, height, bounds }) {
   }
 }
 
-function isPointInsideScienceAdvisorFrameRestorePolygon(x, y) {
-  const px = Number(x) + 0.5;
-  const py = Number(y) + 0.5;
+function isRawPointInsideScienceAdvisorFrameRestorePolygon(px, py) {
   let inside = false;
   for (let i = 0, j = SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON.length - 1; i < SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON.length; j = i, i += 1) {
     const a = SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON[i];
@@ -928,6 +972,10 @@ function isPointInsideScienceAdvisorFrameRestorePolygon(x, y) {
     if (intersects) inside = !inside;
   }
   return inside;
+}
+
+function isPointInsideScienceAdvisorFrameRestorePolygon(x, y) {
+  return isRawPointInsideScienceAdvisorFrameRestorePolygon(Number(x) + 0.5, Number(y) + 0.5);
 }
 
 function shouldRestoreScienceAdvisorFramePixel(x, y) {
@@ -1277,6 +1325,9 @@ function drawScienceAdvisorRoutesRgba({ rgba, palette, width, height, routes, te
 return {
   SCIENCE_ADVISOR_ARROW_STYLE,
   SCIENCE_ADVISOR_ARROW_COLOR_PROFILES,
+  SCIENCE_ADVISOR_FRAME_RESTORE_POLYGON,
+  cloneScienceAdvisorFrameRestorePolygon,
+  getScienceAdvisorFrameInnerLayoutArea,
   normalizeScienceAdvisorArrowStyle,
   getNearestPaletteIndex,
   makePaletteStyle,
