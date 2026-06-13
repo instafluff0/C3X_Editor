@@ -6032,6 +6032,10 @@ details > summary:focus-visible {
   gap: 6px 18px;
 }
 
+.unit-c3x-rules-card .unit-boolean-matrix {
+  margin-top: 8px;
+}
+
 .unit-boolean-item,
 .technology-boolean-item,
 .civilization-boolean-item,

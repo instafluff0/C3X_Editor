@@ -1,4 +1,8 @@
 * RELEASE 27.16
+- Collapsed trailing source-default C3X era-alias resets before positional backfill, preventing deleted middle-era aliases from pushing earlier blank eras to the previous custom name.
+- Scoped C3X era-alias live autofill to the active focus session and committed serialized alias rows for Save/Undo state.
+- Backfilled empty preceding C3X era-alias cells while editing and serializing, preventing later-era-only aliases from reloading into earlier eras.
+- Renamed the Units contextual C3X card to C3X Rules and adjusted its checkbox spacing to match neighboring rule groups.
 - Enforced Quint's fixed BIQ header byte limits in the Scenario Title and Description editors, clipping by detected BIQ text encoding before save.
 - Corrected Locked Alliances to match Quint's BIQ numbering, where slot 0 is No Alliances and slots 1-4 are Alliance 1-4, show alliance war states in a named matrix, and use a full-width layout without the field sidebar.
 - Fixed GAME field enrichment so locked-alliance war flags keep their parsed BIQ values instead of reading the field-name suffix as the value.

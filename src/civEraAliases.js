@@ -136,6 +136,64 @@
     return out;
   }
 
+  function backfillCivAliasPrecedingBlanks(replacements) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeText(Array.isArray(replacements) ? replacements[idx] : ''));
+    const firstFilled = out.find((value) => !!value) || '';
+    if (!firstFilled) return out;
+    let latest = '';
+    let lastFilledIndex = -1;
+    out.forEach((value, idx) => {
+      if (value) lastFilledIndex = idx;
+    });
+    for (let idx = 0; idx <= lastFilledIndex; idx += 1) {
+      if (out[idx]) {
+        latest = out[idx];
+      } else {
+        out[idx] = latest || firstFilled;
+      }
+    }
+    return out;
+  }
+
+  function clearTrailingDefaultCivAliasValues(replacements, defaultValue) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeText(Array.isArray(replacements) ? replacements[idx] : ''));
+    const defaultLookup = normalizeLookup(defaultValue);
+    if (!defaultLookup) return out;
+    for (let idx = out.length - 1; idx >= 0; idx -= 1) {
+      if (!out[idx]) continue;
+      if (normalizeLookup(out[idx]) === defaultLookup) {
+        out[idx] = '';
+        continue;
+      }
+      break;
+    }
+    return out;
+  }
+
+  function getCivAliasLiveFillIndexes(replacements, eraIndex) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeText(Array.isArray(replacements) ? replacements[idx] : ''));
+    const idx = Math.max(0, Math.min(ERA_ALIAS_COUNT - 1, Number(eraIndex) || 0));
+    for (let i = 0; i < idx; i += 1) {
+      if (out[i]) return [];
+    }
+    return out.slice(0, idx).map((value, i) => (!value ? i : -1)).filter((i) => i >= 0);
+  }
+
+  function applyCivAliasLiveEdit(replacements, eraIndex, nextValue, options = {}) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeText(Array.isArray(replacements) ? replacements[idx] : ''));
+    const idx = Math.max(0, Math.min(ERA_ALIAS_COUNT - 1, Number(eraIndex) || 0));
+    const cleanNext = normalizeText(nextValue);
+    out[idx] = cleanNext;
+    const liveFillIndexes = Array.isArray(options && options.liveFillIndexes) ? options.liveFillIndexes : [];
+    if (cleanNext && liveFillIndexes.length > 0) {
+      liveFillIndexes.forEach((fillIndex) => {
+        const fillIdx = Number(fillIndex);
+        if (Number.isInteger(fillIdx) && fillIdx >= 0 && fillIdx < idx) out[fillIdx] = cleanNext;
+      });
+    }
+    return backfillCivAliasPrecedingBlanks(clearTrailingDefaultCivAliasValues(out, options && options.defaultValue));
+  }
+
   function makeEmptyLeaderReplacements() {
     return Array.from({ length: ERA_ALIAS_COUNT }, () => ({ name: '', gender: '', title: '' }));
   }
@@ -156,6 +214,65 @@
       out.pop();
     }
     return out;
+  }
+
+  function backfillLeaderAliasPrecedingBlanks(replacements) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeLeaderReplacement(Array.isArray(replacements) ? replacements[idx] : null));
+    const firstFilled = out.find((rep) => rep && rep.name) || null;
+    if (!firstFilled) return out;
+    let latest = null;
+    let lastFilledIndex = -1;
+    out.forEach((rep, idx) => {
+      if (rep && rep.name) lastFilledIndex = idx;
+    });
+    for (let idx = 0; idx <= lastFilledIndex; idx += 1) {
+      if (out[idx] && out[idx].name) {
+        latest = { ...out[idx] };
+      } else {
+        out[idx] = { ...(latest || firstFilled) };
+      }
+    }
+    return out;
+  }
+
+  function clearTrailingDefaultLeaderAliasValues(replacements, defaultName) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeLeaderReplacement(Array.isArray(replacements) ? replacements[idx] : null));
+    const defaultLookup = normalizeLookup(defaultName);
+    if (!defaultLookup) return out;
+    for (let idx = out.length - 1; idx >= 0; idx -= 1) {
+      const rep = out[idx];
+      if (!rep || (!rep.name && !rep.gender && !rep.title)) continue;
+      if (normalizeLookup(rep.name) === defaultLookup && !rep.gender && !rep.title) {
+        out[idx] = { name: '', gender: '', title: '' };
+        continue;
+      }
+      break;
+    }
+    return out;
+  }
+
+  function getLeaderAliasLiveFillIndexes(replacements, eraIndex) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeLeaderReplacement(Array.isArray(replacements) ? replacements[idx] : null));
+    const idx = Math.max(0, Math.min(ERA_ALIAS_COUNT - 1, Number(eraIndex) || 0));
+    for (let i = 0; i < idx; i += 1) {
+      if (out[i].name) return [];
+    }
+    return out.slice(0, idx).map((rep, i) => (!rep.name ? i : -1)).filter((i) => i >= 0);
+  }
+
+  function applyLeaderAliasLiveEdit(replacements, eraIndex, nextReplacement, options = {}) {
+    const out = Array.from({ length: ERA_ALIAS_COUNT }, (_, idx) => normalizeLeaderReplacement(Array.isArray(replacements) ? replacements[idx] : null));
+    const idx = Math.max(0, Math.min(ERA_ALIAS_COUNT - 1, Number(eraIndex) || 0));
+    const next = normalizeLeaderReplacement(nextReplacement);
+    out[idx] = next;
+    const liveFillIndexes = Array.isArray(options && options.liveFillIndexes) ? options.liveFillIndexes : [];
+    if (next.name && liveFillIndexes.length > 0) {
+      liveFillIndexes.forEach((fillIndex) => {
+        const fillIdx = Number(fillIndex);
+        if (Number.isInteger(fillIdx) && fillIdx >= 0 && fillIdx < idx) out[fillIdx] = { ...next };
+      });
+    }
+    return backfillLeaderAliasPrecedingBlanks(clearTrailingDefaultLeaderAliasValues(out, options && options.defaultName));
   }
 
   function parseLeaderMetadataAt(value, startIndex = 0) {
@@ -221,7 +338,7 @@
   function serializeCivAliasesByEra(items) {
     const entries = (Array.isArray(items) ? items : []).map((item) => {
       const source = normalizeText(item && item.source);
-      const repls = trimReplacementList(item && item.replacements);
+      const repls = trimReplacementList(backfillCivAliasPrecedingBlanks(item && item.replacements));
       if (!source || repls.length === 0) return '';
       return `${quoteToken(source)}: ${repls.map(quoteToken).join(' ')}`;
     }).filter(Boolean);
@@ -247,7 +364,7 @@
   function serializeLeaderAliasesByEra(items) {
     const entries = (Array.isArray(items) ? items : []).map((item) => {
       const source = normalizeText(item && item.source);
-      const repls = trimLeaderReplacementList(item && item.replacements);
+      const repls = trimLeaderReplacementList(backfillLeaderAliasPrecedingBlanks(item && item.replacements));
       if (!source || repls.length === 0) return '';
       const chunks = repls.map((rep) => {
         if (!rep.name) return '';
@@ -372,14 +489,15 @@
       const aliases = normalizeAliasesByKind(group && group.aliases);
       SOURCE_KINDS.forEach((kind) => {
         const source = normalizeText(sourceNames[kind.key]);
-        const replacements = trimReplacementList(aliases[kind.key]);
+        const replacements = trimReplacementList(backfillCivAliasPrecedingBlanks(clearTrailingDefaultCivAliasValues(aliases[kind.key], source)));
         if (source && replacements.length > 0) items.push({ source, replacements });
       });
     });
     (Array.isArray(model && model.ungrouped) ? model.ungrouped : []).forEach((item) => {
+      const source = normalizeText(item && item.source);
       items.push({
-        source: normalizeText(item && item.source),
-        replacements: trimReplacementList(item && item.replacements)
+        source,
+        replacements: trimReplacementList(backfillCivAliasPrecedingBlanks(clearTrailingDefaultCivAliasValues(item && item.replacements, source)))
       });
     });
     return serializeCivAliasesByEra(items);
@@ -429,13 +547,14 @@
     const items = [];
     (Array.isArray(model && model.groups) ? model.groups : []).forEach((group) => {
       const source = normalizeText(group && group.leaderName);
-      const replacements = trimLeaderReplacementList(group && group.replacements);
+      const replacements = trimLeaderReplacementList(backfillLeaderAliasPrecedingBlanks(clearTrailingDefaultLeaderAliasValues(group && group.replacements, source)));
       if (source && replacements.length > 0) items.push({ source, replacements });
     });
     (Array.isArray(model && model.ungrouped) ? model.ungrouped : []).forEach((item) => {
+      const source = normalizeText(item && item.source);
       items.push({
-        source: normalizeText(item && item.source),
-        replacements: trimLeaderReplacementList(item && item.replacements)
+        source,
+        replacements: trimLeaderReplacementList(backfillLeaderAliasPrecedingBlanks(clearTrailingDefaultLeaderAliasValues(item && item.replacements, source)))
       });
     });
     return serializeLeaderAliasesByEra(items);
@@ -448,6 +567,12 @@
     serializeCivAliasesByEra,
     parseLeaderAliasesByEra,
     serializeLeaderAliasesByEra,
+    backfillCivAliasPrecedingBlanks,
+    backfillLeaderAliasPrecedingBlanks,
+    getCivAliasLiveFillIndexes,
+    getLeaderAliasLiveFillIndexes,
+    applyCivAliasLiveEdit,
+    applyLeaderAliasLiveEdit,
     getCivilizationAliasSources,
     getLeaderAliasSource,
     buildCivAliasEditorModel,

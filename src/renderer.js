@@ -9214,6 +9214,10 @@ function makeInputForBaseRow(row, onChange, options = {}) {
         thead.appendChild(headRow);
         table.appendChild(thead);
         const tbody = document.createElement('tbody');
+        const groupInputsByKind = {};
+        sourceKinds.forEach((kind) => {
+          groupInputsByKind[kind.key] = [];
+        });
         eraLabels.forEach((eraLabel, eraIdx) => {
           const tr = document.createElement('tr');
           const label = document.createElement('th');
@@ -9225,12 +9229,23 @@ function makeInputForBaseRow(row, onChange, options = {}) {
             const input = document.createElement('input');
             input.value = String(group.aliases && group.aliases[kind.key] && group.aliases[kind.key][eraIdx] || '');
             input.placeholder = String(group.sourceNames && group.sourceNames[kind.key] || '');
-            wireBaseGroupedUndo(input);
+            wireBaseGroupedUndo(input, () => aliasApi.serializeCivAliasEditorModel(model));
+            groupInputsByKind[kind.key][eraIdx] = input;
             input.addEventListener('input', () => {
               if (!group.aliases) group.aliases = {};
               if (!Array.isArray(group.aliases[kind.key])) group.aliases[kind.key] = ['', '', '', ''];
-              group.aliases[kind.key][eraIdx] = input.value;
+              if (!Array.isArray(input.__aliasLiveFillIndexes)) {
+                input.__aliasLiveFillIndexes = aliasApi.getCivAliasLiveFillIndexes(group.aliases[kind.key], eraIdx);
+              }
+              group.aliases[kind.key] = aliasApi.applyCivAliasLiveEdit(group.aliases[kind.key], eraIdx, input.value, {
+                liveFillIndexes: input.__aliasLiveFillIndexes,
+                defaultValue: group.sourceNames && group.sourceNames[kind.key]
+              });
+              syncCivAliasInputValues(groupInputsByKind[kind.key], group.aliases[kind.key], input);
               emit({ captureUndo: false });
+            });
+            input.addEventListener('blur', () => {
+              input.__aliasLiveFillIndexes = null;
             });
             td.appendChild(input);
             tr.appendChild(td);
@@ -9257,15 +9272,27 @@ function makeInputForBaseRow(row, onChange, options = {}) {
         grid.className = 'civ-era-alias-legacy-grid';
         const repls = Array.isArray(item.replacements) ? item.replacements.slice(0, 4) : [];
         while (repls.length < 4) repls.push('');
+        const legacyInputs = [];
         repls.forEach((rep, eraIdx) => {
           const era = document.createElement('input');
           era.placeholder = eraLabels[eraIdx] || `Era ${eraIdx + 1}`;
           era.value = rep;
-          wireBaseGroupedUndo(era);
+          wireBaseGroupedUndo(era, () => aliasApi.serializeCivAliasEditorModel(model));
+          legacyInputs[eraIdx] = era;
           era.addEventListener('input', () => {
             if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = ['', '', '', ''];
-            model.ungrouped[idx].replacements[eraIdx] = era.value;
+            if (!Array.isArray(era.__aliasLiveFillIndexes)) {
+              era.__aliasLiveFillIndexes = aliasApi.getCivAliasLiveFillIndexes(model.ungrouped[idx].replacements, eraIdx);
+            }
+            model.ungrouped[idx].replacements = aliasApi.applyCivAliasLiveEdit(model.ungrouped[idx].replacements, eraIdx, era.value, {
+              liveFillIndexes: era.__aliasLiveFillIndexes,
+              defaultValue: model.ungrouped[idx].source
+            });
+            syncCivAliasInputValues(legacyInputs, model.ungrouped[idx].replacements, era);
             emit({ captureUndo: false });
+          });
+          era.addEventListener('blur', () => {
+            era.__aliasLiveFillIndexes = null;
           });
           grid.appendChild(era);
         });
@@ -9379,6 +9406,7 @@ function makeInputForBaseRow(row, onChange, options = {}) {
         const tbody = document.createElement('tbody');
         const reps = Array.isArray(group.replacements) ? group.replacements.slice(0, 4) : [];
         while (reps.length < 4) reps.push({ name: '', gender: '', title: '' });
+        const leaderControls = [];
         reps.forEach((rep, eraIdx) => {
           const tr = document.createElement('tr');
           const era = document.createElement('th');
@@ -9389,12 +9417,22 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           const name = document.createElement('input');
           name.placeholder = String(group.leaderName || '');
           name.value = String(rep && rep.name || '');
-          wireBaseGroupedUndo(name);
+          wireBaseGroupedUndo(name, () => aliasApi.serializeLeaderAliasEditorModel(model));
           name.addEventListener('input', () => {
             if (!Array.isArray(group.replacements)) group.replacements = [];
-            if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
-            group.replacements[eraIdx].name = name.value;
+            const current = group.replacements[eraIdx] || { name: '', gender: '', title: '' };
+            if (!Array.isArray(name.__aliasLiveFillIndexes)) {
+              name.__aliasLiveFillIndexes = aliasApi.getLeaderAliasLiveFillIndexes(group.replacements, eraIdx);
+            }
+            group.replacements = aliasApi.applyLeaderAliasLiveEdit(group.replacements, eraIdx, { ...current, name: name.value }, {
+              liveFillIndexes: name.__aliasLiveFillIndexes,
+              defaultName: group.leaderName
+            });
+            syncLeaderAliasControls(leaderControls, group.replacements, name);
             emit({ captureUndo: false });
+          });
+          name.addEventListener('blur', () => {
+            name.__aliasLiveFillIndexes = null;
           });
           nameCell.appendChild(name);
           tr.appendChild(nameCell);
@@ -9414,7 +9452,7 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           title.placeholder = gender.value ? 'Title' : 'Choose gender first';
           title.value = String(rep && rep.title || '');
           title.disabled = !gender.value;
-          wireBaseGroupedUndo(title);
+          wireBaseGroupedUndo(title, () => aliasApi.serializeLeaderAliasEditorModel(model));
           const updateTitleState = () => {
             title.disabled = !gender.value;
             title.placeholder = gender.value ? 'Title' : 'Choose gender first';
@@ -9425,19 +9463,35 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           };
           gender.addEventListener('change', () => {
             if (!Array.isArray(group.replacements)) group.replacements = [];
-            if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
-            group.replacements[eraIdx].gender = gender.value;
+            const current = group.replacements[eraIdx] || { name: '', gender: '', title: '' };
+            const next = { ...current, gender: gender.value };
+            if (!gender.value) next.title = '';
             updateTitleState();
+            group.replacements = aliasApi.applyLeaderAliasLiveEdit(group.replacements, eraIdx, next, {
+              defaultName: group.leaderName
+            });
+            syncLeaderAliasControls(leaderControls, group.replacements, gender);
             emit();
           });
           title.addEventListener('input', () => {
             if (!Array.isArray(group.replacements)) group.replacements = [];
-            if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
-            group.replacements[eraIdx].title = title.value;
+            const current = group.replacements[eraIdx] || { name: '', gender: '', title: '' };
+            if (!Array.isArray(title.__aliasLiveFillIndexes)) {
+              title.__aliasLiveFillIndexes = aliasApi.getLeaderAliasLiveFillIndexes(group.replacements, eraIdx);
+            }
+            group.replacements = aliasApi.applyLeaderAliasLiveEdit(group.replacements, eraIdx, { ...current, title: title.value }, {
+              liveFillIndexes: title.__aliasLiveFillIndexes,
+              defaultName: group.leaderName
+            });
+            syncLeaderAliasControls(leaderControls, group.replacements, title);
             emit({ captureUndo: false });
+          });
+          title.addEventListener('blur', () => {
+            title.__aliasLiveFillIndexes = null;
           });
           titleCell.appendChild(title);
           tr.appendChild(titleCell);
+          leaderControls[eraIdx] = { name, gender, title };
           tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -9460,18 +9514,29 @@ function makeInputForBaseRow(row, onChange, options = {}) {
         repWrap.className = 'structured-list';
         let reps = Array.isArray(item.replacements) ? item.replacements.slice(0, 4) : [];
         while (reps.length < 4) reps.push({ name: '', gender: '', title: '' });
+        const legacyLeaderControls = [];
         reps.forEach((rep, eraIdx) => {
           const rowWrap = document.createElement('div');
           rowWrap.className = 'kv-row';
           const name = document.createElement('input');
           name.placeholder = `${eraLabels[eraIdx] || `Era ${eraIdx + 1}`} leader`;
           name.value = String(rep && rep.name || '');
-          wireBaseGroupedUndo(name);
+          wireBaseGroupedUndo(name, () => aliasApi.serializeLeaderAliasEditorModel(model));
           name.addEventListener('input', () => {
             if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = [];
-            if (!model.ungrouped[idx].replacements[eraIdx]) model.ungrouped[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
-            model.ungrouped[idx].replacements[eraIdx].name = name.value;
+            const current = model.ungrouped[idx].replacements[eraIdx] || { name: '', gender: '', title: '' };
+            if (!Array.isArray(name.__aliasLiveFillIndexes)) {
+              name.__aliasLiveFillIndexes = aliasApi.getLeaderAliasLiveFillIndexes(model.ungrouped[idx].replacements, eraIdx);
+            }
+            model.ungrouped[idx].replacements = aliasApi.applyLeaderAliasLiveEdit(model.ungrouped[idx].replacements, eraIdx, { ...current, name: name.value }, {
+              liveFillIndexes: name.__aliasLiveFillIndexes,
+              defaultName: model.ungrouped[idx].source
+            });
+            syncLeaderAliasControls(legacyLeaderControls, model.ungrouped[idx].replacements, name);
             emit({ captureUndo: false });
+          });
+          name.addEventListener('blur', () => {
+            name.__aliasLiveFillIndexes = null;
           });
           rowWrap.appendChild(name);
           const gender = document.createElement('select');
@@ -9484,9 +9549,13 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           gender.value = String(rep && rep.gender || '').toUpperCase();
           gender.addEventListener('change', () => {
             if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = [];
-            if (!model.ungrouped[idx].replacements[eraIdx]) model.ungrouped[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
-            model.ungrouped[idx].replacements[eraIdx].gender = gender.value;
-            if (!gender.value) model.ungrouped[idx].replacements[eraIdx].title = '';
+            const current = model.ungrouped[idx].replacements[eraIdx] || { name: '', gender: '', title: '' };
+            const next = { ...current, gender: gender.value };
+            if (!gender.value) next.title = '';
+            model.ungrouped[idx].replacements = aliasApi.applyLeaderAliasLiveEdit(model.ungrouped[idx].replacements, eraIdx, next, {
+              defaultName: model.ungrouped[idx].source
+            });
+            syncLeaderAliasControls(legacyLeaderControls, model.ungrouped[idx].replacements, gender);
             emit();
             rerender();
           });
@@ -9495,14 +9564,25 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           title.placeholder = gender.value ? 'Title' : 'Choose gender first';
           title.value = String(rep && rep.title || '');
           title.disabled = !gender.value;
-          wireBaseGroupedUndo(title);
+          wireBaseGroupedUndo(title, () => aliasApi.serializeLeaderAliasEditorModel(model));
           title.addEventListener('input', () => {
             if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = [];
-            if (!model.ungrouped[idx].replacements[eraIdx]) model.ungrouped[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
-            model.ungrouped[idx].replacements[eraIdx].title = title.value;
+            const current = model.ungrouped[idx].replacements[eraIdx] || { name: '', gender: '', title: '' };
+            if (!Array.isArray(title.__aliasLiveFillIndexes)) {
+              title.__aliasLiveFillIndexes = aliasApi.getLeaderAliasLiveFillIndexes(model.ungrouped[idx].replacements, eraIdx);
+            }
+            model.ungrouped[idx].replacements = aliasApi.applyLeaderAliasLiveEdit(model.ungrouped[idx].replacements, eraIdx, { ...current, title: title.value }, {
+              liveFillIndexes: title.__aliasLiveFillIndexes,
+              defaultName: model.ungrouped[idx].source
+            });
+            syncLeaderAliasControls(legacyLeaderControls, model.ungrouped[idx].replacements, title);
             emit({ captureUndo: false });
           });
+          title.addEventListener('blur', () => {
+            title.__aliasLiveFillIndexes = null;
+          });
           rowWrap.appendChild(title);
+          legacyLeaderControls[eraIdx] = { name, gender, title };
           repWrap.appendChild(rowWrap);
         });
         block.appendChild(repWrap);
@@ -18767,11 +18847,11 @@ function renderUnitC3XRulesCard(entry, c3xEditable) {
   const unitName = getUnitC3XName(entry);
   const groupCard = document.createElement('div');
   groupCard.className = 'rule-group-card unit-dense-card unit-c3x-rules-card unit-matrix-card';
-  groupCard.dataset.sectionLabel = 'C3X Unit Rules';
+  groupCard.dataset.sectionLabel = 'C3X Rules';
 
   const groupTitle = document.createElement('div');
   groupTitle.className = 'rule-group-title';
-  groupTitle.textContent = 'C3X Unit Rules';
+  groupTitle.textContent = 'C3X Rules';
   attachRichTooltip(groupTitle, [
     'Source: C3X',
     'These toggles edit unit-name arrays in the C3X base config. They are the same values shown in the C3X tab.'
@@ -20841,48 +20921,85 @@ function setC3XBaseRowValueFromAliasInput(row, serialized, captureUndo = false) 
   setC3XBaseRowValue(row, serialized, { captureUndo });
 }
 
-function makeCivilizationAliasTextInput({ value, placeholder, disabled, sessionKey, onInput }) {
+function makeCivilizationAliasTextInput({ value, placeholder, disabled, sessionKey, getSessionValue, onInput }) {
   const input = document.createElement('input');
   input.type = 'text';
   input.value = String(value || '');
   input.placeholder = String(placeholder || '');
   input.disabled = !!disabled;
   if (!disabled) {
+    const resolveSessionValue = typeof getSessionValue === 'function'
+      ? getSessionValue
+      : (() => String(input.value || ''));
     wireGroupedUndoSession(input, {
       key: sessionKey,
       undoKey: 'BASE:civ_aliases_by_era',
-      getValue: () => String(input.value || '')
+      getValue: resolveSessionValue
     });
     input.addEventListener('input', () => {
       if (typeof onInput === 'function') onInput(input.value);
     });
     input.addEventListener('change', () => {
-      commitTrackedEditSession(sessionKey, String(input.value || ''));
+      commitTrackedEditSession(sessionKey, resolveSessionValue());
+      input.__aliasLiveFillIndexes = null;
+    });
+    input.addEventListener('blur', () => {
+      input.__aliasLiveFillIndexes = null;
     });
   }
   return input;
 }
 
-function makeLeaderAliasTextInput({ value, placeholder, disabled, wireWhenDisabled = false, sessionKey, undoKey, onInput }) {
+function makeLeaderAliasTextInput({ value, placeholder, disabled, wireWhenDisabled = false, sessionKey, undoKey, getSessionValue, onInput }) {
   const input = document.createElement('input');
   input.type = 'text';
   input.value = String(value || '');
   input.placeholder = String(placeholder || '');
   input.disabled = !!disabled;
   if (!disabled || wireWhenDisabled) {
+    const resolveSessionValue = typeof getSessionValue === 'function'
+      ? getSessionValue
+      : (() => String(input.value || ''));
     wireGroupedUndoSession(input, {
       key: sessionKey,
       undoKey,
-      getValue: () => String(input.value || '')
+      getValue: resolveSessionValue
     });
     input.addEventListener('input', () => {
       if (typeof onInput === 'function') onInput(input.value);
     });
     input.addEventListener('change', () => {
-      commitTrackedEditSession(sessionKey, String(input.value || ''));
+      commitTrackedEditSession(sessionKey, resolveSessionValue());
+      input.__aliasLiveFillIndexes = null;
+    });
+    input.addEventListener('blur', () => {
+      input.__aliasLiveFillIndexes = null;
     });
   }
   return input;
+}
+
+function syncCivAliasInputValues(inputs, values, activeInput = null) {
+  const list = Array.isArray(inputs) ? inputs : [];
+  list.forEach((input, idx) => {
+    if (!input || input === activeInput) return;
+    input.value = String(Array.isArray(values) ? values[idx] || '' : '');
+  });
+}
+
+function syncLeaderAliasControls(controls, replacements, activeControl = null) {
+  const list = Array.isArray(controls) ? controls : [];
+  list.forEach((control, idx) => {
+    if (!control) return;
+    const rep = Array.isArray(replacements) && replacements[idx] ? replacements[idx] : { name: '', gender: '', title: '' };
+    if (control.name && control.name !== activeControl) control.name.value = String(rep.name || '');
+    if (control.gender && control.gender !== activeControl) control.gender.value = String(rep.gender || '').toUpperCase();
+    if (control.title && control.title !== activeControl) control.title.value = String(rep.title || '');
+    if (control.title && control.gender) {
+      control.title.disabled = !control.gender.value;
+      control.title.placeholder = control.gender.value ? 'Title' : 'Choose gender first';
+    }
+  });
 }
 
 function renderCivilizationC3XCivAliasesTable(entry, c3xEditable) {
@@ -20923,6 +21040,10 @@ function renderCivilizationC3XCivAliasesTable(entry, c3xEditable) {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
+  const groupInputsByKind = {};
+  sourceKinds.forEach((kind) => {
+    groupInputsByKind[kind.key] = [];
+  });
   eraLabels.forEach((eraLabel, eraIdx) => {
     const tr = document.createElement('tr');
     const label = document.createElement('th');
@@ -20937,14 +21058,23 @@ function renderCivilizationC3XCivAliasesTable(entry, c3xEditable) {
         placeholder: String(displayGroup.sourceNames && displayGroup.sourceNames[kind.key] || ''),
         disabled: !canEdit,
         sessionKey: `BASE:civ_aliases_by_era:${normalizeConfigToken(entry && entry.name)}:${kind.key}:${eraIdx}`,
+        getSessionValue: () => aliasApi.serializeCivAliasEditorModel(model),
         onInput: (nextValue) => {
           const group = getCivilizationAliasGroupForEntry(model, entry, true);
           if (!group.aliases) group.aliases = {};
           if (!Array.isArray(group.aliases[kind.key])) group.aliases[kind.key] = ['', '', '', ''];
-          group.aliases[kind.key][eraIdx] = nextValue;
+          if (!Array.isArray(input.__aliasLiveFillIndexes)) {
+            input.__aliasLiveFillIndexes = aliasApi.getCivAliasLiveFillIndexes(group.aliases[kind.key], eraIdx);
+          }
+          group.aliases[kind.key] = aliasApi.applyCivAliasLiveEdit(group.aliases[kind.key], eraIdx, nextValue, {
+            liveFillIndexes: input.__aliasLiveFillIndexes,
+            defaultValue: group.sourceNames && group.sourceNames[kind.key]
+          });
+          syncCivAliasInputValues(groupInputsByKind[kind.key], group.aliases[kind.key], input);
           setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeCivAliasEditorModel(model), false);
         }
       });
+      groupInputsByKind[kind.key][eraIdx] = input;
       td.appendChild(input);
       tr.appendChild(td);
     });
@@ -20989,6 +21119,7 @@ function renderCivilizationC3XLeaderAliasesTable(entry, c3xEditable) {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
+  const leaderControls = [];
   reps.forEach((rep, eraIdx) => {
     const tr = document.createElement('tr');
     const era = document.createElement('th');
@@ -21003,10 +21134,18 @@ function renderCivilizationC3XLeaderAliasesTable(entry, c3xEditable) {
       disabled: !canEdit,
       sessionKey: `BASE:leader_aliases_by_era:${normalizeConfigToken(leaderName)}:name:${eraIdx}`,
       undoKey: 'BASE:leader_aliases_by_era',
+      getSessionValue: () => aliasApi.serializeLeaderAliasEditorModel(model),
       onInput: (nextValue) => {
         const group = getLeaderAliasGroupForEntry(model, entry, true);
-        if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
-        group.replacements[eraIdx].name = nextValue;
+        const current = group.replacements[eraIdx] || { name: '', gender: '', title: '' };
+        if (!Array.isArray(nameInput.__aliasLiveFillIndexes)) {
+          nameInput.__aliasLiveFillIndexes = aliasApi.getLeaderAliasLiveFillIndexes(group.replacements, eraIdx);
+        }
+        group.replacements = aliasApi.applyLeaderAliasLiveEdit(group.replacements, eraIdx, { ...current, name: nextValue }, {
+          liveFillIndexes: nameInput.__aliasLiveFillIndexes,
+          defaultName: leaderName
+        });
+        syncLeaderAliasControls(leaderControls, group.replacements, nameInput);
         setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeLeaderAliasEditorModel(model), false);
       }
     });
@@ -21034,10 +21173,18 @@ function renderCivilizationC3XLeaderAliasesTable(entry, c3xEditable) {
       wireWhenDisabled: !!canEdit,
       sessionKey: `BASE:leader_aliases_by_era:${normalizeConfigToken(leaderName)}:title:${eraIdx}`,
       undoKey: 'BASE:leader_aliases_by_era',
+      getSessionValue: () => aliasApi.serializeLeaderAliasEditorModel(model),
       onInput: (nextValue) => {
         const group = getLeaderAliasGroupForEntry(model, entry, true);
-        if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
-        group.replacements[eraIdx].title = nextValue;
+        const current = group.replacements[eraIdx] || { name: '', gender: '', title: '' };
+        if (!Array.isArray(title.__aliasLiveFillIndexes)) {
+          title.__aliasLiveFillIndexes = aliasApi.getLeaderAliasLiveFillIndexes(group.replacements, eraIdx);
+        }
+        group.replacements = aliasApi.applyLeaderAliasLiveEdit(group.replacements, eraIdx, { ...current, title: nextValue }, {
+          liveFillIndexes: title.__aliasLiveFillIndexes,
+          defaultName: leaderName
+        });
+        syncLeaderAliasControls(leaderControls, group.replacements, title);
         setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeLeaderAliasEditorModel(model), false);
       }
     });
@@ -21047,18 +21194,23 @@ function renderCivilizationC3XLeaderAliasesTable(entry, c3xEditable) {
     if (canEdit) {
       gender.addEventListener('change', () => {
         const group = getLeaderAliasGroupForEntry(model, entry, true);
-        if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
-        group.replacements[eraIdx].gender = gender.value;
+        const current = group.replacements[eraIdx] || { name: '', gender: '', title: '' };
+        const next = { ...current, gender: gender.value };
         if (!gender.value) {
-          group.replacements[eraIdx].title = '';
+          next.title = '';
           title.value = '';
         }
+        group.replacements = aliasApi.applyLeaderAliasLiveEdit(group.replacements, eraIdx, next, {
+          defaultName: leaderName
+        });
         title.disabled = !gender.value;
         title.placeholder = gender.value ? 'Title' : 'Choose gender first';
+        syncLeaderAliasControls(leaderControls, group.replacements, gender);
         setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeLeaderAliasEditorModel(model), true);
       });
     }
 
+    leaderControls[eraIdx] = { name: nameInput, gender, title };
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
