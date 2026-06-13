@@ -1,4 +1,6 @@
 * RELEASE 27.16
+- Kept contextual C3X controls editable in Standard Game on Civs, Improvements, Units, and Techs while BIQ fields remain read-only, so changes save through the active C3X config target.
+- Restyled C3X era alias matrices as bordered tables with transparent table-cell editing, while keeping the same structured alias editors and serialization.
 - Added contextual C3X unit-rule toggles to the Units tab for PTW artillery targeting, sea-only bombarders, unit-per-tile-limit exemptions, and water defensive retreat limits.
 - Audited C3X array-style base fields and tightened structured parsing so comma-delimited fields preserve newline-wrapped item bodies, while `show_tile_destruct_animation_after` now uses the token-list editor.
 - Added contextual C3X era alias editors to the Civs tab so each civilization can edit its civ and leader aliases alongside its BIQ identity and leader fields.

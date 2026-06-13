@@ -18530,7 +18530,7 @@ function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, reference
   return groupCard;
 }
 
-function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabKey, referenceEditable, selectedBaseIndex = null }) {
+function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabKey, referenceEditable, c3xEditable = false, selectedBaseIndex = null }) {
   const wrap = document.createElement('div');
   wrap.className = 'unit-prereq-resource-editor';
   const entryUndoKey = buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex);
@@ -18618,8 +18618,8 @@ function renderUnitResourcePrereqEditor({ requiredTechField, fields, entry, tabK
     list.appendChild(resourceWrap);
   }
 
-  list.appendChild(renderUnitProductionPerfumeControl(entry, referenceEditable));
-  list.appendChild(renderUnitLimitControl(entry, referenceEditable));
+  list.appendChild(renderUnitProductionPerfumeControl(entry, c3xEditable));
+  list.appendChild(renderUnitLimitControl(entry, c3xEditable));
 
   wrap.appendChild(list);
   return wrap;
@@ -18700,7 +18700,7 @@ function setUnitC3XListMembership(row, unitName, enabled) {
   setC3XBaseRowValue(row, serializeQuotedWhitespaceStructuredEntries(withoutUnit));
 }
 
-function renderUnitC3XRulesCard(entry, referenceEditable) {
+function renderUnitC3XRulesCard(entry, c3xEditable) {
   const rows = UNIT_C3X_LIST_RULES
     .map((rule) => ({ ...rule, row: getC3XBaseRow(rule.key) }))
     .filter((rule) => !!rule.row);
@@ -18723,16 +18723,17 @@ function renderUnitC3XRulesCard(entry, referenceEditable) {
   const grid = document.createElement('div');
   grid.className = 'unit-boolean-matrix unit-c3x-rules-grid';
   rows.forEach((rule) => {
-    const item = document.createElement(referenceEditable && unitName ? 'label' : 'div');
+    const canEdit = !!c3xEditable && canEditC3XBaseRows(rule.row);
+    const item = document.createElement(canEdit && unitName ? 'label' : 'div');
     item.className = 'unit-boolean-item';
     attachRichTooltip(item, createImprovementC3XFieldTooltip(rule.key, rule.note));
 
     const check = document.createElement('input');
     check.type = 'checkbox';
     check.checked = unitC3XListIncludesUnit(rule.row, unitName);
-    check.disabled = !referenceEditable || !unitName;
+    check.disabled = !canEdit || !unitName;
     item.classList.toggle('active', check.checked);
-    if (referenceEditable && unitName) {
+    if (canEdit && unitName) {
       check.addEventListener('change', () => {
         setUnitC3XListMembership(rule.row, unitName, check.checked);
         item.classList.toggle('active', check.checked);
@@ -18751,7 +18752,7 @@ function renderUnitC3XRulesCard(entry, referenceEditable) {
   return groupCard;
 }
 
-function renderUnitNameAmountC3XControl({ entry, referenceEditable, baseKey, label, note, placeholder }) {
+function renderUnitNameAmountC3XControl({ entry, c3xEditable, baseKey, label, note, placeholder }) {
   const { cell, control, row } = createUnitC3XPrereqCell(label, baseKey, note);
   const unitName = getUnitC3XName(entry);
   if (!row || !unitName) {
@@ -18763,34 +18764,37 @@ function renderUnitNameAmountC3XControl({ entry, referenceEditable, baseKey, lab
   }
   const items = parseNameAmountItems(row.value);
   const current = items.find((item) => c3xNameMatches(item.name, unitName)) || null;
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
   const input = document.createElement('input');
   input.type = 'text';
   input.placeholder = placeholder;
   input.value = current ? String(current.amount || '') : '';
-  input.disabled = !referenceEditable;
-  wireGroupedUndoSession(input, {
-    key: `BASE:${baseKey}`,
-    getValue: () => String(input.value || '')
-  });
-  input.addEventListener('input', () => {
-    const nextAmount = String(input.value || '').trim();
-    const nextItems = parseNameAmountItems(row.value)
-      .filter((item) => !c3xNameMatches(item.name, unitName))
-      .map((item) => ({ ...item }));
-    if (nextAmount) nextItems.push({ name: unitName, amount: nextAmount });
-    setC3XBaseRowValue(row, serializeNameAmountItems(nextItems), { captureUndo: false });
-  });
-  input.addEventListener('change', () => {
-    commitTrackedEditSession(`BASE:${baseKey}`, String(input.value || ''));
-  });
+  input.disabled = !canEdit;
+  if (canEdit) {
+    wireGroupedUndoSession(input, {
+      key: `BASE:${baseKey}`,
+      getValue: () => String(input.value || '')
+    });
+    input.addEventListener('input', () => {
+      const nextAmount = String(input.value || '').trim();
+      const nextItems = parseNameAmountItems(row.value)
+        .filter((item) => !c3xNameMatches(item.name, unitName))
+        .map((item) => ({ ...item }));
+      if (nextAmount) nextItems.push({ name: unitName, amount: nextAmount });
+      setC3XBaseRowValue(row, serializeNameAmountItems(nextItems), { captureUndo: false });
+    });
+    input.addEventListener('change', () => {
+      commitTrackedEditSession(`BASE:${baseKey}`, String(input.value || ''));
+    });
+  }
   control.appendChild(input);
   return cell;
 }
 
-function renderUnitProductionPerfumeControl(entry, referenceEditable) {
+function renderUnitProductionPerfumeControl(entry, c3xEditable) {
   return renderUnitNameAmountC3XControl({
     entry,
-    referenceEditable,
+    c3xEditable,
     baseKey: 'production_perfume',
     label: 'Production Perfume',
     note: 'Per-unit AI production perfume.',
@@ -18798,10 +18802,10 @@ function renderUnitProductionPerfumeControl(entry, referenceEditable) {
   });
 }
 
-function renderUnitLimitControl(entry, referenceEditable) {
+function renderUnitLimitControl(entry, c3xEditable) {
   return renderUnitNameAmountC3XControl({
     entry,
-    referenceEditable,
+    c3xEditable,
     baseKey: 'unit_limits',
     label: 'Unit Limits',
     note: 'Per-unit production limit formula.',
@@ -18809,7 +18813,7 @@ function renderUnitLimitControl(entry, referenceEditable) {
   });
 }
 
-function renderUnitBuildingPrereqsControl(entry, referenceEditable) {
+function renderUnitBuildingPrereqsControl(entry, c3xEditable) {
   const baseKey = 'building_prereqs_for_units';
   const { cell, control, row } = createUnitC3XPrereqCell(
     'Required Buildings',
@@ -18851,7 +18855,8 @@ function renderUnitBuildingPrereqsControl(entry, referenceEditable) {
     setC3XBaseRowValue(row, serializeBuildingPrereqItems(nextItems));
   };
 
-  if (!referenceEditable) {
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
+  if (!canEdit) {
     const selected = getSelectedBuildings();
     const chip = document.createElement('span');
     chip.className = 'key-display-chip';
@@ -18874,6 +18879,7 @@ function renderUnitBuildingPrereqsControl(entry, referenceEditable) {
 function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields }) {
   const wrapper = document.createElement('div');
   wrapper.className = 'unit-rules-layout';
+  const c3xEditable = canEditC3XBaseRows();
 
   const topGrid = document.createElement('div');
   topGrid.className = 'unit-main-board';
@@ -18913,6 +18919,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
         entry,
         tabKey,
         referenceEditable,
+        c3xEditable,
         selectedBaseIndex
       }));
     } else if (requiredTechField) {
@@ -18922,6 +18929,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
         entry,
         tabKey,
         referenceEditable,
+        c3xEditable,
         selectedBaseIndex
       }));
     }
@@ -18955,7 +18963,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
         });
         compactRow.appendChild(upgradeWrap);
       }
-      compactRow.appendChild(renderUnitBuildingPrereqsControl(entry, referenceEditable));
+      compactRow.appendChild(renderUnitBuildingPrereqsControl(entry, c3xEditable));
       groupCard.appendChild(compactRow);
     }
 
@@ -19019,7 +19027,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
     groupedFields.delete(groupName);
   });
 
-  const c3xRulesCard = renderUnitC3XRulesCard(entry, referenceEditable);
+  const c3xRulesCard = renderUnitC3XRulesCard(entry, c3xEditable);
   if (c3xRulesCard) c3xCol.appendChild(c3xRulesCard);
 
   if (topGrid.childElementCount > 0) wrapper.appendChild(topGrid);
@@ -19126,6 +19134,66 @@ function buildTechnologyTopNumberControl(field, referenceEditable, min = null, u
     setDirty(true);
   });
   return input;
+}
+
+function getTechnologyC3XName(entry) {
+  return normalizeConfigToken(getReferenceEntryDisplayName('technologies', entry));
+}
+
+function renderTechnologyPerfumeControl(entry, c3xEditable) {
+  const baseKey = 'technology_perfume';
+  const row = getC3XBaseRow(baseKey);
+  if (!row) return null;
+  const cell = document.createElement('div');
+  cell.className = 'technology-top-cell technology-c3x-top-cell';
+  cell.dataset.sectionLabel = 'Technology Perfume';
+  const label = document.createElement('label');
+  label.className = 'field-meta technology-top-cell-label';
+  const strong = document.createElement('strong');
+  strong.textContent = 'Technology Perfume';
+  label.appendChild(strong);
+  attachRichTooltip(label, createImprovementC3XFieldTooltip(baseKey, 'Per-technology AI research perfume.'));
+  cell.appendChild(label);
+  const control = document.createElement('div');
+  control.className = 'technology-top-cell-control';
+  cell.appendChild(control);
+
+  const techName = getTechnologyC3XName(entry);
+  if (!techName) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = '(unavailable)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const items = parseNameAmountItems(row.value);
+  const current = items.find((item) => c3xNameMatches(item.name, techName)) || null;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'amount (e.g. 20 or -50%)';
+  input.value = current ? String(current.amount || '') : '';
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
+  input.disabled = !canEdit;
+  if (canEdit) {
+    wireGroupedUndoSession(input, {
+      key: `BASE:${baseKey}`,
+      getValue: () => String(input.value || '')
+    });
+    input.addEventListener('input', () => {
+      const nextAmount = String(input.value || '').trim();
+      const nextItems = parseNameAmountItems(row.value)
+        .filter((item) => !c3xNameMatches(item.name, techName))
+        .map((item) => ({ ...item }));
+      if (nextAmount) nextItems.push({ name: techName, amount: nextAmount });
+      setC3XBaseRowValue(row, serializeNameAmountItems(nextItems), { captureUndo: false });
+    });
+    input.addEventListener('change', () => {
+      commitTrackedEditSession(`BASE:${baseKey}`, String(input.value || ''));
+    });
+  }
+  control.appendChild(input);
+  return cell;
 }
 
 function renderTechnologyBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex = null) {
@@ -20759,10 +20827,11 @@ function makeLeaderAliasTextInput({ value, placeholder, disabled, wireWhenDisabl
   return input;
 }
 
-function renderCivilizationC3XCivAliasesTable(entry, referenceEditable) {
+function renderCivilizationC3XCivAliasesTable(entry, c3xEditable) {
   const aliasApi = window.CivEraAliases;
   const row = getC3XBaseRow('civ_aliases_by_era');
   if (!aliasApi || !row || !entry) return null;
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
   const civEntries = getCivilizationAliasCivEntries();
   const model = aliasApi.buildCivAliasEditorModel(row.value, civEntries);
   const existingGroup = getCivilizationAliasGroupForEntry(model, entry, false);
@@ -20808,7 +20877,7 @@ function renderCivilizationC3XCivAliasesTable(entry, referenceEditable) {
       const input = makeCivilizationAliasTextInput({
         value,
         placeholder: String(displayGroup.sourceNames && displayGroup.sourceNames[kind.key] || ''),
-        disabled: !referenceEditable,
+        disabled: !canEdit,
         sessionKey: `BASE:civ_aliases_by_era:${normalizeConfigToken(entry && entry.name)}:${kind.key}:${eraIdx}`,
         onInput: (nextValue) => {
           const group = getCivilizationAliasGroupForEntry(model, entry, true);
@@ -20827,10 +20896,11 @@ function renderCivilizationC3XCivAliasesTable(entry, referenceEditable) {
   return table;
 }
 
-function renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable) {
+function renderCivilizationC3XLeaderAliasesTable(entry, c3xEditable) {
   const aliasApi = window.CivEraAliases;
   const row = getC3XBaseRow('leader_aliases_by_era');
   if (!aliasApi || !row || !entry) return null;
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
   const leaderName = aliasApi.getLeaderAliasSource(entry);
   if (!leaderName) return null;
   const civEntries = getCivilizationAliasCivEntries();
@@ -20872,7 +20942,7 @@ function renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable) {
     const nameInput = makeLeaderAliasTextInput({
       value: String(rep && rep.name || ''),
       placeholder: leaderName,
-      disabled: !referenceEditable,
+      disabled: !canEdit,
       sessionKey: `BASE:leader_aliases_by_era:${normalizeConfigToken(leaderName)}:name:${eraIdx}`,
       undoKey: 'BASE:leader_aliases_by_era',
       onInput: (nextValue) => {
@@ -20894,7 +20964,7 @@ function renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable) {
       gender.appendChild(option);
     });
     gender.value = String(rep && rep.gender || '').toUpperCase();
-    gender.disabled = !referenceEditable;
+    gender.disabled = !canEdit;
     genderCell.appendChild(gender);
     tr.appendChild(genderCell);
 
@@ -20902,8 +20972,8 @@ function renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable) {
     const title = makeLeaderAliasTextInput({
       value: String(rep && rep.title || ''),
       placeholder: gender.value ? 'Title' : 'Choose gender first',
-      disabled: !referenceEditable || !gender.value,
-      wireWhenDisabled: !!referenceEditable,
+      disabled: !canEdit || !gender.value,
+      wireWhenDisabled: !!canEdit,
       sessionKey: `BASE:leader_aliases_by_era:${normalizeConfigToken(leaderName)}:title:${eraIdx}`,
       undoKey: 'BASE:leader_aliases_by_era',
       onInput: (nextValue) => {
@@ -20916,7 +20986,7 @@ function renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable) {
     titleCell.appendChild(title);
     tr.appendChild(titleCell);
 
-    if (referenceEditable) {
+    if (canEdit) {
       gender.addEventListener('change', () => {
         const group = getLeaderAliasGroupForEntry(model, entry, true);
         if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
@@ -20937,9 +21007,9 @@ function renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable) {
   return table;
 }
 
-function renderCivilizationC3XAliasesCard(entry, referenceEditable) {
-  const civTable = renderCivilizationC3XCivAliasesTable(entry, referenceEditable);
-  const leaderTable = renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable);
+function renderCivilizationC3XAliasesCard(entry, c3xEditable) {
+  const civTable = renderCivilizationC3XCivAliasesTable(entry, c3xEditable);
+  const leaderTable = renderCivilizationC3XLeaderAliasesTable(entry, c3xEditable);
   if (!civTable && !leaderTable) return null;
   const card = document.createElement('div');
   card.className = 'rule-group-card civilization-aliases-card';
@@ -21006,6 +21076,7 @@ function getCivilizationDenseLayoutMode() {
 function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields }) {
   const wrapper = document.createElement('div');
   wrapper.className = 'civilization-rules-layout';
+  const c3xEditable = canEditC3XBaseRows();
   const layoutMode = getCivilizationDenseLayoutMode();
   wrapper.dataset.layoutMode = layoutMode;
   const topCards = buildCivilizationTopBoardCards(entry, referenceEditable, selectedBaseIndex);
@@ -21014,7 +21085,7 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
   board.className = 'civilization-dashboard-grid';
   const bottomStack = document.createElement('div');
   bottomStack.className = 'civilization-bottom-stack';
-  const aliasesCard = renderCivilizationC3XAliasesCard(entry, referenceEditable);
+  const aliasesCard = renderCivilizationC3XAliasesCard(entry, c3xEditable);
 
   groupedFields.delete('Free Technologies');
   const nameListsCard = renderCivilizationNameListsCard(entry, referenceEditable);
@@ -21088,6 +21159,7 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
 function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields, openCurrentTechTree }) {
   const wrapper = document.createElement('div');
   wrapper.className = 'technology-rules-layout';
+  const c3xEditable = canEditC3XBaseRows();
   const entryUndoKey = buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex);
 
   const mainBoard = document.createElement('div');
@@ -21179,6 +21251,8 @@ function renderTechnologyDenseRulesLayout({ entry, tabKey, selectedBaseIndex, re
     control.appendChild(prereqList);
     secondaryRow.appendChild(cell);
   }
+  const technologyPerfumeCell = renderTechnologyPerfumeControl(entry, c3xEditable);
+  if (technologyPerfumeCell) secondaryRow.appendChild(technologyPerfumeCell);
 
   if (secondaryRow.childElementCount > 0) mainBoard.appendChild(secondaryRow);
   if (mainBoard.childElementCount > 0) wrapper.appendChild(mainBoard);
@@ -21432,6 +21506,18 @@ function getC3XBaseRow(baseKey) {
   return rows.find((row) => String(row && row.key || '') === String(baseKey || '')) || null;
 }
 
+function canEditC3XBaseRows(row = null) {
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs.base : null;
+  if (!tab || tab.readOnly || !Array.isArray(tab.rows)) return false;
+  if (row && (row.readOnly || row.editable === false)) return false;
+  return true;
+}
+
+function canEditC3XConfigTab(tabKey) {
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  return !!(tab && !tab.readOnly);
+}
+
 function createImprovementC3XFieldTooltip(baseKey, note = '') {
   const baseTab = state.bundle && state.bundle.tabs ? state.bundle.tabs.base : null;
   const targetPath = String(baseTab && baseTab.targetPath || '').trim();
@@ -21480,7 +21566,7 @@ function commitC3XBaseRowValue(row, nextValue) {
   refreshTabDirtyBadges();
 }
 
-function renderImprovementProductionPerfumeControl(entry, referenceEditable) {
+function renderImprovementProductionPerfumeControl(entry, c3xEditable) {
   const baseKey = 'production_perfume';
   const { cell, control, row } = createImprovementC3XTopBoardCell(
     'Production Perfume',
@@ -21496,37 +21582,40 @@ function renderImprovementProductionPerfumeControl(entry, referenceEditable) {
     return cell;
   }
 
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
   const items = parseNameAmountItems(row.value);
   const current = items.find((item) => c3xNameMatches(item.name, buildingName)) || null;
   const input = document.createElement('input');
   input.type = 'text';
   input.placeholder = 'amount (e.g. 20 or -50%)';
   input.value = current ? String(current.amount || '') : '';
-  input.disabled = !referenceEditable;
-  wireGroupedUndoSession(input, {
-    key: `BASE:${baseKey}`,
-    getValue: () => String(input.value || '')
-  });
-  input.addEventListener('input', () => {
-    const nextAmount = String(input.value || '').trim();
-    const nextItems = items
-      .filter((item) => !c3xNameMatches(item.name, buildingName))
-      .map((item) => ({ ...item }));
-    if (nextAmount) nextItems.push({ name: buildingName, amount: nextAmount });
-    row.value = serializeNameAmountItems(nextItems);
-    setDirty(true);
-    recomputeDirtyCountForTab('base');
-    refreshDirtyUi();
-    refreshTabDirtyBadges();
-  });
-  input.addEventListener('change', () => {
-    commitTrackedEditSession(`BASE:${baseKey}`, String(input.value || ''));
-  });
+  input.disabled = !canEdit;
+  if (canEdit) {
+    wireGroupedUndoSession(input, {
+      key: `BASE:${baseKey}`,
+      getValue: () => String(input.value || '')
+    });
+    input.addEventListener('input', () => {
+      const nextAmount = String(input.value || '').trim();
+      const nextItems = parseNameAmountItems(row.value)
+        .filter((item) => !c3xNameMatches(item.name, buildingName))
+        .map((item) => ({ ...item }));
+      if (nextAmount) nextItems.push({ name: buildingName, amount: nextAmount });
+      row.value = serializeNameAmountItems(nextItems);
+      setDirty(true);
+      recomputeDirtyCountForTab('base');
+      refreshDirtyUi();
+      refreshTabDirtyBadges();
+    });
+    input.addEventListener('change', () => {
+      commitTrackedEditSession(`BASE:${baseKey}`, String(input.value || ''));
+    });
+  }
   control.appendChild(input);
   return cell;
 }
 
-function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
+function renderImprovementGeneratedResourcesControl(entry, c3xEditable) {
   const baseKey = 'buildings_generating_resources';
   const { cell, control, row } = createImprovementC3XTopBoardCell(
     'Generated Resources',
@@ -21542,6 +21631,7 @@ function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
     return cell;
   }
 
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
   const FLAGS = ['local', 'no-tech-req', 'yields', 'show-bonus', 'hide-non-bonus'];
   const FLAG_LABELS = {
     local: 'Local',
@@ -21581,12 +21671,14 @@ function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
   const addButton = document.createElement('button');
   addButton.type = 'button';
   addButton.textContent = 'Add Resource';
-  addButton.disabled = !referenceEditable;
-  addButton.addEventListener('click', () => {
-    rememberUndoSnapshotForKey(`BASE:${baseKey}`);
-    items.push({ building: buildingName, resource: '', flags: [] });
-    renderItems();
-  });
+  addButton.disabled = !canEdit;
+  if (canEdit) {
+    addButton.addEventListener('click', () => {
+      rememberUndoSnapshotForKey(`BASE:${baseKey}`);
+      items.push({ building: buildingName, resource: '', flags: [] });
+      renderItems();
+    });
+  }
   const renderItems = () => {
     itemsHost.innerHTML = '';
     const selectedCount = items.filter((item) => String(item && item.resource || '').trim()).length;
@@ -21605,8 +21697,8 @@ function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
         searchPlaceholder: 'Search Resource...',
         noneLabel: '(none)',
         showOptionThumbs: true,
-        readOnly: !referenceEditable,
-        onSelect: referenceEditable ? (next) => {
+        readOnly: !canEdit,
+        onSelect: canEdit ? (next) => {
           const normalized = String(next || '').trim();
           item.resource = normalized === '-1' ? '' : normalized;
           commitItems(items);
@@ -21623,6 +21715,7 @@ function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
           },
           'buildings_generating_resources_flags',
           {
+            disabled: !canEdit,
             showTokenIcon: false,
             getLabel: (flag) => FLAG_LABELS[String(flag || '').trim()] || String(flag || '').trim()
           }
@@ -21631,14 +21724,16 @@ function renderImprovementGeneratedResourcesControl(entry, referenceEditable) {
         const del = document.createElement('button');
         del.type = 'button';
         withRemoveIcon(del, ' Remove');
-        del.disabled = !referenceEditable;
-        del.addEventListener('click', () => {
-          const idx = items.indexOf(item);
-          if (idx >= 0) items.splice(idx, 1);
-          if (items.length === 0) items.push({ building: buildingName, resource: '', flags: [] });
-          commitItems(items);
-          renderItems();
-        });
+        del.disabled = !canEdit;
+        if (canEdit) {
+          del.addEventListener('click', () => {
+            const idx = items.indexOf(item);
+            if (idx >= 0) items.splice(idx, 1);
+            if (items.length === 0) items.push({ building: buildingName, resource: '', flags: [] });
+            commitItems(items);
+            renderItems();
+          });
+        }
         block.appendChild(del);
       }
       itemsHost.appendChild(block);
@@ -21711,7 +21806,7 @@ function setDistrictDependentImprovementMembership(entry, districtNames) {
   refreshTabDirtyBadges();
 }
 
-function renderImprovementRequiredDistrictsControl(entry, referenceEditable) {
+function renderImprovementRequiredDistrictsControl(entry, c3xEditable) {
   const cell = document.createElement('div');
   cell.className = 'improvement-top-cell improvement-c3x-top-cell';
   const label = document.createElement('label');
@@ -21786,7 +21881,7 @@ function renderImprovementRequiredDistrictsControl(entry, referenceEditable) {
       link.appendChild(arrow);
       row.appendChild(link);
 
-      if (referenceEditable) {
+      if (c3xEditable) {
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'ghost improvement-required-district-remove';
@@ -21803,7 +21898,7 @@ function renderImprovementRequiredDistrictsControl(entry, referenceEditable) {
   }
   if (list.childElementCount > 0) control.appendChild(list);
 
-  if (referenceEditable) {
+  if (c3xEditable) {
     const selectedSet = new Set(selectedNames.map((name) => normalizeConfigToken(name).toLowerCase()));
     const availableOptions = districtOptions.filter((opt) => !selectedSet.has(normalizeConfigToken(opt.value).toLowerCase()));
     if (availableOptions.length > 0) {
@@ -21950,7 +22045,7 @@ function renderImprovementWonderDistrictLink(entry) {
   return button;
 }
 
-function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, referenceEditable) {
+function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, referenceEditable, c3xBaseEditable, c3xDistrictEditable) {
   const wrap = document.createElement('div');
   wrap.className = 'improvement-main-board';
   const entryUndoKey = buildReferenceEntryUndoKey(tabKey, entry, selectedBaseIndex);
@@ -22032,9 +22127,9 @@ function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, refere
   if (categoryFields.length > 0 || obsoleteField) {
     const c3xRow = document.createElement('div');
     c3xRow.className = 'improvement-top-grid improvement-top-grid-c3x';
-    c3xRow.appendChild(renderImprovementRequiredDistrictsControl(entry, referenceEditable));
-    c3xRow.appendChild(renderImprovementGeneratedResourcesControl(entry, referenceEditable));
-    c3xRow.appendChild(renderImprovementProductionPerfumeControl(entry, referenceEditable));
+    c3xRow.appendChild(renderImprovementRequiredDistrictsControl(entry, c3xDistrictEditable));
+    c3xRow.appendChild(renderImprovementGeneratedResourcesControl(entry, c3xBaseEditable));
+    c3xRow.appendChild(renderImprovementProductionPerfumeControl(entry, c3xBaseEditable));
     wrap.appendChild(c3xRow);
   }
   return wrap;
@@ -22043,10 +22138,12 @@ function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, refere
 function renderImprovementDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields }) {
   const wrapper = document.createElement('div');
   wrapper.className = 'improvement-rules-layout';
+  const c3xBaseEditable = canEditC3XBaseRows();
+  const c3xDistrictEditable = canEditC3XConfigTab('districts');
   const layoutMode = getImprovementDenseLayoutMode();
   state.improvementLayoutMode = layoutMode;
   wrapper.dataset.layoutMode = layoutMode;
-  wrapper.appendChild(renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, referenceEditable));
+  wrapper.appendChild(renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, referenceEditable, c3xBaseEditable, c3xDistrictEditable));
   const board = document.createElement('div');
   board.className = 'improvement-dashboard-grid';
   const bottomStack = document.createElement('div');
@@ -53271,6 +53368,7 @@ function makeSegmentedSingleValueEditor(options, value, onValueChange, fieldKey 
 function makeLabeledSegmentedMultiValueEditor(options, values, onValuesChange, fieldKey = '', config = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'segmented-multi-list';
+  const disabled = !!config.disabled;
   const showTokenIcon = config.showTokenIcon !== false;
   const iconRenderer = typeof config.iconRenderer === 'function' ? config.iconRenderer : null;
   const getLabel = typeof config.getLabel === 'function' ? config.getLabel : ((opt) => String(opt || '').trim());
@@ -53284,6 +53382,7 @@ function makeLabeledSegmentedMultiValueEditor(options, values, onValuesChange, f
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'segmented-multi-btn';
+    btn.disabled = disabled;
     btn.classList.toggle('active', selected.has(opt));
     if (opt) {
       let usedCustomIcon = false;
@@ -53304,12 +53403,14 @@ function makeLabeledSegmentedMultiValueEditor(options, values, onValuesChange, f
     const text = document.createElement('span');
     text.textContent = getLabel(opt);
     btn.appendChild(text);
-    btn.addEventListener('click', () => {
-      if (selected.has(opt)) selected.delete(opt);
-      else selected.add(opt);
-      btn.classList.toggle('active', selected.has(opt));
-      if (onValuesChange) onValuesChange(merged.filter((entry) => selected.has(entry)));
-    });
+    if (!disabled) {
+      btn.addEventListener('click', () => {
+        if (selected.has(opt)) selected.delete(opt);
+        else selected.add(opt);
+        btn.classList.toggle('active', selected.has(opt));
+        if (onValuesChange) onValuesChange(merged.filter((entry) => selected.has(entry)));
+      });
+    }
     wrap.appendChild(btn);
   });
   return wrap;

@@ -561,8 +561,41 @@ test('Units tab exposes C3X unit-name arrays as contextual booleans', () => {
   );
   assert.match(
     rendererText,
-    /const c3xCol = document\.createElement\('div'\);[\s\S]*?unit-dashboard-col-c3x[\s\S]*?const c3xRulesCard = renderUnitC3XRulesCard\(entry, referenceEditable\);[\s\S]*?if \(c3xRulesCard\) c3xCol\.appendChild\(c3xRulesCard\);[\s\S]*?if \(c3xCol\.childElementCount > 0\) dashboardGrid\.appendChild\(c3xCol\);/,
+    /const c3xEditable = canEditC3XBaseRows\(\);[\s\S]*?const c3xCol = document\.createElement\('div'\);[\s\S]*?unit-dashboard-col-c3x[\s\S]*?const c3xRulesCard = renderUnitC3XRulesCard\(entry, c3xEditable\);[\s\S]*?if \(c3xRulesCard\) c3xCol\.appendChild\(c3xRulesCard\);[\s\S]*?if \(c3xCol\.childElementCount > 0\) dashboardGrid\.appendChild\(c3xCol\);/,
     'Units dense rules layout should place the contextual C3X rule card in the lower dashboard grid'
+  );
+});
+
+test('C3X era alias editors use compact semantic table styling', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const stylesPath = path.join(__dirname, '..', 'src', 'styles.css');
+  const rendererText = fs.readFileSync(rendererPath, 'utf8');
+  const stylesText = fs.readFileSync(stylesPath, 'utf8');
+
+  assert.match(
+    rendererText,
+    /const table = document\.createElement\('table'\);[\s\S]*?table\.className = 'civ-era-alias-table'/,
+    'C3X civilization alias editor should use an actual table element'
+  );
+  assert.match(
+    rendererText,
+    /const table = document\.createElement\('table'\);[\s\S]*?table\.className = 'civ-era-alias-table leader-era-alias-table'/,
+    'C3X leader alias editor should use an actual table element'
+  );
+  assert.match(
+    stylesText,
+    /\.civ-era-alias-table \{[\s\S]*?border-collapse: separate;[\s\S]*?border-spacing: 0;[\s\S]*?border: 1px solid rgba\(73, 69, 98, 0\.16\);/,
+    'Era alias tables should have visible compact table framing'
+  );
+  assert.match(
+    stylesText,
+    /\.civ-era-alias-table input,\n\.civ-era-alias-table select \{[\s\S]*?border: 1px solid transparent;[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/,
+    'Era alias table controls should read like table cells until focused'
+  );
+  assert.match(
+    stylesText,
+    /\.civilization-inline-alias-table \{[\s\S]*?min-width: 0;/,
+    'Civs tab inline alias tables should avoid forced horizontal scrolling'
   );
 });
 
@@ -809,14 +842,49 @@ test('improvements top board renderer receives the reference context it uses for
 
   assert.match(
     text,
-    /function renderImprovementDenseTopBoard\(entry, tabKey, selectedBaseIndex, referenceEditable\)/,
+    /function renderImprovementDenseTopBoard\(entry, tabKey, selectedBaseIndex, referenceEditable, c3xBaseEditable, c3xDistrictEditable\)/,
     'Improvements top board should accept tabKey and selectedBaseIndex because its controls build entry-scoped undo keys'
   );
 
   assert.match(
     text,
-    /renderImprovementDenseTopBoard\(entry, tabKey, selectedBaseIndex, referenceEditable\)/,
+    /renderImprovementDenseTopBoard\(entry, tabKey, selectedBaseIndex, referenceEditable, c3xBaseEditable, c3xDistrictEditable\)/,
     'Improvements rules layout should pass the active reference context into the top board renderer'
+  );
+});
+
+test('contextual C3X reference-tab controls use C3X editability instead of BIQ editability', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function canEditC3XBaseRows\(row = null\) \{[\s\S]*?state\.bundle[\s\S]*?tabs\.base[\s\S]*?tab\.readOnly/,
+    'Contextual C3X controls should derive editability from the base C3X tab'
+  );
+
+  assert.match(
+    text,
+    /function renderUnitDenseRulesLayout[\s\S]*?const c3xEditable = canEditC3XBaseRows\(\);[\s\S]*?renderUnitResourcePrereqEditor\(\{[\s\S]*?c3xEditable,[\s\S]*?renderUnitBuildingPrereqsControl\(entry, c3xEditable\)[\s\S]*?renderUnitC3XRulesCard\(entry, c3xEditable\)/,
+    'Units tab C3X controls should stay editable in Standard mode while BIQ controls remain read-only'
+  );
+
+  assert.match(
+    text,
+    /function renderCivilizationDenseRulesLayout[\s\S]*?const c3xEditable = canEditC3XBaseRows\(\);[\s\S]*?renderCivilizationC3XAliasesCard\(entry, c3xEditable\)/,
+    'Civilization alias controls should use C3X base editability'
+  );
+
+  assert.match(
+    text,
+    /function renderImprovementDenseRulesLayout[\s\S]*?const c3xBaseEditable = canEditC3XBaseRows\(\);[\s\S]*?const c3xDistrictEditable = canEditC3XConfigTab\('districts'\);[\s\S]*?renderImprovementDenseTopBoard\(entry, tabKey, selectedBaseIndex, referenceEditable, c3xBaseEditable, c3xDistrictEditable\)/,
+    'Improvement C3X controls should split base-row and district-config editability from BIQ editability'
+  );
+
+  assert.match(
+    text,
+    /function renderTechnologyDenseRulesLayout[\s\S]*?const c3xEditable = canEditC3XBaseRows\(\);[\s\S]*?renderTechnologyPerfumeControl\(entry, c3xEditable\)/,
+    'Technology perfume should be available as a contextual C3X base control'
   );
 });
 

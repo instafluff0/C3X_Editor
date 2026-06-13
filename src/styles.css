@@ -6518,18 +6518,12 @@ details > summary:focus-visible {
 }
 
 .civilization-inline-alias-table {
-  min-width: 560px;
+  min-width: 0;
 }
 
 .civilization-inline-alias-table th,
 .civilization-inline-alias-table td {
   padding: 3px;
-}
-
-.civilization-inline-alias-table input,
-.civilization-inline-alias-table select {
-  width: 100%;
-  min-width: 0;
 }
 
 .civilization-name-lists-grid {
@@ -11704,34 +11698,76 @@ button.unit-ini-delete-btn:disabled {
 
 .civ-era-alias-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
+  overflow: hidden;
+  border: 1px solid rgba(73, 69, 98, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .civ-era-alias-table th,
 .civ-era-alias-table td {
-  padding: 4px;
+  padding: 5px 6px;
+  border-right: 1px solid rgba(73, 69, 98, 0.12);
+  border-bottom: 1px solid rgba(73, 69, 98, 0.11);
   text-align: left;
   vertical-align: middle;
 }
 
+.civ-era-alias-table th:last-child,
+.civ-era-alias-table td:last-child {
+  border-right: 0;
+}
+
+.civ-era-alias-table tbody tr:last-child th,
+.civ-era-alias-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 .civ-era-alias-table thead th {
+  background: rgba(76, 85, 119, 0.08);
   color: #4c5577;
   font-size: 0.72rem;
   font-weight: 700;
+  line-height: 1.2;
 }
 
 .civ-era-alias-table tbody th {
   width: 110px;
+  background: rgba(76, 85, 119, 0.045);
   color: #5f6581;
   font-size: 0.72rem;
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .civ-era-alias-table input,
+.civ-era-alias-table select,
 .civ-era-alias-legacy-grid input {
   width: 100%;
   min-width: 0;
+}
+
+.civ-era-alias-table input,
+.civ-era-alias-table select {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.82rem;
+}
+
+.civ-era-alias-table input:hover,
+.civ-era-alias-table select:hover,
+.civ-era-alias-table input:focus,
+.civ-era-alias-table select:focus {
+  border-color: rgba(73, 69, 98, 0.2);
+  background: #ffffff;
+  border-radius: 6px;
 }
 
 .civ-era-alias-legacy-grid {
@@ -11752,6 +11788,45 @@ button.unit-ini-delete-btn:disabled {
 .leader-era-alias-table th:nth-child(2),
 .leader-era-alias-table th:nth-child(4) {
   width: auto;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table {
+  font-size: 0.82rem;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table th,
+.civ-era-alias-table.civilization-inline-alias-table td {
+  padding: 0;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table thead th,
+.civ-era-alias-table.civilization-inline-alias-table tbody th {
+  padding: 7px 8px;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table tbody th {
+  width: 92px;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table:not(.leader-era-alias-table) th:nth-child(1),
+.civ-era-alias-table.civilization-inline-alias-table:not(.leader-era-alias-table) td:nth-child(1) {
+  width: 30%;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table.leader-era-alias-table th:nth-child(1),
+.civ-era-alias-table.civilization-inline-alias-table.leader-era-alias-table td:nth-child(1) {
+  width: 25%;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table.leader-era-alias-table th:nth-child(3),
+.civ-era-alias-table.civilization-inline-alias-table.leader-era-alias-table td:nth-child(3) {
+  width: 72px;
+}
+
+.civ-era-alias-table.civilization-inline-alias-table input,
+.civ-era-alias-table.civilization-inline-alias-table select {
+  min-height: 34px;
+  padding: 7px 10px;
 }
 
 .building-prereq-units {
