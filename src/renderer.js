@@ -851,6 +851,7 @@ const BASE_MULTI_CHOICE_LIST_OPTIONS = {
   special_zone_of_control_rules: ['amphibious', 'lethal', 'aerial', 'not-from-inside', 'all'],
   land_transport_rules: ['load-onto-boat', 'join-army', 'no-defense-from-inside', 'no-escape'],
   special_helicopter_rules: ['allow-on-carriers', 'passenger-airdrop', 'no-defense-from-inside', 'no-escape'],
+  show_tile_destruct_animation_after: ['bombard', 'bomb', 'pillage'],
   enabled_seasons: ['summer', 'fall', 'winter', 'spring']
 };
 
@@ -7928,6 +7929,36 @@ function tokenizeListPreservingQuotes(text) {
   return items;
 }
 
+function tokenizeCommaDelimitedStructuredEntries(text) {
+  const items = [];
+  let cur = '';
+  let inQuotes = false;
+  let parenDepth = 0;
+  const input = String(text || '');
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      cur += ch;
+      continue;
+    }
+    if (!inQuotes) {
+      if (ch === '(') parenDepth += 1;
+      else if (ch === ')' && parenDepth > 0) parenDepth -= 1;
+      if (ch === ',' && parenDepth === 0) {
+        const t = cur.trim();
+        if (t) items.push(t);
+        cur = '';
+        continue;
+      }
+    }
+    cur += ch;
+  }
+  const tail = cur.trim();
+  if (tail) items.push(tail);
+  return items;
+}
+
 function normalizeConfigToken(value) {
   const raw = String(value == null ? '' : value).trim();
   if (!raw) return '';
@@ -8123,7 +8154,7 @@ function parseStructuredEntries(value) {
     v = v.slice(1, -1).trim();
   }
   if (!v) return [];
-  if (/[,\r\n]/.test(v)) return tokenizeListPreservingQuotes(v);
+  if (/,/.test(v)) return tokenizeCommaDelimitedStructuredEntries(v);
   return tokenizeWhitespacePreservingQuotes(v);
 }
 
@@ -8133,7 +8164,7 @@ function parseDelimitedStructuredEntries(value) {
     v = v.slice(1, -1).trim();
   }
   if (!v) return [];
-  return tokenizeListPreservingQuotes(v);
+  return tokenizeCommaDelimitedStructuredEntries(v);
 }
 
 function serializeStructuredEntries(entries) {
@@ -8444,6 +8475,28 @@ function clearNaturalWonderAtlasPreviewCache() {
 
 function getCivilizationNameSuggestions() {
   return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || '')).filter(Boolean);
+}
+
+function getEraAliasLabels() {
+  const labels = [];
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.world;
+  const sections = tab && Array.isArray(tab.sections) ? tab.sections : [];
+  const eras = sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'ERAS');
+  const records = eras && Array.isArray(eras.records) ? eras.records : [];
+  const readName = (record) => {
+    if (!record) return '';
+    if (record.name) return String(record.name || '').trim();
+    const fields = Array.isArray(record.fields) ? record.fields : [];
+    const hit = fields.find((field) => {
+      const key = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+      return key === 'name' || key === 'eraname';
+    });
+    return String(hit && hit.value || '').trim();
+  };
+  for (let idx = 0; idx < 4; idx += 1) {
+    labels.push(readName(records[idx]) || `Era ${idx + 1}`);
+  }
+  return labels;
 }
 
 function getLeaderNameSuggestions() {
@@ -9050,62 +9103,154 @@ function makeInputForBaseRow(row, onChange, options = {}) {
 
   if (row.key === 'civ_aliases_by_era') {
     const wrap = document.createElement('div');
-    wrap.className = 'structured-list';
-    let items = parseCivAliasesByEra(row.value);
-    if (items.length === 0) items = [{ source: '', replacements: ['', '', '', ''] }];
+    wrap.className = 'structured-list civ-era-alias-editor';
+    const aliasApi = window.CivEraAliases;
+    const civOptions = getNamedReferenceOptionsForTab('civilizations');
+    const civEntries = civOptions.map((opt) => opt && opt.entry).filter(Boolean);
+    const model = aliasApi.buildCivAliasEditorModel(row.value, civEntries);
+    const eraLabels = getEraAliasLabels();
+    const sourceKinds = aliasApi.SOURCE_KINDS;
+    const emit = (options = null) => onChange(aliasApi.serializeCivAliasEditorModel(model), options || undefined);
+    const findOption = (value) => civOptions.find((opt) => normalizeConfigToken(opt && opt.value) === normalizeConfigToken(value)) || null;
+    const refreshGroupSources = (group, entry) => {
+      group.entry = entry || null;
+      group.civName = String(entry && entry.name || '').trim();
+      group.sourceNames = aliasApi.getCivilizationAliasSources(entry);
+      if (!group.aliases) {
+        const empty = aliasApi.makeEmptyGroup(entry);
+        group.aliases = empty.aliases;
+      }
+    };
     const rerender = () => {
       wrap.innerHTML = '';
-      items.forEach((item, idx) => {
+      model.groups.forEach((group, groupIdx) => {
         const block = document.createElement('div');
-        block.className = 'structured-card';
-        const civSuggestions = getCivilizationNameSuggestions();
+        block.className = 'structured-card civ-era-alias-card';
+        const head = document.createElement('div');
+        head.className = 'civ-era-alias-card-head';
+        const picker = createReferencePicker({
+          options: civOptions,
+          targetTabKey: 'civilizations',
+          currentValue: group.civName || '-1',
+          searchPlaceholder: 'Search Civilization...',
+          noneLabel: 'Choose civilization...',
+          onSelect: (next) => {
+            const normalized = normalizeConfigToken(next);
+            const opt = normalized === '-1' ? null : findOption(normalized);
+            refreshGroupSources(group, opt && opt.entry);
+            emit();
+            rerender();
+          }
+        });
+        head.appendChild(picker);
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          model.groups.splice(groupIdx, 1);
+          emit();
+          rerender();
+        });
+        head.appendChild(del);
+        block.appendChild(head);
+
+        const table = document.createElement('table');
+        table.className = 'civ-era-alias-table';
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        const eraTh = document.createElement('th');
+        eraTh.textContent = 'Era';
+        headRow.appendChild(eraTh);
+        sourceKinds.forEach((kind) => {
+          const th = document.createElement('th');
+          const sourceName = String(group.sourceNames && group.sourceNames[kind.key] || '').trim();
+          th.textContent = kind.label;
+          if (sourceName) th.title = sourceName;
+          headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        eraLabels.forEach((eraLabel, eraIdx) => {
+          const tr = document.createElement('tr');
+          const label = document.createElement('th');
+          label.scope = 'row';
+          label.textContent = eraLabel;
+          tr.appendChild(label);
+          sourceKinds.forEach((kind) => {
+            const td = document.createElement('td');
+            const input = document.createElement('input');
+            input.value = String(group.aliases && group.aliases[kind.key] && group.aliases[kind.key][eraIdx] || '');
+            input.placeholder = String(group.sourceNames && group.sourceNames[kind.key] || '');
+            wireBaseGroupedUndo(input);
+            input.addEventListener('input', () => {
+              if (!group.aliases) group.aliases = {};
+              if (!Array.isArray(group.aliases[kind.key])) group.aliases[kind.key] = ['', '', '', ''];
+              group.aliases[kind.key][eraIdx] = input.value;
+              emit({ captureUndo: false });
+            });
+            td.appendChild(input);
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        block.appendChild(table);
+        wrap.appendChild(block);
+      });
+      model.ungrouped.forEach((item, idx) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card civ-era-alias-card';
         const source = document.createElement('input');
-        source.placeholder = 'Original civ name/adjective';
+        source.placeholder = 'Source name';
         source.value = item.source || '';
         wireBaseGroupedUndo(source);
         source.addEventListener('input', () => {
-          items[idx].source = source.value;
-          onChange(serializeCivAliasesByEra(items), { captureUndo: false });
+          model.ungrouped[idx].source = source.value;
+          emit({ captureUndo: false });
         });
         block.appendChild(source);
-        const sourceDl = attachSuggestions(source, civSuggestions);
-        if (sourceDl) block.appendChild(sourceDl);
         const grid = document.createElement('div');
-        grid.className = 'kv-grid';
+        grid.className = 'civ-era-alias-legacy-grid';
         const repls = Array.isArray(item.replacements) ? item.replacements.slice(0, 4) : [];
         while (repls.length < 4) repls.push('');
         repls.forEach((rep, eraIdx) => {
           const era = document.createElement('input');
-          era.placeholder = `Era ${eraIdx + 1} replacement`;
+          era.placeholder = eraLabels[eraIdx] || `Era ${eraIdx + 1}`;
           era.value = rep;
           wireBaseGroupedUndo(era);
           era.addEventListener('input', () => {
-            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = ['', '', '', ''];
-            items[idx].replacements[eraIdx] = era.value;
-            onChange(serializeCivAliasesByEra(items), { captureUndo: false });
+            if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = ['', '', '', ''];
+            model.ungrouped[idx].replacements[eraIdx] = era.value;
+            emit({ captureUndo: false });
           });
           grid.appendChild(era);
-          const eraDl = attachSuggestions(era, civSuggestions);
-          if (eraDl) grid.appendChild(eraDl);
         });
         block.appendChild(grid);
         const del = document.createElement('button');
         del.type = 'button';
         withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
-          items.splice(idx, 1);
-          if (items.length === 0) items.push({ source: '', replacements: ['', '', '', ''] });
-          onChange(serializeCivAliasesByEra(items));
+          model.ungrouped.splice(idx, 1);
+          emit();
           rerender();
         });
         block.appendChild(del);
         wrap.appendChild(block);
       });
+      if (model.groups.length === 0 && model.ungrouped.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'field-meta';
+        empty.textContent = '(none)';
+        wrap.appendChild(empty);
+      }
       const add = document.createElement('button');
       add.type = 'button';
-      add.textContent = 'Add Item';
+      add.textContent = 'Add Civilization';
       add.addEventListener('click', () => {
-        items.push({ source: '', replacements: ['', '', '', ''] });
+        const firstUnused = civOptions.find((opt) => !model.groups.some((group) => normalizeConfigToken(group.civName) === normalizeConfigToken(opt && opt.value))) || civOptions[0] || null;
+        model.groups.push(aliasApi.makeEmptyGroup(firstUnused && firstUnused.entry));
+        emit();
         rerender();
       });
       wrap.appendChild(add);
@@ -9116,26 +9261,158 @@ function makeInputForBaseRow(row, onChange, options = {}) {
 
   if (row.key === 'leader_aliases_by_era') {
     const wrap = document.createElement('div');
-    wrap.className = 'structured-list';
-    let items = parseLeaderAliasesByEra(row.value);
-    if (items.length === 0) items = [{ source: '', replacements: [{ name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }] }];
+    wrap.className = 'structured-list leader-era-alias-editor';
+    const aliasApi = window.CivEraAliases;
+    const civOptions = getNamedReferenceOptionsForTab('civilizations');
+    const leaderOptions = civOptions
+      .map((opt) => {
+        const leaderName = aliasApi.getLeaderAliasSource(opt && opt.entry);
+        if (!leaderName) return null;
+        return {
+          value: leaderName,
+          label: leaderName,
+          displayLabel: leaderName,
+          entry: opt.entry,
+          civName: String(opt.value || '')
+        };
+      })
+      .filter(Boolean);
+    const civEntries = civOptions.map((opt) => opt && opt.entry).filter(Boolean);
+    const model = aliasApi.buildLeaderAliasEditorModel(row.value, civEntries);
+    const eraLabels = getEraAliasLabels();
+    const emit = (options = null) => onChange(aliasApi.serializeLeaderAliasEditorModel(model), options || undefined);
+    const findLeaderOption = (value) => leaderOptions.find((opt) => normalizeConfigToken(opt && opt.value) === normalizeConfigToken(value)) || null;
+    const refreshLeaderGroup = (group, option) => {
+      group.entry = option && option.entry ? option.entry : null;
+      group.leaderName = String(option && option.value || '').trim();
+      group.civName = String(option && option.civName || '').trim();
+      if (!Array.isArray(group.replacements)) group.replacements = aliasApi.makeEmptyLeaderGroup(group.entry).replacements;
+    };
     const rerender = () => {
       wrap.innerHTML = '';
-      items.forEach((item, idx) => {
+      model.groups.forEach((group, groupIdx) => {
         const block = document.createElement('div');
-        block.className = 'structured-card';
-        const leaderSuggestions = getLeaderNameSuggestions();
+        block.className = 'structured-card civ-era-alias-card leader-era-alias-card';
+        const head = document.createElement('div');
+        head.className = 'civ-era-alias-card-head';
+        const picker = createReferencePicker({
+          options: leaderOptions,
+          targetTabKey: 'civilizations',
+          currentValue: group.leaderName || '-1',
+          searchPlaceholder: 'Search Leader...',
+          noneLabel: 'Choose leader...',
+          getOptionMetaText: (opt) => String(opt && opt.civName || '').trim(),
+          onSelect: (next) => {
+            const normalized = normalizeConfigToken(next);
+            const opt = normalized === '-1' ? null : findLeaderOption(normalized);
+            refreshLeaderGroup(group, opt);
+            emit();
+            rerender();
+          }
+        });
+        head.appendChild(picker);
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          model.groups.splice(groupIdx, 1);
+          emit();
+          rerender();
+        });
+        head.appendChild(del);
+        block.appendChild(head);
+
+        const table = document.createElement('table');
+        table.className = 'civ-era-alias-table leader-era-alias-table';
+        const thead = document.createElement('thead');
+        const header = document.createElement('tr');
+        ['Era', 'Leader', 'Gender', 'Title'].forEach((labelText) => {
+          const th = document.createElement('th');
+          th.textContent = labelText;
+          header.appendChild(th);
+        });
+        thead.appendChild(header);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        const reps = Array.isArray(group.replacements) ? group.replacements.slice(0, 4) : [];
+        while (reps.length < 4) reps.push({ name: '', gender: '', title: '' });
+        reps.forEach((rep, eraIdx) => {
+          const tr = document.createElement('tr');
+          const era = document.createElement('th');
+          era.scope = 'row';
+          era.textContent = eraLabels[eraIdx] || `Era ${eraIdx + 1}`;
+          tr.appendChild(era);
+          const nameCell = document.createElement('td');
+          const name = document.createElement('input');
+          name.placeholder = String(group.leaderName || '');
+          name.value = String(rep && rep.name || '');
+          wireBaseGroupedUndo(name);
+          name.addEventListener('input', () => {
+            if (!Array.isArray(group.replacements)) group.replacements = [];
+            if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
+            group.replacements[eraIdx].name = name.value;
+            emit({ captureUndo: false });
+          });
+          nameCell.appendChild(name);
+          tr.appendChild(nameCell);
+          const genderCell = document.createElement('td');
+          const gender = document.createElement('select');
+          ['', 'M', 'F'].forEach((opt) => {
+            const o = document.createElement('option');
+            o.value = opt;
+            o.textContent = opt || 'Default';
+            gender.appendChild(o);
+          });
+          gender.value = String(rep && rep.gender || '').toUpperCase();
+          genderCell.appendChild(gender);
+          tr.appendChild(genderCell);
+          const titleCell = document.createElement('td');
+          const title = document.createElement('input');
+          title.placeholder = gender.value ? 'Title' : 'Choose gender first';
+          title.value = String(rep && rep.title || '');
+          title.disabled = !gender.value;
+          wireBaseGroupedUndo(title);
+          const updateTitleState = () => {
+            title.disabled = !gender.value;
+            title.placeholder = gender.value ? 'Title' : 'Choose gender first';
+            if (!gender.value) {
+              title.value = '';
+              if (group.replacements[eraIdx]) group.replacements[eraIdx].title = '';
+            }
+          };
+          gender.addEventListener('change', () => {
+            if (!Array.isArray(group.replacements)) group.replacements = [];
+            if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
+            group.replacements[eraIdx].gender = gender.value;
+            updateTitleState();
+            emit();
+          });
+          title.addEventListener('input', () => {
+            if (!Array.isArray(group.replacements)) group.replacements = [];
+            if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
+            group.replacements[eraIdx].title = title.value;
+            emit({ captureUndo: false });
+          });
+          titleCell.appendChild(title);
+          tr.appendChild(titleCell);
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        block.appendChild(table);
+        wrap.appendChild(block);
+      });
+      model.ungrouped.forEach((item, idx) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card civ-era-alias-card leader-era-alias-card';
         const source = document.createElement('input');
-        source.placeholder = 'Original leader name';
+        source.placeholder = 'Source leader name';
         source.value = item.source || '';
         wireBaseGroupedUndo(source);
         source.addEventListener('input', () => {
-          items[idx].source = source.value;
-          onChange(serializeLeaderAliasesByEra(items), { captureUndo: false });
+          model.ungrouped[idx].source = source.value;
+          emit({ captureUndo: false });
         });
         block.appendChild(source);
-        const sourceDl = attachSuggestions(source, leaderSuggestions);
-        if (sourceDl) block.appendChild(sourceDl);
         const repWrap = document.createElement('div');
         repWrap.className = 'structured-list';
         let reps = Array.isArray(item.replacements) ? item.replacements.slice(0, 4) : [];
@@ -9144,42 +9421,43 @@ function makeInputForBaseRow(row, onChange, options = {}) {
           const rowWrap = document.createElement('div');
           rowWrap.className = 'kv-row';
           const name = document.createElement('input');
-          name.placeholder = `Era ${eraIdx + 1} leader`;
+          name.placeholder = `${eraLabels[eraIdx] || `Era ${eraIdx + 1}`} leader`;
           name.value = String(rep && rep.name || '');
           wireBaseGroupedUndo(name);
           name.addEventListener('input', () => {
-            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = [];
-            if (!items[idx].replacements[eraIdx]) items[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
-            items[idx].replacements[eraIdx].name = name.value;
-            onChange(serializeLeaderAliasesByEra(items), { captureUndo: false });
+            if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = [];
+            if (!model.ungrouped[idx].replacements[eraIdx]) model.ungrouped[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
+            model.ungrouped[idx].replacements[eraIdx].name = name.value;
+            emit({ captureUndo: false });
           });
           rowWrap.appendChild(name);
-          const nameDl = attachSuggestions(name, leaderSuggestions);
-          if (nameDl) rowWrap.appendChild(nameDl);
           const gender = document.createElement('select');
           ['', 'M', 'F'].forEach((opt) => {
             const o = document.createElement('option');
             o.value = opt;
-            o.textContent = opt ? opt : 'Gender';
+            o.textContent = opt ? opt : 'Default';
             gender.appendChild(o);
           });
           gender.value = String(rep && rep.gender || '').toUpperCase();
           gender.addEventListener('change', () => {
-            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = [];
-            if (!items[idx].replacements[eraIdx]) items[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
-            items[idx].replacements[eraIdx].gender = gender.value;
-            onChange(serializeLeaderAliasesByEra(items));
+            if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = [];
+            if (!model.ungrouped[idx].replacements[eraIdx]) model.ungrouped[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
+            model.ungrouped[idx].replacements[eraIdx].gender = gender.value;
+            if (!gender.value) model.ungrouped[idx].replacements[eraIdx].title = '';
+            emit();
+            rerender();
           });
           rowWrap.appendChild(gender);
           const title = document.createElement('input');
-          title.placeholder = 'Title (optional)';
+          title.placeholder = gender.value ? 'Title' : 'Choose gender first';
           title.value = String(rep && rep.title || '');
+          title.disabled = !gender.value;
           wireBaseGroupedUndo(title);
           title.addEventListener('input', () => {
-            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = [];
-            if (!items[idx].replacements[eraIdx]) items[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
-            items[idx].replacements[eraIdx].title = title.value;
-            onChange(serializeLeaderAliasesByEra(items), { captureUndo: false });
+            if (!Array.isArray(model.ungrouped[idx].replacements)) model.ungrouped[idx].replacements = [];
+            if (!model.ungrouped[idx].replacements[eraIdx]) model.ungrouped[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
+            model.ungrouped[idx].replacements[eraIdx].title = title.value;
+            emit({ captureUndo: false });
           });
           rowWrap.appendChild(title);
           repWrap.appendChild(rowWrap);
@@ -9189,19 +9467,26 @@ function makeInputForBaseRow(row, onChange, options = {}) {
         del.type = 'button';
         withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
-          items.splice(idx, 1);
-          if (items.length === 0) items.push({ source: '', replacements: [{ name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }] });
-          onChange(serializeLeaderAliasesByEra(items));
+          model.ungrouped.splice(idx, 1);
+          emit();
           rerender();
         });
         block.appendChild(del);
         wrap.appendChild(block);
       });
+      if (model.groups.length === 0 && model.ungrouped.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'field-meta';
+        empty.textContent = '(none)';
+        wrap.appendChild(empty);
+      }
       const add = document.createElement('button');
       add.type = 'button';
-      add.textContent = 'Add Item';
+      add.textContent = 'Add Leader';
       add.addEventListener('click', () => {
-        items.push({ source: '', replacements: [{ name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }] });
+        const firstUnused = leaderOptions.find((opt) => !model.groups.some((group) => normalizeConfigToken(group.leaderName) === normalizeConfigToken(opt && opt.value))) || leaderOptions[0] || null;
+        model.groups.push(aliasApi.makeEmptyLeaderGroup(firstUnused && firstUnused.entry));
+        emit();
         rerender();
       });
       wrap.appendChild(add);
@@ -18344,6 +18629,29 @@ function getUnitC3XName(entry) {
   return normalizeConfigToken(getReferenceEntryDisplayName('units', entry));
 }
 
+const UNIT_C3X_LIST_RULES = Object.freeze([
+  {
+    key: 'ptw_like_artillery_targeting',
+    label: 'PTW Artillery Targeting',
+    note: 'Units that use PTW-style artillery targeting.'
+  },
+  {
+    key: 'can_bombard_only_sea_tiles',
+    label: 'Bombards Only Sea Tiles',
+    note: 'Units whose bombard action is limited to sea tiles.'
+  },
+  {
+    key: 'exclude_types_from_units_per_tile_limit',
+    label: 'Exempt From Unit-Per-Tile Limit',
+    note: 'Units ignored by the C3X unit-per-tile limit.'
+  },
+  {
+    key: 'limit_defensive_retreat_on_water_to_types',
+    label: 'Limit Water Defensive Retreat',
+    note: 'Units affected by the C3X defensive retreat limit on water.'
+  }
+]);
+
 function createUnitC3XPrereqCell(labelText, baseKey, note = '') {
   const row = getC3XBaseRow(baseKey);
   const cell = document.createElement('div');
@@ -18369,6 +18677,78 @@ function setC3XBaseRowValue(row, nextValue, { captureUndo = true } = {}) {
   recomputeDirtyCountForTab('base');
   refreshDirtyUi();
   refreshTabDirtyBadges();
+}
+
+function parseUnitC3XListValues(value) {
+  return parseStructuredEntries(value)
+    .map((entry) => normalizeConfigToken(entry))
+    .filter(Boolean);
+}
+
+function unitC3XListIncludesUnit(row, unitName) {
+  if (!row || !unitName) return false;
+  return parseUnitC3XListValues(row.value).some((value) => c3xNameMatches(value, unitName));
+}
+
+function setUnitC3XListMembership(row, unitName, enabled) {
+  if (!row || !unitName) return;
+  const current = parseUnitC3XListValues(row.value);
+  const withoutUnit = current.filter((value) => !c3xNameMatches(value, unitName));
+  const alreadyIncluded = withoutUnit.length !== current.length;
+  if (enabled && !alreadyIncluded) withoutUnit.push(unitName);
+  if (enabled === alreadyIncluded) return;
+  setC3XBaseRowValue(row, serializeQuotedWhitespaceStructuredEntries(withoutUnit));
+}
+
+function renderUnitC3XRulesCard(entry, referenceEditable) {
+  const rows = UNIT_C3X_LIST_RULES
+    .map((rule) => ({ ...rule, row: getC3XBaseRow(rule.key) }))
+    .filter((rule) => !!rule.row);
+  if (rows.length === 0) return null;
+
+  const unitName = getUnitC3XName(entry);
+  const groupCard = document.createElement('div');
+  groupCard.className = 'rule-group-card unit-dense-card unit-c3x-rules-card unit-matrix-card';
+  groupCard.dataset.sectionLabel = 'C3X Unit Rules';
+
+  const groupTitle = document.createElement('div');
+  groupTitle.className = 'rule-group-title';
+  groupTitle.textContent = 'C3X Unit Rules';
+  attachRichTooltip(groupTitle, [
+    'Source: C3X',
+    'These toggles edit unit-name arrays in the C3X base config. They are the same values shown in the C3X tab.'
+  ]);
+  groupCard.appendChild(groupTitle);
+
+  const grid = document.createElement('div');
+  grid.className = 'unit-boolean-matrix unit-c3x-rules-grid';
+  rows.forEach((rule) => {
+    const item = document.createElement(referenceEditable && unitName ? 'label' : 'div');
+    item.className = 'unit-boolean-item';
+    attachRichTooltip(item, createImprovementC3XFieldTooltip(rule.key, rule.note));
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = unitC3XListIncludesUnit(rule.row, unitName);
+    check.disabled = !referenceEditable || !unitName;
+    item.classList.toggle('active', check.checked);
+    if (referenceEditable && unitName) {
+      check.addEventListener('change', () => {
+        setUnitC3XListMembership(rule.row, unitName, check.checked);
+        item.classList.toggle('active', check.checked);
+      });
+    }
+
+    const label = document.createElement('span');
+    label.textContent = rule.label;
+
+    item.appendChild(check);
+    item.appendChild(label);
+    grid.appendChild(item);
+  });
+
+  groupCard.appendChild(grid);
+  return groupCard;
 }
 
 function renderUnitNameAmountC3XControl({ entry, referenceEditable, baseKey, label, note, placeholder }) {
@@ -18505,6 +18885,8 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
   middleCol.className = 'unit-dashboard-col unit-dashboard-col-middle';
   const rightCol = document.createElement('div');
   rightCol.className = 'unit-dashboard-col unit-dashboard-col-right';
+  const c3xCol = document.createElement('div');
+  c3xCol.className = 'unit-dashboard-col unit-dashboard-col-c3x';
   const bottomStack = document.createElement('div');
   bottomStack.className = 'unit-bottom-stack';
 
@@ -18637,10 +19019,14 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
     groupedFields.delete(groupName);
   });
 
+  const c3xRulesCard = renderUnitC3XRulesCard(entry, referenceEditable);
+  if (c3xRulesCard) c3xCol.appendChild(c3xRulesCard);
+
   if (topGrid.childElementCount > 0) wrapper.appendChild(topGrid);
   if (statsCol.childElementCount > 0) dashboardGrid.appendChild(statsCol);
   if (middleCol.childElementCount > 0) dashboardGrid.appendChild(middleCol);
   if (rightCol.childElementCount > 0) dashboardGrid.appendChild(rightCol);
+  if (c3xCol.childElementCount > 0) dashboardGrid.appendChild(c3xCol);
   if (dashboardGrid.childElementCount > 0) wrapper.appendChild(dashboardGrid);
 
   const listsCard = renderUnitBottomListsCard(entry, referenceEditable);
@@ -20241,6 +20627,355 @@ function buildCivilizationTopBoardCards(entry, referenceEditable, selectedBaseIn
   return cards;
 }
 
+function getCivilizationAliasCivEntries() {
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs.civilizations : null;
+  return tab && Array.isArray(tab.entries) ? tab.entries.filter(Boolean) : [];
+}
+
+function getCivilizationAliasGroupForEntry(model, entry, createGroup) {
+  const aliasApi = window.CivEraAliases;
+  if (!aliasApi || !entry) return null;
+  const groups = Array.isArray(model && model.groups) ? model.groups : [];
+  const entrySourceNames = aliasApi.getCivilizationAliasSources(entry);
+  const entryKeys = aliasApi.SOURCE_KINDS
+    .map((kind) => normalizeConfigToken(entrySourceNames && entrySourceNames[kind.key]).toLowerCase())
+    .filter(Boolean);
+  let group = groups.find((candidate) => candidate && candidate.entry === entry) || null;
+  if (!group && entryKeys.length > 0) {
+    group = groups.find((candidate) => {
+      const sources = candidate && candidate.sourceNames ? candidate.sourceNames : {};
+      return aliasApi.SOURCE_KINDS.some((kind) => {
+        const source = normalizeConfigToken(sources[kind.key]).toLowerCase();
+        return source && entryKeys.includes(source);
+      });
+    }) || null;
+  }
+  if (!group && createGroup) {
+    group = aliasApi.makeEmptyGroup(entry);
+    groups.push(group);
+  }
+  if (group) {
+    group.entry = entry;
+    group.civName = String(entry && entry.name || '').trim();
+    group.sourceNames = entrySourceNames;
+    if (!group.aliases) group.aliases = aliasApi.makeEmptyGroup(entry).aliases;
+  }
+  return group;
+}
+
+function hasUngroupedCivilizationAliasForEntry(model, entry) {
+  const aliasApi = window.CivEraAliases;
+  if (!aliasApi || !entry) return false;
+  const sourceNames = aliasApi.getCivilizationAliasSources(entry);
+  const sourceKeys = aliasApi.SOURCE_KINDS
+    .map((kind) => normalizeConfigToken(sourceNames && sourceNames[kind.key]).toLowerCase())
+    .filter(Boolean);
+  if (sourceKeys.length === 0) return false;
+  return (Array.isArray(model && model.ungrouped) ? model.ungrouped : []).some((item) => {
+    const source = normalizeConfigToken(item && item.source).toLowerCase();
+    return source && sourceKeys.includes(source);
+  });
+}
+
+function getLeaderAliasGroupForEntry(model, entry, createGroup) {
+  const aliasApi = window.CivEraAliases;
+  if (!aliasApi || !entry) return null;
+  const groups = Array.isArray(model && model.groups) ? model.groups : [];
+  const leaderName = aliasApi.getLeaderAliasSource(entry);
+  const leaderKey = normalizeConfigToken(leaderName).toLowerCase();
+  let group = groups.find((candidate) => candidate && candidate.entry === entry) || null;
+  if (!group && leaderKey) {
+    group = groups.find((candidate) => normalizeConfigToken(candidate && candidate.leaderName).toLowerCase() === leaderKey) || null;
+  }
+  if (!group && createGroup) {
+    group = aliasApi.makeEmptyLeaderGroup(entry);
+    groups.push(group);
+  }
+  if (group) {
+    group.entry = entry;
+    group.leaderName = leaderName;
+    group.civName = String(entry && entry.name || '').trim();
+    if (!Array.isArray(group.replacements)) group.replacements = aliasApi.makeEmptyLeaderGroup(entry).replacements;
+  }
+  return group;
+}
+
+function hasUngroupedLeaderAliasForEntry(model, entry) {
+  const aliasApi = window.CivEraAliases;
+  if (!aliasApi || !entry) return false;
+  const leaderKey = normalizeConfigToken(aliasApi.getLeaderAliasSource(entry)).toLowerCase();
+  if (!leaderKey) return false;
+  return (Array.isArray(model && model.ungrouped) ? model.ungrouped : []).some((item) => {
+    const source = normalizeConfigToken(item && item.source).toLowerCase();
+    return source && source === leaderKey;
+  });
+}
+
+function setC3XBaseRowValueFromAliasInput(row, serialized, captureUndo = false) {
+  setC3XBaseRowValue(row, serialized, { captureUndo });
+}
+
+function makeCivilizationAliasTextInput({ value, placeholder, disabled, sessionKey, onInput }) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = String(value || '');
+  input.placeholder = String(placeholder || '');
+  input.disabled = !!disabled;
+  if (!disabled) {
+    wireGroupedUndoSession(input, {
+      key: sessionKey,
+      undoKey: 'BASE:civ_aliases_by_era',
+      getValue: () => String(input.value || '')
+    });
+    input.addEventListener('input', () => {
+      if (typeof onInput === 'function') onInput(input.value);
+    });
+    input.addEventListener('change', () => {
+      commitTrackedEditSession(sessionKey, String(input.value || ''));
+    });
+  }
+  return input;
+}
+
+function makeLeaderAliasTextInput({ value, placeholder, disabled, wireWhenDisabled = false, sessionKey, undoKey, onInput }) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = String(value || '');
+  input.placeholder = String(placeholder || '');
+  input.disabled = !!disabled;
+  if (!disabled || wireWhenDisabled) {
+    wireGroupedUndoSession(input, {
+      key: sessionKey,
+      undoKey,
+      getValue: () => String(input.value || '')
+    });
+    input.addEventListener('input', () => {
+      if (typeof onInput === 'function') onInput(input.value);
+    });
+    input.addEventListener('change', () => {
+      commitTrackedEditSession(sessionKey, String(input.value || ''));
+    });
+  }
+  return input;
+}
+
+function renderCivilizationC3XCivAliasesTable(entry, referenceEditable) {
+  const aliasApi = window.CivEraAliases;
+  const row = getC3XBaseRow('civ_aliases_by_era');
+  if (!aliasApi || !row || !entry) return null;
+  const civEntries = getCivilizationAliasCivEntries();
+  const model = aliasApi.buildCivAliasEditorModel(row.value, civEntries);
+  const existingGroup = getCivilizationAliasGroupForEntry(model, entry, false);
+  if (!existingGroup && hasUngroupedCivilizationAliasForEntry(model, entry)) {
+    const hint = document.createElement('div');
+    hint.className = 'field-meta civilization-inline-alias-raw-hint';
+    hint.textContent = 'This civilization has raw or duplicate source entries. Edit this alias in the C3X tab.';
+    return hint;
+  }
+  const displayGroup = existingGroup || aliasApi.makeEmptyGroup(entry);
+  const sourceKinds = aliasApi.SOURCE_KINDS;
+  const eraLabels = getEraAliasLabels();
+  const table = document.createElement('table');
+  table.className = 'civ-era-alias-table civilization-inline-alias-table';
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['Era'].forEach((labelText) => {
+    const th = document.createElement('th');
+    th.textContent = labelText;
+    headRow.appendChild(th);
+  });
+  sourceKinds.forEach((kind) => {
+    const th = document.createElement('th');
+    const sourceName = String(displayGroup.sourceNames && displayGroup.sourceNames[kind.key] || '').trim();
+    th.textContent = kind.label;
+    if (sourceName) th.title = sourceName;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  eraLabels.forEach((eraLabel, eraIdx) => {
+    const tr = document.createElement('tr');
+    const label = document.createElement('th');
+    label.scope = 'row';
+    label.textContent = eraLabel || `Era ${eraIdx + 1}`;
+    tr.appendChild(label);
+    sourceKinds.forEach((kind) => {
+      const td = document.createElement('td');
+      const value = String(displayGroup.aliases && displayGroup.aliases[kind.key] && displayGroup.aliases[kind.key][eraIdx] || '');
+      const input = makeCivilizationAliasTextInput({
+        value,
+        placeholder: String(displayGroup.sourceNames && displayGroup.sourceNames[kind.key] || ''),
+        disabled: !referenceEditable,
+        sessionKey: `BASE:civ_aliases_by_era:${normalizeConfigToken(entry && entry.name)}:${kind.key}:${eraIdx}`,
+        onInput: (nextValue) => {
+          const group = getCivilizationAliasGroupForEntry(model, entry, true);
+          if (!group.aliases) group.aliases = {};
+          if (!Array.isArray(group.aliases[kind.key])) group.aliases[kind.key] = ['', '', '', ''];
+          group.aliases[kind.key][eraIdx] = nextValue;
+          setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeCivAliasEditorModel(model), false);
+        }
+      });
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+function renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable) {
+  const aliasApi = window.CivEraAliases;
+  const row = getC3XBaseRow('leader_aliases_by_era');
+  if (!aliasApi || !row || !entry) return null;
+  const leaderName = aliasApi.getLeaderAliasSource(entry);
+  if (!leaderName) return null;
+  const civEntries = getCivilizationAliasCivEntries();
+  const model = aliasApi.buildLeaderAliasEditorModel(row.value, civEntries);
+  const existingGroup = getLeaderAliasGroupForEntry(model, entry, false);
+  if (!existingGroup && hasUngroupedLeaderAliasForEntry(model, entry)) {
+    const hint = document.createElement('div');
+    hint.className = 'field-meta civilization-inline-alias-raw-hint';
+    hint.textContent = 'This leader has raw or duplicate source entries. Edit this alias in the C3X tab.';
+    return hint;
+  }
+  const displayGroup = existingGroup || aliasApi.makeEmptyLeaderGroup(entry);
+  const eraLabels = getEraAliasLabels();
+  const reps = Array.isArray(displayGroup.replacements) ? displayGroup.replacements.slice(0, 4) : [];
+  while (reps.length < 4) reps.push({ name: '', gender: '', title: '' });
+
+  const table = document.createElement('table');
+  table.className = 'civ-era-alias-table leader-era-alias-table civilization-inline-alias-table';
+  const thead = document.createElement('thead');
+  const header = document.createElement('tr');
+  ['Era', 'Leader', 'Gender', 'Title'].forEach((labelText) => {
+    const th = document.createElement('th');
+    th.textContent = labelText;
+    if (labelText === 'Leader' && leaderName) th.title = leaderName;
+    header.appendChild(th);
+  });
+  thead.appendChild(header);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  reps.forEach((rep, eraIdx) => {
+    const tr = document.createElement('tr');
+    const era = document.createElement('th');
+    era.scope = 'row';
+    era.textContent = eraLabels[eraIdx] || `Era ${eraIdx + 1}`;
+    tr.appendChild(era);
+
+    const nameCell = document.createElement('td');
+    const nameInput = makeLeaderAliasTextInput({
+      value: String(rep && rep.name || ''),
+      placeholder: leaderName,
+      disabled: !referenceEditable,
+      sessionKey: `BASE:leader_aliases_by_era:${normalizeConfigToken(leaderName)}:name:${eraIdx}`,
+      undoKey: 'BASE:leader_aliases_by_era',
+      onInput: (nextValue) => {
+        const group = getLeaderAliasGroupForEntry(model, entry, true);
+        if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
+        group.replacements[eraIdx].name = nextValue;
+        setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeLeaderAliasEditorModel(model), false);
+      }
+    });
+    nameCell.appendChild(nameInput);
+    tr.appendChild(nameCell);
+
+    const genderCell = document.createElement('td');
+    const gender = document.createElement('select');
+    ['', 'M', 'F'].forEach((opt) => {
+      const option = document.createElement('option');
+      option.value = opt;
+      option.textContent = opt || 'Default';
+      gender.appendChild(option);
+    });
+    gender.value = String(rep && rep.gender || '').toUpperCase();
+    gender.disabled = !referenceEditable;
+    genderCell.appendChild(gender);
+    tr.appendChild(genderCell);
+
+    const titleCell = document.createElement('td');
+    const title = makeLeaderAliasTextInput({
+      value: String(rep && rep.title || ''),
+      placeholder: gender.value ? 'Title' : 'Choose gender first',
+      disabled: !referenceEditable || !gender.value,
+      wireWhenDisabled: !!referenceEditable,
+      sessionKey: `BASE:leader_aliases_by_era:${normalizeConfigToken(leaderName)}:title:${eraIdx}`,
+      undoKey: 'BASE:leader_aliases_by_era',
+      onInput: (nextValue) => {
+        const group = getLeaderAliasGroupForEntry(model, entry, true);
+        if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
+        group.replacements[eraIdx].title = nextValue;
+        setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeLeaderAliasEditorModel(model), false);
+      }
+    });
+    titleCell.appendChild(title);
+    tr.appendChild(titleCell);
+
+    if (referenceEditable) {
+      gender.addEventListener('change', () => {
+        const group = getLeaderAliasGroupForEntry(model, entry, true);
+        if (!group.replacements[eraIdx]) group.replacements[eraIdx] = { name: '', gender: '', title: '' };
+        group.replacements[eraIdx].gender = gender.value;
+        if (!gender.value) {
+          group.replacements[eraIdx].title = '';
+          title.value = '';
+        }
+        title.disabled = !gender.value;
+        title.placeholder = gender.value ? 'Title' : 'Choose gender first';
+        setC3XBaseRowValueFromAliasInput(row, aliasApi.serializeLeaderAliasEditorModel(model), true);
+      });
+    }
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  return table;
+}
+
+function renderCivilizationC3XAliasesCard(entry, referenceEditable) {
+  const civTable = renderCivilizationC3XCivAliasesTable(entry, referenceEditable);
+  const leaderTable = renderCivilizationC3XLeaderAliasesTable(entry, referenceEditable);
+  if (!civTable && !leaderTable) return null;
+  const card = document.createElement('div');
+  card.className = 'rule-group-card civilization-aliases-card';
+  card.dataset.sectionLabel = 'Era Aliases';
+  const title = document.createElement('div');
+  title.className = 'rule-group-title';
+  title.textContent = 'Era Aliases';
+  attachRichTooltip(title, createImprovementC3XFieldTooltip(
+    'civ_aliases_by_era / leader_aliases_by_era',
+    'Contextual editor for this civilization and its leader.'
+  ));
+  card.appendChild(title);
+
+  if (civTable) {
+    const section = document.createElement('div');
+    section.className = 'civilization-inline-alias-section';
+    const label = document.createElement('div');
+    label.className = 'field-meta civilization-inline-alias-label';
+    label.textContent = 'Civilization Names';
+    section.appendChild(label);
+    section.appendChild(civTable);
+    card.appendChild(section);
+  }
+  if (leaderTable) {
+    const section = document.createElement('div');
+    section.className = 'civilization-inline-alias-section';
+    const label = document.createElement('div');
+    label.className = 'field-meta civilization-inline-alias-label';
+    label.textContent = 'Leader Names';
+    section.appendChild(label);
+    section.appendChild(leaderTable);
+    card.appendChild(section);
+  }
+  return card;
+}
+
 function getCivilizationDenseAvailableWidth() {
   const detailLayout = el && el.tabContent ? el.tabContent.querySelector('.reference-detail-layout.reference-detail-layout-civilizations') : null;
   const textCol = detailLayout ? detailLayout.querySelector('.reference-text-col') : null;
@@ -20279,6 +21014,7 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
   board.className = 'civilization-dashboard-grid';
   const bottomStack = document.createElement('div');
   bottomStack.className = 'civilization-bottom-stack';
+  const aliasesCard = renderCivilizationC3XAliasesCard(entry, referenceEditable);
 
   groupedFields.delete('Free Technologies');
   const nameListsCard = renderCivilizationNameListsCard(entry, referenceEditable);
@@ -20300,7 +21036,7 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
     const rightCol = document.createElement('div');
     rightCol.className = 'civilization-dashboard-col civilization-dashboard-col-right';
 
-    [topCards.identity, topCards.grammar, topCards.leader, topCards.colors, nameListsCard].forEach((card) => {
+    [topCards.identity, topCards.grammar, topCards.leader, aliasesCard, topCards.colors, nameListsCard].forEach((card) => {
       if (card) leftCol.appendChild(card);
     });
 
@@ -20312,6 +21048,7 @@ function renderCivilizationDenseRulesLayout({ tab, entry, tabKey, selectedBaseIn
     if (rightCol.childElementCount > 0) board.appendChild(rightCol);
   } else {
     wrapper.appendChild(renderCivilizationDenseTopBoard(entry, referenceEditable, selectedBaseIndex));
+    if (aliasesCard) board.appendChild(aliasesCard);
     [traitsCard, governorCard, flavorsCard, buildCard, nameListsCard].forEach((card) => {
       if (card) board.appendChild(card);
     });

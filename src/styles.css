@@ -6489,6 +6489,49 @@ details > summary:focus-visible {
   margin-bottom: 0;
 }
 
+.civilization-aliases-card {
+  gap: 10px;
+  overflow: hidden;
+}
+
+.civilization-aliases-card > .rule-group-title {
+  margin-bottom: 4px;
+}
+
+.civilization-inline-alias-section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.civilization-inline-alias-section + .civilization-inline-alias-section {
+  margin-top: 8px;
+}
+
+.civilization-inline-alias-label {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #46588e;
+  line-height: 1.2;
+}
+
+.civilization-inline-alias-table {
+  min-width: 560px;
+}
+
+.civilization-inline-alias-table th,
+.civilization-inline-alias-table td {
+  padding: 3px;
+}
+
+.civilization-inline-alias-table input,
+.civilization-inline-alias-table select {
+  width: 100%;
+  min-width: 0;
+}
+
 .civilization-name-lists-grid {
   display: grid;
   gap: 0;
@@ -11642,6 +11685,73 @@ button.unit-ini-delete-btn:disabled {
   border: 1px solid rgba(73, 69, 98, 0.14);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.55);
+}
+
+.civ-era-alias-card {
+  gap: 8px;
+}
+
+.civ-era-alias-card-head {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.civ-era-alias-card-head .tech-picker {
+  min-width: 0;
+}
+
+.civ-era-alias-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.civ-era-alias-table th,
+.civ-era-alias-table td {
+  padding: 4px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.civ-era-alias-table thead th {
+  color: #4c5577;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.civ-era-alias-table tbody th {
+  width: 110px;
+  color: #5f6581;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.civ-era-alias-table input,
+.civ-era-alias-legacy-grid input {
+  width: 100%;
+  min-width: 0;
+}
+
+.civ-era-alias-legacy-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.leader-era-alias-table th:nth-child(1) {
+  width: 110px;
+}
+
+.leader-era-alias-table th:nth-child(3),
+.leader-era-alias-table td:nth-child(3) {
+  width: 84px;
+}
+
+.leader-era-alias-table th:nth-child(2),
+.leader-era-alias-table th:nth-child(4) {
+  width: auto;
 }
 
 .building-prereq-units {

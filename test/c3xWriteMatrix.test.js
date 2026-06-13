@@ -148,6 +148,8 @@ test('C3X base structured editor families persist and appear in file diff previe
     'government_perfume = ["Despotism": 10]',
     'building_prereqs_for_units = ["Barracks": "Warrior"]',
     'buildings_generating_resources = ["Temple": local "Incense"]',
+    'civ_aliases_by_era = []',
+    'leader_aliases_by_era = []',
     'great_wall_auto_build_wonder_name = "The Great Wall"',
     ''
   ].join('\n'), 'utf8');
@@ -171,6 +173,8 @@ test('C3X base structured editor families persist and appear in file diff previe
   setBaseRowValue(bundle, 'government_perfume', '["Despotism": 5]');
   setBaseRowValue(bundle, 'building_prereqs_for_units', '["Barracks": "Warrior" "Archer"]');
   setBaseRowValue(bundle, 'buildings_generating_resources', '["Temple": local "Incense", "Marketplace": yields "Dyes"]');
+  setBaseRowValue(bundle, 'civ_aliases_by_era', '[Rome: Rome "Byzantine Empire" Italy Italy, Roman: Roman Byzantine Italian Italian]');
+  setBaseRowValue(bundle, 'leader_aliases_by_era', '["Caesar": "Augustus" (M, Princeps) "Trajan" (M) Hadrian]');
   setBaseRowValue(bundle, 'great_wall_auto_build_wonder_name', '"Pyramids"');
 
   const customPath = path.join(c3xRoot, 'custom.c3x_config.ini');
@@ -203,6 +207,8 @@ test('C3X base structured editor families persist and appear in file diff previe
     'government_perfume = ["Despotism": 5]',
     'building_prereqs_for_units = ["Barracks": "Warrior" "Archer"]',
     'buildings_generating_resources = ["Temple": local "Incense", "Marketplace": yields "Dyes"]',
+    'civ_aliases_by_era = [Rome: Rome "Byzantine Empire" Italy Italy, Roman: Roman Byzantine Italian Italian]',
+    'leader_aliases_by_era = ["Caesar": "Augustus" (M, Princeps) "Trajan" (M) Hadrian]',
     'great_wall_auto_build_wonder_name = "Pyramids"'
   ].forEach((line) => assert.match(newText, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(' = ', '\\s*=\\s*'))));
 
@@ -233,7 +239,29 @@ test('C3X base structured editor families persist and appear in file diff previe
   assert.equal(baseParsed.map.government_perfume, '["Despotism": 5]');
   assert.equal(baseParsed.map.building_prereqs_for_units, '["Barracks": "Warrior" "Archer"]');
   assert.equal(baseParsed.map.buildings_generating_resources, '["Temple": local "Incense", "Marketplace": yields "Dyes"]');
+  assert.equal(baseParsed.map.civ_aliases_by_era, '[Rome: Rome "Byzantine Empire" Italy Italy, Roman: Roman Byzantine Italian Italian]');
+  assert.equal(baseParsed.map.leader_aliases_by_era, '["Caesar": "Augustus" (M, Princeps) "Trajan" (M) Hadrian]');
   assert.equal(baseParsed.map.great_wall_auto_build_wonder_name, '"Pyramids"');
+});
+
+test('C3X base parser reads CCM3-style multi-line alias lists as one value', () => {
+  const parsed = parseIniLines([
+    'civ_aliases_by_era = [Rome: Rome "The Italian city-states" Italy Italy, Italian: Roman,',
+    'Greece: "The Greek city-states" "The Byzantine Empire", Greek: Greek Byzantine]',
+    '',
+    'leader_aliases_by_era = ["Julius Caesar": "Julius Caesar" (M, Emperor) "Lorenzo de Medici" (M, Duke) "Silvio Berlusconi" (M, "Prime Minister"),',
+    '"Ramesses II": "Ramesses II" (M, Pharaoh) Baibars (M, Sultan)]',
+    ''
+  ].join('\n'));
+
+  assert.equal(
+    parsed.map.civ_aliases_by_era,
+    '[Rome: Rome "The Italian city-states" Italy Italy, Italian: Roman,\nGreece: "The Greek city-states" "The Byzantine Empire", Greek: Greek Byzantine]'
+  );
+  assert.equal(
+    parsed.map.leader_aliases_by_era,
+    '["Julius Caesar": "Julius Caesar" (M, Emperor) "Lorenzo de Medici" (M, Duke) "Silvio Berlusconi" (M, "Prime Minister"),\n"Ramesses II": "Ramesses II" (M, Pharaoh) Baibars (M, Sultan)]'
+  );
 });
 
 test('C3X write matrix (global): base + all sectioned files support edit/add/delete and preserve untouched entries', () => {

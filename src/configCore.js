@@ -5859,7 +5859,24 @@ function parseIniLines(text) {
 
   const lines = text.split(/\r?\n/);
   let pendingComments = [];
-  for (const line of lines) {
+  const bracketDepth = (value) => {
+    const raw = String(value || '');
+    let depth = 0;
+    let inQuotes = false;
+    for (let idx = 0; idx < raw.length; idx += 1) {
+      const ch = raw[idx];
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (inQuotes) continue;
+      if (ch === '[') depth += 1;
+      else if (ch === ']' && depth > 0) depth -= 1;
+    }
+    return depth;
+  };
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
+    const line = lines[lineIdx];
     const trimmed = line.trim();
     if (trimmed.startsWith(';')) {
       pendingComments.push(line);
@@ -5878,7 +5895,12 @@ function parseIniLines(text) {
       continue;
     }
     const key = match[1];
-    const value = match[2];
+    const valueLines = [match[2]];
+    while (bracketDepth(valueLines.join('\n')) > 0 && lineIdx + 1 < lines.length) {
+      lineIdx += 1;
+      valueLines.push(lines[lineIdx].trim());
+    }
+    const value = valueLines.join('\n').trim();
     rows.push({ key, value, leadingComments: pendingComments });
     pendingComments = [];
     map[key] = value;

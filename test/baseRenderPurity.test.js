@@ -76,6 +76,29 @@ test('C3X name/value parsers keep single colon entries intact', () => {
   );
 });
 
+test('C3X comma-delimited structured entries treat newlines as item whitespace', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function tokenizeCommaDelimitedStructuredEntries\(text\) \{[\s\S]*?if \(ch === ',' && parenDepth === 0\)/,
+    'Comma-delimited C3X structured fields should split top-level items only on commas'
+  );
+
+  assert.match(
+    text,
+    /function parseStructuredEntries\(value\) \{[\s\S]*?if \(\/,\/\.test\(v\)\) return tokenizeCommaDelimitedStructuredEntries\(v\);[\s\S]*?return tokenizeWhitespacePreservingQuotes\(v\);/,
+    'Generic structured C3X fields should treat newline-only bracket contents as whitespace lists'
+  );
+
+  assert.match(
+    text,
+    /function parseDelimitedStructuredEntries\(value\) \{[\s\S]*?return tokenizeCommaDelimitedStructuredEntries\(v\);/,
+    'Name/value C3X fields should not treat line wrapping as a top-level item separator'
+  );
+});
+
 test('tech era dropdown uses BIQ era names when available', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
@@ -376,6 +399,12 @@ test('C3X bitfield base settings serialize with whitespace-separated bracket lis
     /if \(BASE_MULTI_CHOICE_LIST_OPTIONS\[row\.key\]\) \{[\s\S]*?onChange\(serializeStructuredEntries\(ordered\)\);[\s\S]*?\}/,
     'C3X multi-choice bitfield controls must not write comma-delimited lists'
   );
+
+  assert.match(
+    text,
+    /show_tile_destruct_animation_after:\s*\['bombard', 'bomb', 'pillage'\]/,
+    'show_tile_destruct_animation_after should use the same structured bitfield editor as other C3X token lists'
+  );
 });
 
 test('C3X quoted reference-list settings serialize with whitespace-separated quoted bracket lists', () => {
@@ -505,6 +534,35 @@ test('C3X can_bombard_only_sea_tiles uses the shared quoted unit-list wiring', (
     manifestText,
     /can_bombard_only_sea_tiles:\s*Object\.freeze\(\{ tab: 'units' \}\)/,
     'Manifest should bind can_bombard_only_sea_tiles to unit references'
+  );
+});
+
+test('Units tab exposes C3X unit-name arrays as contextual booleans', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const rendererText = fs.readFileSync(rendererPath, 'utf8');
+  const expectedKeys = [
+    'ptw_like_artillery_targeting',
+    'can_bombard_only_sea_tiles',
+    'exclude_types_from_units_per_tile_limit',
+    'limit_defensive_retreat_on_water_to_types'
+  ];
+
+  expectedKeys.forEach((key) => {
+    assert.match(
+      rendererText,
+      new RegExp(`key:\\s*'${key}'`),
+      `Units C3X contextual rules should include ${key}`
+    );
+  });
+  assert.match(
+    rendererText,
+    /function setUnitC3XListMembership\(row, unitName, enabled\)[\s\S]*?parseUnitC3XListValues\(row\.value\)[\s\S]*?serializeQuotedWhitespaceStructuredEntries\(withoutUnit\)/,
+    'Units C3X booleans should preserve the structured quoted-list serializer'
+  );
+  assert.match(
+    rendererText,
+    /const c3xCol = document\.createElement\('div'\);[\s\S]*?unit-dashboard-col-c3x[\s\S]*?const c3xRulesCard = renderUnitC3XRulesCard\(entry, referenceEditable\);[\s\S]*?if \(c3xRulesCard\) c3xCol\.appendChild\(c3xRulesCard\);[\s\S]*?if \(c3xCol\.childElementCount > 0\) dashboardGrid\.appendChild\(c3xCol\);/,
+    'Units dense rules layout should place the contextual C3X rule card in the lower dashboard grid'
   );
 });
 
