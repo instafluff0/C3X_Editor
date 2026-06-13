@@ -3,12 +3,12 @@
 - Scoped C3X era-alias live autofill to the active focus session and committed serialized alias rows for Save/Undo state.
 - Backfilled empty preceding C3X era-alias cells while editing and serializing, preventing later-era-only aliases from reloading into earlier eras.
 - Renamed the Units contextual C3X card to C3X Rules and adjusted its checkbox spacing to match neighboring rule groups.
-- Enforced Quint's fixed BIQ header byte limits in the Scenario Title and Description editors, clipping by detected BIQ text encoding before save.
-- Corrected Locked Alliances to match Quint's BIQ numbering, where slot 0 is No Alliances and slots 1-4 are Alliance 1-4, show alliance war states in a named matrix, and use a full-width layout without the field sidebar.
+- Enforced BIQ header byte limits in the Scenario Title and Description editors, clipping by detected BIQ text encoding before save.
+- Corrected Locked Alliances BIQ numbering, where slot 0 is No Alliances and slots 1-4 are Alliance 1-4, show alliance war states in a named matrix, and use a full-width layout without the field sidebar.
 - Fixed GAME field enrichment so locked-alliance war flags keep their parsed BIQ values instead of reading the field-name suffix as the value.
 - Removed the empty Player Options card from Scenario setup now that playable civilizations live in the dedicated Players panel.
-- Patched Scenario and Rules BIQ field mappings for locked alliances, spaceship part requirements, culture level names, flavor relations, and read-only Civilopedia Entry fields to better match Quint's exposed fields.
-- Added a read-only Total row to the scenario Time Scale table, corrected Base Time Unit to Quint's BIQ order, and made displayed ranges refresh when related time fields change without jumping scroll.
+- Patched Scenario and Rules BIQ field mappings for locked alliances, spaceship part requirements, culture level names, flavor relations, and read-only Civilopedia Entry fields to better match exposed fields.
+- Added a read-only Total row to the scenario Time Scale table, corrected Base Time Unit to BIQ order, and made displayed ranges refresh when related time fields change without jumping scroll.
 - Kept contextual C3X controls editable in Standard Game on Civs, Improvements, Units, and Techs while BIQ fields remain read-only, so changes save through the active C3X config target.
 - Restyled C3X era alias matrices as bordered tables with transparent table-cell editing, while keeping the same structured alias editors and serialization.
 - Added contextual C3X unit-rule toggles to the Units tab for PTW artillery targeting, sea-only bombarders, unit-per-tile-limit exemptions, and water defensive retreat limits.
