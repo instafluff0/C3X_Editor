@@ -628,6 +628,14 @@ function parseEditInt(value, fallback = NaN) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseEditBoolish(value) {
+  const raw = String(value == null ? '' : value).trim().toLowerCase();
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on' || raw === 'enabled') return true;
+  if (raw === '' || raw === '0' || raw === 'false' || raw === 'no' || raw === 'off' || raw === 'disabled') return false;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed !== 0 : false;
+}
+
 function parseLeadCivilizationValue(value, fallback = -3) {
   const raw = String(value == null ? '' : value).trim();
   if (/^any(?:\s*\(|$)/i.test(raw)) return -3;
@@ -1268,7 +1276,17 @@ function toEnglishGAME(rec, io) {
   pairs.push(['alliance4', rec.alliance4 || '']);
   pairs.push(['allianceVictoryType', String(rec.allianceVictoryType | 0)]);
 
-  // warWith flags (display only, not writable)
+  const allianceAssignments = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
+  civIds.forEach((id, pos) => {
+    const civId = Number.parseInt(String(id), 10);
+    if (!Number.isFinite(civId) || civId < 0) return;
+    const allianceIdx = Number.parseInt(String(allianceAssignments[pos]), 10);
+    for (let k = 0; k < 4; k++) {
+      pairs.push([`alliance${k}_member_${civId}`, String(allianceIdx === k ? 1 : 0)]);
+    }
+  });
+
+  // warWith flags
   const ww = Array.isArray(rec.warWith) ? rec.warWith : [[], [], [], [], []];
   for (let k = 0; k < 5; k++) {
     const arr = Array.isArray(ww[k]) ? ww[k] : [];
@@ -2157,6 +2175,11 @@ function toEnglishRULE(rec, io) {
   for (const sn of RULE_VISIBLE_SCALAR_NAMES) {
     pairs.push([sn, String((rec[sn] != null ? rec[sn] : 0) | 0)]);
   }
+  const cultureLevels = Array.isArray(rec.culturalLevelNames) ? rec.culturalLevelNames : [];
+  pairs.push(['numCultureLevels', String(cultureLevels.length)]);
+  cultureLevels.forEach((name, i) => {
+    pairs.push([`cultural_level_${i}`, name || '']);
+  });
   pairs.push(['borderExpansionMultiplier', String((rec.borderExpansionMultiplier != null ? rec.borderExpansionMultiplier : 0) | 0)]);
   pairs.push(['borderFactor', String((rec.borderFactor != null ? rec.borderFactor : 10) | 0)]);
   for (const sn of RULE_TRAILING_SCALAR_NAMES) {
@@ -3129,6 +3152,32 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
       rec.timeUnitsPerTurn[idx] = parseEditInt(value, 0);
       return true;
     }
+    const allianceMemberMatch = ck.match(/^alliance(\d+)member(\d+)$/);
+    if (allianceMemberMatch) {
+      const allianceIdx = Number.parseInt(allianceMemberMatch[1], 10);
+      const civId = Number.parseInt(allianceMemberMatch[2], 10);
+      if (!Number.isFinite(allianceIdx) || allianceIdx < 0 || allianceIdx > 3 || !Number.isFinite(civId) || civId < 0) return true;
+      const playableIds = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
+      const civPos = playableIds.findIndex((id) => Number.parseInt(String(id), 10) === civId);
+      if (civPos < 0) return true;
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, playableIds.length, 4).slice(0, playableIds.length);
+      if (parseEditBoolish(value)) {
+        rec.civPartOfWhichAlliance[civPos] = allianceIdx;
+      } else if (Number.parseInt(String(rec.civPartOfWhichAlliance[civPos]), 10) === allianceIdx) {
+        rec.civPartOfWhichAlliance[civPos] = 4;
+      }
+      return true;
+    }
+    const allianceWarMatch = ck.match(/^alliance(\d+)isatwarwithalliance([0-4])(?:\d+)?$/);
+    if (allianceWarMatch) {
+      const allianceIdx = Number.parseInt(allianceWarMatch[1], 10);
+      const enemyIdx = Number.parseInt(allianceWarMatch[2], 10);
+      if (!Number.isFinite(allianceIdx) || allianceIdx < 0 || allianceIdx > 4 || !Number.isFinite(enemyIdx) || enemyIdx < 0 || enemyIdx > 4) return true;
+      rec.warWith = ensureArraySize(rec.warWith, 5, null).slice(0, 5);
+      rec.warWith[allianceIdx] = ensureArraySize(rec.warWith[allianceIdx], 5, 0).slice(0, 5);
+      rec.warWith[allianceIdx][enemyIdx] = parseEditBoolish(value) ? 1 : 0;
+      return true;
+    }
     const VCR_FLAG_BITS = {
       dominationenabled: 0, spaceraceenabled: 1, diplomacticenabled: 2,
       conquestenabled: 3, culturalenabled: 4, civspecificabilitiesenabled: 5,
@@ -3143,6 +3192,46 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
       const on = value === '1' || value === 'true';
       const cur = rec.victoryConditionsAndRules | 0;
       rec.victoryConditionsAndRules = on ? (cur | (1 << bit)) : (cur & ~(1 << bit));
+      return true;
+    }
+  }
+
+  if (code === 'RULE') {
+    if (ck === 'numspaceshipparts') return true;
+    if (ck === 'numculturelevels') {
+      const n = Math.max(0, parseEditInt(value, 0));
+      rec.culturalLevelNames = ensureArraySize(rec.culturalLevelNames, n, '').slice(0, n);
+      rec.numCultureLevels = rec.culturalLevelNames.length;
+      return true;
+    }
+    const partReqMatch = ck.match(/^numberofparts(\d+)required$/);
+    if (partReqMatch) {
+      const idx = Number.parseInt(partReqMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.numberOfPartsRequired = ensureArraySize(rec.numberOfPartsRequired, idx + 1, 0);
+      rec.numberOfPartsRequired[idx] = parseEditInt(value, 0);
+      rec.numSSParts = rec.numberOfPartsRequired.length;
+      return true;
+    }
+    const cultureLevelMatch = ck.match(/^culturallevel(\d+)$/);
+    if (cultureLevelMatch) {
+      const idx = Number.parseInt(cultureLevelMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.culturalLevelNames = ensureArraySize(rec.culturalLevelNames, idx + 1, '');
+      rec.culturalLevelNames[idx] = String(value == null ? '' : value);
+      rec.numCultureLevels = rec.culturalLevelNames.length;
+      return true;
+    }
+  }
+
+  if (code === 'FLAV') {
+    const relationMatch = ck.match(/^relationwithflavor(\d+)$/);
+    if (relationMatch) {
+      const idx = Number.parseInt(relationMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.relations = ensureArraySize(rec.relations, idx + 1, 0);
+      rec.relations[idx] = parseEditInt(value, 0);
+      rec.numRelations = rec.relations.length;
       return true;
     }
   }

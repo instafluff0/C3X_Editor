@@ -1,4 +1,7 @@
 * RELEASE 27.16
+- Enforced Quint's fixed BIQ header byte limits in the Scenario Title and Description editors, clipping by detected BIQ text encoding before save.
+- Removed the empty Player Options card from Scenario setup now that playable civilizations live in the dedicated Players panel.
+- Patched Scenario and Rules BIQ field mappings for locked alliances, spaceship part requirements, culture level names, flavor relations, and read-only Civilopedia Entry fields to better match Quint's exposed fields.
 - Added a read-only Total row to the scenario Time Scale table, corrected Base Time Unit to Quint's BIQ order, and made displayed ranges refresh when related time fields change without jumping scroll.
 - Kept contextual C3X controls editable in Standard Game on Civs, Improvements, Units, and Techs while BIQ fields remain read-only, so changes save through the active C3X config target.
 - Restyled C3X era alias matrices as bordered tables with transparent table-cell editing, while keeping the same structured alias editors and serialization.

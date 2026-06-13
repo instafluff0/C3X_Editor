@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('c3xManager', {
       return '';
     }
   },
+  getEncodedByteLength: (text, encoding) => ipcRenderer.sendSync('manager:get-encoded-byte-length', { text, encoding }),
+  clipTextToEncodedByteLimit: (text, maxBytes, encoding) => ipcRenderer.sendSync('manager:clip-text-to-encoded-byte-limit', { text, maxBytes, encoding }),
   openFilePath: (filePath) => ipcRenderer.invoke('manager:open-file-path', filePath),
   openLogFolder: () => ipcRenderer.invoke('manager:open-log-folder'),
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),

@@ -11314,6 +11314,11 @@ button.unit-ini-delete-btn:disabled {
   line-height: 1.42;
 }
 
+.biq-text-byte-limit {
+  margin-top: 6px;
+  text-align: right;
+}
+
 .civilopedia-editor-controls {
   display: inline-flex;
   align-items: center;

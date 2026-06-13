@@ -13004,6 +13004,7 @@ function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath, textEnco
 module.exports = {
   FILE_SPECS,
   normalizeTextFileEncoding,
+  encodeTextBuffer,
   detectTextFileEncodingFromBuffer,
   detectBiqTextEncodingFromBuffer,
   readTextFileWithEncodingInfoIfExists,

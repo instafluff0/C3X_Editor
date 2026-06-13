@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = requir
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab } = require('./src/configCore');
+const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const log = require('./src/log');
 
@@ -226,6 +226,30 @@ function normalizeTextFileEncoding(value) {
     cp949: 'euc-kr'
   };
   return aliases[raw] || 'auto';
+}
+
+function normalizeBiqByteEncoding(value) {
+  const normalized = normalizeTextFileEncoding(value);
+  return normalized === 'auto' ? 'windows-1252' : normalized;
+}
+
+function getEncodedByteLength(text, encoding) {
+  return encodeTextBuffer(String(text || ''), normalizeBiqByteEncoding(encoding)).length;
+}
+
+function clipTextToEncodedByteLimit(text, maxBytes, encoding) {
+  const limit = Math.max(0, Number(maxBytes) || 0);
+  const source = String(text || '');
+  if (getEncodedByteLength(source, encoding) <= limit) return source;
+  const chars = Array.from(source);
+  let lo = 0;
+  let hi = chars.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (getEncodedByteLength(chars.slice(0, mid).join(''), encoding) <= limit) lo = mid;
+    else hi = mid - 1;
+  }
+  return chars.slice(0, lo).join('');
 }
 
 function parseReleaseNum(value) {
@@ -968,6 +992,22 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+ipcMain.on('manager:get-encoded-byte-length', (event, payload) => {
+  try {
+    event.returnValue = getEncodedByteLength(payload && payload.text, payload && payload.encoding);
+  } catch (_err) {
+    event.returnValue = String(payload && payload.text || '').length;
+  }
+});
+
+ipcMain.on('manager:clip-text-to-encoded-byte-limit', (event, payload) => {
+  try {
+    event.returnValue = clipTextToEncodedByteLimit(payload && payload.text, payload && payload.maxBytes, payload && payload.encoding);
+  } catch (_err) {
+    event.returnValue = String(payload && payload.text || '').slice(0, Math.max(0, Number(payload && payload.maxBytes) || 0));
   }
 });
 

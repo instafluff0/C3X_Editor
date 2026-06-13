@@ -3,6 +3,39 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+test('BIQ Scenario title and description editors enforce fixed header byte limits in UI', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const preloadPath = path.join(__dirname, '..', 'preload.js');
+  const rendererText = fs.readFileSync(rendererPath, 'utf8');
+  const preloadText = fs.readFileSync(preloadPath, 'utf8');
+
+  assert.match(
+    preloadText,
+    /clipTextToEncodedByteLimit:\s*\(text, maxBytes, encoding\) => ipcRenderer\.sendSync\('manager:clip-text-to-encoded-byte-limit', \{ text, maxBytes, encoding \}\)/,
+    'preload should expose byte-accurate text clipping through main-process IPC'
+  );
+  assert.doesNotMatch(
+    preloadText,
+    /require\('iconv-lite'\)/,
+    'preload should not load iconv-lite directly because preload startup must stay dependency-light'
+  );
+  assert.match(
+    rendererText,
+    /const BIQ_HEADER_TEXT_LIMITS = \{\s*title:\s*63,\s*description:\s*639\s*\};/,
+    'renderer should use the null-terminated BIQ header payload limits'
+  );
+  assert.match(
+    rendererText,
+    /encodedByteLimit:\s*BIQ_HEADER_TEXT_LIMITS\[base\] \|\| 0,[\s\S]*?textEncoding:\s*state\.bundle && state\.bundle\.biqTextEncoding/,
+    'Scenario title and description editors should receive the detected BIQ encoding and byte limit'
+  );
+  assert.match(
+    rendererText,
+    /input\.addEventListener\('input', \(\) => \{[\s\S]*?clipTextToEncodedByteLimit\(input\.value, maxEncodedBytes, resolvedTextEncoding\)[\s\S]*?onChange\(input\.value\);[\s\S]*?\}\);/,
+    'BIQ text editor input should clip before mutating the field value'
+  );
+});
+
 test('base field renderers do not mutate rows during initial render', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

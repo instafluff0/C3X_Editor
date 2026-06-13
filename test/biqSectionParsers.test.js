@@ -15,6 +15,7 @@ const {
   sectionToEnglish,
   sectionRecordName,
   sectionWritableKeys,
+  applySetToRecord,
   TILE_FIELDS,
 } = require('../src/biq/biqSections');
 
@@ -941,6 +942,9 @@ test('RULE parser produces human-readable fields', () => {
   assert.equal(map.get('numSpaceshipParts'), '5', 'RULE: expected numSpaceshipParts');
   assert.equal(map.get('number_of_parts_0_required'), '1', 'RULE: expected number_of_parts_0_required');
   assert.equal(map.get('number_of_parts_4_required'), '5', 'RULE: expected number_of_parts_4_required');
+  assert.equal(map.get('numCultureLevels'), '3', 'RULE: expected numCultureLevels');
+  assert.equal(map.get('cultural_level_0'), 'Village', 'RULE: expected cultural_level_0');
+  assert.equal(map.get('cultural_level_2'), 'City', 'RULE: expected cultural_level_2');
   assert.equal(map.get('futureTechCost'), '41');
   assert.equal(map.get('goldenAgeDuration'), '42');
   assert.equal(map.get('maximumResearchTime'), '43');
@@ -951,6 +955,27 @@ test('RULE parser produces human-readable fields', () => {
   // RULE has a static name, verify it is not a code+index fallback
   const name = sectionRecordName({ index: 0, ...rec }, 'RULE');
   assert.ok(!/^RULE\s+\d+$/.test(name), `RULE: expected non-fallback name, got "${name}"`);
+});
+
+test('RULE field edits update spaceship part and culture level arrays', () => {
+  const rec = {
+    numSSParts: 1,
+    numberOfPartsRequired: [1],
+    numCultureLevels: 1,
+    culturalLevelNames: ['Village'],
+  };
+
+  assert.equal(applySetToRecord(rec, 'number_of_parts_2_required', '5', 'RULE', makeIo()), true);
+  assert.deepEqual(rec.numberOfPartsRequired, [1, 0, 5]);
+  assert.equal(rec.numSSParts, 3);
+
+  assert.equal(applySetToRecord(rec, 'cultural_level_1', 'Town', 'RULE', makeIo()), true);
+  assert.deepEqual(rec.culturalLevelNames, ['Village', 'Town']);
+  assert.equal(rec.numCultureLevels, 2);
+
+  assert.equal(applySetToRecord(rec, 'numCultureLevels', '1', 'RULE', makeIo()), true);
+  assert.deepEqual(rec.culturalLevelNames, ['Village']);
+  assert.equal(rec.numCultureLevels, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -1052,6 +1077,31 @@ test('GAME parser produces human-readable fields with individual playable_civ_N 
   assert.equal(map.get('spaceRaceEnabled'), '1', 'GAME: expected spaceRaceEnabled=1 for vcr=7');
   assert.equal(map.get('diplomacticEnabled'), '1', 'GAME: expected diplomacticEnabled=1 for vcr=7');
   assert.equal(map.get('conquestEnabled'), '0', 'GAME: expected conquestEnabled=0 for vcr=7');
+});
+
+test('GAME field edits update locked alliance membership and war arrays', () => {
+  const io = makeIo();
+  const rec = {
+    playableCivIds: [2, 5],
+    civPartOfWhichAlliance: [4, 1],
+    warWith: [[], [], [], [], []],
+  };
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GAME', io);
+  const map = parseEnglish(english);
+  assert.equal(map.get('alliance0_member_2'), '0');
+  assert.equal(map.get('alliance1_member_5'), '1');
+
+  assert.equal(applySetToRecord(rec, 'alliance0_member_2', 'true', 'GAME', io), true);
+  assert.deepEqual(rec.civPartOfWhichAlliance, [0, 1]);
+
+  assert.equal(applySetToRecord(rec, 'alliance1_member_5', 'false', 'GAME', io), true);
+  assert.deepEqual(rec.civPartOfWhichAlliance, [0, 4]);
+
+  assert.equal(applySetToRecord(rec, 'alliance2_is_at_war_with_alliance3_0', 'true', 'GAME', io), true);
+  assert.equal(rec.warWith[2][3], 1);
+  assert.equal(applySetToRecord(rec, 'alliance2_is_at_war_with_alliance3_0', 'false', 'GAME', io), true);
+  assert.equal(rec.warWith[2][3], 0);
 });
 
 test('GAME parser emits Victory Point Limits panel fields', () => {
@@ -1481,6 +1531,19 @@ test('FLAV toEnglish produces human-readable fields', () => {
   assert.equal(map.get('relation_with_flavor_0'), '10');
   assert.equal(map.get('relation_with_flavor_1'), '-5');
   assertNameNotFallback(flavRec, 'FLAV');
+});
+
+test('FLAV field edits update flavor relation arrays', () => {
+  const rec = {
+    name: 'Militaristic',
+    questionMark: 0,
+    numRelations: 1,
+    relations: [10],
+  };
+
+  assert.equal(applySetToRecord(rec, 'relation_with_flavor_2', '-5', 'FLAV', makeIo()), true);
+  assert.deepEqual(rec.relations, [10, 0, -5]);
+  assert.equal(rec.numRelations, 3);
 });
 
 // ---------------------------------------------------------------------------

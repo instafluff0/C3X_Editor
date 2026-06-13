@@ -673,6 +673,10 @@ const el = {
 
 const DEFAULT_TEXT_FILE_ENCODING = 'auto';
 const TEXT_FILE_ENCODING_OPTIONS = new Set(['auto', 'utf8', 'windows-1252', 'windows-1251', 'gbk', 'big5', 'shift_jis', 'euc-kr']);
+const BIQ_HEADER_TEXT_LIMITS = {
+  title: 63,
+  description: 639
+};
 
 function normalizeTextFileEncoding(value) {
   const raw = String(value || DEFAULT_TEXT_FILE_ENCODING).trim().toLowerCase();
@@ -4062,6 +4066,45 @@ function normalizeReferenceEntryForDirty(entry) {
   if (unitIniPayload) normalized.unitIniEditor = unitIniPayload;
   else delete normalized.unitIniEditor;
   return normalized;
+}
+
+function getActiveBiqTextEncoding(fallback = '') {
+  const encoding = normalizeTextFileEncoding(
+    fallback
+    || (state.bundle && state.bundle.biqTextEncoding)
+    || (state.settings && state.settings.textFileEncoding)
+    || 'windows-1252'
+  );
+  return encoding === 'auto' ? 'windows-1252' : encoding;
+}
+
+function getEncodedTextByteLength(value, encoding = '') {
+  const normalized = getActiveBiqTextEncoding(encoding);
+  if (window.c3xManager && typeof window.c3xManager.getEncodedByteLength === 'function') {
+    const length = Number(window.c3xManager.getEncodedByteLength(String(value || ''), normalized));
+    if (Number.isFinite(length) && length >= 0) return length;
+  }
+  if (normalized === 'utf8' && typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(String(value || '')).length;
+  }
+  return String(value || '').length;
+}
+
+function clipTextToEncodedByteLimit(value, maxBytes, encoding = '') {
+  const limit = Math.max(0, Number(maxBytes) || 0);
+  const text = String(value || '');
+  const normalized = getActiveBiqTextEncoding(encoding);
+  if (window.c3xManager && typeof window.c3xManager.clipTextToEncodedByteLimit === 'function') {
+    return String(window.c3xManager.clipTextToEncodedByteLimit(text, limit, normalized) || '');
+  }
+  if (getEncodedTextByteLength(text, normalized) <= limit) return text;
+  let out = '';
+  for (const ch of text) {
+    const next = out + ch;
+    if (getEncodedTextByteLength(next, normalized) > limit) break;
+    out = next;
+  }
+  return out;
 }
 
 function hasReferenceEntryChangedFromClean(currentEntry, cleanEntry, options = {}) {
@@ -13823,6 +13866,7 @@ const BIQ_FIELD_ENUMS = {
       { value: '11', label: 'November' },
       { value: '12', label: 'December' }
     ],
+    startweek: Array.from({ length: 52 }, (_value, idx) => ({ value: String(idx + 1), label: `Week ${idx + 1}` })),
     alliancevictorytype: [
       { value: '0', label: 'Individual' },
       { value: '1', label: 'Coalition' }
@@ -14036,7 +14080,7 @@ const UNIT_BOTTOM_LIST_HIDDEN_KEYS = new Set([
 ]);
 
 const BIQ_STRUCTURE_FIELD_HIDDEN = {
-  all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry', 'possibleresourcesmask']),
+  all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'possibleresourcesmask']),
   GAME: new Set(['playable_civ_ids', 'numberofplayablecivs']),
   LEAD: new Set([]),
   RULE: new Set(['name']),
@@ -14048,7 +14092,7 @@ const BIQ_STRUCTURE_FIELD_HIDDEN = {
   DIFF: new Set([]),
   ESPN: new Set([]),
   CTZN: new Set([]),
-  CULT: new Set([]),
+  CULT: new Set(['cultratiopercent']),
   EXPR: new Set([]),
   FLAV: new Set(['question_mark', 'questionmark'])
 };
@@ -14083,7 +14127,7 @@ const GAME_PANEL_DEFINITIONS = [
   {
     id: 'scenario',
     label: 'Scenario',
-    groups: ['Scenario', 'Map Options', 'Player Options', 'Game Options', 'Time Options', 'Base Unit of Time', 'Start Date', 'MP Timers', 'Time Scale']
+    groups: ['Scenario', 'Map Options', 'Game Options', 'Time Options', 'Base Unit of Time', 'Start Date', 'MP Timers', 'Time Scale']
   },
   {
     id: 'victoryconditions',
@@ -14153,7 +14197,7 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       eliminationenabled: { group: 'Victory Conditions', control: 'bool', label: 'Elimination Victory' },
       regicideenabled: { group: 'Victory Conditions', control: 'bool', label: 'Regicide' },
       massregicideenabled: { group: 'Victory Conditions', control: 'bool', label: 'Mass Regicide' },
-      victorylocationsenabled: { group: 'Victory Conditions', control: 'bool', label: 'Victory Locations' },
+      victorylocationsenabled: { group: 'Victory Conditions', control: 'bool', label: 'Victory Point Scoring' },
       capturetheflag: { group: 'Victory Conditions', control: 'bool', label: 'Capture The Flag' },
       reversecapturetheflag: { group: 'Victory Conditions', control: 'bool', label: 'Reverse Capture The Flag' },
       culturallylinkedstart: { group: 'Game Options', control: 'bool', label: 'Culturally Linked Start' },
@@ -14172,9 +14216,9 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       turntimelimit: { group: 'Time Options', control: 'number', min: 0, label: 'Turns' },
       minutetimelimit: { group: 'Time Options', control: 'number', min: 0, label: 'Minutes' },
       basetimeunit: { group: 'Base Unit of Time', control: 'number' },
-      startyear: { group: 'Start Date', control: 'number' },
+      startyear: { group: 'Start Date', control: 'year_era', label: 'Year' },
       startmonth: { group: 'Start Date', control: 'select' },
-      startweek: { group: 'Start Date', control: 'number', min: 0 },
+      startweek: { group: 'Start Date', control: 'select' },
       mpbasetime: { group: 'MP Timers', control: 'number', min: 0 },
       mpunittime: { group: 'MP Timers', control: 'number', min: 0 },
       mpcitytime: { group: 'MP Timers', control: 'number', min: 0 },
@@ -14245,6 +14289,9 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       'chancetointerceptairmissions', 'chancetointerceptstealthmissions', 'citiesforarmy',
       'citizenvalueinshields', 'shieldcostingold', 'basecapitalizationrate', 'forestvalueinshields', 'shieldvalueingold',
       'numspaceshipparts',
+      'number_of_parts',
+      'numculturelevels',
+      'cultural_level',
       'roadmovementrate', 'upgradecost', 'foodconsumptionpercitizen', 'startingtreasury', 'goldenageduration', 'defaultdifficultylevel', 'defaultmoneyresource', 'borderexpansionmultiplier', 'borderfactor',
       'towndefencebonus', 'citydefencebonus', 'metropolisdefencebonus', 'fortressdefencebonus', 'riverdefensivebonus', 'fortificationsdefencebonus', 'citizendefensivebonus', 'buildingdefensivebonus',
       'questionmark1', 'questionmark2', 'questionmark3', 'questionmark4'
@@ -14282,6 +14329,8 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       forestvalueinshields: { group: 'Hurry Production/Wealth', control: 'number', label: 'Forest Value in Shields' },
       shieldvalueingold: { group: 'Hurry Production/Wealth', control: 'number', label: 'Shield Value in Gold' },
       numspaceshipparts: { group: 'Spaceship Parts', control: 'number', label: 'Number of Parts' },
+      numculturelevels: { group: 'Culture Levels', control: 'number', label: 'Number of Levels' },
+      cultural_level: { group: 'Culture Levels', control: 'text', label: 'Culture Level' },
       roadmovementrate: { group: 'Other', control: 'number', label: 'Road movement rate' },
       upgradecost: { group: 'Other', control: 'number', label: 'Upgrade Cost' },
       foodconsumptionpercitizen: { group: 'Other', control: 'number', label: 'Food Consumption Per Citizen' },
@@ -14720,6 +14769,7 @@ function getBiqStructureFieldGroup(sectionCode, field) {
   }
   if (code === 'RULE') {
     if (/^number_of_parts_\d+_required$/.test(base)) return 'Spaceship Parts';
+    if (/^cultural_level_\d+$/.test(base) || base === 'numculturelevels') return 'Culture Levels';
     if (/^questionmark(?:\d+|one|two|three|four)?$/.test(canon)) return 'Unknowns';
   }
   const spec = getBiqStructureFieldSpec(sectionCode, field);
@@ -14763,6 +14813,13 @@ function getBiqStructureFieldOrder(sectionCode, field) {
       const partIdx = Number.parseInt(partReqMatch[1], 10);
       if (Number.isFinite(partIdx)) return 300 + partIdx;
       return 300;
+    }
+    if (base === 'numculturelevels') return 330;
+    const cultureLevelMatch = base.match(/^cultural_level_(\d+)$/);
+    if (cultureLevelMatch) {
+      const levelIdx = Number.parseInt(cultureLevelMatch[1], 10);
+      if (Number.isFinite(levelIdx)) return 331 + levelIdx;
+      return 331;
     }
   }
   if (!schema || !Array.isArray(schema.order)) return Number.MAX_SAFE_INTEGER;
@@ -15611,8 +15668,9 @@ function getReferenceTopNameBiqFieldKey(tabKey) {
 function isReadonlyBiqStructureField(sectionCode, field) {
   const code = String(sectionCode || '').toUpperCase();
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
-  return (code === 'TERR' && (base === 'civilopediaentry' || base === 'landmarkcivilopediaentry'))
-    || (code === 'TFRM' && base === 'civilopediaentry');
+  return base === 'civilopediaentry'
+    || (code === 'TERR' && base === 'landmarkcivilopediaentry')
+    || (code === 'RULE' && (base === 'numspaceshipparts' || base === 'numculturelevels'));
 }
 
 function renderTerrainValuesTable(groupCard, groupFields, tab) {
@@ -32293,7 +32351,18 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   return block;
 }
 
-function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onChange, multiline = false, emptyText = '(empty)', editable = true }) {
+function createBiqTextEditorBlock({
+  editorKey,
+  titleText,
+  sourceInfo,
+  value,
+  onChange,
+  multiline = false,
+  emptyText = '(empty)',
+  editable = true,
+  encodedByteLimit = 0,
+  textEncoding = ''
+}) {
   const isEditing = editable && !!state.civilopediaEditorOpen[editorKey];
   const block = document.createElement('div');
   block.className = 'section-card source-section';
@@ -32355,12 +32424,38 @@ function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onC
   }
   input.className = 'civilopedia-editor';
   input.value = String(value || '');
+  const maxEncodedBytes = Math.max(0, Number(encodedByteLimit) || 0);
+  const resolvedTextEncoding = getActiveBiqTextEncoding(textEncoding);
+  const limitNote = maxEncodedBytes > 0 ? document.createElement('div') : null;
+  const refreshLimitNote = () => {
+    if (!limitNote) return;
+    const usedBytes = getEncodedTextByteLength(input.value, resolvedTextEncoding);
+    limitNote.textContent = `${usedBytes} / ${maxEncodedBytes} bytes`;
+  };
   wireGroupedUndoSession(input, {
     key: editorKey,
     getValue: () => input.value
   });
-  input.addEventListener('input', () => onChange(input.value));
+  input.addEventListener('input', () => {
+    if (maxEncodedBytes > 0) {
+      const clipped = clipTextToEncodedByteLimit(input.value, maxEncodedBytes, resolvedTextEncoding);
+      if (clipped !== input.value) {
+        const nextPos = clipped.length;
+        input.value = clipped;
+        try {
+          input.setSelectionRange(nextPos, nextPos);
+        } catch (_err) {}
+      }
+    }
+    refreshLimitNote();
+    onChange(input.value);
+  });
   block.appendChild(input);
+  if (limitNote) {
+    limitNote.className = 'field-meta biq-text-byte-limit';
+    refreshLimitNote();
+    block.appendChild(limitNote);
+  }
   return block;
 }
 
@@ -39339,6 +39434,8 @@ function renderBiqTab(tab) {
               multiline: base === 'description',
               emptyText: base === 'title' ? '(empty title)' : '(empty description)',
               editable: isScenarioMode() && !tab.readOnly,
+              encodedByteLimit: BIQ_HEADER_TEXT_LIMITS[base] || 0,
+              textEncoding: state.bundle && state.bundle.biqTextEncoding,
               onChange: (nextValue) => {
                 rememberUndoSnapshot();
                 field.value = String(nextValue || '');
@@ -40000,6 +40097,45 @@ function renderBiqTab(tab) {
                 });
                 controlWrap.appendChild(removeBtn);
               }
+            } else if (desiredControl === 'year_era') {
+              const yearWrap = document.createElement('div');
+              yearWrap.className = 'inline-field-pair';
+              yearWrap.style.display = 'grid';
+              yearWrap.style.gridTemplateColumns = 'minmax(0, 1fr) 120px';
+              yearWrap.style.gap = '8px';
+              const input = document.createElement('input');
+              input.type = 'number';
+              input.min = '0';
+              const currentYear = parseIntFromDisplayValue(field.value);
+              input.value = currentYear == null ? '' : String(Math.abs(currentYear));
+              const era = document.createElement('select');
+              ['AD', 'BC'].forEach((labelValue) => {
+                const option = document.createElement('option');
+                option.value = labelValue;
+                option.textContent = labelValue;
+                era.appendChild(option);
+              });
+              era.value = currentYear != null && currentYear < 0 ? 'BC' : 'AD';
+              const persistYearEra = () => {
+                const absYear = Math.max(0, Number.parseInt(String(input.value || '0'), 10) || 0);
+                field.value = era.value === 'BC' ? String(-absYear) : String(absYear);
+                setDirty(true);
+                if (typeof refreshScenarioTimeProgressionDisplay === 'function') refreshScenarioTimeProgressionDisplay();
+                refreshMapForBiqStructureOwnerSupportField();
+              };
+              wireGroupedUndoSession(input, {
+                key: `BIQ_FIELD:${selected.code}:${selectedRecordIndex}:${baseKey}:year`,
+                getValue: () => `${era.value}:${input.value}`,
+                commitOnChange: true
+              });
+              input.addEventListener('input', persistYearEra);
+              era.addEventListener('change', () => {
+                rememberUndoSnapshot();
+                persistYearEra();
+              });
+              yearWrap.appendChild(input);
+              yearWrap.appendChild(era);
+              controlWrap.appendChild(yearWrap);
             } else if (desiredControl === 'select' || enumOptions.length > 0) {
               const select = document.createElement('select');
               const hasNone = enumOptions.some((opt) => String(opt.value) === '-1');
