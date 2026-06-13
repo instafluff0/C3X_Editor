@@ -13805,10 +13805,9 @@ const BIQ_FIELD_ENUMS = {
   },
   scenarioSettings: {
     basetimeunit: [
-      { value: '0', label: 'Turns' },
-      { value: '1', label: 'Years' },
-      { value: '2', label: 'Months' },
-      { value: '3', label: 'Weeks' }
+      { value: '0', label: 'Years' },
+      { value: '1', label: 'Months' },
+      { value: '2', label: 'Weeks' }
     ],
     startmonth: [
       { value: '1', label: 'January' },
@@ -38268,8 +38267,30 @@ function formatScenarioYearLabel(value) {
   return rounded <= 0 ? `${display} BC` : `${display} AD`;
 }
 
-function getTimeProgressionYearRanges(rows, startYearRaw) {
+function getTimeProgressionBaseUnit(baseTimeUnitRaw) {
+  const raw = String(baseTimeUnitRaw == null ? '' : baseTimeUnitRaw).trim().toLowerCase();
+  const parsed = Number.parseInt(raw, 10);
+  const key = Number.isFinite(parsed) ? String(parsed) : raw;
+  if (key === '1' || key === 'month' || key === 'months') {
+    return { label: 'months', singular: 'month', yearsPerUnit: 1 / 12 };
+  }
+  if (key === '2' || key === 'week' || key === 'weeks') {
+    return { label: 'weeks', singular: 'week', yearsPerUnit: 1 / 52 };
+  }
+  return { label: 'years', singular: 'year', yearsPerUnit: 1 };
+}
+
+function formatTimeProgressionUnitQuantity(value, unit) {
+  const text = formatTimeProgressionSummaryNumber(value);
+  if (text === '(unknown)') return text;
+  const unitInfo = unit && typeof unit === 'object' ? unit : getTimeProgressionBaseUnit(unit);
+  const label = Math.abs(value) === 1 ? unitInfo.singular : unitInfo.label;
+  return `${text} ${label}`;
+}
+
+function getTimeProgressionYearRanges(rows, startYearRaw, baseTimeUnitRaw = '0') {
   const safeRows = Array.isArray(rows) ? rows : [];
+  const baseUnit = getTimeProgressionBaseUnit(baseTimeUnitRaw);
   const startYear = parseFiniteNumber(startYearRaw);
   if (!Number.isFinite(startYear)) {
     return safeRows.map(() => '(unknown)');
@@ -38279,13 +38300,54 @@ function getTimeProgressionYearRanges(rows, startYearRaw) {
     const row = timeRow || {};
     const turns = parseFiniteNumber(row.turnsValue);
     const perTurn = parseFiniteNumber(row.perTurnValue);
-    const delta = Number.isFinite(turns) && Number.isFinite(perTurn) ? (turns * perTurn) : 0;
+    const delta = Number.isFinite(turns) && Number.isFinite(perTurn) ? (turns * perTurn * baseUnit.yearsPerUnit) : 0;
     const startLabel = formatScenarioYearLabel(cursor);
     const endValue = cursor + delta;
     const endLabel = formatScenarioYearLabel(endValue);
     cursor = endValue;
     return `${startLabel} to ${endLabel}`;
   });
+}
+
+function formatTimeProgressionSummaryNumber(value) {
+  if (!Number.isFinite(value)) return '(unknown)';
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+function getTimeProgressionTotals(rows, startYearRaw, baseTimeUnitRaw = '0') {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const startYear = parseFiniteNumber(startYearRaw);
+  const baseUnit = getTimeProgressionBaseUnit(baseTimeUnitRaw);
+  let totalTurns = 0;
+  let totalElapsed = 0;
+  let completeTurns = safeRows.length > 0;
+  let completeElapsed = safeRows.length > 0;
+  safeRows.forEach((timeRow) => {
+    const row = timeRow || {};
+    const turns = parseFiniteNumber(row.turnsValue);
+    const perTurn = parseFiniteNumber(row.perTurnValue);
+    if (Number.isFinite(turns)) {
+      totalTurns += turns;
+    } else {
+      completeTurns = false;
+    }
+    if (Number.isFinite(turns) && Number.isFinite(perTurn)) {
+      totalElapsed += turns * perTurn;
+    } else {
+      completeElapsed = false;
+    }
+  });
+  const elapsedText = completeElapsed ? formatTimeProgressionUnitQuantity(totalElapsed, baseUnit) : '(unknown)';
+  let rangeText = '(unknown)';
+  if (completeElapsed && Number.isFinite(startYear)) {
+    rangeText = `${formatScenarioYearLabel(startYear)} to ${formatScenarioYearLabel(startYear + (totalElapsed * baseUnit.yearsPerUnit))}`;
+  }
+  return {
+    turnsText: completeTurns ? formatTimeProgressionSummaryNumber(totalTurns) : '(unknown)',
+    elapsedText,
+    rangeText
+  };
 }
 
 function extractTimeProgressionModel(groupFields) {
@@ -39222,6 +39284,8 @@ function renderBiqTab(tab) {
         }
         rows.appendChild(boardCard);
       }
+      let refreshScenarioTimeProgressionDisplay = null;
+      let refreshScenarioStartDateVisibility = null;
       const appendBiqGroupCard = ([groupName, groupFields]) => {
         const groupCard = document.createElement('div');
         groupCard.className = 'rule-group-card';
@@ -39235,9 +39299,21 @@ function renderBiqTab(tab) {
         const consumedTimeFields = timeProgressionModel && timeProgressionModel.consumedFields
           ? timeProgressionModel.consumedFields
           : new Set();
-        let refreshTimeProgressionYearRanges = null;
         const consumedSpecialFields = new Set();
         const consumedRichFields = new Set();
+        const startDateRowsByBaseKey = {};
+        const syncScenarioStartDateRows = () => {
+          if (selected.code !== 'GAME' || groupName !== 'Start Date') return;
+          const baseUnit = getTimeProgressionBaseUnit(getBiqRecordFieldValueByBaseKey(record, 'basetimeunit'));
+          Object.entries(startDateRowsByBaseKey).forEach(([fieldKey, row]) => {
+            const hideRow = (fieldKey === 'startmonth' && baseUnit.label !== 'months')
+              || (fieldKey === 'startweek' && baseUnit.label !== 'weeks');
+            row.classList.toggle('hidden', hideRow);
+          });
+        };
+        if (selected.code === 'GAME' && groupName === 'Start Date') {
+          refreshScenarioStartDateVisibility = syncScenarioStartDateRows;
+        }
         if (selected.code === 'GAME') {
           groupFields.forEach((field) => {
             const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
@@ -39495,13 +39571,20 @@ function renderBiqTab(tab) {
           const tbody = document.createElement('tbody');
           const editable = !tab.readOnly;
           const rangeCells = [];
+          const summaryCells = {};
           const refreshYearRangeCells = () => {
-            const ranges = getTimeProgressionYearRanges(timeProgressionModel.rows, getBiqRecordFieldValueByBaseKey(record, 'startyear'));
+            const startYear = getBiqRecordFieldValueByBaseKey(record, 'startyear');
+            const baseTimeUnit = getBiqRecordFieldValueByBaseKey(record, 'basetimeunit');
+            const ranges = getTimeProgressionYearRanges(timeProgressionModel.rows, startYear, baseTimeUnit);
             rangeCells.forEach((cell, rowIdx) => {
               cell.textContent = String(ranges[rowIdx] || '(unknown)');
             });
+            const totals = getTimeProgressionTotals(timeProgressionModel.rows, startYear, baseTimeUnit);
+            if (summaryCells.turns) summaryCells.turns.textContent = totals.turnsText;
+            if (summaryCells.elapsed) summaryCells.elapsed.textContent = totals.elapsedText;
+            if (summaryCells.range) summaryCells.range.textContent = totals.rangeText;
           };
-          refreshTimeProgressionYearRanges = refreshYearRangeCells;
+          refreshScenarioTimeProgressionDisplay = refreshYearRangeCells;
           timeProgressionModel.rows.forEach((timeRow, idx) => {
             const tr = document.createElement('tr');
             const secTd = document.createElement('td');
@@ -39559,8 +39642,28 @@ function renderBiqTab(tab) {
             tr.appendChild(rangeTd);
             tbody.appendChild(tr);
           });
-          refreshYearRangeCells();
           table.appendChild(tbody);
+          const tfoot = document.createElement('tfoot');
+          const totalTr = document.createElement('tr');
+          const totalTh = document.createElement('th');
+          totalTh.scope = 'row';
+          totalTh.textContent = 'Total';
+          totalTr.appendChild(totalTh);
+          const totalTurnsTd = document.createElement('td');
+          totalTurnsTd.className = 'time-progression-total-cell';
+          summaryCells.turns = totalTurnsTd;
+          totalTr.appendChild(totalTurnsTd);
+          const totalElapsedTd = document.createElement('td');
+          totalElapsedTd.className = 'time-progression-total-cell';
+          summaryCells.elapsed = totalElapsedTd;
+          totalTr.appendChild(totalElapsedTd);
+          const totalRangeTd = document.createElement('td');
+          totalRangeTd.className = 'field-meta time-progression-total-cell';
+          summaryCells.range = totalRangeTd;
+          totalTr.appendChild(totalRangeTd);
+          tfoot.appendChild(totalTr);
+          table.appendChild(tfoot);
+          refreshYearRangeCells();
           tableWrap.appendChild(table);
           tableRow.appendChild(tableWrap);
           groupCard.appendChild(tableRow);
@@ -39715,11 +39818,14 @@ function renderBiqTab(tab) {
           if (consumedRichFields.has(field)) return;
           if (consumedTimeFields.has(field)) return;
           if (consumedSpecialFields.has(field)) return;
+          const baseKeyRaw = String(field.baseKey || field.key || '').toLowerCase();
           const row = document.createElement('div');
           row.className = 'rule-row';
+          if (selected.code === 'GAME' && groupName === 'Start Date') {
+            startDateRowsByBaseKey[baseKeyRaw] = row;
+          }
           const label = document.createElement('label');
           label.className = 'field-meta';
-          const baseKeyRaw = String(field.baseKey || field.key || '').toLowerCase();
           const displayLabel = getBiqStructureDisplayLabel(selected.code, field, groupFields, fieldIdx);
           label.textContent = displayLabel;
           const biqFieldKey = String(field.baseKey || field.key || '');
@@ -39915,6 +40021,11 @@ function renderBiqTab(tab) {
                 rememberUndoSnapshot();
                 field.value = String(select.value);
                 setDirty(true);
+                if (selected.code === 'GAME' && baseKey === 'basetimeunit') {
+                  if (typeof refreshScenarioTimeProgressionDisplay === 'function') refreshScenarioTimeProgressionDisplay();
+                  if (typeof refreshScenarioStartDateVisibility === 'function') refreshScenarioStartDateVisibility();
+                  return;
+                }
                 refreshMapForBiqStructureOwnerSupportField();
               });
               controlWrap.appendChild(select);
@@ -39984,8 +40095,8 @@ function renderBiqTab(tab) {
               input.addEventListener('input', () => {
                 field.value = input.value;
                 setDirty(true);
-                if (selected.code === 'GAME' && baseKey === 'startyear' && typeof refreshTimeProgressionYearRanges === 'function') {
-                  refreshTimeProgressionYearRanges();
+                if (selected.code === 'GAME' && baseKey === 'startyear' && typeof refreshScenarioTimeProgressionDisplay === 'function') {
+                  refreshScenarioTimeProgressionDisplay();
                 }
                 refreshMapForBiqStructureOwnerSupportField();
               });
@@ -40066,6 +40177,7 @@ function renderBiqTab(tab) {
         if (selected.code === 'TFRM' && groupName === 'General') {
           groupCard.appendChild(renderTfrmCommandButtonRow(record));
         }
+        syncScenarioStartDateRows();
         rows.appendChild(groupCard);
       };
       const finalizeBiqRows = () => {

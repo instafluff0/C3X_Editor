@@ -1,4 +1,5 @@
 * RELEASE 27.16
+- Added a read-only Total row to the scenario Time Scale table, corrected Base Time Unit to Quint's BIQ order, and made displayed ranges refresh when related time fields change without jumping scroll.
 - Kept contextual C3X controls editable in Standard Game on Civs, Improvements, Units, and Techs while BIQ fields remain read-only, so changes save through the active C3X config target.
 - Restyled C3X era alias matrices as bordered tables with transparent table-cell editing, while keeping the same structured alias editors and serialization.
 - Added contextual C3X unit-rule toggles to the Units tab for PTW artillery targeting, sea-only bombarders, unit-per-tile-limit exemptions, and water defensive retreat limits.

@@ -9362,6 +9362,19 @@ details > summary:focus-visible {
   border-bottom: none;
 }
 
+.time-progression-table tfoot th,
+.time-progression-table tfoot td {
+  background: rgba(248, 250, 255, 0.98);
+  border-bottom: none;
+  border-top: 1px solid rgba(73, 69, 98, 0.18);
+  color: #334267;
+  font-weight: 700;
+}
+
+.time-progression-table tfoot th {
+  text-align: left;
+}
+
 .time-progression-table thead th {
   background: rgba(242, 246, 255, 0.95);
   color: #334267;
@@ -9378,6 +9391,10 @@ details > summary:focus-visible {
 .time-progression-table input[type="number"] {
   width: 100%;
   min-width: 98px;
+}
+
+.time-progression-total-cell {
+  white-space: nowrap;
 }
 
 .rule-city-size-panel {
