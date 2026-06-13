@@ -4746,6 +4746,10 @@ button.danger:hover {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.reference-detail-layout.reference-detail-layout-no-nav {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .reference-text-col,
 .reference-nav-col {
   min-width: 0;
@@ -9212,6 +9216,85 @@ details > summary:focus-visible {
 .alliance-dnd-empty {
   font-size: 0.72rem;
   color: #6b7698;
+}
+
+.alliance-war-matrix-wrap {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.alliance-war-matrix-title {
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.alliance-war-matrix {
+  display: grid;
+  grid-template-columns: minmax(112px, 1.35fr) repeat(4, minmax(72px, 0.65fr));
+  border: 1px solid rgba(73, 69, 98, 0.16);
+  border-radius: 9px;
+  overflow: hidden;
+  background: rgba(246, 249, 255, 0.82);
+}
+
+.alliance-war-head,
+.alliance-war-row-head,
+.alliance-war-cell {
+  min-height: 34px;
+  border: 0;
+  border-right: 1px solid rgba(73, 69, 98, 0.12);
+  border-bottom: 1px solid rgba(73, 69, 98, 0.12);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
+.alliance-war-head {
+  flex-direction: column;
+  gap: 2px;
+  font-weight: 800;
+  color: #3f4f80;
+}
+
+.alliance-war-head-number {
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.alliance-war-head-name {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 0.66rem;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.alliance-war-row-head {
+  justify-content: flex-start;
+  font-weight: 700;
+  color: #3f4f80;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.alliance-war-cell {
+  color: #2f3d66;
+  background: #fff;
+  cursor: pointer;
+}
+
+.alliance-war-cell.active {
+  color: #7a1f1f;
+  background: #ffe4de;
+  font-weight: 800;
+}
+
+.alliance-war-cell:disabled {
+  color: #9aa1b6;
+  background: rgba(246, 249, 255, 0.62);
+  cursor: default;
 }
 
 .identity-key-row {

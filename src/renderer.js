@@ -14237,11 +14237,11 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       victorypointvp: { group: 'Victory Points', control: 'number', min: 0 },
       capturespecialunitvp: { group: 'Victory Points', control: 'number', min: 0 },
       goldforcapture: { group: 'Victory Points', control: 'number', min: 0 },
-      alliance0: { group: 'Alliance 1', control: 'text', label: 'Alliance Name' },
-      alliance1: { group: 'Alliance 2', control: 'text', label: 'Alliance Name' },
-      alliance2: { group: 'Alliance 3', control: 'text', label: 'Alliance Name' },
-      alliance3: { group: 'Alliance 4', control: 'text', label: 'Alliance Name' },
-      alliance4: { group: 'No Alliances', control: 'text', label: 'No Alliances' },
+      alliance0: { group: 'No Alliances', control: 'text', label: 'No Alliances' },
+      alliance1: { group: 'Alliance 1', control: 'text', label: 'Alliance Name' },
+      alliance2: { group: 'Alliance 2', control: 'text', label: 'Alliance Name' },
+      alliance3: { group: 'Alliance 3', control: 'text', label: 'Alliance Name' },
+      alliance4: { group: 'Alliance 4', control: 'text', label: 'Alliance Name' },
       alliancevictorytype: { group: 'Victory Type', control: 'select' },
       permitplagues: { group: 'Plague Information', control: 'bool' },
       plaugename: { group: 'Plague Information', control: 'text' },
@@ -14745,21 +14745,22 @@ function getBiqStructureFieldGroup(sectionCode, field) {
     const allianceName = base.match(/^alliance(\d+)$/);
     if (allianceName) {
       const idx = Number.parseInt(allianceName[1], 10);
-      if (Number.isFinite(idx) && idx >= 0 && idx <= 3) return `Alliance ${idx + 1}`;
-      if (idx === 4) return 'No Alliances';
+      if (idx === 0) return 'No Alliances';
+      if (Number.isFinite(idx) && idx >= 1 && idx <= 4) return `Alliance ${idx}`;
       return 'Locked Alliances';
     }
     const allianceMember = base.match(/^alliance(\d+)_member_\d+$/);
     if (allianceMember) {
       const idx = Number.parseInt(allianceMember[1], 10);
-      if (Number.isFinite(idx) && idx >= 0 && idx <= 3) return `Alliance ${idx + 1}`;
-      if (idx === 4) return 'No Alliances';
+      if (idx === 0) return 'No Alliances';
+      if (Number.isFinite(idx) && idx >= 1 && idx <= 4) return `Alliance ${idx}`;
       return 'Locked Alliances';
     }
     const allianceWar = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
     if (allianceWar) {
       const idx = Number.parseInt(allianceWar[1], 10);
-      if (Number.isFinite(idx) && idx >= 0 && idx <= 3) return `Alliance ${idx + 1}`;
+      if (idx === 0) return 'No Alliances';
+      if (Number.isFinite(idx) && idx >= 1 && idx <= 4) return `Alliance ${idx}`;
       return 'Locked Alliances';
     }
   }
@@ -39004,12 +39005,14 @@ function renderBiqTab(tab) {
     };
     const detailLayout = document.createElement('div');
     detailLayout.className = 'reference-detail-layout';
+    const hideBiqRecordNav = selected.code === 'GAME' && activeGamePanel && activeGamePanel.id === 'alliances';
+    if (hideBiqRecordNav) detailLayout.classList.add('reference-detail-layout-no-nav');
     const textCol = document.createElement('div');
     textCol.className = 'reference-text-col';
     const navCol = document.createElement('div');
     navCol.className = 'reference-nav-col';
     detailLayout.appendChild(textCol);
-    detailLayout.appendChild(navCol);
+    if (!hideBiqRecordNav) detailLayout.appendChild(navCol);
     card.appendChild(detailLayout);
 
     if (terrainPediaEntry) {
@@ -39130,7 +39133,7 @@ function renderBiqTab(tab) {
           if (!m) return;
           const idx = Number.parseInt(m[1], 10);
           if (!Number.isFinite(idx)) return;
-          const fallback = idx === 4 ? 'No Alliances' : `Alliance ${idx + 1}`;
+          const fallback = idx === 0 ? 'No Alliances' : `Alliance ${idx}`;
           const value = String(field.value || '').trim();
           allianceNameByIndex[idx] = value || fallback;
         });
@@ -39167,8 +39170,8 @@ function renderBiqTab(tab) {
         civOptions.forEach((opt) => {
           const civIdx = Number.parseInt(String(opt.value || ''), 10);
           if (!Number.isFinite(civIdx)) return;
-          let assigned = -1;
-          for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
+          let assigned = 0;
+          for (let allianceIdx = 0; allianceIdx < 5; allianceIdx += 1) {
             const field = memberFieldsByAllianceAndCiv.get(`${allianceIdx}:${civIdx}`);
             if (field && boolish(field.value)) {
               assigned = allianceIdx;
@@ -39188,7 +39191,7 @@ function renderBiqTab(tab) {
           const created = {
             key: baseKey,
             baseKey,
-            label: `Alliance ${allianceIdx + 1} Member ${civIdx + 1}`,
+            label: allianceIdx === 0 ? `No Alliances Member ${civIdx + 1}` : `Alliance ${allianceIdx} Member ${civIdx + 1}`,
             value: 'false',
             originalValue: ''
           };
@@ -39198,8 +39201,8 @@ function renderBiqTab(tab) {
         };
         const moveCivToAlliance = (civIdx, targetAllianceIdx) => {
           rememberUndoSnapshot();
-          if (targetAllianceIdx >= 0) ensureAllianceMemberField(targetAllianceIdx, civIdx);
-          for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
+          ensureAllianceMemberField(targetAllianceIdx, civIdx);
+          for (let allianceIdx = 0; allianceIdx < 5; allianceIdx += 1) {
             const memberField = memberFieldsByAllianceAndCiv.get(`${allianceIdx}:${civIdx}`);
             if (!memberField) continue;
             memberField.value = (targetAllianceIdx === allianceIdx) ? 'true' : 'false';
@@ -39212,7 +39215,7 @@ function renderBiqTab(tab) {
           col.className = 'alliance-dnd-col';
           const head = document.createElement('div');
           head.className = 'alliance-dnd-col-title';
-          if (targetAllianceIdx >= 0 && !tab.readOnly) {
+          if (targetAllianceIdx > 0 && !tab.readOnly) {
             const nameBtn = document.createElement('button');
             nameBtn.type = 'button';
             nameBtn.className = 'alliance-name-btn';
@@ -39229,7 +39232,7 @@ function renderBiqTab(tab) {
               input.className = 'alliance-name-input';
               input.value = title;
               const commit = () => {
-                const next = String(input.value || '').trim() || `Alliance ${targetAllianceIdx + 1}`;
+                const next = String(input.value || '').trim() || `Alliance ${targetAllianceIdx}`;
                 const field = findAllianceNameField(targetAllianceIdx);
                 if (field && String(field.value || '') !== next) {
                   rememberUndoSnapshot();
@@ -39276,7 +39279,7 @@ function renderBiqTab(tab) {
             const civIdx = Number.parseInt(String(opt.value || ''), 10);
             if (!Number.isFinite(civIdx)) return false;
             const assigned = civToAlliance.get(civIdx);
-            return (targetAllianceIdx < 0 && assigned < 0) || assigned === targetAllianceIdx;
+            return assigned === targetAllianceIdx;
           });
           if (civs.length === 0) {
             const empty = document.createElement('div');
@@ -39312,70 +39315,75 @@ function renderBiqTab(tab) {
           col.appendChild(body);
           return col;
         };
-        board.appendChild(makeColumn('No Alliances', -1));
-        for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
-          const label = allianceNameByIndex[allianceIdx] || `Alliance ${allianceIdx + 1}`;
+        board.appendChild(makeColumn('No Alliances', 0));
+        for (let allianceIdx = 1; allianceIdx <= 4; allianceIdx += 1) {
+          const label = allianceNameByIndex[allianceIdx] || `Alliance ${allianceIdx}`;
           board.appendChild(makeColumn(label, allianceIdx));
         }
         boardCard.appendChild(board);
-        for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
-          const warFields = fields.filter((field) => {
-            const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
-            return new RegExp(`^alliance${allianceIdx}_is_at_war_with_alliance\\d+_\\d+$`).test(base);
-          });
-          if (warFields.length === 0) continue;
-          const warRow = document.createElement('div');
-          warRow.className = 'rule-row';
-          const label = document.createElement('label');
-          label.className = 'field-meta';
-          label.textContent = `${allianceNameByIndex[allianceIdx] || `Alliance ${allianceIdx + 1}`} At War With`;
-          warRow.appendChild(label);
-          const controlWrap = document.createElement('div');
-          controlWrap.className = 'rule-control';
-          const options = [];
-          const selectedVals = [];
-          warFields.forEach((f) => {
-            const base = String(f.baseKey || f.key || '').toLowerCase();
-            const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
-            if (!m) return;
-            const enemyIdx = Number.parseInt(m[2], 10);
-            if (!Number.isFinite(enemyIdx) || enemyIdx === allianceIdx) return;
-            options.push({
-              value: String(enemyIdx),
-              label: allianceNameByIndex[enemyIdx] || `Alliance ${enemyIdx + 1}`
-            });
-            if (boolish(f.value)) selectedVals.push(String(enemyIdx));
-          });
-          if (!tab.readOnly) {
-            const editor = makeNamedListPickerEditor({
-              tabKey: 'scenarioSettings',
-              options,
-              values: selectedVals,
-              onValuesChange: (nextValues) => {
-                rememberUndoSnapshot();
-                const nextSet = new Set((Array.isArray(nextValues) ? nextValues : []).map((v) => String(v)));
-                warFields.forEach((f) => {
-                  const base = String(f.baseKey || f.key || '').toLowerCase();
-                  const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
-                  if (!m) return;
-                  const enemyIdx = String(Number.parseInt(m[2], 10));
-                  f.value = nextSet.has(enemyIdx) ? 'true' : 'false';
-                });
-                setDirty(true);
-              }
-            });
-            controlWrap.appendChild(editor);
-          } else {
-            const labels = options
-              .filter((opt) => selectedVals.includes(String(opt.value)))
-              .map((opt) => String(opt.label || opt.value));
-            const text = document.createElement('div');
-            text.className = 'field-meta';
-            text.textContent = labels.length ? labels.join(', ') : '(none)';
-            controlWrap.appendChild(text);
+        const warFieldByPair = new Map();
+        fields.forEach((field) => {
+          const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+          const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
+          if (!m) return;
+          const sourceIdx = Number.parseInt(m[1], 10);
+          const targetIdx = Number.parseInt(m[2], 10);
+          if (!Number.isFinite(sourceIdx) || !Number.isFinite(targetIdx) || sourceIdx === 0 || targetIdx === 0) return;
+          warFieldByPair.set(`${sourceIdx}:${targetIdx}`, field);
+        });
+        if (warFieldByPair.size > 0) {
+          const matrixWrap = document.createElement('div');
+          matrixWrap.className = 'alliance-war-matrix-wrap';
+          const matrixTitle = document.createElement('div');
+          matrixTitle.className = 'field-meta alliance-war-matrix-title';
+          matrixTitle.textContent = 'Wars Between Alliances';
+          matrixWrap.appendChild(matrixTitle);
+          const matrix = document.createElement('div');
+          matrix.className = 'alliance-war-matrix';
+          matrix.appendChild(document.createElement('div'));
+          for (let targetIdx = 1; targetIdx <= 4; targetIdx += 1) {
+            const head = document.createElement('div');
+            head.className = 'alliance-war-head';
+            const number = document.createElement('span');
+            number.className = 'alliance-war-head-number';
+            number.textContent = String(targetIdx);
+            const name = document.createElement('span');
+            name.className = 'alliance-war-head-name';
+            name.textContent = allianceNameByIndex[targetIdx] || `Alliance ${targetIdx}`;
+            head.appendChild(number);
+            head.appendChild(name);
+            matrix.appendChild(head);
           }
-          warRow.appendChild(controlWrap);
-          boardCard.appendChild(warRow);
+          for (let sourceIdx = 1; sourceIdx <= 4; sourceIdx += 1) {
+            const rowHead = document.createElement('div');
+            rowHead.className = 'alliance-war-row-head';
+            rowHead.textContent = allianceNameByIndex[sourceIdx] || `Alliance ${sourceIdx}`;
+            matrix.appendChild(rowHead);
+            for (let targetIdx = 1; targetIdx <= 4; targetIdx += 1) {
+              const field = warFieldByPair.get(`${sourceIdx}:${targetIdx}`);
+              const active = field && boolish(field.value);
+              const cell = document.createElement('button');
+              cell.type = 'button';
+              cell.className = `alliance-war-cell${active ? ' active' : ''}`;
+              cell.textContent = active ? 'WAR' : 'Peace';
+              cell.disabled = tab.readOnly || sourceIdx === targetIdx || !field;
+              cell.title = `${allianceNameByIndex[sourceIdx] || `Alliance ${sourceIdx}`} vs ${allianceNameByIndex[targetIdx] || `Alliance ${targetIdx}`}`;
+              if (!cell.disabled) {
+                cell.addEventListener('click', () => {
+                  rememberUndoSnapshot();
+                  const next = !boolish(field.value);
+                  field.value = next ? 'true' : 'false';
+                  const reciprocal = warFieldByPair.get(`${targetIdx}:${sourceIdx}`);
+                  if (reciprocal && reciprocal !== field) reciprocal.value = field.value;
+                  setDirty(true);
+                  renderActiveTab({ preserveTabScroll: true });
+                });
+              }
+              matrix.appendChild(cell);
+            }
+          }
+          matrixWrap.appendChild(matrix);
+          boardCard.appendChild(matrixWrap);
         }
         rows.appendChild(boardCard);
       }
@@ -39455,7 +39463,7 @@ function renderBiqTab(tab) {
 
         if (selected.code === 'GAME' && /^Alliance \d+$/.test(groupName)) {
           const allianceNum = Number.parseInt(groupName.replace('Alliance ', ''), 10);
-          const allianceIdx = Number.isFinite(allianceNum) ? allianceNum - 1 : -1;
+          const allianceIdx = Number.isFinite(allianceNum) ? allianceNum : -1;
           if (allianceIdx >= 0) {
             const memberFields = groupFields.filter((field) => {
               const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
@@ -39487,10 +39495,10 @@ function renderBiqTab(tab) {
                 const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
                 if (!m) return;
                 const enemyIdx = Number.parseInt(m[2], 10);
-                if (!Number.isFinite(enemyIdx) || enemyIdx === allianceIdx) return;
+                if (!Number.isFinite(enemyIdx) || enemyIdx === 0 || enemyIdx === allianceIdx) return;
                 options.push({
                   value: String(enemyIdx),
-                  label: allianceNameByIndex[enemyIdx] || `Alliance ${enemyIdx + 1}`
+                  label: allianceNameByIndex[enemyIdx] || `Alliance ${enemyIdx}`
                 });
                 if (boolish(f.value)) selectedVals.push(String(enemyIdx));
               });
@@ -40318,12 +40326,14 @@ function renderBiqTab(tab) {
       };
       const finalizeBiqRows = () => {
         textCol.appendChild(rows);
-        buildBiqRecordSectionNav({
-          tabKey: tab.key || state.activeTab || 'biq',
-          sectionCode: selected.code,
-          rowsRoot: rows,
-          navHost: navCol
-        });
+        if (!hideBiqRecordNav) {
+          buildBiqRecordSectionNav({
+            tabKey: tab.key || state.activeTab || 'biq',
+            sectionCode: selected.code,
+            rowsRoot: rows,
+            navHost: navCol
+          });
+        }
       };
       const useIncrementalGroupMount = hideRecordList && groupedEntries.length > 2;
       if (!useIncrementalGroupMount) {
@@ -40351,21 +40361,25 @@ function renderBiqTab(tab) {
             return;
           }
           if (loadingNote.isConnected) loadingNote.remove();
-          buildBiqRecordSectionNav({
-            tabKey: tab.key || state.activeTab || 'biq',
-            sectionCode: selected.code,
-            rowsRoot: rows,
-            navHost: navCol
-          });
+          if (!hideBiqRecordNav) {
+            buildBiqRecordSectionNav({
+              tabKey: tab.key || state.activeTab || 'biq',
+              sectionCode: selected.code,
+              rowsRoot: rows,
+              navHost: navCol
+            });
+          }
         };
         if (pendingEntries.length === 0) {
           if (loadingNote.isConnected) loadingNote.remove();
-          buildBiqRecordSectionNav({
-            tabKey: tab.key || state.activeTab || 'biq',
-            sectionCode: selected.code,
-            rowsRoot: rows,
-            navHost: navCol
-          });
+          if (!hideBiqRecordNav) {
+            buildBiqRecordSectionNav({
+              tabKey: tab.key || state.activeTab || 'biq',
+              sectionCode: selected.code,
+              rowsRoot: rows,
+              navHost: navCol
+            });
+          }
         } else {
           scheduleChunk(mountChunk);
         }

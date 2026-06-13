@@ -1148,7 +1148,7 @@ function serializeGAME(rec, io) {
   writeStr(w, rec.scenarioSearchFolders || '', 5200);
 
   const cpa = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
-  for (let i = 0; i < civIds.length; i++) w.writeInt((cpa[i] != null ? cpa[i] : 4) | 0);
+  for (let i = 0; i < civIds.length; i++) w.writeInt((cpa[i] != null ? cpa[i] : 0) | 0);
 
   w.writeInt(rec.victoryPointLimit | 0);
   w.writeInt(rec.cityEliminationCount | 0);
@@ -1281,7 +1281,7 @@ function toEnglishGAME(rec, io) {
     const civId = Number.parseInt(String(id), 10);
     if (!Number.isFinite(civId) || civId < 0) return;
     const allianceIdx = Number.parseInt(String(allianceAssignments[pos]), 10);
-    for (let k = 0; k < 4; k++) {
+    for (let k = 0; k < 5; k++) {
       pairs.push([`alliance${k}_member_${civId}`, String(allianceIdx === k ? 1 : 0)]);
     }
   });
@@ -1318,7 +1318,7 @@ function toEnglishGAME(rec, io) {
   return lines(pairs);
 }
 
-// scenarioSearchFolders and warWith are read-only; all other named fields are writable
+  // scenarioSearchFolders is read-only; all other named fields are writable
 const WRITABLE_GAME = [
   'use_default_rules', 'default_victory_conditions',
   'domination_enabled', 'space_race_enabled', 'diplomactic_enabled',
@@ -3112,7 +3112,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     if (ck === 'numberofplayablecivs') {
       const n = Math.max(0, parseEditInt(value, 0));
       rec.playableCivIds = ensureArraySize(rec.playableCivIds, n, -1).slice(0, n);
-      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, n, 4).slice(0, n);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, n, 0).slice(0, n);
       rec.numPlayableCivs = n;
       return true;
     }
@@ -3122,7 +3122,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
         .map((part) => parseEditInt(part, NaN))
         .filter((part) => Number.isFinite(part) && part >= 0);
       rec.playableCivIds = ids;
-      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, ids.length, 4).slice(0, ids.length);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, ids.length, 0).slice(0, ids.length);
       rec.numPlayableCivs = ids.length;
       return true;
     }
@@ -3132,7 +3132,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
       if (!Number.isFinite(idx) || idx < 0) return false;
       rec.playableCivIds = ensureArraySize(rec.playableCivIds, idx + 1, -1);
       rec.playableCivIds[idx] = parseEditInt(value, -1);
-      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, rec.playableCivIds.length, 4).slice(0, rec.playableCivIds.length);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, rec.playableCivIds.length, 0).slice(0, rec.playableCivIds.length);
       rec.numPlayableCivs = rec.playableCivIds.length;
       return true;
     }
@@ -3156,15 +3156,15 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     if (allianceMemberMatch) {
       const allianceIdx = Number.parseInt(allianceMemberMatch[1], 10);
       const civId = Number.parseInt(allianceMemberMatch[2], 10);
-      if (!Number.isFinite(allianceIdx) || allianceIdx < 0 || allianceIdx > 3 || !Number.isFinite(civId) || civId < 0) return true;
+      if (!Number.isFinite(allianceIdx) || allianceIdx < 0 || allianceIdx > 4 || !Number.isFinite(civId) || civId < 0) return true;
       const playableIds = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
       const civPos = playableIds.findIndex((id) => Number.parseInt(String(id), 10) === civId);
       if (civPos < 0) return true;
-      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, playableIds.length, 4).slice(0, playableIds.length);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, playableIds.length, 0).slice(0, playableIds.length);
       if (parseEditBoolish(value)) {
         rec.civPartOfWhichAlliance[civPos] = allianceIdx;
       } else if (Number.parseInt(String(rec.civPartOfWhichAlliance[civPos]), 10) === allianceIdx) {
-        rec.civPartOfWhichAlliance[civPos] = 4;
+        rec.civPartOfWhichAlliance[civPos] = 0;
       }
       return true;
     }
@@ -3951,7 +3951,7 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
       }
       if (!Number.isFinite(nextId) || nextId < 0 || nextId >= finalRaceCount) return;
       nextIds.push(nextId);
-      nextAlliance.push(Number.isFinite(Number(currentAlliance[idx])) ? Number(currentAlliance[idx]) : 4);
+      nextAlliance.push(Number.isFinite(Number(currentAlliance[idx])) ? Number(currentAlliance[idx]) : 0);
     });
     gameRecord.playableCivIds = nextIds;
     gameRecord.civPartOfWhichAlliance = nextAlliance;
@@ -4281,7 +4281,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       rec.playableCivIds = remapDeletedSectionListRemovingDeleted(currentIds, raceRemap);
       rec.numPlayableCivs = rec.playableCivIds.length;
       const currentAlliances = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
-      rec.civPartOfWhichAlliance = ensureArraySize(currentAlliances, rec.playableCivIds.length, 4)
+      rec.civPartOfWhichAlliance = ensureArraySize(currentAlliances, rec.playableCivIds.length, 0)
         .slice(0, rec.playableCivIds.length);
     });
     markModified(gameSection);

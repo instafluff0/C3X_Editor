@@ -6,11 +6,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { BiqWriter } = require('../src/biq/biqBuffer');
 const {
   BiqIO,
   SECTION_REGISTRY,
+  parseAllSections,
   serializeSection,
   sectionToEnglish,
   sectionRecordName,
@@ -1083,25 +1086,43 @@ test('GAME field edits update locked alliance membership and war arrays', () => 
   const io = makeIo();
   const rec = {
     playableCivIds: [2, 5],
-    civPartOfWhichAlliance: [4, 1],
+    civPartOfWhichAlliance: [0, 1],
     warWith: [[], [], [], [], []],
   };
 
   const english = sectionToEnglish({ index: 0, ...rec }, 'GAME', io);
   const map = parseEnglish(english);
-  assert.equal(map.get('alliance0_member_2'), '0');
+  assert.equal(map.get('alliance0_member_2'), '1');
   assert.equal(map.get('alliance1_member_5'), '1');
 
-  assert.equal(applySetToRecord(rec, 'alliance0_member_2', 'true', 'GAME', io), true);
-  assert.deepEqual(rec.civPartOfWhichAlliance, [0, 1]);
+  assert.equal(applySetToRecord(rec, 'alliance2_member_2', 'true', 'GAME', io), true);
+  assert.deepEqual(rec.civPartOfWhichAlliance, [2, 1]);
 
   assert.equal(applySetToRecord(rec, 'alliance1_member_5', 'false', 'GAME', io), true);
-  assert.deepEqual(rec.civPartOfWhichAlliance, [0, 4]);
+  assert.deepEqual(rec.civPartOfWhichAlliance, [2, 0]);
 
   assert.equal(applySetToRecord(rec, 'alliance2_is_at_war_with_alliance3_0', 'true', 'GAME', io), true);
   assert.equal(rec.warWith[2][3], 1);
   assert.equal(applySetToRecord(rec, 'alliance2_is_at_war_with_alliance3_0', 'false', 'GAME', io), true);
   assert.equal(rec.warWith[2][3], 0);
+});
+
+test('GAME projection matches Pacific locked-alliance war matrix', (t) => {
+  const biqPath = path.resolve(__dirname, '..', '..', 'Scenarios', '9 MP WWII in the Pacific.biq');
+  if (!fs.existsSync(biqPath)) {
+    t.skip('Missing stock 9 MP WWII in the Pacific BIQ.');
+    return;
+  }
+  const parsed = parseAllSections(fs.readFileSync(biqPath));
+  assert.equal(parsed.ok, true, parsed.error || 'BIQ parse failed');
+  const game = (parsed.sections.find((section) => section.code === 'GAME') || {}).records?.[0];
+  assert.ok(game, 'expected GAME record');
+  const map = parseEnglish(sectionToEnglish({ index: 0, ...game }, 'GAME', parsed.io));
+
+  assert.equal(map.get('alliance1'), 'Allies');
+  assert.equal(map.get('alliance2'), 'Japanese Empire');
+  assert.equal(map.get('alliance1_is_at_war_with_alliance2_0'), '1');
+  assert.equal(map.get('alliance2_is_at_war_with_alliance1_0'), '1');
 });
 
 test('GAME parser emits Victory Point Limits panel fields', () => {

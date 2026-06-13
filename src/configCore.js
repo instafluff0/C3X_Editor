@@ -1143,14 +1143,14 @@ function enrichBridgeSections(sections) {
           const allianceNameMatch = k.match(/^alliance(\d+)$/);
           if (allianceNameMatch) {
             const idx = Number.parseInt(allianceNameMatch[1], 10);
-            field.label = `Alliance ${idx + 1} Name`;
+            field.label = idx === 0 ? 'No Alliances Name' : `Alliance ${idx} Name`;
           }
           const warMatch = k.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_(\d+)$/);
           if (warMatch) {
-            const a = Number.parseInt(warMatch[1], 10) + 1;
-            const b = Number.parseInt(warMatch[2], 10) + 1;
+            const a = Number.parseInt(warMatch[1], 10);
+            const b = Number.parseInt(warMatch[2], 10);
             field.label = `Alliance ${a} At War With Alliance ${b}`;
-            field.value = toBoolStringFromInt(warMatch[3]);
+            field.value = toBoolStringFromInt(field.value);
           }
         } else if (code === 'CITY') {
           if (k === 'building') {

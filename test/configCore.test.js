@@ -54,6 +54,27 @@ function getRecordValue(record, baseKey, fallback = '') {
   return field ? String(field.value || '') : String(fallback);
 }
 
+test('loadBundle preserves GAME locked-alliance war flags for Pacific scenario', (t) => {
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const scenarioPath = path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific.biq');
+  if (!fs.existsSync(scenarioPath)) {
+    t.skip('Missing stock 9 MP WWII in the Pacific BIQ.');
+    return;
+  }
+  const bundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: civ3Root,
+    c3xPath: path.join(civ3Root, 'Conquests', 'C3X_Districts'),
+    scenarioPath
+  });
+  const tab = bundle && bundle.tabs && bundle.tabs.scenarioSettings;
+  const game = getSection(tab && tab.sections, 'GAME');
+  const record = game && game.records && game.records[0];
+
+  assert.equal(getRecordValue(record, 'alliance1_is_at_war_with_alliance2_0'), 'true');
+  assert.equal(getRecordValue(record, 'alliance2_is_at_war_with_alliance1_0'), 'true');
+});
+
 test('base config precedence is default -> scenario -> custom', () => {
   const defaultText = 'a = 1\nb = 2\n';
   const scenarioText = 'b = 20\nc = 30\n';
