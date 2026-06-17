@@ -20,6 +20,7 @@ const vm = require('node:vm');
 const { loadBundle, saveBundle, findNextResourceAtlasSlot, findNextUnitAtlasSlot } = require('../src/configCore');
 const { decodePcx } = require('../src/artPreview');
 const { getReferenceEntryIdentity } = require('../src/referenceIdentity');
+const { DELETE_REFERENCE_INVENTORY } = require('./referenceCrudInventory');
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -358,6 +359,13 @@ function getEntryIndex(bundle, tabKey, key) {
   return Number.isFinite(idx) ? idx : -1;
 }
 
+function getEntryByBiqIndex(bundle, tabKey, biqIndex) {
+  const target = Number(biqIndex);
+  const entries = bundle && bundle.tabs && bundle.tabs[tabKey] && bundle.tabs[tabKey].entries;
+  if (!Number.isFinite(target) || !Array.isArray(entries)) return null;
+  return entries.find((entry) => Number(entry && entry.biqIndex) === target) || null;
+}
+
 function getSection(bundle, sectionCode) {
   const sections = (bundle && bundle.biq && Array.isArray(bundle.biq.sections))
     ? bundle.biq.sections : [];
@@ -390,6 +398,13 @@ function getRawRecordField(record, key) {
   ) || null;
 }
 
+function setRawRecordFieldValue(record, key, value) {
+  const field = getRawRecordField(record, key);
+  assert.ok(field, `expected structured BIQ field ${key}`);
+  field.value = String(value);
+  return field;
+}
+
 function getRawRecordInt(record, key, fallback = NaN) {
   const field = getRawRecordField(record, key);
   const text = String(field && field.value || '');
@@ -419,6 +434,37 @@ function countPrimaryPrtoRecords(bundle) {
   return (section && Array.isArray(section.records) ? section.records : []).filter((record) =>
     getRawRecordInt(record, 'otherstrategy', -1) < 0
   ).length;
+}
+
+function makeTabWithSectionRecord(bundle, tabKey, sectionCode, recordIndex = 0) {
+  const section = getTabSection(bundle, tabKey, sectionCode);
+  assert.ok(section && Array.isArray(section.records), `expected ${tabKey}.${sectionCode} section`);
+  const record = section.records[recordIndex];
+  assert.ok(record, `expected ${sectionCode} record ${recordIndex}`);
+  return {
+    sections: [{
+      ...section,
+      records: [record]
+    }]
+  };
+}
+
+function getRuleDefaultUnitFieldKeys() {
+  return DELETE_REFERENCE_INVENTORY
+    .filter((item) => item.targetSection === 'PRTO' && item.sectionCode === 'RULE' && item.kind === 'scalar')
+    .map((item) => item.field);
+}
+
+function assertRuleDefaultUnitFieldsPointTo(bundle, expectedUnitKey, message) {
+  const ruleSection = getTabSection(bundle, 'rules', 'RULE');
+  const ruleRecord = ruleSection && Array.isArray(ruleSection.records) ? ruleSection.records[0] : null;
+  assert.ok(ruleRecord, 'expected RULE record');
+  const expectedIndex = expectedUnitKey ? getEntryIndex(bundle, 'units', expectedUnitKey) : -1;
+  if (expectedUnitKey) assert.ok(expectedIndex >= 0, `expected unit ${expectedUnitKey} to exist`);
+  for (const fieldKey of getRuleDefaultUnitFieldKeys()) {
+    const actual = getRawRecordInt(ruleRecord, fieldKey, -1);
+    assert.equal(actual, expectedIndex, `${message}: RULE.${fieldKey}`);
+  }
 }
 
 const UNIT_AI_STRATEGY_FIELD_KEYS = [
@@ -4305,6 +4351,305 @@ test('Add to each uncapped section simultaneously in one save call', (t) => {
     assert.equal(biqHasKey(after, sectionCode, newKeys[sectionCode]), true,
       `expected new key in ${sectionCode}`);
   }
+});
+
+test('Rules default unit fields preserve what the UI shows after every CRUD save prefix', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  assert.ok(getRuleDefaultUnitFieldKeys().length >= 10, 'expected full RULE default-unit delete inventory');
+
+  const unitA = makeShortTestRef('PRTO_', 'RULEA');
+  const unitB = makeShortTestRef('PRTO_', 'RULEB');
+  const addAB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: {
+        recordOps: [
+          { op: 'add', newRecordRef: unitA },
+          { op: 'add', newRecordRef: unitB }
+        ]
+      }
+    }
+  });
+  assert.equal(addAB.ok, true, String(addAB.error || 'unit add save failed'));
+
+  let bundle = reload(c3xDir, biqPath);
+  const ruleTab = makeTabWithSectionRecord(bundle, 'rules', 'RULE');
+  const ruleRecord = ruleTab.sections[0].records[0];
+  const unitBIndex = getEntryIndex(bundle, 'units', unitB);
+  assert.ok(unitBIndex >= 0, 'expected second added unit to have an index');
+  for (const fieldKey of getRuleDefaultUnitFieldKeys()) {
+    setRawRecordFieldValue(ruleRecord, fieldKey, unitBIndex);
+  }
+  const setRules = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { rules: ruleTab }
+  });
+  assert.equal(setRules.ok, true, String(setRules.error || 'RULE default-unit save failed'));
+
+  bundle = reload(c3xDir, biqPath);
+  assertRuleDefaultUnitFieldsPointTo(bundle, unitB, 'after setting every RULE default unit field');
+
+  const unitC = makeShortTestRef('PRTO_', 'RULEC');
+  const addC = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: { recordOps: [{ op: 'add', newRecordRef: unitC }] }
+    }
+  });
+  assert.equal(addC.ok, true, String(addC.error || 'unit C add save failed'));
+  bundle = reload(c3xDir, biqPath);
+  assertRuleDefaultUnitFieldsPointTo(bundle, unitB, 'after later unit add');
+
+  const deleteA = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: { recordOps: [{ op: 'delete', recordRef: unitA }] }
+    }
+  });
+  assert.equal(deleteA.ok, true, String(deleteA.error || 'unit A delete save failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(getEntry(bundle, 'units', unitA), null, 'deleted earlier unit should be gone');
+  assertRuleDefaultUnitFieldsPointTo(bundle, unitB, 'after deleting an earlier unit shifts RULE defaults');
+
+  const unitD = makeShortTestRef('PRTO_', 'RULED');
+  const unitBEntry = getEntry(bundle, 'units', unitB);
+  assert.ok(unitBEntry, 'expected unit B before copy');
+  const copyB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: {
+        recordOps: [{ op: 'copy', sourceRef: `@INDEX:${unitBEntry.biqIndex}`, newRecordRef: unitD }]
+      }
+    }
+  });
+  assert.equal(copyB.ok, true, String(copyB.error || 'unit B copy save failed'));
+  bundle = reload(c3xDir, biqPath);
+  assertRuleDefaultUnitFieldsPointTo(bundle, unitB, 'after later unit copy');
+
+  const editedB = cloneReferenceEntry(getEntry(bundle, 'units', unitB));
+  applyRepresentativeCrudEditsToEntry('units', editedB, bundle, 'Rules Default Unit B');
+  const editB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['units'],
+    tabs: {
+      units: { entries: [editedB] }
+    }
+  });
+  assert.equal(editB.ok, true, String(editB.error || 'unit B edit save failed'));
+  bundle = reload(c3xDir, biqPath);
+  assertReloadedReferenceEntryFieldsMatchPreSave(editedB, getEntry(bundle, 'units', unitB), 'edited RULE default unit target');
+  assertRuleDefaultUnitFieldsPointTo(bundle, unitB, 'after editing referenced unit');
+
+  const deleteB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: { recordOps: [{ op: 'delete', recordRef: unitB }] }
+    }
+  });
+  assert.equal(deleteB.ok, true, String(deleteB.error || 'unit B delete save failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(getEntry(bundle, 'units', unitB), null, 'referenced unit should be deleted');
+  assertRuleDefaultUnitFieldsPointTo(bundle, null, 'after deleting referenced unit clears RULE defaults');
+  assert.ok(getEntry(bundle, 'units', unitC), 'later added unit should survive default-unit cascade sequence');
+  assert.ok(getEntry(bundle, 'units', unitD), 'later copied unit should survive default-unit cascade sequence');
+});
+
+test('Cross-entity references preserve projected values when saved after each CRUD prefix', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const techA = makeShortTestRef('TECH_', 'PFXA');
+  const techB = makeShortTestRef('TECH_', 'PFXB');
+  const techC = makeShortTestRef('TECH_', 'PFXC');
+  for (const key of [techA, techB, techC]) {
+    const save = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3xDir,
+      civ3Path: CIV3_ROOT,
+      scenarioPath: biqPath,
+      tabs: { technologies: { recordOps: [{ op: 'add', newRecordRef: key }] } }
+    });
+    assert.equal(save.ok, true, String(save.error || `failed to add ${key}`));
+    assert.ok(getEntry(reload(c3xDir, biqPath), 'technologies', key), `${key} should survive immediate save/reload`);
+  }
+
+  let bundle = reload(c3xDir, biqPath);
+  const unitHost = (bundle.tabs.units.entries || []).find((entry) => findBiqField(entry, 'requiredtech'));
+  assert.ok(unitHost, 'expected editable unit tech prerequisite');
+  const techCIndex = getEntryIndex(bundle, 'technologies', techC);
+  setReferenceField(findBiqField(unitHost, 'requiredtech'), 'technologies', techC, techCIndex);
+  const setUnitTech = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: { entries: [unitHost] },
+      technologies: bundle.tabs.technologies
+    }
+  });
+  assert.equal(setUnitTech.ok, true, String(setUnitTech.error || 'unit tech reference save failed'));
+
+  const deleteTechB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { technologies: { recordOps: [{ op: 'delete', recordRef: techB }] } }
+  });
+  assert.equal(deleteTechB.ok, true, String(deleteTechB.error || 'delete middle tech failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(getEntry(bundle, 'technologies', techB), null, 'middle saved tech should be deleted');
+  const reloadedUnit = getEntry(bundle, 'units', unitHost.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedUnit.biqFields }, 'requiredtech'), getEntryIndex(bundle, 'technologies', techC),
+    'unit required tech should track the surviving later tech index after a later save');
+
+  const resourceA = makeShortTestRef('GOOD_', 'PFXA');
+  const resourceB = makeShortTestRef('GOOD_', 'PFXB');
+  for (const key of [resourceA, resourceB]) {
+    const save = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3xDir,
+      civ3Path: CIV3_ROOT,
+      scenarioPath: biqPath,
+      tabs: { resources: { recordOps: [{ op: 'add', newRecordRef: key }] } }
+    });
+    assert.equal(save.ok, true, String(save.error || `failed to add ${key}`));
+    assert.ok(getEntry(reload(c3xDir, biqPath), 'resources', key), `${key} should survive immediate save/reload`);
+  }
+
+  bundle = reload(c3xDir, biqPath);
+  const improvementHost = (bundle.tabs.improvements.entries || []).find((entry) => findBiqField(entry, 'reqresource1'));
+  assert.ok(improvementHost, 'expected editable improvement resource prerequisite');
+  setReferenceField(findBiqField(improvementHost, 'reqresource1'), 'resources', resourceB, getEntryIndex(bundle, 'resources', resourceB));
+  const setImprovementResource = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      improvements: { entries: [improvementHost] },
+      resources: bundle.tabs.resources
+    }
+  });
+  assert.equal(setImprovementResource.ok, true, String(setImprovementResource.error || 'improvement resource reference save failed'));
+
+  const deleteResourceA = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { resources: { recordOps: [{ op: 'delete', recordRef: resourceA }] } }
+  });
+  assert.equal(deleteResourceA.ok, true, String(deleteResourceA.error || 'delete earlier resource failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(getEntry(bundle, 'resources', resourceA), null, 'earlier saved resource should be deleted');
+  const reloadedImprovement = getEntry(bundle, 'improvements', improvementHost.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedImprovement.biqFields }, 'reqresource1'), getEntryIndex(bundle, 'resources', resourceB),
+    'improvement required resource should track the surviving later resource index after a later save');
+});
+
+test('Government references preserve projected values when saved after each CRUD prefix', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const govA = makeShortTestRef('GOVT_', 'PFXA');
+  const govB = makeShortTestRef('GOVT_', 'PFXB');
+  const govC = makeShortTestRef('GOVT_', 'PFXC');
+  for (const key of [govA, govB, govC]) {
+    const save = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3xDir,
+      civ3Path: CIV3_ROOT,
+      scenarioPath: biqPath,
+      tabs: { governments: { recordOps: [{ op: 'add', newRecordRef: key }] } }
+    });
+    assert.equal(save.ok, true, String(save.error || `failed to add ${key}`));
+    assert.ok(getEntry(reload(c3xDir, biqPath), 'governments', key), `${key} should survive immediate save/reload`);
+  }
+
+  let bundle = reload(c3xDir, biqPath);
+  const govCIndex = getEntryIndex(bundle, 'governments', govC);
+  const civHost = (bundle.tabs.civilizations.entries || []).find((entry) =>
+    findBiqField(entry, 'favoritegovernment') && findBiqField(entry, 'shunnedgovernment')
+  );
+  const improvementHost = (bundle.tabs.improvements.entries || []).find((entry) => findBiqField(entry, 'reqgovernment'));
+  assert.ok(civHost, 'expected editable civilization government references');
+  assert.ok(improvementHost, 'expected editable improvement government reference');
+  setReferenceField(findBiqField(civHost, 'favoritegovernment'), 'governments', govC, govCIndex);
+  setReferenceField(findBiqField(civHost, 'shunnedgovernment'), 'governments', govC, govCIndex);
+  setReferenceField(findBiqField(improvementHost, 'reqgovernment'), 'governments', govC, govCIndex);
+
+  const setReferences = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: { entries: [civHost] },
+      improvements: { entries: [improvementHost] },
+      governments: bundle.tabs.governments
+    }
+  });
+  assert.equal(setReferences.ok, true, String(setReferences.error || 'government reference save failed'));
+
+  const deleteGovB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { governments: { recordOps: [{ op: 'delete', recordRef: govB }] } }
+  });
+  assert.equal(deleteGovB.ok, true, String(deleteGovB.error || 'delete middle government failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(getEntry(bundle, 'governments', govB), null, 'middle saved government should be deleted');
+  const reloadedGovCIndex = getEntryIndex(bundle, 'governments', govC);
+  const reloadedCiv = getEntry(bundle, 'civilizations', civHost.civilopediaKey);
+  const reloadedImprovement = getEntry(bundle, 'improvements', improvementHost.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedCiv.biqFields }, 'favoritegovernment'), reloadedGovCIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedCiv.biqFields }, 'shunnedgovernment'), reloadedGovCIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedImprovement.biqFields }, 'reqgovernment'), reloadedGovCIndex);
+
+  const deleteGovC = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { governments: { recordOps: [{ op: 'delete', recordRef: govC }] } }
+  });
+  assert.equal(deleteGovC.ok, true, String(deleteGovC.error || 'delete referenced government failed'));
+  bundle = reload(c3xDir, biqPath);
+  const clearedCiv = getEntry(bundle, 'civilizations', civHost.civilopediaKey);
+  const clearedImprovement = getEntry(bundle, 'improvements', improvementHost.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: clearedCiv.biqFields }, 'favoritegovernment', -1), -1);
+  assert.equal(getRawRecordInt({ fields: clearedCiv.biqFields }, 'shunnedgovernment', -1), -1);
+  assert.equal(getRawRecordInt({ fields: clearedImprovement.biqFields }, 'reqgovernment', -1), -1);
+  assert.ok(getEntry(bundle, 'governments', govA), 'earlier added government should survive the sequence');
 });
 test('Import Civ into base Conquests BIQ is blocked at the Civ3 32-civ limit', (t) => {
   const r = runTidesImport(t, 'civilizations', 'RACE', 'RACE_',

@@ -221,7 +221,7 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   assert.match(
     source,
     /function hasScienceAdvisorArrowMetadataForEra\(eraValue\) \{[\s\S]*?state\.techTreeArrowMetadataEraKeys\[eraKey\][\s\S]*?const isGeneratedArrowPreviewActive = \(\) => !!\(state\.techTreeArrowArtDirtyByEra && state\.techTreeArrowArtDirtyByEra\[eraDirtyKey\]\);[\s\S]*?const isRouteHandlePreviewActive = \(\) => isGeneratedArrowPreviewActive\(\) \|\| hasScienceAdvisorArrowMetadataForEra\(eraValue\);[\s\S]*?lines\.classList\.toggle\('tech-tree-lines-hidden', !generatedActive\);[\s\S]*?arrowHandles\.classList\.toggle\('tech-tree-route-handles-hidden', !handlesActive\);[\s\S]*?selectedArrowLines\.classList\.toggle\('tech-tree-lines-hidden', !handlesActive\);/,
-    'Expected clean Tech Tree opens to preserve the disk PCX arrows while saved metadata still enables route handles'
+    'Expected clean Tech Tree opens to preserve disk PCX arrows while saved metadata still enables route handles'
   );
   assert.match(
     source,

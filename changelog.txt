@@ -13,12 +13,14 @@
 - Fixed concurrent BIQ record delete plus field-edit saves so edits targeting original indexes are shifted or dropped after deletes, and PRTO copy/delete now preserves or reconciles strategy-map child rows, preventing unit edits/adds/deletes from poisoning neighboring unit fields or AI Strategy masks.
 - Added full-field saved-BIQ reload assertions for add, edit, copy, delete-survivor, and import CRUD workflows across Civilizations, Technologies, Resources, Improvements, Governments, and Units.
 - Added semantic delete-cascade coverage for every inventoried BIQ reference field affected by CRUD deletes, including Rules default units, Civilization government/unit references, Unit and Improvement prerequisites, leader/player references, terrain resource masks, and government relation tables.
+- Added save-after-each-prefix BIQ CRUD regressions for Rules default units, cross-entity Tech/Resource prerequisites, and Government references so fields shown in the UI are rechecked after each intermediate save/reload point.
 - Added fixture-backed Civilization LEGENDS and 2021 EXPANSION unit edit/copy regressions so same-key PRTO primaries and strategy-map units are tested for adds as well as deletes.
 - Added unit pending-reference regression coverage for logical PRTO primary indices when new units serialize with strategy-map duplicate records.
 - Added full-field saved-BIQ reload assertions for newly added, copied, and imported PRTO units so regressions such as dropped unit names fail directly.
 - Added BIQ regressions for newly added and imported units edited to multiple AI Strategy bits before first save, including checks that existing neighboring PRTO rows keep their fields and strategy masks.
 - Added per-arrow floating Tech Tree border warnings for dirty Science Advisor arrows that touch protected advisor-frame areas, with red route highlights, stale route-snapshot invalidation for resized tech boxes, cleaner selected-focus route previews, a selected-arrow frame guide, no stray stage focus ring after handle deletion, and a save-details note.
 - Improved Tech Tree drag responsiveness by caching selected-focus arrow layers and limiting border-warning refresh work during live tech-box and arrow-handle drags.
+- Kept saved route metadata handles available on clean Tech Tree opens so precomputed Science Advisor arrows can be inspected and edited without first dirtying generated arrow art.
 - Added BIQ regression coverage for adjacent and duplicate-key unit AI Strategy masks, pending copied units, repeated unit saves, pending copied civilizations, repeated civilization saves, and civilization Flavor masks, guarding against save/reload transfers or losses in the areas reported by mod authors.
 
 * RELEASE 27.16
