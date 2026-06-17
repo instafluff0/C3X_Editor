@@ -274,6 +274,76 @@ test('Science Advisor arrow metadata write is editor-only scenario sidecar JSON'
   assert.equal(parsed.baselineRouteHints['2:10->11'].horizontalTolerance, 18);
 });
 
+test('Science Advisor arrow metadata write preserves clean era metadata', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-science-advisor-metadata-preserve-era-'));
+  const metadataPath = path.join(root, 'c3x_editor_tech_tree_arrows.json');
+  fs.writeFileSync(metadataPath, JSON.stringify({
+    format: 'c3x-editor-tech-tree-arrows',
+    version: 1,
+    routeOverrides: {
+      '0:1->2': {
+        points: [
+          { x: 10, y: 20 },
+          { x: 50, y: 20 }
+        ]
+      },
+      '2:8->9': {
+        points: [
+          { x: 80, y: 90 },
+          { x: 120, y: 90 }
+        ]
+      }
+    },
+    routeSnapshots: {
+      '0:1->2': {
+        points: [
+          { x: 11, y: 21 },
+          { x: 51, y: 21 }
+        ]
+      }
+    },
+    baselineRouteHints: {
+      '0:1->2': {
+        sourceSide: 'right',
+        targetSide: 'left',
+        sourceOffset: 3,
+        targetOffset: -2
+      }
+    }
+  }), 'utf8');
+
+  const write = buildScienceAdvisorArrowMetadataWrite({
+    targetContentRoot: root,
+    dirtyEraIndexes: [2],
+    routeOverrides: {
+      '2:10->11': {
+        points: [
+          { x: 20, y: 30 },
+          { x: 70, y: 30 }
+        ]
+      }
+    },
+    routeSnapshots: {},
+    baselineRouteHints: {}
+  });
+
+  const parsed = JSON.parse(write.data);
+  assert.deepEqual(parsed.routeOverrides['0:1->2'].points, [
+    { x: 10, y: 20 },
+    { x: 50, y: 20 }
+  ]);
+  assert.equal(parsed.routeOverrides['2:8->9'], undefined);
+  assert.deepEqual(parsed.routeOverrides['2:10->11'].points, [
+    { x: 20, y: 30 },
+    { x: 70, y: 30 }
+  ]);
+  assert.deepEqual(parsed.routeSnapshots['0:1->2'].points, [
+    { x: 11, y: 21 },
+    { x: 51, y: 21 }
+  ]);
+  assert.equal(parsed.baselineRouteHints['0:1->2'].sourceSide, 'right');
+});
+
 test('Science Advisor palette style is era-specific for reddish and modern blue arrows', () => {
   const palette = makeMixedEraPalette();
 

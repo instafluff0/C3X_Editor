@@ -4137,6 +4137,25 @@ function remapDeletedCivilizationAvailabilityMask(maskValue, remap) {
   return nextMask | 0;
 }
 
+function remapDeletedBitmask(maskValue, remap, maxBits = 32) {
+  const parsedMask = Number.parseInt(String(maskValue), 10);
+  const unsignedMask = Number.isFinite(parsedMask) ? (parsedMask >>> 0) : 0;
+  if (!remap) return unsignedMask | 0;
+  let nextMask = 0 >>> 0;
+  const upperBound = Math.min(Math.max(0, Number(maxBits) || 0), Number.isFinite(remap.oldCount) ? remap.oldCount : 32);
+  for (let oldIndex = 0; oldIndex < upperBound; oldIndex += 1) {
+    if (((unsignedMask >>> oldIndex) & 1) !== 1) continue;
+    const nextIndex = remapDeletedSectionIndex(oldIndex, remap, null);
+    if (!Number.isFinite(nextIndex) || nextIndex < 0 || nextIndex >= 32) continue;
+    nextMask = (nextMask | ((1 << nextIndex) >>> 0)) >>> 0;
+  }
+  for (let bit = upperBound; bit < 32; bit += 1) {
+    if (((unsignedMask >>> bit) & 1) !== 1) continue;
+    nextMask = (nextMask | ((1 << bit) >>> 0)) >>> 0;
+  }
+  return nextMask | 0;
+}
+
 function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection) {
   const deleteTouchedCodes = new Set((Array.isArray(edits) ? edits : [])
     .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete')
@@ -4173,6 +4192,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const tfrmRemap = remaps.get('TFRM');
   const terrRemap = remaps.get('TERR');
   const leadRemap = remaps.get('LEAD');
+  const flavRemap = remaps.get('FLAV');
   const markModified = (section) => {
     if (section) section._modified = true;
   };
@@ -4237,8 +4257,11 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
         rec.shunnedGovernment = remapDeletedSectionIndex(rec.shunnedGovernment, govtRemap, -1);
       }
       if (prtoRemap) rec.kingUnit = remapDeletedSectionIndex(rec.kingUnit, prtoRemap, -1);
+      if (flavRemap && Object.prototype.hasOwnProperty.call(rec, 'flavors')) {
+        rec.flavors = remapDeletedBitmask(rec.flavors, flavRemap);
+      }
     });
-    if (techRemap || govtRemap || prtoRemap) markModified(raceSection);
+    if (techRemap || govtRemap || prtoRemap || flavRemap) markModified(raceSection);
   }
 
   const goodSection = getSectionByCode(parsed, 'GOOD');
@@ -4254,9 +4277,12 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     techSection.records.forEach((rec, index) => {
       if (techRemap) rec.prerequisites = remapDeletedSectionList(ensureArraySize(rec.prerequisites, 4, -1), techRemap, -1);
       if (erasRemap) rec.era = remapDeletedSectionIndex(rec.era, erasRemap, -1);
+      if (flavRemap && Object.prototype.hasOwnProperty.call(rec, 'flavors')) {
+        rec.flavors = remapDeletedBitmask(rec.flavors, flavRemap);
+      }
       rec.index = index;
     });
-    if (techRemap || erasRemap) markModified(techSection);
+    if (techRemap || erasRemap || flavRemap) markModified(techSection);
   }
 
   const govtSection = getSectionByCode(parsed, 'GOVT');
@@ -4312,8 +4338,29 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
         rec.doublesHappiness = remapDeletedSectionIndex(rec.doublesHappiness, bldgRemap, 0);
       }
       if (prtoRemap) rec.unitProduced = remapDeletedSectionIndex(rec.unitProduced, prtoRemap, -1);
+      if (flavRemap && Object.prototype.hasOwnProperty.call(rec, 'flavors')) {
+        rec.flavors = remapDeletedBitmask(rec.flavors, flavRemap);
+      }
     });
-    if (techRemap || goodRemap || govtRemap || bldgRemap || prtoRemap) markModified(bldgSection);
+    if (techRemap || goodRemap || govtRemap || bldgRemap || prtoRemap || flavRemap) markModified(bldgSection);
+  }
+
+  const flavSection = getSectionByCode(parsed, 'FLAV');
+  if (flavSection && Array.isArray(flavSection.records) && flavRemap) {
+    flavSection.records.forEach((rec, index) => {
+      const relations = Array.isArray(rec.relations) ? rec.relations : [];
+      const nextRelations = [];
+      for (let oldIndex = 0; oldIndex < relations.length; oldIndex += 1) {
+        const nextIndex = remapDeletedSectionIndex(oldIndex, flavRemap, null);
+        if (!Number.isFinite(nextIndex) || nextIndex < 0) continue;
+        nextRelations[nextIndex] = relations[oldIndex];
+      }
+      rec.relations = [];
+      for (let i = 0; i < flavRemap.finalCount; i += 1) rec.relations.push(nextRelations[i] || 0);
+      rec.numRelations = rec.relations.length;
+      rec.index = index;
+    });
+    markModified(flavSection);
   }
 
   const gameSection = getSectionByCode(parsed, 'GAME');
@@ -5564,9 +5611,10 @@ function applyEdits(buf, edits, options = {}) {
 
   const { io } = parsed;
   const originalRefsBySection = {};
-  ['RACE', 'TECH', 'GOOD', 'BLDG', 'GOVT', 'PRTO', 'CITY', 'CLNY'].forEach((code) => {
-    const section = getSectionByCode(parsed, code);
-    originalRefsBySection[code] = section && Array.isArray(section.records)
+  (Array.isArray(parsed.sections) ? parsed.sections : []).forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!code) return;
+    originalRefsBySection[code] = Array.isArray(section.records)
       ? section.records.map((record) => getRecordStructureRef(record))
       : [];
   });

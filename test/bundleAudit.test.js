@@ -1036,7 +1036,7 @@ test('auditLoadedBundle reports Civilopedia link target case mismatches only for
   );
 });
 
-test('auditLoadedBundle reports Civilopedia links to missing local entries', () => {
+test('auditLoadedBundle reports Civilopedia links to missing entries', () => {
   const civ3Root = mkTmpDir();
   const bundle = makeBundle(civ3Root, {
     tabs: {
@@ -1072,8 +1072,8 @@ test('auditLoadedBundle reports Civilopedia links to missing local entries', () 
   const result = auditLoadedBundle(bundle);
   assert.equal(result.totalWarnings, 2);
   const messages = result.tabs.units.sections['0'].map((entry) => entry.message);
-  assert.match(messages[0], /Civilopedia link target "RACE_Trolls" has no matching local entry/);
-  assert.match(messages[1], /Civilopedia link target "GCON_Summoning" has no matching local entry/);
+  assert.match(messages[0], /Civilopedia link target "RACE_Trolls" has no matching entry/);
+  assert.match(messages[1], /Civilopedia link target "GCON_Summoning" has no matching entry/);
 });
 
 test('auditLoadedBundle ignores missing Civilopedia link targets that are not Civ3 pedia keys', () => {

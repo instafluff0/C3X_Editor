@@ -183,6 +183,34 @@ function assertAvailableToCascadeItem(item) {
   assert.equal(records[0].availableTo, (1 << 0) | (1 << 1) | (1 << 5), `${item.id} should shift civilization availability bits`);
 }
 
+function assertBitmaskCascadeItem(item) {
+  const prop = fieldPropertyName(item.field);
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      [prop]: (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5)
+    })
+  ]);
+  assert.equal(records[0][prop], (1 << 0) | (1 << 1) | (1 << 5), `${item.id} should clear deleted bit and shift higher bits`);
+}
+
+function assertFlavorRelationTableCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      numRelations: 3,
+      relations: [10, 11, 12]
+    }),
+    makeIndexedRecord(item.sectionCode, 2, {
+      numRelations: 3,
+      relations: [20, 21, 22]
+    })
+  ]);
+  assert.equal(records.length, 2, `${item.id} should keep surviving flavor rows`);
+  assert.equal(records[0].numRelations, 2, `${item.id} should shrink first surviving relation count`);
+  assert.deepEqual(records[0].relations, [10, 12], `${item.id} should remove deleted relation column from first survivor`);
+  assert.equal(records[1].numRelations, 2, `${item.id} should shrink second surviving relation count`);
+  assert.deepEqual(records[1].relations, [20, 22], `${item.id} should remove deleted relation column from second survivor`);
+}
+
 function assertGamePlayableCivCascadeItem(item) {
   const records = runSingleDeleteCascadeItem(item, [
     makeIndexedRecord(item.sectionCode, 0, {
@@ -239,6 +267,12 @@ function assertDeleteCascadeInventoryItem(item) {
       return;
     case 'relation-table':
       assertRelationTableCascadeItem(item);
+      return;
+    case 'flavor-relation-table':
+      assertFlavorRelationTableCascadeItem(item);
+      return;
+    case 'bitmask':
+      assertBitmaskCascadeItem(item);
       return;
     default:
       throw new Error(`Unhandled delete cascade inventory kind for ${item.id}: ${item.kind}`);

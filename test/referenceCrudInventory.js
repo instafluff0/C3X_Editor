@@ -63,7 +63,12 @@ const DELETE_REFERENCE_INVENTORY = [
   { id: 'delete-diff-rule-defaultdifficultylevel', targetSection: 'DIFF', sectionCode: 'RULE', field: 'defaultdifficultylevel', kind: 'scalar' },
   { id: 'delete-eras-lead-initialera', targetSection: 'ERAS', sectionCode: 'LEAD', field: 'initialera', kind: 'scalar' },
   { id: 'delete-tfrm-terr-workerjob', targetSection: 'TFRM', sectionCode: 'TERR', field: 'workerjob', kind: 'scalar' },
-  { id: 'delete-terr-terr-pollutioneffect', targetSection: 'TERR', sectionCode: 'TERR', field: 'pollutioneffect', kind: 'scalar' }
+  { id: 'delete-terr-terr-pollutioneffect', targetSection: 'TERR', sectionCode: 'TERR', field: 'pollutioneffect', kind: 'scalar' },
+
+  { id: 'delete-flav-race-flavors', targetSection: 'FLAV', sectionCode: 'RACE', field: 'flavors', kind: 'bitmask' },
+  { id: 'delete-flav-tech-flavors', targetSection: 'FLAV', sectionCode: 'TECH', field: 'flavors', kind: 'bitmask' },
+  { id: 'delete-flav-bldg-flavors', targetSection: 'FLAV', sectionCode: 'BLDG', field: 'flavors', kind: 'bitmask' },
+  { id: 'delete-flav-flav-relations', targetSection: 'FLAV', sectionCode: 'FLAV', field: 'relations', kind: 'flavor-relation-table' }
 ];
 
 const IMPORT_REFERENCE_INVENTORY = [

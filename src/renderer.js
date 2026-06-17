@@ -20277,6 +20277,810 @@ function renderTechnologyUnlocksBoard({ entry, selectedBaseIndex, referenceEdita
   return board;
 }
 
+const RESOURCE_REQUIRED_BY_GROUPS = [
+  {
+    key: 'units',
+    title: 'Units',
+    tabKey: 'units',
+    fieldKeys: ['requiredresource1', 'requiredresource2', 'requiredresource3'],
+    sectionCode: 'PRTO'
+  },
+  {
+    key: 'improvements',
+    title: 'Improvements',
+    tabKey: 'improvements',
+    fieldKeys: ['reqresource1', 'reqresource2'],
+    sectionCode: 'BLDG'
+  },
+  {
+    key: 'workerJobs',
+    title: 'Worker Jobs',
+    tabKey: 'workerActions',
+    sectionTabKey: 'terrain',
+    fieldKeys: ['requiredresource1', 'requiredresource2'],
+    sectionCode: 'TFRM',
+    kind: 'biqStructureSection',
+    dirtyTabKey: 'terrain'
+  },
+  {
+    key: 'districts',
+    title: 'Districts',
+    tabKey: 'districts',
+    fieldKey: 'resource_prereqs',
+    kind: 'sectionList'
+  },
+  {
+    key: 'tileDistricts',
+    title: 'Resource on Tile for Districts',
+    tabKey: 'districts',
+    fieldKey: 'resource_prereq_on_tile',
+    kind: 'sectionSingle'
+  }
+];
+
+const RESOURCE_GENERATED_BY_GROUPS = [
+  {
+    key: 'generatedByImprovements',
+    title: 'Improvements',
+    tabKey: 'improvements',
+    baseKey: 'buildings_generating_resources',
+    kind: 'c3xBuildingResource'
+  },
+  {
+    key: 'generatedByDistricts',
+    title: 'Districts',
+    tabKey: 'districts',
+    fieldKey: 'generated_resource',
+    kind: 'sectionGenerated'
+  }
+];
+
+const RESOURCE_USAGE_EAGER_SELECTED_PICKERS = 8;
+
+function getResourceUsageResourceIndex(entry, selectedBaseIndex) {
+  const idx = getReferenceEntryIndexForOption('resources', entry, selectedBaseIndex, { allowFallback: true });
+  return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
+function getResourceUsageResourceName(entry) {
+  return normalizeConfigToken(getReferenceEntryDisplayName('resources', entry) || (entry && entry.name) || '');
+}
+
+function resolveResourceIndexFromValue(rawValue) {
+  const parsed = parseIntFromDisplayValue(rawValue);
+  if (parsed != null) return parsed;
+  const raw = String(rawValue || '').trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/^name\s*:/i, '').trim();
+  if (!normalized || /^none$/i.test(normalized) || normalized === '-1') return -1;
+  const needle = normalized.toLowerCase();
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.resources;
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  const resource = entries.find((entry, fallbackIdx) => {
+    const name = String((entry && entry.name) || '').trim().toLowerCase();
+    const key = String((entry && entry.civilopediaKey) || '').trim().toLowerCase();
+    if (name && name === needle) return true;
+    if (key && key === needle) return true;
+    if (key && key === `good_${needle.replace(/\s+/g, '_')}`) return true;
+    const biqIdx = getReferenceEntryIndexForOption('resources', entry, fallbackIdx, { allowFallback: true });
+    return String(biqIdx) === needle;
+  });
+  if (!resource) return null;
+  return getReferenceEntryIndexForOption('resources', resource, entries.indexOf(resource), { allowFallback: true });
+}
+
+function setResourceUsageReferenceTarget(field, resourceEntry, resourceIndex) {
+  if (!field) return;
+  const options = makeIndexOptionsForTab('resources');
+  const option = options.find((opt) => String(opt && opt.value) === String(resourceIndex))
+    || (resourceEntry ? { value: String(resourceIndex), entry: resourceEntry } : null);
+  setFieldReferenceTargetMeta(field, 'resources', option, String(resourceIndex), options);
+}
+
+function isResourceUsageBiqStructureGroup(spec) {
+  return !!(spec && spec.kind === 'biqStructureSection');
+}
+
+function isResourceUsageSectionGroup(spec) {
+  return !!(spec && (spec.kind === 'sectionList' || spec.kind === 'sectionSingle' || spec.kind === 'sectionGenerated'));
+}
+
+function getResourceUsageDirtyTabKey(spec) {
+  return String((spec && (spec.dirtyTabKey || spec.sectionTabKey || spec.tabKey)) || '').trim();
+}
+
+function getResourceUsageEntriesForSpec(spec) {
+  if (isResourceUsageBiqStructureGroup(spec)) return getBiqStructureRecordsForUnlockGroup(spec);
+  if (isResourceUsageSectionGroup(spec)) return getDistrictSectionsForUnlockGroup({ ...spec, kind: 'section' });
+  if (spec && spec.kind === 'c3xBuildingResource') return getReferenceEntriesForUnlockGroup(spec);
+  return getReferenceEntriesForUnlockGroup(spec);
+}
+
+function getResourceUsageItemCount(spec) {
+  if (spec && spec.kind === 'c3xBuildingResource' && !getC3XBaseRow(spec.baseKey)) return 0;
+  return getResourceUsageEntriesForSpec(spec).length;
+}
+
+function getResourceUsageEntryIndexForSpec(spec, entry, fallbackIndex) {
+  if (isResourceUsageBiqStructureGroup(spec)) {
+    const idx = Number(entry && entry.index);
+    if (Number.isFinite(idx) && idx >= 0) return idx;
+    const fallback = Number(fallbackIndex);
+    return Number.isFinite(fallback) && fallback >= 0 ? fallback : null;
+  }
+  if (isResourceUsageSectionGroup(spec)) {
+    const fallback = Number(fallbackIndex);
+    return Number.isFinite(fallback) && fallback >= 0 ? fallback : null;
+  }
+  return getReferenceEntryIndexForOption(spec.tabKey, entry, fallbackIndex, { allowFallback: true });
+}
+
+function getResourceUsageOptions(spec, resourceIndex = null, resourceEntry = null) {
+  if (isResourceUsageBiqStructureGroup(spec)) {
+    const raw = getBiqStructureRecordsForUnlockGroup(spec).map((record, fallbackIdx) => {
+      const idx = getResourceUsageEntryIndexForSpec(spec, record, fallbackIdx);
+      if (idx == null) return null;
+      const label = getDisplayBiqRecordName(spec.sectionCode, record, fallbackIdx) || `${spec.sectionCode} ${idx + 1}`;
+      return {
+        value: String(idx),
+        label,
+        displayLabel: label,
+        entry: record,
+        recIndex: idx,
+        jumpTarget: { sectionCode: spec.sectionCode, record }
+      };
+    }).filter(Boolean);
+    return dedupeResourceUsageOptionLabels(raw);
+  }
+  if (isResourceUsageSectionGroup(spec)) {
+    const sections = getResourceUsageEntriesForSpec(spec);
+    const raw = sections.map((section, idx) => {
+      const display = getDistrictSectionDisplay(section, idx);
+      const label = display.primary || `District ${idx + 1}`;
+      return {
+        value: String(idx),
+        label,
+        displayLabel: label,
+        section,
+        recIndex: idx,
+        jumpTarget: { districtIndex: idx, section }
+      };
+    });
+    return dedupeResourceUsageOptionLabels(raw);
+  }
+  const entries = getResourceUsageEntriesForSpec(spec);
+  const raw = entries.map((entry, fallbackIdx) => {
+    const idx = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+    if (idx == null) return null;
+    const name = getReferenceEntryDisplayName(spec.tabKey, entry) || String(entry && entry.name || '').trim();
+    return {
+      value: String(idx),
+      label: name || `${spec.sectionCode || spec.tabKey} ${idx + 1}`,
+      displayLabel: name || `${spec.sectionCode || spec.tabKey} ${idx + 1}`,
+      entry,
+      recIndex: idx
+    };
+  }).filter(Boolean);
+  return dedupeResourceUsageOptionLabels(raw);
+}
+
+function dedupeResourceUsageOptionLabels(rawOptions) {
+  const labelCounts = new Map();
+  (Array.isArray(rawOptions) ? rawOptions : []).forEach((opt) => {
+    const key = String(opt && opt.label || '').trim().toLowerCase();
+    if (!key) return;
+    labelCounts.set(key, Number(labelCounts.get(key) || 0) + 1);
+  });
+  return (Array.isArray(rawOptions) ? rawOptions : []).map((opt) => {
+    const key = String(opt && opt.label || '').trim().toLowerCase();
+    if (key && Number(labelCounts.get(key) || 0) > 1) {
+      return { ...opt, label: `${opt.label} [ID ${opt.recIndex + 1}]`, displayLabel: opt.label };
+    }
+    return opt;
+  }).sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+}
+
+function getResourceUsageFields(entry, spec) {
+  const keys = Array.isArray(spec && spec.fieldKeys) && spec.fieldKeys.length > 0
+    ? spec.fieldKeys
+    : [spec && spec.fieldKey].filter(Boolean);
+  return keys.map((key) => getTechnologyUnlockFieldByBaseKey(entry, key)).filter(Boolean);
+}
+
+function getResourceUsageOpenField(entry, spec) {
+  const keys = Array.isArray(spec && spec.fieldKeys) && spec.fieldKeys.length > 0
+    ? spec.fieldKeys
+    : [spec && spec.fieldKey].filter(Boolean);
+  for (const key of keys) {
+    const field = getTechnologyUnlockFieldByBaseKey(entry, key);
+    if (!field) return ensureTechnologyUnlockFieldByBaseKey(entry, key, key, '-1');
+    const resolved = resolveResourceIndexFromValue(field.value);
+    const raw = String(field.value == null ? '' : field.value).trim();
+    if (!raw || /^none$/i.test(raw) || resolved === -1) return field;
+  }
+  return null;
+}
+
+function resourceUsageEntryHasResource(entry, spec, resourceIndex) {
+  if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return false;
+  return getResourceUsageFields(entry, spec)
+    .some((field) => resolveResourceIndexFromValue(field && field.value) === resourceIndex);
+}
+
+function resourceUsageEntryHasOpenResourceSlot(entry, spec) {
+  const keys = Array.isArray(spec && spec.fieldKeys) && spec.fieldKeys.length > 0
+    ? spec.fieldKeys
+    : [spec && spec.fieldKey].filter(Boolean);
+  return keys.some((key) => {
+    const field = getTechnologyUnlockFieldByBaseKey(entry, key);
+    if (!field) return true;
+    const resolved = resolveResourceIndexFromValue(field.value);
+    const raw = String(field.value == null ? '' : field.value).trim();
+    return !raw || /^none$/i.test(raw) || resolved === -1;
+  });
+}
+
+function canResourceUsageEntryAcceptResource(entry, spec, resourceIndex) {
+  if (resourceUsageEntryHasResource(entry, spec, resourceIndex)) return true;
+  return resourceUsageEntryHasOpenResourceSlot(entry, spec);
+}
+
+function getSectionResourceListTokens(section, fieldKey) {
+  return tokenizeListPreservingQuotes(getFieldValue(section, fieldKey) || '')
+    .map((value) => normalizeConfigToken(value))
+    .filter(Boolean);
+}
+
+function setSectionResourceListTokens(section, fieldKey, tokens) {
+  const nextValue = serializeSectionListTokens(tokens);
+  return setSectionFieldValueWithoutUndo(section, fieldKey, nextValue);
+}
+
+function setSectionFieldValueWithoutUndo(section, fieldKey, value) {
+  if (!section || !Array.isArray(section.fields)) return false;
+  const key = String(fieldKey || '').trim();
+  if (!key) return false;
+  const nextValue = String(value || '').trim();
+  const idx = section.fields.findIndex((field) => String(field && field.key || '').trim() === key);
+  const currentValue = idx >= 0 ? String(section.fields[idx] && section.fields[idx].value || '').trim() : '';
+  if (currentValue === nextValue) return false;
+  if (!nextValue) {
+    if (idx >= 0) section.fields.splice(idx, 1);
+    return idx >= 0;
+  }
+  if (idx >= 0) {
+    section.fields[idx].value = nextValue;
+  } else {
+    section.fields.push({ key, value: nextValue });
+  }
+  return true;
+}
+
+function getDistrictGeneratedResourceState(section) {
+  const rawValue = String(getFieldValue(section, 'generated_resource') || '').trim();
+  const parts = tokenizeWhitespacePreservingQuotes(rawValue)
+    .map((part) => String(part || '').trim().replace(/^"(.*)"$/, '$1'))
+    .filter(Boolean);
+  const knownFlags = ['local', 'yields', 'no-tech-req'];
+  const resourceOptions = getNamedReferenceOptionsForTab('resources');
+  const resourceValues = new Set(resourceOptions.map((opt) => normalizeConfigToken(opt && opt.value)).filter(Boolean));
+  let resource = '';
+  const flags = [];
+  parts.forEach((part) => {
+    const normalized = normalizeConfigToken(part);
+    const lower = normalized.toLowerCase();
+    if (!resource && resourceValues.has(normalized)) {
+      resource = normalized;
+      return;
+    }
+    if (knownFlags.includes(lower) && !flags.includes(lower)) flags.push(lower);
+  });
+  return { resource, flags };
+}
+
+function setDistrictGeneratedResourceValue(section, resourceName, flags = []) {
+  const cleanResource = normalizeConfigToken(resourceName);
+  if (!cleanResource) return setSectionFieldValueWithoutUndo(section, 'generated_resource', '');
+  const knownFlags = ['local', 'yields', 'no-tech-req'];
+  const nextParts = [quoteConfigToken(cleanResource)];
+  (Array.isArray(flags) ? flags : [])
+    .map((flag) => normalizeConfigToken(flag).toLowerCase())
+    .filter((flag, idx, arr) => knownFlags.includes(flag) && arr.indexOf(flag) === idx)
+    .forEach((flag) => nextParts.push(flag));
+  return setSectionFieldValueWithoutUndo(section, 'generated_resource', nextParts.join(' '));
+}
+
+function getGeneratedResourceBuildingItemsForResource(resourceName) {
+  const row = getC3XBaseRow('buildings_generating_resources');
+  if (!row || !resourceName) return [];
+  return parseBuildingResourceItems(row.value)
+    .filter((item) => c3xNameMatches(item.resource, resourceName));
+}
+
+function setGeneratedResourceBuildingMembership(resourceName, selectedEntryIndices) {
+  const row = getC3XBaseRow('buildings_generating_resources');
+  if (!row || !resourceName) return false;
+  const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0));
+  const improvementOptions = getResourceUsageOptions({ tabKey: 'improvements' });
+  const selectedNames = improvementOptions
+    .filter((opt) => selected.has(Number.parseInt(String(opt.value), 10)))
+    .map((opt) => normalizeConfigToken(opt.displayLabel || opt.label))
+    .filter(Boolean);
+  const items = parseBuildingResourceItems(row.value);
+  const existingResourceItems = items.filter((item) => c3xNameMatches(item.resource, resourceName));
+  const nextItems = items.filter((item) => !c3xNameMatches(item.resource, resourceName));
+  selectedNames.forEach((building) => {
+    const existing = existingResourceItems.find((item) => c3xNameMatches(item.building, building)) || null;
+    nextItems.push({
+      building,
+      resource: resourceName,
+      flags: existing && Array.isArray(existing.flags) ? existing.flags.slice() : []
+    });
+  });
+  const nextValue = serializeBuildingResourceItems(nextItems);
+  if (String(row.value || '').trim() === nextValue.trim()) return false;
+  row.value = nextValue;
+  setDirty(true);
+  recomputeDirtyCountForTab('base');
+  refreshDirtyUi();
+  refreshTabDirtyBadges();
+  return true;
+}
+
+function getResourceUsageSelectedEntries(spec, resourceIndex, resourceEntry = null) {
+  const resourceName = getResourceUsageResourceName(resourceEntry);
+  if (spec && spec.kind === 'sectionList') {
+    const resourceKey = resourceName.toLowerCase();
+    if (!resourceKey) return [];
+    return getResourceUsageEntriesForSpec(spec).map((section, sectionIndex) => {
+      const tokens = getSectionResourceListTokens(section, spec.fieldKey);
+      const hasResource = tokens.some((token) => normalizeConfigToken(token).toLowerCase() === resourceKey);
+      if (!hasResource) return null;
+      return { section, entryIndex: sectionIndex, tokens };
+    }).filter(Boolean);
+  }
+  if (spec && spec.kind === 'sectionSingle') {
+    const resourceKey = resourceName.toLowerCase();
+    if (!resourceKey) return [];
+    return getResourceUsageEntriesForSpec(spec).map((section, sectionIndex) => {
+      const value = normalizeConfigToken(getFieldValue(section, spec.fieldKey)).toLowerCase();
+      return value && value === resourceKey ? { section, entryIndex: sectionIndex } : null;
+    }).filter(Boolean);
+  }
+  if (spec && spec.kind === 'sectionGenerated') {
+    const resourceKey = resourceName.toLowerCase();
+    if (!resourceKey) return [];
+    return getResourceUsageEntriesForSpec(spec).map((section, sectionIndex) => {
+      const stateValue = getDistrictGeneratedResourceState(section).resource.toLowerCase();
+      return stateValue && stateValue === resourceKey ? { section, entryIndex: sectionIndex } : null;
+    }).filter(Boolean);
+  }
+  if (spec && spec.kind === 'c3xBuildingResource') {
+    if (!resourceName) return [];
+    const generatedItems = getGeneratedResourceBuildingItemsForResource(resourceName);
+    if (generatedItems.length === 0) return [];
+    const generatedNames = generatedItems.map((item) => normalizeConfigToken(item.building).toLowerCase()).filter(Boolean);
+    return getResourceUsageEntriesForSpec(spec).map((entry, fallbackIdx) => {
+      const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+      const name = normalizeConfigToken(getReferenceEntryDisplayName(spec.tabKey, entry)).toLowerCase();
+      if (entryIndex == null || !name || !generatedNames.includes(name)) return null;
+      return { entry, entryIndex };
+    }).filter(Boolean);
+  }
+  if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return [];
+  return getResourceUsageEntriesForSpec(spec).map((entry, fallbackIdx) => {
+    const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+    if (entryIndex == null || !resourceUsageEntryHasResource(entry, spec, resourceIndex)) return null;
+    return { entry, entryIndex };
+  }).filter(Boolean);
+}
+
+function setResourceUsageMembership(spec, resourceIndex, selectedEntryIndices, resourceEntry = null) {
+  const resourceName = getResourceUsageResourceName(resourceEntry);
+  if (spec && spec.kind === 'sectionList') {
+    const resourceKey = resourceName.toLowerCase();
+    if (!resourceKey) return;
+    const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+      .map((value) => Number.parseInt(String(value), 10))
+      .filter((value) => Number.isFinite(value) && value >= 0));
+    let didChange = false;
+    getResourceUsageEntriesForSpec(spec).forEach((section, sectionIndex) => {
+      const tokens = getSectionResourceListTokens(section, spec.fieldKey);
+      const hasResource = tokens.some((token) => normalizeConfigToken(token).toLowerCase() === resourceKey);
+      const shouldUseResource = selected.has(sectionIndex);
+      if (shouldUseResource && !hasResource) {
+        didChange = setSectionResourceListTokens(section, spec.fieldKey, tokens.concat(resourceName)) || didChange;
+      } else if (!shouldUseResource && hasResource) {
+        didChange = setSectionResourceListTokens(
+          section,
+          spec.fieldKey,
+          tokens.filter((token) => normalizeConfigToken(token).toLowerCase() !== resourceKey)
+        ) || didChange;
+      }
+    });
+    markResourceUsageSectionDirty(spec, didChange);
+    return;
+  }
+  if (spec && spec.kind === 'sectionSingle') {
+    const resourceKey = resourceName.toLowerCase();
+    if (!resourceKey) return;
+    const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+      .map((value) => Number.parseInt(String(value), 10))
+      .filter((value) => Number.isFinite(value) && value >= 0));
+    let didChange = false;
+    getResourceUsageEntriesForSpec(spec).forEach((section, sectionIndex) => {
+      const value = normalizeConfigToken(getFieldValue(section, spec.fieldKey)).toLowerCase();
+      const hasResource = value && value === resourceKey;
+      const shouldUseResource = selected.has(sectionIndex);
+      if (shouldUseResource && !hasResource) {
+        didChange = setSectionFieldValueWithoutUndo(section, spec.fieldKey, quoteConfigToken(resourceName)) || didChange;
+      } else if (!shouldUseResource && hasResource) {
+        didChange = setSectionFieldValueWithoutUndo(section, spec.fieldKey, '') || didChange;
+      }
+    });
+    markResourceUsageSectionDirty(spec, didChange);
+    return;
+  }
+  if (spec && spec.kind === 'sectionGenerated') {
+    const resourceKey = resourceName.toLowerCase();
+    if (!resourceKey) return;
+    const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+      .map((value) => Number.parseInt(String(value), 10))
+      .filter((value) => Number.isFinite(value) && value >= 0));
+    let didChange = false;
+    getResourceUsageEntriesForSpec(spec).forEach((section, sectionIndex) => {
+      const current = getDistrictGeneratedResourceState(section);
+      const hasResource = current.resource && current.resource.toLowerCase() === resourceKey;
+      const shouldGenerateResource = selected.has(sectionIndex);
+      if (shouldGenerateResource && !hasResource) {
+        didChange = setDistrictGeneratedResourceValue(section, resourceName, current.flags) || didChange;
+      } else if (!shouldGenerateResource && hasResource) {
+        didChange = setDistrictGeneratedResourceValue(section, '', []) || didChange;
+      }
+    });
+    markResourceUsageSectionDirty(spec, didChange);
+    return;
+  }
+  if (spec && spec.kind === 'c3xBuildingResource') {
+    const didChange = setGeneratedResourceBuildingMembership(resourceName, selectedEntryIndices);
+    if (didChange) state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    return;
+  }
+  if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return;
+  const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0));
+  let didChange = false;
+  getResourceUsageEntriesForSpec(spec).forEach((entry, fallbackIdx) => {
+    const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+    if (entryIndex == null) return;
+    const shouldUseResource = selected.has(entryIndex);
+    const hasResource = resourceUsageEntryHasResource(entry, spec, resourceIndex);
+    if (shouldUseResource && !hasResource) {
+      const openField = getResourceUsageOpenField(entry, spec);
+      if (!openField) return;
+      openField.value = String(resourceIndex);
+      setResourceUsageReferenceTarget(openField, resourceEntry, resourceIndex);
+      didChange = true;
+    } else if (!shouldUseResource && hasResource) {
+      getResourceUsageFields(entry, spec).forEach((field) => {
+        if (resolveResourceIndexFromValue(field && field.value) !== resourceIndex) return;
+        field.value = '-1';
+        setFieldReferenceTargetMeta(field, 'resources', null, '-1', []);
+        didChange = true;
+      });
+    }
+  });
+  if (!didChange) return;
+  setDirty(true);
+  if (isResourceUsageBiqStructureGroup(spec)) {
+    recomputeDirtyCountForTab(getResourceUsageDirtyTabKey(spec));
+  } else {
+    rebuildReferenceDirtyCacheForTab(spec.tabKey);
+  }
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+}
+
+function markResourceUsageSectionDirty(spec, didChange) {
+  if (!didChange) return;
+  setDirty(true);
+  recomputeDirtyCountForTab(spec.tabKey);
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+}
+
+function rememberResourceUsageUndoSnapshot(spec) {
+  if (spec && spec.kind === 'c3xBuildingResource') {
+    rememberUndoSnapshotForKey(`BASE:${String(spec.baseKey || '').trim()}`);
+    return;
+  }
+  if (isResourceUsageSectionGroup(spec)) {
+    rememberUndoSnapshotForKey(`SECTION_TAB:${String(spec.tabKey || '').trim()}`);
+    return;
+  }
+  if (isResourceUsageBiqStructureGroup(spec)) {
+    const dirtyTabKey = getResourceUsageDirtyTabKey(spec);
+    rememberUndoSnapshotForKey(dirtyTabKey ? `SECTION_TAB:${dirtyTabKey}` : '');
+    return;
+  }
+  rememberUndoSnapshotForKey(`RESOURCE_USAGE_TAB:${String(spec && spec.tabKey || '').trim()}`);
+}
+
+function isResourceUsageSpecEditable(spec, referenceEditable) {
+  if (spec && spec.kind === 'c3xBuildingResource') return canEditC3XBaseRows(getC3XBaseRow(spec.baseKey));
+  if (isResourceUsageSectionGroup(spec)) return canEditC3XConfigTab(spec.tabKey);
+  return !!referenceEditable;
+}
+
+function getResourceUsageAddOptions(spec, resourceIndex, resourceEntry, selectedIndices, allOptions) {
+  const selected = new Set((Array.isArray(selectedIndices) ? selectedIndices : []).map((idx) => Number(idx)));
+  const source = Array.isArray(allOptions) ? allOptions : getResourceUsageOptions(spec, resourceIndex, resourceEntry);
+  if (spec && !isResourceUsageSectionGroup(spec) && spec.kind !== 'c3xBuildingResource') {
+    return source.filter((opt) => {
+      const idx = Number.parseInt(String(opt && opt.value), 10);
+      if (!Number.isFinite(idx) || selected.has(idx)) return false;
+      return canResourceUsageEntryAcceptResource(opt.entry, spec, resourceIndex);
+    });
+  }
+  return source.filter((opt) => {
+    const idx = Number.parseInt(String(opt && opt.value), 10);
+    return Number.isFinite(idx) && !selected.has(idx);
+  });
+}
+
+function navigateToResourceUsageBiqStructureTarget(spec, target) {
+  return navigateToTechnologyUnlockBiqStructureTarget(spec, target);
+}
+
+function refreshResourceUsageBoardsInPlace(anchor, resourceEntry, referenceEditable) {
+  const currentBoards = anchor && typeof anchor.closest === 'function'
+    ? anchor.closest('.resource-usage-boards')
+    : null;
+  if (!currentBoards || !currentBoards.isConnected) return false;
+  const selectedBaseIndex = Math.max(0, Number(state.referenceSelection.resources || 0));
+  const selectedEntry = resourceEntry
+    || (state.bundle && state.bundle.tabs && state.bundle.tabs.resources && Array.isArray(state.bundle.tabs.resources.entries)
+      ? state.bundle.tabs.resources.entries[selectedBaseIndex]
+      : null);
+  if (!selectedEntry) return false;
+  const nextBoards = renderResourceUsageBoards({
+    entry: selectedEntry,
+    selectedBaseIndex,
+    referenceEditable
+  });
+  if (nextBoards) currentBoards.replaceWith(nextBoards);
+  else currentBoards.remove();
+  updateSaveButtonLabel();
+  updateInlineHistoryNavVisibility();
+  return true;
+}
+
+function renderResourceUsagePicker({
+  spec,
+  resourceIndex,
+  resourceEntry,
+  selectedIndices,
+  currentValue,
+  referenceEditable,
+  mode,
+  allOptions = null
+}) {
+  const sourceOptions = Array.isArray(allOptions) ? allOptions : getResourceUsageOptions(spec, resourceIndex, resourceEntry);
+  const options = mode === 'add'
+    ? getResourceUsageAddOptions(spec, resourceIndex, resourceEntry, selectedIndices, sourceOptions)
+    : sourceOptions;
+  if (mode === 'add' && options.length === 0) return null;
+  const isSectionGroup = isResourceUsageSectionGroup(spec);
+  const isBiqStructureGroup = isResourceUsageBiqStructureGroup(spec);
+  const picker = createReferencePicker({
+    options,
+    targetTabKey: isSectionGroup || isBiqStructureGroup ? '' : spec.tabKey,
+    currentValue: mode === 'add' ? '-1' : String(currentValue),
+    searchPlaceholder: mode === 'add' ? `Add ${spec.title.toLowerCase()}...` : `Search ${spec.title.toLowerCase()}...`,
+    noneLabel: mode === 'add' ? 'Add...' : '(none)',
+    includeNone: true,
+    resetAfterSelect: mode === 'add',
+    showOptionThumbs: true,
+    resolveJumpTarget: (isSectionGroup || isBiqStructureGroup) ? ((option) => option && option.jumpTarget) : null,
+    onJump: (isSectionGroup || isBiqStructureGroup) ? ((target) => {
+      if (isSectionGroup && target && Number.isFinite(Number(target.districtIndex))) navigateToDistrict(Number(target.districtIndex));
+      if (isBiqStructureGroup) navigateToResourceUsageBiqStructureTarget(spec, target);
+    }) : null,
+    renderOptionThumb: isSectionGroup ? (({ holder, option }) => {
+      const section = option && option.section;
+      if (!holder || !section) return false;
+      loadDistrictRepresentativePreview(section, holder, 28);
+      return true;
+    }) : (isBiqStructureGroup ? (({ holder, option }) => (
+      renderTechnologyUnlockBiqStructureThumb(spec, holder, option)
+    )) : null),
+    readOnly: !referenceEditable,
+    onSelect: referenceEditable ? (value) => {
+      const nextIndex = Number.parseInt(String(value), 10);
+      if (mode === 'add') {
+        if (!Number.isFinite(nextIndex) || nextIndex < 0) return;
+        rememberResourceUsageUndoSnapshot(spec);
+        setResourceUsageMembership(spec, resourceIndex, selectedIndices.concat(nextIndex), resourceEntry);
+        if (!refreshResourceUsageBoardsInPlace(picker, resourceEntry, referenceEditable)) {
+          renderActiveTab({ preserveTabScroll: true });
+        }
+        return;
+      }
+      const currentIndex = Number.parseInt(String(currentValue), 10);
+      rememberResourceUsageUndoSnapshot(spec);
+      setResourceUsageMembership(
+        spec,
+        resourceIndex,
+        replaceTechnologyUnlockSelection(selectedIndices, currentIndex, nextIndex),
+        resourceEntry
+      );
+      if (!refreshResourceUsageBoardsInPlace(picker, resourceEntry, referenceEditable)) {
+        renderActiveTab({ preserveTabScroll: true });
+      }
+    } : null
+  });
+  picker.classList.add('technology-unlock-picker', 'resource-usage-picker');
+  if (mode === 'add') picker.classList.add('technology-unlock-add-picker', 'resource-usage-add-picker');
+  return picker;
+}
+
+function makeResourceUsageDeferredPicker({
+  spec,
+  resourceIndex,
+  resourceEntry,
+  selectedIndices,
+  currentValue,
+  referenceEditable,
+  mode,
+  allOptions
+}) {
+  const currentKey = String(currentValue);
+  const selected = (Array.isArray(allOptions) ? allOptions : [])
+    .find((opt) => String(opt && opt.value) === currentKey) || null;
+  const labelText = String((selected && (selected.displayLabel || selected.label)) || spec.title || '').trim() || '(none)';
+  const host = document.createElement('div');
+  host.className = 'tech-picker technology-unlock-picker resource-usage-picker technology-unlock-picker-deferred';
+  const head = document.createElement('div');
+  head.className = 'tech-picker-head';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tech-picker-btn';
+  button.tabIndex = -1;
+  button.setAttribute('aria-label', labelText);
+  const thumb = document.createElement('span');
+  thumb.className = 'entry-thumb';
+  const label = document.createElement('span');
+  label.className = 'tech-picker-btn-label';
+  label.textContent = labelText;
+  label.title = labelText;
+  button.appendChild(thumb);
+  button.appendChild(label);
+  head.appendChild(button);
+  host.appendChild(head);
+
+  let mounted = false;
+  let observer = null;
+  const mount = () => {
+    if (mounted) return;
+    mounted = true;
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    const picker = renderResourceUsagePicker({
+      spec,
+      resourceIndex,
+      resourceEntry,
+      selectedIndices,
+      currentValue,
+      referenceEditable,
+      mode,
+      allOptions
+    });
+    if (picker && host.parentElement) host.replaceWith(picker);
+  };
+
+  host.addEventListener('pointerenter', mount, { once: true });
+  host.addEventListener('focusin', mount, { once: true });
+  if (typeof window !== 'undefined' && typeof window.IntersectionObserver === 'function') {
+    observer = new window.IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry && entry.isIntersecting)) mount();
+    }, { root: null, rootMargin: '220px 0px', threshold: 0.01 });
+    observer.observe(host);
+  } else if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(mount);
+  } else {
+    mount();
+  }
+  return host;
+}
+
+function renderResourceUsageGroup(spec, resourceIndex, resourceEntry, referenceEditable) {
+  const cell = document.createElement('div');
+  cell.className = 'technology-unlock-cell resource-usage-cell';
+  cell.dataset.sectionLabel = spec.title;
+  const label = document.createElement('label');
+  label.className = 'field-meta technology-unlock-cell-label resource-usage-cell-label';
+  const strong = document.createElement('strong');
+  strong.textContent = spec.title;
+  label.appendChild(strong);
+  cell.appendChild(label);
+
+  const groupEditable = isResourceUsageSpecEditable(spec, referenceEditable);
+  const selectedItems = getResourceUsageSelectedEntries(spec, resourceIndex, resourceEntry);
+  const selectedIndices = selectedItems.map((item) => item.entryIndex);
+  const allOptions = getResourceUsageOptions(spec, resourceIndex, resourceEntry);
+  const pickerList = document.createElement('div');
+  pickerList.className = 'technology-unlock-picker-list resource-usage-picker-list';
+  selectedItems.forEach((item, idx) => {
+    const pickerConfig = {
+      spec,
+      resourceIndex,
+      resourceEntry,
+      selectedIndices,
+      currentValue: item.entryIndex,
+      referenceEditable: groupEditable,
+      mode: 'selected',
+      allOptions
+    };
+    const picker = idx < RESOURCE_USAGE_EAGER_SELECTED_PICKERS
+      ? renderResourceUsagePicker(pickerConfig)
+      : makeResourceUsageDeferredPicker(pickerConfig);
+    if (picker) pickerList.appendChild(picker);
+  });
+  cell.appendChild(pickerList);
+
+  if (groupEditable) {
+    const addPicker = renderResourceUsagePicker({
+      spec,
+      resourceIndex,
+      resourceEntry,
+      selectedIndices,
+      currentValue: -1,
+      referenceEditable: groupEditable,
+      mode: 'add',
+      allOptions
+    });
+    if (addPicker) cell.appendChild(addPicker);
+  }
+
+  return cell;
+}
+
+function renderResourceUsageBoard(titleText, groups, resourceIndex, resourceEntry, referenceEditable) {
+  const board = document.createElement('div');
+  board.className = 'technology-unlocks-board resource-usage-board';
+  const title = document.createElement('label');
+  title.className = 'field-meta technology-top-cell-label resource-usage-board-label';
+  const strong = document.createElement('strong');
+  strong.textContent = titleText;
+  title.appendChild(strong);
+  board.appendChild(title);
+  const grid = document.createElement('div');
+  grid.className = 'technology-unlocks-grid resource-usage-grid';
+  groups.forEach((spec) => {
+    if (getResourceUsageItemCount(spec) === 0) return;
+    grid.appendChild(renderResourceUsageGroup(spec, resourceIndex, resourceEntry, referenceEditable));
+  });
+  if (grid.childElementCount === 0) return null;
+  board.appendChild(grid);
+  return board;
+}
+
+function renderResourceUsageBoards({ entry, selectedBaseIndex, referenceEditable }) {
+  const resourceIndex = getResourceUsageResourceIndex(entry, selectedBaseIndex);
+  const resourceName = getResourceUsageResourceName(entry);
+  if (resourceIndex == null && !resourceName) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'resource-usage-boards';
+  const requiredBy = renderResourceUsageBoard('Required By', RESOURCE_REQUIRED_BY_GROUPS, resourceIndex, entry, referenceEditable);
+  const generatedBy = renderResourceUsageBoard('Generated By', RESOURCE_GENERATED_BY_GROUPS, resourceIndex, entry, referenceEditable);
+  if (requiredBy) wrap.appendChild(requiredBy);
+  if (generatedBy) wrap.appendChild(generatedBy);
+  return wrap.childElementCount > 0 ? wrap : null;
+}
+
 const TECHNOLOGY_TOP_FIELD_KEYS = new Set([
   'civilopediaentry',
   'era',
@@ -32555,6 +33359,7 @@ function showPediaLinkPreview(anchor, civilopediaKey, fallbackLabel = '') {
 }
 
 const CIVILOPEDIA_LINK_PATTERN = /\$LINK<([^=<>]+)=([^<>]+)>/g;
+const CIVILOPEDIA_LINK_TARGET_PREFIX_RE = /^(?:RACE|TECH|GOOD|BLDG|PRTO|GCON|TERR|TFRM)_/i;
 
 function replaceFirstCivilopediaLinkTarget(text, badTarget, goodTarget) {
   const source = String(text || '');
@@ -32600,9 +33405,13 @@ function appendCivilopediaInlineNodes(container, value, options = {}) {
     a.textContent = label;
     const actualKey = getCivilopediaActualLinkKey(key);
     const hasCaseMismatch = !!actualKey && actualKey.toUpperCase() === key.toUpperCase() && actualKey !== key;
+    const hasMissingTarget = !!key && !actualKey && CIVILOPEDIA_LINK_TARGET_PREFIX_RE.test(key);
     if (hasCaseMismatch) {
       a.classList.add('pedia-link-case-warning');
       a.title = `Civ3 link target casing mismatch: ${key} should be ${actualKey}.`;
+    } else if (hasMissingTarget) {
+      a.classList.add('pedia-link-missing-warning');
+      a.title = `No matching entry for ${key}.`;
     }
     a.addEventListener('mouseenter', () => {
       showPediaLinkPreview(a, key, label);
@@ -37921,8 +38730,15 @@ function renderReferenceTab(tab, tabKey) {
   let improvementUtilityStack = null;
   let technologyUtilityStack = null;
   let resourceUtilityStack = null;
+  let resourceUsageBoards = null;
+  let resourceIdentityTechStack = null;
   let civilizationUtilityStack = null;
   let governmentUtilityStack = null;
+    if (tabKey === 'resources') {
+      identityMeta.classList.add('resource-identity-stack');
+      resourceIdentityTechStack = document.createElement('div');
+      resourceIdentityTechStack.className = 'resource-identity-tech-stack';
+    }
     const identityGrid = document.createElement('div');
     identityGrid.className = 'kv-grid';
     if (tabKey === 'improvements') identityGrid.classList.add('improvement-identity-grid');
@@ -38154,6 +38970,11 @@ function renderReferenceTab(tab, tabKey) {
     const techCtx = buildIdentityTechContext(tabKey, entry);
     const identityValues = formatIdentityTechValues(techCtx);
     const hasIdentityTechInfo = techCtx.fields.length > 0 || identityValues.length > 0;
+    const appendIdentityTechNode = (node) => {
+      if (!node) return;
+      if (resourceIdentityTechStack) resourceIdentityTechStack.appendChild(node);
+      else identityGrid.appendChild(node);
+    };
     if (hasIdentityTechInfo && tabKey !== 'units' && tabKey !== 'technologies') {
       if (!referenceEditable) {
         const techData = getTechTreeData(getTechEntries());
@@ -38202,16 +39023,16 @@ function renderReferenceTab(tab, tabKey) {
             });
           });
           attachRichTooltip(links, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
-          identityGrid.appendChild(links);
+          appendIdentityTechNode(links);
         } else {
           depsLine.innerHTML = `<strong>${techCtx.label}:</strong> ${formatReferenceList(identityValues)}`;
           attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
-          identityGrid.appendChild(depsLine);
+          appendIdentityTechNode(depsLine);
         }
       } else {
         depsLine.innerHTML = `<strong>${techCtx.label}:</strong>${techCtx.fields.length > 0 ? '' : ` ${formatReferenceList(identityValues)}`}`;
         attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
-        identityGrid.appendChild(depsLine);
+        appendIdentityTechNode(depsLine);
       }
     }
     if (tabKey !== 'units' && tabKey !== 'technologies' && referenceEditable && techCtx.editable && techCtx.fields.length > 0) {
@@ -38235,9 +39056,9 @@ function renderReferenceTab(tab, tabKey) {
         }, identityEntryUndoKey);
         techEditRow.appendChild(picker);
       });
-      identityGrid.appendChild(techEditRow);
+      appendIdentityTechNode(techEditRow);
     }
-    identityMeta.appendChild(identityGrid);
+    if (tabKey !== 'resources') identityMeta.appendChild(identityGrid);
     const artGrid = document.createElement('div');
     artGrid.className = 'kv-grid';
     if (secondaryArtSlots.length > 0) {
@@ -38406,6 +39227,11 @@ function renderReferenceTab(tab, tabKey) {
     } else if (tabKey === 'resources') {
       const utilityStack = document.createElement('div');
       utilityStack.className = 'unit-utility-stack';
+      resourceUsageBoards = renderResourceUsageBoards({
+        entry,
+        selectedBaseIndex,
+        referenceEditable
+      });
       const pediaOpenKey = 'resources:civilopedia';
       const pediaDetails = createDeferredReferenceUtilityDetails({
         titleText: 'Civilopedia',
@@ -38534,6 +39360,14 @@ function renderReferenceTab(tab, tabKey) {
       civilizationUtilityStack = utilityStack.childElementCount > 0 ? utilityStack : null;
     } else if (secondaryArtSlots.length > 0) {
       identityMeta.appendChild(artGrid);
+    }
+    if (tabKey === 'resources') {
+      identityMeta.appendChild(identityGrid);
+      if (resourceUtilityStack) identityMeta.appendChild(resourceUtilityStack);
+      if (resourceIdentityTechStack && resourceIdentityTechStack.childElementCount > 0) {
+        identityMeta.appendChild(resourceIdentityTechStack);
+      }
+      if (resourceUsageBoards) identityMeta.appendChild(resourceUsageBoards);
     }
     textCol.appendChild(identityMeta);
 
@@ -38686,8 +39520,6 @@ function renderReferenceTab(tab, tabKey) {
       if (civilizationUtilityStack) textCol.appendChild(civilizationUtilityStack);
     } else if (tabKey === 'technologies') {
       if (technologyUtilityStack) textCol.appendChild(technologyUtilityStack);
-    } else if (tabKey === 'resources') {
-      if (resourceUtilityStack) textCol.appendChild(resourceUtilityStack);
     } else if (tabKey === 'governments') {
       if (governmentUtilityStack) textCol.appendChild(governmentUtilityStack);
     } else if (tabKey !== 'units' && referenceEditable) {
@@ -57919,6 +58751,7 @@ async function refreshCurrentBundleFromDisk() {
     return false;
   }
   invalidatePreviewStateForReload();
+  await refreshScenarioSelectOptions();
   await loadBundleAndRender({
     viewSnapshot: currentViewSnapshot,
     loadingText: 'Refreshing...'

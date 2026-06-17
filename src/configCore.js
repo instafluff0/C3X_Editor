@@ -8143,6 +8143,11 @@ function buildScienceAdvisorArrowRouteKey(eraIndex, sourceId, targetId) {
   return `${Number(eraIndex) || 0}:${Number(sourceId)}->${Number(targetId)}`;
 }
 
+function getScienceAdvisorArrowRouteEraKey(routeKey) {
+  const match = String(routeKey || '').match(/^(\d+):/);
+  return match ? String(Number.parseInt(match[1], 10) || 0) : '';
+}
+
 function normalizeScienceAdvisorOverrideRoute(route) {
   const points = Array.isArray(route && route.points) ? route.points : [];
   const normalized = points
@@ -8224,15 +8229,52 @@ function loadScienceAdvisorArrowMetadata(targetContentRoot) {
   };
 }
 
-function buildScienceAdvisorArrowMetadataWrite({ targetContentRoot, routeOverrides = {}, routeSnapshots = {}, baselineRouteHints = {} }) {
+function mergeScienceAdvisorArrowMetadataForDirtyEras(existingMap, incomingMap, dirtyEraKeys) {
+  const out = {};
+  const dirtyKeys = dirtyEraKeys instanceof Set ? dirtyEraKeys : new Set();
+  Object.entries(existingMap && typeof existingMap === 'object' ? existingMap : {}).forEach(([key, value]) => {
+    const eraKey = getScienceAdvisorArrowRouteEraKey(key);
+    if (eraKey && !dirtyKeys.has(eraKey)) out[key] = value;
+  });
+  Object.entries(incomingMap && typeof incomingMap === 'object' ? incomingMap : {}).forEach(([key, value]) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+function buildScienceAdvisorArrowMetadataWrite({
+  targetContentRoot,
+  routeOverrides = {},
+  routeSnapshots = {},
+  baselineRouteHints = {},
+  dirtyEraIndexes = []
+}) {
   const root = String(targetContentRoot || '').trim();
   if (!root) return null;
-  const metadata = {
-    format: SCIENCE_ADVISOR_ARROW_METADATA_FORMAT,
-    version: 1,
+  const dirtyEraKeys = new Set((Array.isArray(dirtyEraIndexes) ? dirtyEraIndexes : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0)
+    .map((value) => String(value)));
+  const incoming = {
     routeOverrides: normalizeScienceAdvisorRouteOverrides(routeOverrides),
     routeSnapshots: normalizeScienceAdvisorRouteOverrides(routeSnapshots),
     baselineRouteHints: normalizeScienceAdvisorRouteHints(baselineRouteHints)
+  };
+  const existing = dirtyEraKeys.size > 0
+    ? loadScienceAdvisorArrowMetadata(root)
+    : null;
+  const metadata = {
+    format: SCIENCE_ADVISOR_ARROW_METADATA_FORMAT,
+    version: 1,
+    routeOverrides: existing && existing.exists
+      ? mergeScienceAdvisorArrowMetadataForDirtyEras(existing.routeOverrides, incoming.routeOverrides, dirtyEraKeys)
+      : incoming.routeOverrides,
+    routeSnapshots: existing && existing.exists
+      ? mergeScienceAdvisorArrowMetadataForDirtyEras(existing.routeSnapshots, incoming.routeSnapshots, dirtyEraKeys)
+      : incoming.routeSnapshots,
+    baselineRouteHints: existing && existing.exists
+      ? mergeScienceAdvisorArrowMetadataForDirtyEras(existing.baselineRouteHints, incoming.baselineRouteHints, dirtyEraKeys)
+      : incoming.baselineRouteHints
   };
   return {
     kind: 'scienceAdvisorArrowMetadata',
@@ -9981,7 +10023,8 @@ function buildSavePlan(payload) {
         targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
         routeOverrides: payload.techTreeArrowRouteOverrides || {},
         routeSnapshots: payload.techTreeArrowRouteSnapshots || {},
-        baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {}
+        baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {},
+        dirtyEraIndexes: payload.techTreeArrowDirtyEras || []
       });
       if (metadataWrite) {
         const protectErr = failIfProtected(metadataWrite.path, 'Science Advisor arrow metadata target');

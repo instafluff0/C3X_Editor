@@ -415,6 +415,44 @@ function getRawRecordInt(record, key, fallback = NaN) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function makeIndexedMaskCsv(count, enabledIndices) {
+  const enabled = new Set((Array.isArray(enabledIndices) ? enabledIndices : [])
+    .map((idx) => Number.parseInt(String(idx), 10))
+    .filter((idx) => Number.isFinite(idx) && idx >= 0));
+  const total = Math.max(0, Number.parseInt(String(count), 10) || 0);
+  const values = [];
+  for (let i = 0; i < total; i += 1) values.push(enabled.has(i) ? '1' : '0');
+  return values.join(',');
+}
+
+function rawBitmaskHasIndex(mask, index) {
+  const idx = Number.parseInt(String(index), 10);
+  if (!Number.isFinite(idx) || idx < 0) return false;
+  if (Buffer.isBuffer(mask)) {
+    const byteIndex = idx >> 3;
+    if (byteIndex >= mask.length) return false;
+    return (mask[byteIndex] & (1 << (idx & 7))) !== 0;
+  }
+  const text = String(mask == null ? '' : mask).trim();
+  if (/[, \t\r\n]/.test(text)) {
+    const parts = text.split(/[,\s]+/).filter(Boolean);
+    return Number.parseInt(String(parts[idx] || '0'), 10) !== 0;
+  }
+  const parsed = Number.parseInt(text, 10);
+  if (!Number.isFinite(parsed) || idx >= 32) return false;
+  const unsigned = parsed < 0 ? (parsed + 0x100000000) >>> 0 : parsed >>> 0;
+  return ((unsigned >>> idx) & 1) === 1;
+}
+
+function setReferenceEntryFlavorMask(entry, flavorCount, enabledIndices) {
+  const enabled = new Set((Array.isArray(enabledIndices) ? enabledIndices : [])
+    .map((idx) => Number.parseInt(String(idx), 10))
+    .filter((idx) => Number.isFinite(idx) && idx >= 0));
+  for (let idx = 0; idx < flavorCount; idx += 1) {
+    setFieldVal(entry, `flavor_${idx + 1}`, enabled.has(idx) ? 'true' : 'false');
+  }
+}
+
 function getRawRecordsByCivilopediaKey(bundle, sectionCode, key) {
   const section = getSection(bundle, sectionCode);
   const target = String(key || '').trim().toUpperCase();
@@ -4651,6 +4689,232 @@ test('Government references preserve projected values when saved after each CRUD
   assert.equal(getRawRecordInt({ fields: clearedImprovement.biqFields }, 'reqgovernment', -1), -1);
   assert.ok(getEntry(bundle, 'governments', govA), 'earlier added government should survive the sequence');
 });
+
+test('Flavor CRUD remaps civilization, technology, and improvement flavor fields after save/reload', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  let bundle = reload(c3xDir, biqPath);
+  const baseFlavorCount = countSection(bundle, 'FLAV');
+  if (baseFlavorCount + 3 >= 32) return t.skip('Fixture does not have enough free flavor bit slots for this regression');
+
+  const flavorA = makeShortTestRef('FLAV_', 'PFXA');
+  const flavorB = makeShortTestRef('FLAV_', 'PFXB');
+  const flavorC = makeShortTestRef('FLAV_', 'PFXC');
+  for (const key of [flavorA, flavorB, flavorC]) {
+    const save = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3xDir,
+      civ3Path: CIV3_ROOT,
+      scenarioPath: biqPath,
+      tabs: {
+        rules: { recordOps: [{ op: 'add', sectionCode: 'FLAV', newRecordRef: key }] }
+      }
+    });
+    assert.equal(save.ok, true, String(save.error || `failed to add ${key}`));
+    bundle = reload(c3xDir, biqPath);
+    assert.equal(countSection(bundle, 'FLAV') >= baseFlavorCount + 1, true, `${key} should survive immediate save/reload`);
+  }
+
+  bundle = reload(c3xDir, biqPath);
+  const flavorBIndex = baseFlavorCount + 1;
+  const flavorCIndex = baseFlavorCount + 2;
+  const flavorCount = countSection(bundle, 'FLAV');
+  assert.equal(flavorCount, baseFlavorCount + 3, 'expected three saved test flavors before deletion');
+
+  const civHost = (bundle.tabs.civilizations.entries || []).find((entry) => findBiqField(entry, `flavor_${flavorCIndex + 1}`));
+  const techHost = (bundle.tabs.technologies.entries || []).find((entry) => findBiqField(entry, `flavor_${flavorCIndex + 1}`));
+  const improvementHost = (bundle.tabs.improvements.entries || []).find((entry) => findBiqField(entry, `flavor_${flavorCIndex + 1}`));
+  assert.ok(civHost, 'expected civilization flavor fields');
+  assert.ok(techHost, 'expected technology flavor fields');
+  assert.ok(improvementHost, 'expected improvement flavor fields');
+
+  [civHost, techHost, improvementHost].forEach((entry) => {
+    setReferenceEntryFlavorMask(entry, flavorCount, [flavorBIndex, flavorCIndex]);
+  });
+  const setFlavorRefs = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['civilizations', 'technologies', 'improvements'],
+    tabs: {
+      civilizations: { entries: [civHost] },
+      technologies: { entries: [techHost] },
+      improvements: { entries: [improvementHost] }
+    }
+  });
+  assert.equal(setFlavorRefs.ok, true, String(setFlavorRefs.error || 'flavor reference setup save failed'));
+
+  const deleteMiddleFlavor = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      rules: { recordOps: [{ op: 'delete', sectionCode: 'FLAV', recordRef: `@INDEX:${flavorBIndex}` }] }
+    }
+  });
+  assert.equal(deleteMiddleFlavor.ok, true, String(deleteMiddleFlavor.error || 'delete middle flavor failed'));
+
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(countSection(bundle, 'FLAV'), baseFlavorCount + 2, 'middle flavor delete should persist');
+  const expectedShiftedField = `flavor_${flavorBIndex + 1}`;
+  const removedTrailingField = `flavor_${flavorCIndex + 1}`;
+  [
+    ['civilization', getEntry(bundle, 'civilizations', civHost.civilopediaKey)],
+    ['technology', getEntry(bundle, 'technologies', techHost.civilopediaKey)],
+    ['improvement', getEntry(bundle, 'improvements', improvementHost.civilopediaKey)]
+  ].forEach(([label, entry]) => {
+    assert.ok(entry, `expected reloaded ${label}`);
+    assert.equal(fieldVal(entry, expectedShiftedField), 'true', `${label} should keep the surviving later flavor after it shifts down`);
+    assert.equal(fieldVal(entry, removedTrailingField), undefined, `${label} should not keep a stale flavor field beyond final FLAV count`);
+    assert.equal(rawBitmaskHasIndex(fieldVal(entry, 'flavors'), flavorCIndex), false, `${label} raw flavors should not keep stale deleted-position drift`);
+  });
+});
+
+test('Terrain and worker-job references preserve saved BIQ values across resource, tech, and worker CRUD prefixes', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  let bundle = reload(c3xDir, biqPath);
+
+  const addReferenceRecord = (tabKey, key) => {
+    const save = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3xDir,
+      civ3Path: CIV3_ROOT,
+      scenarioPath: biqPath,
+      tabs: { [tabKey]: { recordOps: [{ op: 'add', newRecordRef: key }] } }
+    });
+    assert.equal(save.ok, true, String(save.error || `failed to add ${key}`));
+    bundle = reload(c3xDir, biqPath);
+    assert.ok(getEntry(bundle, tabKey, key), `${key} should survive immediate save/reload`);
+  };
+  const addWorkerJob = (key, expectedCount) => {
+    const save = saveBundle({
+      mode: 'scenario',
+      c3xPath: c3xDir,
+      civ3Path: CIV3_ROOT,
+      scenarioPath: biqPath,
+      tabs: { terrain: { recordOps: [{ op: 'add', sectionCode: 'TFRM', newRecordRef: key }] } }
+    });
+    assert.equal(save.ok, true, String(save.error || `failed to add worker job ${key}`));
+    bundle = reload(c3xDir, biqPath);
+    assert.equal(countSection(bundle, 'TFRM'), expectedCount, `${key} should survive immediate save/reload`);
+  };
+
+  const resourceBaseCount = countSection(bundle, 'GOOD');
+  const techBaseCount = countSection(bundle, 'TECH');
+  const workerBaseCount = countSection(bundle, 'TFRM');
+  const resourceA = makeShortTestRef('GOOD_', 'TERRA');
+  const resourceB = makeShortTestRef('GOOD_', 'TERRB');
+  const resourceC = makeShortTestRef('GOOD_', 'TERRC');
+  const techA = makeShortTestRef('TECH_', 'TERRA');
+  const techB = makeShortTestRef('TECH_', 'TERRB');
+  const techC = makeShortTestRef('TECH_', 'TERRC');
+  const workerA = makeShortTestRef('TFRM_', 'TERRA');
+  const workerB = makeShortTestRef('TFRM_', 'TERRB');
+  const workerC = makeShortTestRef('TFRM_', 'TERRC');
+
+  [resourceA, resourceB, resourceC].forEach((key) => addReferenceRecord('resources', key));
+  [techA, techB, techC].forEach((key) => addReferenceRecord('technologies', key));
+  [workerA, workerB, workerC].forEach((key, offset) => addWorkerJob(key, workerBaseCount + offset + 1));
+
+  bundle = reload(c3xDir, biqPath);
+  const resourceBIndex = resourceBaseCount + 1;
+  const resourceCIndex = resourceBaseCount + 2;
+  const techBIndex = techBaseCount + 1;
+  const techCIndex = techBaseCount + 2;
+  const workerBIndex = workerBaseCount + 1;
+  const workerCIndex = workerBaseCount + 2;
+  assert.ok(resourceBIndex >= 0 && techBIndex >= 0, 'expected test indexes');
+  const terrSection = getTabSection(bundle, 'terrain', 'TERR');
+  const tfrmSection = getTabSection(bundle, 'terrain', 'TFRM');
+  const terrRecord = terrSection && Array.isArray(terrSection.records) ? terrSection.records[0] : null;
+  const tfrmRecord = tfrmSection && Array.isArray(tfrmSection.records) ? tfrmSection.records[0] : null;
+  assert.ok(terrRecord, 'expected terrain record');
+  assert.ok(tfrmRecord, 'expected worker-job record');
+
+  setRawRecordFieldValue(terrRecord, 'possibleResourcesMask', makeIndexedMaskCsv(countSection(bundle, 'GOOD'), [resourceCIndex]));
+  setRawRecordFieldValue(terrRecord, 'workerJob', workerCIndex);
+  setRawRecordFieldValue(tfrmRecord, 'requiredAdvance', techCIndex);
+  setRawRecordFieldValue(tfrmRecord, 'requiredResource1', resourceCIndex);
+  const setTerrainRefs = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['terrain'],
+    tabs: {
+      terrain: {
+        sections: [
+          { ...terrSection, records: [terrRecord] },
+          { ...tfrmSection, records: [tfrmRecord] }
+        ]
+      }
+    }
+  });
+  assert.equal(setTerrainRefs.ok, true, String(setTerrainRefs.error || 'terrain reference setup save failed'));
+
+  const deleteResourceB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { resources: { recordOps: [{ op: 'delete', recordRef: resourceB }] } }
+  });
+  assert.equal(deleteResourceB.ok, true, String(deleteResourceB.error || 'delete middle resource failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(getEntry(bundle, 'resources', resourceB), null, 'middle resource should be deleted');
+  const shiftedResourceCIndex = getEntryIndex(bundle, 'resources', resourceC);
+  let reTerrRecord = getTabSection(bundle, 'terrain', 'TERR').records[0];
+  let reTfrmRecord = getTabSection(bundle, 'terrain', 'TFRM').records[0];
+  assert.equal(getRawRecordInt(reTfrmRecord, 'requiredResource1'), shiftedResourceCIndex, 'TFRM required resource should track shifted resource C');
+  assert.equal(
+    rawBitmaskHasIndex(getRawRecordField(reTerrRecord, 'possibleResourcesMask').value, shiftedResourceCIndex),
+    true,
+    'TERR possible-resource mask should track shifted resource C'
+  );
+  assert.equal(
+    rawBitmaskHasIndex(getRawRecordField(reTerrRecord, 'possibleResourcesMask').value, resourceCIndex),
+    false,
+    'TERR possible-resource mask should not keep stale resource C bit'
+  );
+
+  const deleteTechB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { technologies: { recordOps: [{ op: 'delete', recordRef: techB }] } }
+  });
+  assert.equal(deleteTechB.ok, true, String(deleteTechB.error || 'delete middle tech failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(getEntry(bundle, 'technologies', techB), null, 'middle tech should be deleted');
+  reTfrmRecord = getTabSection(bundle, 'terrain', 'TFRM').records[0];
+  assert.equal(getRawRecordInt(reTfrmRecord, 'requiredAdvance'), getEntryIndex(bundle, 'technologies', techC),
+    'TFRM required advance should track shifted tech C');
+  assert.notEqual(getRawRecordInt(reTfrmRecord, 'requiredAdvance'), techCIndex,
+    'TFRM required advance should not keep stale tech C index');
+
+  const deleteWorkerB = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: { terrain: { recordOps: [{ op: 'delete', sectionCode: 'TFRM', recordRef: `@INDEX:${workerBIndex}` }] } }
+  });
+  assert.equal(deleteWorkerB.ok, true, String(deleteWorkerB.error || 'delete middle worker job failed'));
+  bundle = reload(c3xDir, biqPath);
+  assert.equal(countSection(bundle, 'TFRM'), workerBaseCount + 2, 'middle worker job should be deleted');
+  reTerrRecord = getTabSection(bundle, 'terrain', 'TERR').records[0];
+  assert.equal(getRawRecordInt(reTerrRecord, 'workerJob'), workerCIndex - 1,
+    'TERR worker job should track shifted worker job C');
+  assert.notEqual(getRawRecordInt(reTerrRecord, 'workerJob'), workerCIndex,
+    'TERR worker job should not keep stale worker job C index');
+});
+
 test('Import Civ into base Conquests BIQ is blocked at the Civ3 32-civ limit', (t) => {
   const r = runTidesImport(t, 'civilizations', 'RACE', 'RACE_',
     (b) => b.tabs.civilizations.entries.find((e) => e.civilopediaKey === 'RACE_AMAZONIANS')

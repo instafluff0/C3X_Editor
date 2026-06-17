@@ -6147,7 +6147,8 @@ details > summary:focus-visible {
   width: 100%;
 }
 
-.technology-unlocks-board {
+.technology-unlocks-board,
+.resource-usage-board {
   display: grid;
   gap: 8px;
   padding: 12px;
@@ -6157,14 +6158,31 @@ details > summary:focus-visible {
   box-shadow: 0 8px 20px rgba(38, 28, 72, 0.05);
 }
 
-.technology-unlocks-grid {
+.resource-usage-boards {
+  display: grid;
+  gap: 12px;
+}
+
+.resource-identity-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.resource-identity-tech-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.technology-unlocks-grid,
+.resource-usage-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 10px;
   align-items: start;
 }
 
-.technology-unlock-cell {
+.technology-unlock-cell,
+.resource-usage-cell {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -6174,11 +6192,13 @@ details > summary:focus-visible {
   background: rgba(255, 255, 255, 0.82);
 }
 
-.technology-unlock-cell-label {
+.technology-unlock-cell-label,
+.resource-usage-cell-label {
   margin: 0;
 }
 
-.technology-unlock-picker-list {
+.technology-unlock-picker-list,
+.resource-usage-picker-list {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -6189,7 +6209,13 @@ details > summary:focus-visible {
 .technology-unlock-picker .tech-picker-btn,
 .technology-unlock-add-picker,
 .technology-unlock-add-picker .tech-picker-head,
-.technology-unlock-add-picker .tech-picker-btn {
+.technology-unlock-add-picker .tech-picker-btn,
+.resource-usage-picker,
+.resource-usage-picker .tech-picker-head,
+.resource-usage-picker .tech-picker-btn,
+.resource-usage-add-picker,
+.resource-usage-add-picker .tech-picker-head,
+.resource-usage-add-picker .tech-picker-btn {
   width: 100%;
   min-width: 0;
   max-width: none;
@@ -11607,7 +11633,8 @@ button.unit-ini-delete-btn:disabled {
   cursor: pointer;
 }
 
-.pedia-link-case-warning {
+.pedia-link-case-warning,
+.pedia-link-missing-warning {
   color: #b42318;
   text-decoration-line: underline;
   text-decoration-style: wavy;

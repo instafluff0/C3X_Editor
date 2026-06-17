@@ -1743,7 +1743,7 @@ function auditCivilopediaLinks(bundle, result) {
             result,
             tabKey,
             index,
-            `${label}: Civilopedia link target "${target}" has no matching local entry.`,
+            `${label}: Civilopedia link target "${target}" has no matching entry.`,
             'civilopedia-link-target-missing'
           );
           continue;
