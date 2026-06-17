@@ -730,7 +730,7 @@ test('reference CRUD captures undo before pending BIQ record ops mutate', () => 
   );
 
   assertBefore(addHandler, 'rememberUndoSnapshot();', 'ops.push({', 'reference add');
-  assertBefore(copyHandler, 'rememberUndoSnapshot();', 'ops.push({', 'reference copy');
+  assertBefore(copyHandler, 'rememberUndoSnapshot();', 'ops.push(copyOp);', 'reference copy');
   assertBefore(importHandler, 'rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);', 'tab.diplomacySlots.push({', 'reference import diplomacy');
   assertBefore(importHandler, 'rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);', 'ops.push({', 'reference import');
 });

@@ -29,9 +29,11 @@ const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..
 const BASE_BIQ = process.env.C3X_TEST_BIQ
   || path.join(CIV3_ROOT, 'Conquests', 'conquests.biq');
 const TIDES_BIQ = path.join(CIV3_ROOT, 'Conquests', 'Scenarios', 'TIDES OF CRIMSON.biq');
+const CIVILIZATION_LEGENDS_BIQ = path.join(CIV3_ROOT, 'Conquests', 'Scenarios', 'Civilization LEGENDS.biq');
 
 const BASE_BIQ_EXISTS = fs.existsSync(BASE_BIQ);
 const TIDES_BIQ_EXISTS = fs.existsSync(TIDES_BIQ);
+const CIVILIZATION_LEGENDS_BIQ_EXISTS = fs.existsSync(CIVILIZATION_LEGENDS_BIQ);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,6 +118,34 @@ function fieldVal(entry, key) {
     (field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === String(key || '').toLowerCase()
   );
   return f ? f.value : undefined;
+}
+
+function setFieldVal(entry, key, value) {
+  const field = ensureBiqField(entry, key, '');
+  field.value = String(value);
+  return field;
+}
+
+function parseReferenceIndexValue(value, fallback = NaN) {
+  const text = String(value == null ? '' : value);
+  const trailing = text.match(/\((-?\d+)\)\s*$/);
+  const match = trailing || text.match(/-?\d+/);
+  if (!match) return fallback;
+  const parsed = Number.parseInt(trailing ? match[1] : match[0], 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function makeUniqueEntryKey(entries, baseKey) {
+  const existing = new Set((Array.isArray(entries) ? entries : []).map((entry) =>
+    String(entry && entry.civilopediaKey || '').trim().toUpperCase()
+  ));
+  const base = String(baseKey || '').trim();
+  if (!existing.has(base.toUpperCase())) return base;
+  for (let i = 1; i < 1000; i += 1) {
+    const next = `${base}${i}`;
+    if (!existing.has(next.toUpperCase())) return next;
+  }
+  return `${base}${Date.now()}`;
 }
 
 function findBiqField(entry, key) {
@@ -293,6 +323,8 @@ function loadRendererImportHelpers(targetBundle) {
     'encodeAvailableToFromIndices',
     'getBiqFieldByBaseKey',
     'makeBlankReferenceFieldValue',
+    'getReferenceRecordRefForOps',
+    'makeReferenceCopyRecordOp',
     'buildNewReferenceEntryFromTemplate',
     'getImportReferenceIndexMap',
     'getTargetReferenceIndexByKey',
@@ -363,7 +395,7 @@ function makeTestBiqField(key, value) {
 function loadRendererDeleteHelpers() {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
-  const functionNames = ['getReferenceRecordRefForOps'];
+  const functionNames = ['getReferenceRecordRefForOps', 'makeReferenceCopyRecordOp'];
   const sandbox = {};
   sandbox.globalThis = sandbox;
   const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
@@ -1887,6 +1919,72 @@ test('copying a reference resets raw/display/link keys to the user-entered key',
   assert.equal(copied.linkCivilopediaKey, 'BLDG_Resin_Shop');
   assert.equal(copied.originalCivilopediaSection1, '');
   assert.equal(copied.biqFields.find((field) => field.baseKey === 'civilopediaentry').value, 'BLDG_Resin_Shop');
+  assert.equal(copied.name, 'Resin Shop');
+  assert.equal(fieldVal(copied, 'name'), 'Resin Shop');
+  assert.equal(findBiqField(copied, 'name').originalValue, 'Tincture Shop');
+});
+
+test('renderer unit copy ops use BIQ index source refs for duplicate Civilopedia keys', () => {
+  const { makeReferenceCopyRecordOp } = loadRendererDeleteHelpers();
+  const op = makeReferenceCopyRecordOp(
+    'units',
+    { civilopediaKey: 'PRTO_WAR_CHARIOT', biqIndex: 57 },
+    3,
+    'PRTO_War_Chariot_Copy'
+  );
+  assert.equal(op.op, 'copy');
+  assert.equal(op.sourceRef, '@INDEX:57');
+  assert.equal(op.newRecordRef, 'PRTO_War_Chariot_Copy');
+});
+
+test('renderer-shaped Civilization LEGENDS War Chariot copy saves and reloads with copied name and prereqs', (t) => {
+  if (!CIVILIZATION_LEGENDS_BIQ_EXISTS) {
+    t.skip('Civilization LEGENDS BIQ not available for renderer-shaped War Chariot copy regression.');
+  }
+  const setup = setupScenario(CIVILIZATION_LEGENDS_BIQ);
+  if (!setup) t.skip('Civilization LEGENDS BIQ not available for renderer-shaped War Chariot copy regression.');
+  const { c3xDir, biqPath, bundle } = setup;
+  const unitsTab = bundle.tabs.units;
+  const entries = (unitsTab && Array.isArray(unitsTab.entries)) ? unitsTab.entries : [];
+  const warChariotIndex = entries.findIndex((entry) =>
+    String(entry && entry.name || '').trim() === 'War Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT'
+  );
+  assert.ok(warChariotIndex >= 0, 'expected Civilization LEGENDS War Chariot duplicate-key unit');
+  const warChariot = entries[warChariotIndex];
+  const copyKey = makeUniqueEntryKey(entries, 'PRTO_War_Chariot_Copy_UI');
+  const copyName = 'War Chariot Copy';
+  const { buildNewReferenceEntryFromTemplate, makeReferenceCopyRecordOp } = loadRendererImportHelpers(bundle);
+  const copied = buildNewReferenceEntryFromTemplate({
+    tabKey: 'units',
+    sourceEntry: warChariot,
+    civilopediaKey: copyKey,
+    mode: 'copy',
+    displayName: copyName
+  });
+  setFieldVal(copied, 'requiredtech', '33');
+  setFieldVal(copied, 'requiredresource1', '14');
+
+  unitsTab.entries = [copied];
+  unitsTab.recordOps = [makeReferenceCopyRecordOp('units', warChariot, warChariotIndex, copyKey)];
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'War Chariot copy save failed'));
+
+  const reloaded = reload(c3xDir, biqPath);
+  const reloadedCopy = getEntry(reloaded, 'units', copyKey);
+  assert.ok(reloadedCopy, 'expected War Chariot copy after reload');
+  assert.equal(reloadedCopy.name, copyName);
+  assert.equal(fieldVal(reloadedCopy, 'name'), copyName);
+  assert.equal(parseReferenceIndexValue(fieldVal(reloadedCopy, 'requiredtech')), 33);
+  assert.equal(parseReferenceIndexValue(fieldVal(reloadedCopy, 'requiredresource1')), 14);
 });
 
 function computeDirtyReferenceIdentitySet(tabKey, currentEntries, cleanEntries) {

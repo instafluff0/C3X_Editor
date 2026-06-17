@@ -7305,6 +7305,16 @@ function getReferenceRecordRefForOps(tabKey, entry, fallbackIndex) {
   return '';
 }
 
+function makeReferenceCopyRecordOp(tabKey, selectedEntry, selectedIndex, newRecordRef) {
+  const sourceRef = getReferenceRecordRefForOps(tabKey, selectedEntry, selectedIndex)
+    || String(selectedEntry && selectedEntry.civilopediaKey || '').trim().toUpperCase();
+  return {
+    op: 'copy',
+    sourceRef,
+    newRecordRef
+  };
+}
+
 function getBiqRecordSearchTerms(sectionCode, record) {
   const terms = [];
   const fields = Array.isArray(record && record.fields) ? record.fields : [];
@@ -35300,6 +35310,20 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
       originalValue: mode === 'copy' ? civilopediaKey : ''
     };
   });
+  if (mode === 'blank' || mode === 'copy') {
+    const preferredNameKey = tabKey === 'civilizations' ? 'civilizationname' : 'name';
+    entry.biqFields = entry.biqFields.map((field) => {
+      const base = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+      if (base !== preferredNameKey) return field;
+      return {
+        ...field,
+        value: name,
+        originalValue: mode === 'copy'
+          ? String(field && field.originalValue != null ? field.originalValue : '')
+          : ''
+      };
+    });
+  }
   entry.originalCivilopediaSection1 = '';
   entry.originalCivilopediaSection2 = '';
   // For import mode: keep icon/race/animation originals in sync with current values so they are
@@ -36711,6 +36735,7 @@ function renderReferenceTab(tab, tabKey) {
       if (!selectedEntry) return;
       const copyName = `${selectedEntry.name || inferReferenceNameFromKey(selectedEntry.civilopediaKey, tabKey)} Copy`;
       const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, copyName, '', { preserveCase: true });
+      const selectedIndex = Math.max(0, Number(state.referenceSelection[tabKey] || 0));
       const newEntry = buildNewReferenceEntryFromTemplate({
         tabKey,
         sourceEntry: selectedEntry,
@@ -36720,12 +36745,9 @@ function renderReferenceTab(tab, tabKey) {
       });
       rememberUndoSnapshot();
       const ops = ensureReferenceRecordOps(tab);
-      ops.push({
-        op: 'copy',
-        sourceRef: String(selectedEntry.civilopediaKey || '').toUpperCase(),
-        newRecordRef: key
-      });
-      _dbgLog('INF', 'BiqCRUD', `reference copy: tabKey=${tabKey} source=${String(selectedEntry.civilopediaKey || '').toUpperCase()} -> newRef=${key}`);
+      const copyOp = makeReferenceCopyRecordOp(tabKey, selectedEntry, selectedIndex, key);
+      ops.push(copyOp);
+      _dbgLog('INF', 'BiqCRUD', `reference copy: tabKey=${tabKey} source=${String(copyOp.sourceRef || '').toUpperCase()} -> newRef=${key}`);
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
       state.isDirty = true;

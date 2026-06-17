@@ -1,4 +1,6 @@
 * RELEASE 27.16.1
+- Fixed copied reference entries so their default copy name is written into the BIQ name field, preventing UI-created unit copies from reloading under the source unit's name.
+- Fixed unit copy record operations to use BIQ index source references for duplicate Civilopedia-key units, so Civilization LEGENDS `War Chariot` copies clone the selected row instead of the first `PRTO_WAR_CHARIOT` row.
 - Fixed concurrent BIQ record delete plus field-edit saves so edits targeting original indexes are shifted or dropped after deletes, and PRTO copy/delete now preserves or reconciles strategy-map child rows, preventing Civilization LEGENDS and 2021 EXPANSION unit edits/adds/deletes from poisoning neighboring unit fields or AI Strategy masks.
 - Added fixture-backed Civilization LEGENDS and 2021 EXPANSION unit edit/copy regressions so same-key PRTO primaries and Quint-style strategy-map units are tested for adds as well as deletes.
 - Added unit pending-reference regression coverage for logical PRTO primary indices when new units serialize with Quint-style strategy-map duplicate records.
