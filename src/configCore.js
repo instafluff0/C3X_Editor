@@ -8316,7 +8316,11 @@ function buildScienceAdvisorArrowRoutesForEra({
         return makeRouteFromPoints(override, edge, routeKey, 'override', { dirty: isDirtyEdge });
       }
       const rawSnapshot = normalizeScienceAdvisorOverrideRoute(routeSnapshots[routeKey]);
-      const snapshot = !isDirtyEdge ? rawSnapshot : null;
+      const snapshotAttached = rawSnapshot
+        && techBoxLayout
+        && typeof techBoxLayout.isTechTreeArrowRouteAttachedToRects === 'function'
+        && techBoxLayout.isTechTreeArrowRouteAttachedToRects(rawSnapshot, edge.sourceRect, edge.targetRect, { tolerance: 4 });
+      const snapshot = !isDirtyEdge && snapshotAttached ? rawSnapshot : null;
       if (snapshot) {
         return makeRouteFromPoints(snapshot, edge, routeKey, 'snapshot', { dirty: false });
       }
@@ -8353,7 +8357,7 @@ function buildScienceAdvisorArrowRoutesForEra({
             routeSourceSide: routeOptions.sourceSide,
             routeTargetSide: routeOptions.targetSide,
             dirty: isDirtyEdge,
-            ignoredSnapshot: isDirtyEdge && !!rawSnapshot,
+            ignoredSnapshot: !!rawSnapshot && (isDirtyEdge || !snapshotAttached),
             ignoredHint: isDirtyEdge && !!rawBaselineHint
           }
         )
@@ -11212,7 +11216,7 @@ function collectBiqReferenceEdits(tabs, options = {}) {
       const recordRef = Number.isFinite(entry && entry.biqIndex)
         ? `@INDEX:${Number(entry.biqIndex)}`
         : civKey;
-      if (!civKey || !Array.isArray(entry.biqFields)) return;
+      if (!recordRef || !Array.isArray(entry.biqFields)) return;
       if (spec.key === 'improvements') {
         const flavorCount = Number.isFinite(Number(entry && entry.improvementFlavorCount))
           ? Number(entry.improvementFlavorCount)

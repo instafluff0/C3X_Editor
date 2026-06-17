@@ -868,8 +868,8 @@ test('Science Advisor route builder reuses exact route snapshots until an edge i
       points: [
         { x: 22, y: 16 },
         { x: 35, y: 16 },
-        { x: 35, y: 5 },
-        { x: 50, y: 5 }
+        { x: 35, y: 16 },
+        { x: 50, y: 16 }
       ]
     }
   };
@@ -898,6 +898,36 @@ test('Science Advisor route builder reuses exact route snapshots until an edge i
   assert.equal(recomputed.debug.routeSource, 'generated');
   assert.equal(recomputed.debug.dirty, true);
   assert.equal(recomputed.debug.ignoredSnapshot, true);
+});
+
+test('Science Advisor route builder ignores stale route snapshots when tech box sizes change', () => {
+  const source = { id: 0, era: 0, x: 10, y: 10, w: 32, h: 12, prereqs: [] };
+  const target = { id: 1, era: 0, x: 70, y: 10, w: 12, h: 12, prereqs: [0] };
+  const nodes = [source, target];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const routeKey = '0:0->1';
+  const routeSnapshots = {
+    [routeKey]: {
+      points: [
+        { x: 22, y: 16 },
+        { x: 45, y: 16 },
+        { x: 70, y: 16 }
+      ]
+    }
+  };
+
+  const route = buildScienceAdvisorArrowRoutesForEra({
+    nodes,
+    byId,
+    eraIndex: 0,
+    routeSnapshots
+  })[0];
+
+  assert.equal(route.debug.routeSource, 'generated');
+  assert.equal(route.debug.ignoredSnapshot, true);
+  assert.notDeepEqual(route.points, routeSnapshots[routeKey].points);
+  assert.equal(Math.round(route.points[0].x), source.x + source.w);
+  assert.equal(Math.round(route.points[route.points.length - 1].x), target.x);
 });
 
 test('Science Advisor save diagnostics log per-route geometry sources', () => {

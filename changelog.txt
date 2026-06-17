@@ -1,10 +1,17 @@
 * RELEASE 27.16.1
+- Added File -> Settings -> Tooltips presets for no delay, short delay at 300ms, medium delay at 800ms, long delay at 2s, or never showing shared blue metadata tooltips.
+- Fixed reference picker metadata to target existing BIQ rows by `@INDEX` instead of Civilopedia key, preventing duplicate-key scenario data such as Civilization LEGENDS Fishing/Tin/Rare Earths from saving as later same-key records.
+- Fixed reference edit collection for existing BIQ rows with blank Civilopedia keys so edits still target the row by `@INDEX`.
 - Fixed copied reference entries so their default copy name is written into the BIQ name field, preventing UI-created unit copies from reloading under the source unit's name.
+- Fixed blank unit creation so new PRTO rows use the same Quint-style defaults shown after save/reload, including `otherstrategy = -1`, movement, AI Strategy, and order/action defaults.
 - Fixed unit copy record operations to use BIQ index source references for duplicate Civilopedia-key units, so Civilization LEGENDS `War Chariot` copies clone the selected row instead of the first `PRTO_WAR_CHARIOT` row.
 - Fixed concurrent BIQ record delete plus field-edit saves so edits targeting original indexes are shifted or dropped after deletes, and PRTO copy/delete now preserves or reconciles strategy-map child rows, preventing Civilization LEGENDS and 2021 EXPANSION unit edits/adds/deletes from poisoning neighboring unit fields or AI Strategy masks.
 - Added fixture-backed Civilization LEGENDS and 2021 EXPANSION unit edit/copy regressions so same-key PRTO primaries and Quint-style strategy-map units are tested for adds as well as deletes.
 - Added unit pending-reference regression coverage for logical PRTO primary indices when new units serialize with Quint-style strategy-map duplicate records.
-- Added a floating Tech Tree border warning for dirty Science Advisor arrows that touch protected advisor-frame areas, with amber route highlights and a save-details note.
+- Added full-field saved-BIQ reload assertions for newly added, copied, and imported PRTO units so regressions such as dropped unit names fail directly.
+- Added BIQ regressions for newly added and imported units edited to multiple AI Strategy bits before first save, including checks that existing neighboring PRTO rows keep their fields and strategy masks.
+- Added per-arrow floating Tech Tree border warnings for dirty Science Advisor arrows that touch protected advisor-frame areas, with red route highlights, stale route-snapshot invalidation for resized tech boxes, cleaner selected-focus route previews, a selected-arrow frame guide, no stray stage focus ring after handle deletion, and a save-details note.
+- Improved Tech Tree drag responsiveness by caching selected-focus arrow layers and limiting border-warning refresh work during live tech-box and arrow-handle drags.
 - Added BIQ regression coverage for adjacent and duplicate-key unit AI Strategy masks, pending copied units, repeated unit saves, pending copied civilizations, repeated civilization saves, and civilization Flavor masks, guarding against save/reload transfers or losses in the areas reported by mod authors.
 
 * RELEASE 27.16

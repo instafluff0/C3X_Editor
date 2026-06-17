@@ -437,8 +437,13 @@ test('Tech Tree generated-arrow preview uses the shared Science Advisor rasterer
   );
   assert.match(
     source,
-    /const tintExistingArrowPixels = \(ctx, w, h, color = 'rgba\(166, 166, 154, 0\.76\)'\) => \{[\s\S]*?ctx\.globalCompositeOperation = 'source-atop';[\s\S]*?ctx\.fillRect\(0, 0, w, h\);[\s\S]*?const getDimmedScienceAdvisorArrowStyle = \(\) => \{[\s\S]*?colors: \{[\s\S]*?outline: \{ r: 126, g: 126, b: 118 \}[\s\S]*?main: \{ r: 164, g: 164, b: 154 \}[\s\S]*?highlight: \{ r: 196, g: 196, b: 184 \}[\s\S]*?\};[\s\S]*?if \(selectionFocusActive\) \{[\s\S]*?if \(baseLayer\) ctx\.drawImage\(baseLayer, 0, 0\);[\s\S]*?tintExistingArrowPixels\(ctx, w, h\);[\s\S]*?drawArrowRouteOverlay\(ctx, w, h, routeListFor\(focusedEdges\), palette, baseStyle\);/,
-    'Expected selected-focus arrows to tint the cached base layer and redraw focused routes normally'
+    /let arrowFocusLayerCache = null;[\s\S]*?const getFocusArrowBaseSignature = \(w, h, dynamicKeys, styleKey, dimmedStyleKey\) => \{[\s\S]*?const role = edgeObj\.dimmed \? 'dimmed' : 'focused';[\s\S]*?const getArrowFocusLayerCanvas = \(w, h, dynamicKeys, palette, baseStyle, dimmedStyle, styleKey, dimmedStyleKey\) => \{[\s\S]*?arrowFocusLayerCache[\s\S]*?const dimmedRoutes = allEdges[\s\S]*?!dynamicKeys\.has\(edgeObj\.key\) && edgeObj\.dimmed[\s\S]*?const focusedRoutes = allEdges[\s\S]*?!dynamicKeys\.has\(edgeObj\.key\) && !edgeObj\.dimmed[\s\S]*?if \(selectionFocusActive\) \{[\s\S]*?const dynamicFocusedEdges = drawableEdges\.filter\(\(edgeObj\) => dynamicKeys\.has\(edgeObj\.key\) && !edgeObj\.dimmed\);[\s\S]*?const dynamicDimmedEdges = drawableEdges\.filter\(\(edgeObj\) => dynamicKeys\.has\(edgeObj\.key\) && edgeObj\.dimmed\);[\s\S]*?const focusLayer = getArrowFocusLayerCanvas\(w, h, dynamicKeys, palette, baseStyle, dimmedStyle, styleKey, dimmedStyleKey\);[\s\S]*?if \(focusLayer\) ctx\.drawImage\(focusLayer, 0, 0\);[\s\S]*?drawArrowRouteOverlay\(ctx, w, h, routeListFor\(dynamicDimmedEdges\), null, dimmedStyle\);[\s\S]*?drawArrowRouteOverlay\(ctx, w, h, routeListFor\(dynamicFocusedEdges\), palette, baseStyle\);[\s\S]*?\} else \{[\s\S]*?const baseLayer = getArrowBaseLayerCanvas\(w, h, dynamicKeys, palette, baseStyle, styleKey\);/,
+    'Expected selected-focus arrows to cache unrelated dimmed/focused routes and redraw only dynamic routes during live drags'
+  );
+  assert.match(
+    source,
+    /const updateTechTreeArrowFrameWarnings = \(options = \{\}\) => \{[\s\S]*?const updateKeys = normalizeArrowDynamicEdgeKeys\(options\.edgeKeys\);[\s\S]*?const scanEdges = updateKeys\.size > 0[\s\S]*?allEdges\.filter\(\(edgeObj\) => edgeObj && updateKeys\.has\(edgeObj\.key\)\)[\s\S]*?const renderSignature = warningEntries[\s\S]*?if \(renderSignature === arrowFrameWarningRenderSignature\) return;[\s\S]*?const dynamicKeys = normalizeArrowDynamicEdgeKeys\(options\.dynamicEdgeKeys\);[\s\S]*?updateTechTreeArrowFrameWarnings\(\{[\s\S]*?edgeKeys: options\.recomputeRoutes === false \? dynamicKeys : null[\s\S]*?\}\);/,
+    'Expected border-warning checks to scan only dynamic edges during live drags and skip unchanged warning DOM rebuilds'
   );
   assert.match(
     source,
@@ -695,8 +700,8 @@ test('Tech Tree Auto-Position is wired into undo, dirty state, and save payloads
   );
   assert.match(
     source,
-    /const overrideRoute = useStoredRoute \? getDisplayOverrideRoute\(edgeObj\.key\) : null;[\s\S]*?const snapshotRoute = useStoredRoute && !edgeDirty \? getDisplayRouteSnapshot\(edgeObj\.key\) : null;[\s\S]*?if \(!overrideRoute && route && techBoxLayout && typeof techBoxLayout\.constrainTechTreeArrowRoute === 'function'\) \{[\s\S]*?route = techBoxLayout\.constrainTechTreeArrowRoute\(route, routeConstraintArea\);/,
-    'Expected explicit user-edited arrow routes to stay raw while generated and cached routes are constrained to the Science Advisor frame'
+    /const overrideRoute = useStoredRoute \? getDisplayOverrideRoute\(edgeObj\.key\) : null;[\s\S]*?const rawSnapshotRoute = useStoredRoute && !edgeDirty \? getDisplayRouteSnapshot\(edgeObj\.key\) : null;[\s\S]*?const snapshotRoute = rawSnapshotRoute && isDisplayRouteSnapshotAttachedToEdge\(edgeObj, rawSnapshotRoute\)[\s\S]*?if \(!overrideRoute && route && techBoxLayout && typeof techBoxLayout\.constrainTechTreeArrowRoute === 'function'\) \{[\s\S]*?route = techBoxLayout\.constrainTechTreeArrowRoute\(route, routeConstraintArea\);/,
+    'Expected explicit user-edited arrow routes to stay raw while generated and attached cached routes are constrained to the Science Advisor frame'
   );
   assert.match(
     source,

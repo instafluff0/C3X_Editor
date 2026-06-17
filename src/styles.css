@@ -7207,25 +7207,30 @@ details > summary:focus-visible {
   font-size: 0.66rem;
 }
 
+.tech-tree-arrow-frame-warning-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+
 .tech-tree-arrow-frame-warning {
   position: absolute;
-  z-index: 7;
   min-height: 24px;
   display: inline-flex;
   align-items: center;
-  max-width: 190px;
+  max-width: 210px;
   padding: 3px 7px;
-  border: 1px solid rgba(169, 96, 16, 0.34);
+  border: 1px solid rgba(172, 32, 32, 0.36);
   border-radius: 6px;
-  background: rgba(255, 241, 206, 0.96);
-  color: #71410d;
+  background: rgba(255, 230, 230, 0.96);
+  color: #7d1717;
   font-size: 0.66rem;
   font-weight: 800;
   line-height: 1.15;
   text-align: center;
-  pointer-events: none;
   transform: translate(-50%, 0);
-  box-shadow: 0 4px 12px rgba(66, 39, 10, 0.18);
+  box-shadow: 0 4px 12px rgba(86, 16, 16, 0.18);
 }
 
 .tech-tree-arrow-frame-warning.hidden {
@@ -7363,6 +7368,11 @@ details > summary:focus-visible {
   min-width: 100%;
   min-height: 380px;
   margin: 0;
+}
+
+.tech-tree-stage:focus,
+.tech-tree-stage:focus-visible {
+  outline: none;
 }
 
 .tech-tree-bg {
@@ -7510,14 +7520,14 @@ details > summary:focus-visible {
 }
 
 .tech-tree-route-control.has-frame-warning .tech-tree-route-handle {
-  fill: #fff1ce;
-  stroke: #d57919;
+  fill: #ffe7e7;
+  stroke: #d12d2d;
   stroke-width: 2.5;
 }
 
 .tech-tree-route-control.has-frame-warning .tech-tree-route-handle.selected-handle {
-  fill: #ffe3a3;
-  stroke: #9b560c;
+  fill: #ffd0d0;
+  stroke: #a51f1f;
 }
 
 .tech-tree-route-control.is-focus-dimmed .tech-tree-route-handle {

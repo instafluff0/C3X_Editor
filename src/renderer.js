@@ -260,6 +260,7 @@ const state = {
   performanceMenuUnsubscribe: null,
   qualityChecksMenuUnsubscribe: null,
   reloadAfterSaveMenuUnsubscribe: null,
+  tooltipDelayMenuUnsubscribe: null,
   logSettingsMenuUnsubscribe: null,
   mapSettingsMenuUnsubscribe: null,
   resourceSettingsMenuUnsubscribe: null,
@@ -325,7 +326,11 @@ const techBoxLayout = (typeof window !== 'undefined' && window.TechBoxLayout) ? 
 const scienceAdvisorArrows = (typeof window !== 'undefined' && window.ScienceAdvisorArrows) ? window.ScienceAdvisorArrows : null;
 const richTooltip = {
   node: null,
-  active: false
+  active: false,
+  showTimer: null,
+  pendingTarget: null,
+  pendingText: null,
+  pendingPointer: null
 };
 const artFocus = {
   node: null,
@@ -674,6 +679,14 @@ const el = {
 
 const DEFAULT_TEXT_FILE_ENCODING = 'auto';
 const TEXT_FILE_ENCODING_OPTIONS = new Set(['auto', 'utf8', 'windows-1252', 'windows-1251', 'gbk', 'big5', 'shift_jis', 'euc-kr']);
+const DEFAULT_TOOLTIP_DELAY = 'medium';
+const TOOLTIP_DELAY_OPTIONS = new Set(['none', 'short', 'medium', 'long', 'off']);
+const TOOLTIP_DELAY_MS = {
+  none: 0,
+  short: 300,
+  medium: 800,
+  long: 2000
+};
 const BIQ_HEADER_TEXT_LIMITS = {
   title: 63,
   description: 639
@@ -703,6 +716,24 @@ function normalizeTextFileEncoding(value) {
   };
   const normalized = aliases[raw] || DEFAULT_TEXT_FILE_ENCODING;
   return TEXT_FILE_ENCODING_OPTIONS.has(normalized) ? normalized : DEFAULT_TEXT_FILE_ENCODING;
+}
+
+function normalizeTooltipDelay(value) {
+  const raw = String(value || DEFAULT_TOOLTIP_DELAY).trim().toLowerCase();
+  const aliases = {
+    instant: 'none',
+    immediate: 'none',
+    none: 'none',
+    'no-delay': 'none',
+    short: 'short',
+    medium: 'medium',
+    long: 'long',
+    never: 'off',
+    off: 'off',
+    disabled: 'off'
+  };
+  const normalized = aliases[raw] || DEFAULT_TOOLTIP_DELAY;
+  return TOOLTIP_DELAY_OPTIONS.has(normalized) ? normalized : DEFAULT_TOOLTIP_DELAY;
 }
 
 const DIRECTION_OPTIONS = ['northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north'];
@@ -7292,12 +7323,9 @@ function ensureSyntheticReferenceEntryForBiqRecord(tabKey, sectionCode, record) 
 }
 
 function getReferenceRecordRefForOps(tabKey, entry, fallbackIndex) {
-  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
   const rawBiqIndex = entry && entry.biqIndex;
   const biqIndex = rawBiqIndex === '' || rawBiqIndex == null ? NaN : Number(rawBiqIndex);
-  if (normalizedTabKey === 'units' && Number.isFinite(biqIndex) && biqIndex >= 0) {
-    return `@INDEX:${biqIndex}`;
-  }
+  if (Number.isFinite(biqIndex) && biqIndex >= 0) return `@INDEX:${biqIndex}`;
   const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
   if (key) return key;
   const fallback = Number(fallbackIndex);
@@ -13778,7 +13806,86 @@ function showRichTooltip(text, x, y) {
   node.style.top = `${Math.min(maxY, Math.max(12, y + pad))}px`;
 }
 
+function clearRichTooltipShowTimer() {
+  if (richTooltip.showTimer) {
+    const timerApi = (typeof window !== 'undefined') ? window : globalThis;
+    timerApi.clearTimeout(richTooltip.showTimer);
+  }
+  richTooltip.showTimer = null;
+  richTooltip.pendingTarget = null;
+  richTooltip.pendingText = null;
+  richTooltip.pendingPointer = null;
+}
+
+function canShowRichTooltipForTarget(target) {
+  if (!target || !target.isConnected) return false;
+  if (typeof target.matches !== 'function') return true;
+  try {
+    return target.matches(':hover');
+  } catch (err) {
+    return true;
+  }
+}
+
+function getRichTooltipDelayMs() {
+  const setting = normalizeTooltipDelay(state.settings && state.settings.tooltipDelay);
+  return Object.prototype.hasOwnProperty.call(TOOLTIP_DELAY_MS, setting)
+    ? TOOLTIP_DELAY_MS[setting]
+    : TOOLTIP_DELAY_MS[DEFAULT_TOOLTIP_DELAY];
+}
+
+function shouldShowRichTooltips() {
+  return normalizeTooltipDelay(state.settings && state.settings.tooltipDelay) !== 'off';
+}
+
+function scheduleRichTooltip(target, getTip, ev) {
+  if (!shouldShowRichTooltips()) {
+    clearRichTooltipShowTimer();
+    hideRichTooltip();
+    return;
+  }
+  const tip = String(getTip() || '').trim();
+  if (!tip) {
+    clearRichTooltipShowTimer();
+    return;
+  }
+  clearRichTooltipShowTimer();
+  richTooltip.pendingTarget = target;
+  richTooltip.pendingText = getTip;
+  richTooltip.pendingPointer = {
+    x: Number(ev && ev.clientX) || 0,
+    y: Number(ev && ev.clientY) || 0
+  };
+  const delayMs = getRichTooltipDelayMs();
+  if (delayMs <= 0) {
+    richTooltip.showTimer = null;
+    richTooltip.pendingTarget = null;
+    richTooltip.pendingText = null;
+    richTooltip.pendingPointer = null;
+    if (!canShowRichTooltipForTarget(target)) return;
+    richTooltip.active = true;
+    showRichTooltip(tip, Number(ev && ev.clientX) || 0, Number(ev && ev.clientY) || 0);
+    return;
+  }
+  const timerApi = (typeof window !== 'undefined') ? window : globalThis;
+  richTooltip.showTimer = timerApi.setTimeout(() => {
+    const pendingTarget = richTooltip.pendingTarget;
+    const pendingText = richTooltip.pendingText;
+    const pendingPointer = richTooltip.pendingPointer || { x: 0, y: 0 };
+    richTooltip.showTimer = null;
+    richTooltip.pendingTarget = null;
+    richTooltip.pendingText = null;
+    richTooltip.pendingPointer = null;
+    if (!canShowRichTooltipForTarget(pendingTarget)) return;
+    const nextTip = String((pendingText ? pendingText() : '') || '').trim();
+    if (!nextTip) return;
+    richTooltip.active = true;
+    showRichTooltip(nextTip, pendingPointer.x, pendingPointer.y);
+  }, delayMs);
+}
+
 function hideRichTooltip() {
+  clearRichTooltipShowTimer();
   if (!richTooltip.node) return;
   richTooltip.node.classList.add('hidden');
 }
@@ -13790,15 +13897,28 @@ function attachRichTooltip(target, text) {
     : () => String(text || '').trim();
   target.classList.add('help-hover-target');
   target.addEventListener('mouseenter', (ev) => {
-    const tip = String(getTip() || '').trim();
-    if (!tip) return;
-    richTooltip.active = true;
-    showRichTooltip(tip, ev.clientX, ev.clientY);
+    scheduleRichTooltip(target, getTip, ev);
   });
   target.addEventListener('mousemove', (ev) => {
-    if (!richTooltip.active) return;
+    if (!shouldShowRichTooltips()) {
+      richTooltip.active = false;
+      hideRichTooltip();
+      return;
+    }
     const tip = String(getTip() || '').trim();
-    if (!tip) return;
+    if (!tip) {
+      richTooltip.active = false;
+      hideRichTooltip();
+      return;
+    }
+    if (!richTooltip.active) {
+      if (richTooltip.showTimer) {
+        richTooltip.pendingPointer = { x: ev.clientX, y: ev.clientY };
+      } else {
+        scheduleRichTooltip(target, getTip, ev);
+      }
+      return;
+    }
     showRichTooltip(tip, ev.clientX, ev.clientY);
   });
   target.addEventListener('mouseleave', () => {
@@ -22735,12 +22855,14 @@ function resolveReferenceEntryForPicker(targetTabKey, rawValue, options = []) {
 function makeReferenceTargetMeta(targetTabKey, option, value, options = []) {
   const tabKey = String(targetTabKey || '').trim();
   if (!tabKey) return null;
+  const normalizedValue = normalizeConfigToken(value);
   const entry = option && option.entry
     ? option.entry
-    : resolveReferenceEntryForPicker(tabKey, value, options);
-  const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-  if (!key) return null;
-  return { tabKey, key };
+    : resolveReferenceEntryForPicker(tabKey, normalizedValue, options);
+  const fallbackIndex = parseIntFromDisplayValue(normalizedValue);
+  const recordRef = getReferenceRecordRefForOps(tabKey, entry, fallbackIndex);
+  if (!recordRef) return null;
+  return { tabKey, key: recordRef };
 }
 
 function setFieldReferenceTargetMeta(field, targetTabKey, option, value, options = []) {
@@ -25235,8 +25357,9 @@ const TECH_TREE_NON_ERA_MIN_VERTICAL_GAP = 14;
 const TECH_TREE_ERA_PANE_LEFT_PADDING = 28;
 const TECH_TREE_STAGE_SIDE_PADDING = 24;
 const TECH_TREE_GAME_BOX_RENDER_Y_OFFSET = 4;
-const TECH_TREE_ARROW_FRAME_WARNING_TEXT = 'Border warning: arrow may leave residue.';
+const TECH_TREE_ARROW_FRAME_WARNING_TEXT = 'Warning: arrow may be permanently drawn on border';
 const TECH_TREE_ARROW_FRAME_WARNING_MARGIN = 6;
+const TECH_TREE_ARROW_FRAME_GUIDE_DASH = [8, 5];
 
 function getTechTreeArrowFrameWarningNoteForEra(eraIndex) {
   const key = String(Number(eraIndex) || 0);
@@ -26372,11 +26495,10 @@ function createTechTreePanel({
   selectedArrowLines.classList.add('tech-tree-selected-arrow-lines');
   const selectedArrowHandles = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   selectedArrowHandles.classList.add('tech-tree-selected-route-handles-layer');
-  const arrowFrameWarning = document.createElement('div');
-  arrowFrameWarning.className = 'tech-tree-arrow-frame-warning hidden';
-  arrowFrameWarning.setAttribute('role', 'status');
-  arrowFrameWarning.setAttribute('aria-live', 'polite');
-  arrowFrameWarning.textContent = TECH_TREE_ARROW_FRAME_WARNING_TEXT;
+  const arrowFrameWarningLayer = document.createElement('div');
+  arrowFrameWarningLayer.className = 'tech-tree-arrow-frame-warning-layer';
+  arrowFrameWarningLayer.setAttribute('role', 'status');
+  arrowFrameWarningLayer.setAttribute('aria-live', 'polite');
   stage.appendChild(bg);
   stage.appendChild(laneLayer);
   stage.appendChild(lines);
@@ -26384,7 +26506,7 @@ function createTechTreePanel({
   stage.appendChild(nodesLayer);
   stage.appendChild(selectedArrowLines);
   stage.appendChild(selectedArrowHandles);
-  stage.appendChild(arrowFrameWarning);
+  stage.appendChild(arrowFrameWarningLayer);
   stageWrap.appendChild(stage);
   section.appendChild(stageWrap);
 
@@ -26855,6 +26977,16 @@ function createTechTreePanel({
     const getRouteArrowFrameWarningAnchor = (route) => {
       const points = Array.isArray(route && route.points) ? route.points : [];
       if (points.length < 2) return null;
+      let totalLength = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const dx = (Number(b && b.x) || 0) - (Number(a && a.x) || 0);
+        const dy = (Number(b && b.y) || 0) - (Number(a && a.y) || 0);
+        totalLength += Math.sqrt((dx * dx) + (dy * dy));
+      }
+      const endpointPad = Math.min(18, Math.max(0, totalLength / 5));
+      let distanceAlong = 0;
       for (let i = 0; i < points.length - 1; i += 1) {
         const a = points[i];
         const b = points[i + 1];
@@ -26865,26 +26997,42 @@ function createTechTreePanel({
         if (![ax, ay, bx, by].every(Number.isFinite)) continue;
         const dx = bx - ax;
         const dy = by - ay;
-        const steps = Math.max(1, Math.ceil(Math.sqrt((dx * dx) + (dy * dy)) / 6));
+        const segmentLength = Math.sqrt((dx * dx) + (dy * dy));
+        const steps = Math.max(1, Math.ceil(segmentLength / 6));
         for (let step = 0; step <= steps; step += 1) {
           const t = step / steps;
+          const routeDistance = distanceAlong + (segmentLength * t);
+          if (routeDistance < endpointPad || routeDistance > totalLength - endpointPad) continue;
           const point = { x: ax + (dx * t), y: ay + (dy * t) };
           if (isPointInArrowFrameWarningArea(point)) return point;
         }
+        distanceAlong += segmentLength;
       }
       return null;
     };
-    const updateTechTreeArrowFrameWarnings = () => {
+    let arrowFrameWarningRenderSignature = '';
+    const updateTechTreeArrowFrameWarnings = (options = {}) => {
       const eraKey = String(Number(eraValue) || 0);
       const eraDirty = !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraKey]);
-      const riskyKeys = [];
-      allEdges.forEach((edgeObj) => {
+      const updateKeys = normalizeArrowDynamicEdgeKeys(options.edgeKeys);
+      const scanEdges = updateKeys.size > 0
+        ? allEdges.filter((edgeObj) => edgeObj && updateKeys.has(edgeObj.key))
+        : allEdges;
+      scanEdges.forEach((edgeObj) => {
         const anchor = eraDirty && edgeObj && edgeObj.route ? getRouteArrowFrameWarningAnchor(edgeObj.route) : null;
         const risky = !!anchor;
         if (edgeObj) edgeObj.frameWarning = risky;
         if (edgeObj) edgeObj.frameWarningAnchor = anchor;
-        if (risky && edgeObj.key) riskyKeys.push(edgeObj.key);
       });
+      const warningEntries = allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.frameWarning && edgeObj.key)
+        .map((edgeObj) => ({
+          edgeObj,
+          key: String(edgeObj.key || ''),
+          x: Math.round(Number(edgeObj.frameWarningAnchor && edgeObj.frameWarningAnchor.x) || 0),
+          y: Math.round(Number(edgeObj.frameWarningAnchor && edgeObj.frameWarningAnchor.y) || 0)
+        }));
+      const riskyKeys = warningEntries.map((entry) => entry.key);
       if (!state.techTreeArrowFrameWarningsByEra || typeof state.techTreeArrowFrameWarningsByEra !== 'object') {
         state.techTreeArrowFrameWarningsByEra = {};
       }
@@ -26896,23 +27044,28 @@ function createTechTreePanel({
       } else {
         delete state.techTreeArrowFrameWarningsByEra[eraKey];
       }
-      if (arrowFrameWarning) {
-        const selectedRisky = !!(selectedArrowKey && riskyKeys.includes(selectedArrowKey));
-        arrowFrameWarning.classList.toggle('hidden', riskyKeys.length === 0 || selectedRisky);
-        arrowFrameWarning.textContent = TECH_TREE_ARROW_FRAME_WARNING_TEXT;
-        arrowFrameWarning.title = riskyKeys.length === 0 || selectedRisky ? '' : 'Move the highlighted arrow away from the advisor border before saving.';
-        const anchorEdge = allEdges.find((edgeObj) => edgeObj && edgeObj.frameWarning && edgeObj.key === hoveredArrowKey)
-          || allEdges.find((edgeObj) => edgeObj && edgeObj.frameWarning);
-        const anchor = anchorEdge && anchorEdge.frameWarningAnchor;
-        if (anchor && riskyKeys.length > 0 && !selectedRisky) {
-          const x = Math.max(70, Math.min(contentW - 70, Number(anchor.x) || 0));
-          const y = Math.max(34, Math.min(contentH - 40, (Number(anchor.y) || 0) + 42));
-          arrowFrameWarning.style.left = `${Math.round(x)}px`;
-          arrowFrameWarning.style.top = `${Math.round(y)}px`;
-        } else {
-          arrowFrameWarning.style.left = '';
-          arrowFrameWarning.style.top = '';
-        }
+      if (arrowFrameWarningLayer) {
+        const renderSignature = warningEntries
+          .filter((entry) => entry.key !== selectedArrowKey)
+          .map((entry, warningIndex) => `${entry.key}:${entry.x},${entry.y}:${warningIndex % 3}`)
+          .join('|');
+        if (renderSignature === arrowFrameWarningRenderSignature) return;
+        arrowFrameWarningRenderSignature = renderSignature;
+        while (arrowFrameWarningLayer.firstChild) arrowFrameWarningLayer.removeChild(arrowFrameWarningLayer.firstChild);
+        warningEntries
+          .filter((entry) => entry.key !== selectedArrowKey)
+          .forEach((entry, warningIndex) => {
+            const warning = document.createElement('div');
+            warning.className = 'tech-tree-arrow-frame-warning';
+            warning.textContent = TECH_TREE_ARROW_FRAME_WARNING_TEXT;
+            warning.title = 'Move the highlighted arrow away from the advisor border before saving.';
+            warning.dataset.arrowKey = entry.key;
+            const x = Math.max(82, Math.min(contentW - 82, entry.x));
+            const y = Math.max(34, Math.min(contentH - 40, entry.y + 42 + ((warningIndex % 3) * 30)));
+            warning.style.left = `${Math.round(x)}px`;
+            warning.style.top = `${Math.round(y)}px`;
+            arrowFrameWarningLayer.appendChild(warning);
+          });
       }
     };
     const showLaneSplit = !!showNonEraCheck.checked;
@@ -27168,9 +27321,9 @@ function createTechTreePanel({
       }
       if (role === 'warning') {
         return {
-          outline: { r: 116, g: 66, b: 10 },
-          main: { r: 242, g: 166, b: 42 },
-          highlight: { r: 255, g: 220, b: 96 }
+          outline: { r: 128, g: 24, b: 24 },
+          main: { r: 228, g: 48, b: 48 },
+          highlight: { r: 255, g: 124, b: 124 }
         };
       }
       return {
@@ -27203,6 +27356,39 @@ function createTechTreePanel({
           main: {
             ...(head.main && typeof head.main === 'object' ? head.main : {}),
             half: Math.min(9, (Number(head.main && head.main.half) || 4) + 0.5)
+          }
+        }
+      };
+    };
+    const getDimmedScienceAdvisorArrowStyle = () => {
+      const source = getStoredScienceAdvisorArrowStyle();
+      const base = scienceAdvisorArrows && typeof scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle === 'function'
+        ? scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle(source, { eraIndex: eraValue })
+        : deepCloneUiValue(source || {});
+      const body = base.body && typeof base.body === 'object' ? base.body : {};
+      const head = base.head && typeof base.head === 'object' ? base.head : {};
+      return {
+        ...base,
+        coverageThreshold: Math.max(1, Number(base.coverageThreshold) || 3),
+        colors: {
+          outline: { r: 122, g: 122, b: 114 },
+          main: { r: 164, g: 164, b: 154 },
+          highlight: { r: 202, g: 202, b: 190 }
+        },
+        body: {
+          ...body,
+          outlineRadius: Math.max(0.75, (Number(body.outlineRadius) || 1.5) - 0.2),
+          highlightRadius: Math.max(0, Number(body.highlightRadius) || 0)
+        },
+        head: {
+          ...head,
+          outline: {
+            ...(head.outline && typeof head.outline === 'object' ? head.outline : {}),
+            half: Math.max(2, (Number(head.outline && head.outline.half) || 5) - 1)
+          },
+          main: {
+            ...(head.main && typeof head.main === 'object' ? head.main : {}),
+            half: Math.max(1, (Number(head.main && head.main.half) || 4) - 1)
           }
         }
       };
@@ -27275,6 +27461,29 @@ function createTechTreePanel({
     };
     const getDisplayOverrideRoute = (key) => getDisplayRouteFromRawMap(state.techTreeArrowRouteOverrides || {}, key);
     const getDisplayRouteSnapshot = (key) => getDisplayRouteFromRawMap(state.techTreeArrowRouteSnapshots || {}, key);
+    const isDisplayRouteSnapshotAttachedToEdge = (edgeObj, route) => {
+      if (!edgeObj || !route || !techBoxLayout || typeof techBoxLayout.isTechTreeArrowRouteAttachedToRects !== 'function') return true;
+      const src = edgeObj.source;
+      const dst = edgeObj.target;
+      const srcSize = getNodeSize(src && src.id);
+      const dstSize = getNodeSize(dst && dst.id);
+      return techBoxLayout.isTechTreeArrowRouteAttachedToRects(
+        route,
+        {
+          x: Number.isFinite(src && src.vx) ? src.vx : Number(src && src.x) || 0,
+          y: Number.isFinite(src && src.vy) ? src.vy : Number(src && src.y) || 0,
+          w: srcSize.width,
+          h: srcSize.height
+        },
+        {
+          x: Number.isFinite(dst && dst.vx) ? dst.vx : Number(dst && dst.x) || 0,
+          y: Number.isFinite(dst && dst.vy) ? dst.vy : Number(dst && dst.y) || 0,
+          w: dstSize.width,
+          h: dstSize.height
+        },
+        { tolerance: 4 }
+      );
+    };
     const setRawOverrideFromDisplayRoute = (key, route) => {
       if (!key || !route || !Array.isArray(route.points) || route.points.length < 2) return;
       if (!state.techTreeArrowRouteOverrides || typeof state.techTreeArrowRouteOverrides !== 'object') {
@@ -27614,7 +27823,13 @@ function createTechTreePanel({
         ? edgeObj.baselineRouteOptions
         : (edgeObj.routeOptions || {});
       const overrideRoute = useStoredRoute ? getDisplayOverrideRoute(edgeObj.key) : null;
-      const snapshotRoute = useStoredRoute && !edgeDirty ? getDisplayRouteSnapshot(edgeObj.key) : null;
+      const rawSnapshotRoute = useStoredRoute && !edgeDirty ? getDisplayRouteSnapshot(edgeObj.key) : null;
+      const snapshotRoute = rawSnapshotRoute && isDisplayRouteSnapshotAttachedToEdge(edgeObj, rawSnapshotRoute)
+        ? rawSnapshotRoute
+        : null;
+      if (rawSnapshotRoute && !snapshotRoute && state.techTreeArrowRouteSnapshots) {
+        delete state.techTreeArrowRouteSnapshots[edgeObj.key];
+      }
       let route = overrideRoute || snapshotRoute || (techBoxLayout && typeof techBoxLayout.buildTechTreeArrowRoute === 'function'
         ? techBoxLayout.buildTechTreeArrowRoute(
           {
@@ -27857,6 +28072,7 @@ function createTechTreePanel({
       syncRouteHandleDeleteButtonState();
     };
     let arrowBaseLayerCache = null;
+    let arrowFocusLayerCache = null;
     let arrowScratchCanvas = null;
     const getArrowScratchContext = (w, h) => {
       if (!arrowScratchCanvas) arrowScratchCanvas = document.createElement('canvas');
@@ -27891,6 +28107,16 @@ function createTechTreePanel({
         if (!edgeObj || !edgeObj.route || dynamicKeys.has(edgeObj.key)) return;
         const points = Array.isArray(edgeObj.route.points) ? edgeObj.route.points : [];
         parts.push(`${edgeObj.key}:${points.map((point) => `${Math.round(Number(point.x) || 0)},${Math.round(Number(point.y) || 0)}`).join(';')}`);
+      });
+      return parts.join('|');
+    };
+    const getFocusArrowBaseSignature = (w, h, dynamicKeys, styleKey, dimmedStyleKey) => {
+      const parts = [String(w), String(h), String(eraValue), styleKey, dimmedStyleKey];
+      allEdges.forEach((edgeObj) => {
+        if (!edgeObj || !edgeObj.route || dynamicKeys.has(edgeObj.key)) return;
+        const points = Array.isArray(edgeObj.route.points) ? edgeObj.route.points : [];
+        const role = edgeObj.dimmed ? 'dimmed' : 'focused';
+        parts.push(`${edgeObj.key}:${role}:${points.map((point) => `${Math.round(Number(point.x) || 0)},${Math.round(Number(point.y) || 0)}`).join(';')}`);
       });
       return parts.join('|');
     };
@@ -27932,6 +28158,42 @@ function createTechTreePanel({
       arrowBaseLayerCache = { signature, canvas };
       return canvas;
     };
+    const renderArrowRouteGroupsToCanvas = (targetCanvas, w, h, groups) => {
+      if (!targetCanvas) return;
+      if (targetCanvas.width !== w) targetCanvas.width = w;
+      if (targetCanvas.height !== h) targetCanvas.height = h;
+      const targetCtx = targetCanvas.getContext('2d');
+      if (!targetCtx) return;
+      targetCtx.clearRect(0, 0, w, h);
+      (Array.isArray(groups) ? groups : []).forEach((group) => {
+        const routes = Array.isArray(group && group.routes) ? group.routes : [];
+        if (routes.length === 0) return;
+        drawArrowRouteOverlay(targetCtx, w, h, routes, group.palette, group.style);
+      });
+    };
+    const getArrowFocusLayerCanvas = (w, h, dynamicKeys, palette, baseStyle, dimmedStyle, styleKey, dimmedStyleKey) => {
+      const signature = getFocusArrowBaseSignature(w, h, dynamicKeys, styleKey, dimmedStyleKey);
+      if (arrowFocusLayerCache
+        && arrowFocusLayerCache.signature === signature
+        && arrowFocusLayerCache.canvas
+        && arrowFocusLayerCache.canvas.width === w
+        && arrowFocusLayerCache.canvas.height === h) {
+        return arrowFocusLayerCache.canvas;
+      }
+      const canvas = document.createElement('canvas');
+      const dimmedRoutes = allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.route && !dynamicKeys.has(edgeObj.key) && edgeObj.dimmed)
+        .map((edgeObj) => edgeObj.route);
+      const focusedRoutes = allEdges
+        .filter((edgeObj) => edgeObj && edgeObj.route && !dynamicKeys.has(edgeObj.key) && !edgeObj.dimmed)
+        .map((edgeObj) => edgeObj.route);
+      renderArrowRouteGroupsToCanvas(canvas, w, h, [
+        { routes: dimmedRoutes, palette: null, style: dimmedStyle },
+        { routes: focusedRoutes, palette, style: baseStyle }
+      ]);
+      arrowFocusLayerCache = { signature, canvas };
+      return canvas;
+    };
     const drawArrowRouteOverlay = (ctx, w, h, routes, palette, style) => {
       if (!ctx || !Array.isArray(routes) || routes.length === 0) return;
       const scratchCtx = getArrowScratchContext(w, h);
@@ -27939,46 +28201,81 @@ function createTechTreePanel({
       renderArrowRoutesToCanvas(arrowScratchCanvas, w, h, routes, palette, style);
       ctx.drawImage(arrowScratchCanvas, 0, 0);
     };
-    const tintExistingArrowPixels = (ctx, w, h, color = 'rgba(166, 166, 154, 0.76)') => {
-      if (!ctx) return;
-      ctx.save();
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.fillStyle = color;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
-    };
-    const getDimmedScienceAdvisorArrowStyle = () => {
-      const source = getStoredScienceAdvisorArrowStyle();
-      const base = scienceAdvisorArrows && typeof scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle === 'function'
-        ? scienceAdvisorArrows.normalizeScienceAdvisorArrowStyle(source, { eraIndex: eraValue })
-        : deepCloneUiValue(source || {});
-      const body = base.body && typeof base.body === 'object' ? base.body : {};
-      const head = base.head && typeof base.head === 'object' ? base.head : {};
-      return {
-        ...base,
-        colors: {
-          outline: { r: 126, g: 126, b: 118 },
-          main: { r: 164, g: 164, b: 154 },
-          highlight: { r: 196, g: 196, b: 184 }
-        },
-        body: {
-          ...body,
-          outlineRadius: Math.max(0.75, (Number(body.outlineRadius) || 1.5) - 0.25),
-          mainRadius: Math.max(0, Number(body.mainRadius) || 0),
-          highlightRadius: Math.max(0, Number(body.highlightRadius) || 0)
-        },
-        head: {
-          ...head,
-          outline: {
-            ...(head.outline && typeof head.outline === 'object' ? head.outline : {}),
-            half: Math.max(2, (Number(head.outline && head.outline.half) || 5) - 1)
-          },
-          main: {
-            ...(head.main && typeof head.main === 'object' ? head.main : {}),
-            half: Math.max(1, (Number(head.main && head.main.half) || 4) - 1)
-          }
-        }
+    const drawSelectedArrowFrameWarningGuide = (ctx, w, h) => {
+      if (!ctx || !selectedArrowKey || !isRouteHandlePreviewActive()) return;
+      const bounds = routeConstraintArea && routeConstraintArea.bounds;
+      if (!bounds) return;
+      const margin = TECH_TREE_ARROW_FRAME_WARNING_MARGIN;
+      const clipRect = (rect) => {
+        const x = Number(rect && rect.x);
+        const y = Number(rect && rect.y);
+        const rw = Number(rect && (rect.w || rect.width));
+        const rh = Number(rect && (rect.h || rect.height));
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !(rw > 0) || !(rh > 0)) return null;
+        const left = Math.max(0, Math.min(w, x));
+        const top = Math.max(0, Math.min(h, y));
+        const right = Math.max(left, Math.min(w, x + rw));
+        const bottom = Math.max(top, Math.min(h, y + rh));
+        if (right - left < 1 || bottom - top < 1) return null;
+        return { x: left, y: top, w: right - left, h: bottom - top };
       };
+      const guideBounds = clipRect({
+        x: (Number(bounds.x) || 0) + margin,
+        y: (Number(bounds.y) || 0) + margin,
+        w: Math.max(1, (Number(bounds.w) || 1) - (margin * 2)),
+        h: Math.max(1, (Number(bounds.h) || 1) - (margin * 2))
+      });
+      if (!guideBounds) return;
+      const rects = [];
+      const exclusionRects = (Array.isArray(routeConstraintArea.exclusionZones) ? routeConstraintArea.exclusionZones : [])
+        .map((zone) => clipRect({
+          x: (Number(zone && zone.x) || 0) - margin,
+          y: (Number(zone && zone.y) || 0) - margin,
+          w: Math.max(1, Number(zone && (zone.w || zone.width)) || 1) + (margin * 2),
+          h: Math.max(1, Number(zone && (zone.h || zone.height)) || 1) + (margin * 2)
+        }))
+        .filter(Boolean);
+      const guideRight = guideBounds.x + guideBounds.w;
+      const guideBottom = guideBounds.y + guideBounds.h;
+      const edgeSnap = 3;
+      const topRightNotch = exclusionRects.find((rect) => (
+        rect.x > guideBounds.x + edgeSnap
+        && rect.y <= guideBounds.y + edgeSnap
+        && rect.x + rect.w >= guideRight - edgeSnap
+        && rect.y + rect.h < guideBottom - edgeSnap
+      ));
+      if (!topRightNotch) rects.push(guideBounds);
+      exclusionRects.forEach((rect) => {
+        if (rect !== topRightNotch) rects.push(rect);
+      });
+      ctx.save();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(194, 28, 28, 0.86)';
+      ctx.setLineDash(TECH_TREE_ARROW_FRAME_GUIDE_DASH);
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.84)';
+      ctx.shadowBlur = 2;
+      if (topRightNotch) {
+        const notchLeft = Math.max(guideBounds.x, Math.min(guideRight, topRightNotch.x));
+        const notchBottom = Math.max(guideBounds.y, Math.min(guideBottom, topRightNotch.y + topRightNotch.h));
+        ctx.beginPath();
+        ctx.moveTo(Math.round(guideBounds.x) + 0.5, Math.round(guideBounds.y) + 0.5);
+        ctx.lineTo(Math.round(notchLeft) + 0.5, Math.round(guideBounds.y) + 0.5);
+        ctx.lineTo(Math.round(notchLeft) + 0.5, Math.round(notchBottom) + 0.5);
+        ctx.lineTo(Math.round(guideRight) + 0.5, Math.round(notchBottom) + 0.5);
+        ctx.lineTo(Math.round(guideRight) + 0.5, Math.round(guideBottom) + 0.5);
+        ctx.lineTo(Math.round(guideBounds.x) + 0.5, Math.round(guideBottom) + 0.5);
+        ctx.closePath();
+        ctx.stroke();
+      }
+      rects.forEach((rect) => {
+        ctx.strokeRect(
+          Math.round(rect.x) + 0.5,
+          Math.round(rect.y) + 0.5,
+          Math.max(1, Math.round(rect.w) - 1),
+          Math.max(1, Math.round(rect.h) - 1)
+        );
+      });
+      ctx.restore();
     };
     const redrawLines = (options = {}) => {
       if (options.recomputeRoutes !== false) {
@@ -27991,7 +28288,10 @@ function createTechTreePanel({
           });
         });
       }
-      updateTechTreeArrowFrameWarnings();
+      const dynamicKeys = normalizeArrowDynamicEdgeKeys(options.dynamicEdgeKeys);
+      updateTechTreeArrowFrameWarnings({
+        edgeKeys: options.recomputeRoutes === false ? dynamicKeys : null
+      });
       const ctx = lines.getContext('2d');
       if (!ctx) return;
       const selectedCtx = selectedArrowLines.getContext('2d');
@@ -28003,23 +28303,22 @@ function createTechTreePanel({
       if (!scienceAdvisorArrows || typeof scienceAdvisorArrows.drawScienceAdvisorRoutesRgba !== 'function') return;
       const palette = bgPreview && bgPreview.paletteBase64 ? fromBase64ToUint8(bgPreview.paletteBase64) : null;
       const baseStyle = getStoredScienceAdvisorArrowStyle();
-      const dynamicKeys = normalizeArrowDynamicEdgeKeys(options.dynamicEdgeKeys);
       const drawableEdges = allEdges.filter((edgeObj) => edgeObj && edgeObj.route);
       const routeListFor = (edges) => edges.map((edgeObj) => edgeObj.route).filter(Boolean);
       if (generatedActive) {
         ensureArrowlessBackgroundPreview();
         const styleKey = `${bgPreview && bgPreview.paletteBase64 ? bgPreview.paletteBase64 : ''}|${JSON.stringify(baseStyle || {})}`;
-        const baseLayer = getArrowBaseLayerCanvas(w, h, dynamicKeys, palette, baseStyle, styleKey);
         if (selectionFocusActive) {
-          const focusedEdges = drawableEdges.filter((edgeObj) => !dynamicKeys.has(edgeObj.key) && !edgeObj.dimmed);
-          const dynamicDimmedEdges = drawableEdges.filter((edgeObj) => dynamicKeys.has(edgeObj.key) && edgeObj.dimmed);
           const dynamicFocusedEdges = drawableEdges.filter((edgeObj) => dynamicKeys.has(edgeObj.key) && !edgeObj.dimmed);
-          if (baseLayer) ctx.drawImage(baseLayer, 0, 0);
-          tintExistingArrowPixels(ctx, w, h);
-          drawArrowRouteOverlay(ctx, w, h, routeListFor(focusedEdges), palette, baseStyle);
-          drawArrowRouteOverlay(ctx, w, h, routeListFor(dynamicDimmedEdges), null, getDimmedScienceAdvisorArrowStyle());
+          const dynamicDimmedEdges = drawableEdges.filter((edgeObj) => dynamicKeys.has(edgeObj.key) && edgeObj.dimmed);
+          const dimmedStyle = getDimmedScienceAdvisorArrowStyle();
+          const dimmedStyleKey = JSON.stringify(dimmedStyle || {});
+          const focusLayer = getArrowFocusLayerCanvas(w, h, dynamicKeys, palette, baseStyle, dimmedStyle, styleKey, dimmedStyleKey);
+          if (focusLayer) ctx.drawImage(focusLayer, 0, 0);
+          drawArrowRouteOverlay(ctx, w, h, routeListFor(dynamicDimmedEdges), null, dimmedStyle);
           drawArrowRouteOverlay(ctx, w, h, routeListFor(dynamicFocusedEdges), palette, baseStyle);
         } else {
+          const baseLayer = getArrowBaseLayerCanvas(w, h, dynamicKeys, palette, baseStyle, styleKey);
           if (baseLayer) ctx.drawImage(baseLayer, 0, 0);
           drawArrowRouteOverlay(ctx, w, h, getArrowRoutesForKeys(dynamicKeys), palette, baseStyle);
         }
@@ -28029,6 +28328,7 @@ function createTechTreePanel({
         if (!highlightCtx || !Array.isArray(routes) || routes.length === 0) return;
         drawArrowRouteOverlay(highlightCtx, w, h, routes, null, getHighlightedScienceAdvisorArrowStyle(role));
       };
+      if (highlightCtx) drawSelectedArrowFrameWarningGuide(highlightCtx, w, h);
       const incomingHighlightedRoutes = allEdges
         .filter((edgeObj) => edgeObj && edgeObj.route && edgeObj.highlightRole === 'incoming')
         .map((edgeObj) => edgeObj.route);
@@ -35176,6 +35476,40 @@ function makeDefaultReferenceFieldValue(field, name) {
   return '';
 }
 
+const BLANK_UNIT_DEFAULT_VALUES = {
+  requiredtech: '-1',
+  requiredresource1: '-1',
+  requiredresource2: '-1',
+  requiredresource3: '-1',
+  upgradeto: '-1',
+  enslaveresultsin: '-1',
+  iconindex: '0',
+  movement: '1',
+  availableto: '-2',
+  otherstrategy: '-1',
+  useexactcost: '7',
+  questionmark3: '1',
+  questionmark5: '1',
+  questionmark6: '1'
+};
+
+const BLANK_UNIT_DEFAULT_TRUE_FIELDS = new Set([
+  'offence',
+  'defencestrategy',
+  'skipturn',
+  'wait',
+  'fortify',
+  'disband',
+  'goto',
+  'exploreorder',
+  'sentry',
+  'load',
+  'airlift',
+  'pillage',
+  'upgrade',
+  'capture'
+]);
+
 function makeBlankReferenceFieldValue(field, tabKey = '') {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   if (tabKey === 'civilizations') {
@@ -35212,9 +35546,8 @@ function makeBlankReferenceFieldValue(field, tabKey = '') {
     if (base === 'improvement') return 'true';
   }
   if (tabKey === 'units') {
-    if (base === 'iconindex') return '-1';
-    if (base === 'requiredtech' || base === 'upgradeto' || base === 'enslaveresultsin') return '-1';
-    if (/^requiredresource\d+$/.test(base)) return '-1';
+    if (Object.prototype.hasOwnProperty.call(BLANK_UNIT_DEFAULT_VALUES, base)) return BLANK_UNIT_DEFAULT_VALUES[base];
+    if (BLANK_UNIT_DEFAULT_TRUE_FIELDS.has(base)) return 'true';
     if (base === 'stealth_target' || base === 'stealthtarget' || base === 'stealthtargets'
       || base === 'legal_unit_telepad' || base === 'legalunittelepad' || base === 'legalunittelepads'
       || base === 'legal_building_telepad' || base === 'legalbuildingtelepad' || base === 'legalbuildingtelepads') {
@@ -59994,6 +60327,7 @@ async function init() {
   if (typeof state.settings.reloadAfterSave !== 'boolean') {
     state.settings.reloadAfterSave = false;
   }
+  state.settings.tooltipDelay = normalizeTooltipDelay(state.settings.tooltipDelay);
   if (typeof state.settings.mapAutoDockTileInfoLeft !== 'boolean') {
     state.settings.mapAutoDockTileInfoLeft = true;
   }
@@ -60146,6 +60480,31 @@ async function init() {
       if (state.reloadAfterSaveMenuUnsubscribe) {
         state.reloadAfterSaveMenuUnsubscribe();
         state.reloadAfterSaveMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onTooltipDelayMenuSelect === 'function') {
+    state.tooltipDelayMenuUnsubscribe = window.c3xManager.onTooltipDelayMenuSelect((value) => {
+      if (!state.settings) return;
+      state.settings.tooltipDelay = normalizeTooltipDelay(value);
+      if (!shouldShowRichTooltips()) {
+        richTooltip.active = false;
+        hideRichTooltip();
+      }
+      void window.c3xManager.setSettings(state.settings);
+      const labels = {
+        none: 'no delay',
+        short: 'short delay - 300ms',
+        medium: 'medium delay - 800ms',
+        long: 'long delay - 2s',
+        off: 'disabled'
+      };
+      setStatus(`Tooltips: ${labels[state.settings.tooltipDelay] || 'medium delay - 800ms'}.`);
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.tooltipDelayMenuUnsubscribe) {
+        state.tooltipDelayMenuUnsubscribe();
+        state.tooltipDelayMenuUnsubscribe = null;
       }
     }, { once: true });
   }

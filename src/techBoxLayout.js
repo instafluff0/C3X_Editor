@@ -338,6 +338,31 @@ function getAttachmentPoint(rect, side, offset = 0, pad = 0) {
   return { x: r.x + (r.w / 2) + (vector.x * pad), y: r.y + (r.h / 2) + (vector.y * pad) };
 }
 
+function isPointAttachedToRectBorder(point, rect, tolerance = 8) {
+  const r = normalizeArrowRect(rect);
+  const px = Number(point && point.x);
+  const py = Number(point && point.y);
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
+  const tol = Math.max(0, Number(tolerance) || 0);
+  const inX = px >= r.x - tol && px <= r.x + r.w + tol;
+  const inY = py >= r.y - tol && py <= r.y + r.h + tol;
+  const onLeft = Math.abs(px - r.x) <= tol && inY;
+  const onRight = Math.abs(px - (r.x + r.w)) <= tol && inY;
+  const onTop = Math.abs(py - r.y) <= tol && inX;
+  const onBottom = Math.abs(py - (r.y + r.h)) <= tol && inX;
+  return onLeft || onRight || onTop || onBottom;
+}
+
+function isTechTreeArrowRouteAttachedToRects(route, sourceRect, targetRect, options = {}) {
+  const points = Array.isArray(route) ? route : (Array.isArray(route && route.points) ? route.points : []);
+  if (points.length < 2) return false;
+  const tolerance = Object.prototype.hasOwnProperty.call(options, 'tolerance')
+    ? Number(options.tolerance)
+    : 4;
+  return isPointAttachedToRectBorder(points[0], sourceRect, tolerance)
+    && isPointAttachedToRectBorder(points[points.length - 1], targetRect, tolerance);
+}
+
 function getBorderAxisRange(rect, side, inset = 5) {
   const r = normalizeArrowRect(rect);
   const safeInset = clamp(Number(inset) || 0, 0, Math.min(r.w, r.h) / 2);
@@ -2072,6 +2097,7 @@ return {
   autoLayoutTechTreeNodes,
   layoutTechTreeArrowEdges,
   buildTechTreeArrowRoute,
+  isTechTreeArrowRouteAttachedToRects,
   constrainTechTreeArrowRoute,
   formatTechTreeArrowSvgPath,
   sampleTechTreeArrowRoute

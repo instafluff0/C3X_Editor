@@ -289,6 +289,48 @@ function setUnitScalarFields(entry, fields) {
   });
 }
 
+const PRTO_INDEX_DISPLAY_FIELD_KEYS = new Set([
+  'requiredtech',
+  'requiredresource1',
+  'requiredresource2',
+  'requiredresource3',
+  'upgradeto',
+  'enslaveresultsin',
+  'unitclass'
+]);
+
+function makePrtoEntryFieldSnapshot(entry) {
+  const snapshot = new Map();
+  const occurrenceByBaseKey = new Map();
+  getFieldCollection(entry).forEach((field) => {
+    const baseKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    if (!baseKey) return;
+    const occurrence = occurrenceByBaseKey.get(baseKey) || 0;
+    occurrenceByBaseKey.set(baseKey, occurrence + 1);
+    const text = String(field && field.value != null ? field.value : '').trim();
+    const lower = text.toLowerCase();
+    let normalized = text;
+    if (PRTO_INDEX_DISPLAY_FIELD_KEYS.has(baseKey)) {
+      normalized = String(parseDisplayedReferenceIndex(text, -1));
+    } else if (lower === 'true' || lower === 'false') {
+      normalized = lower;
+    }
+    snapshot.set(`${baseKey}#${occurrence}`, normalized);
+  });
+  return snapshot;
+}
+
+function assertReloadedPrtoEntryFieldsMatchPreSave(preSaveEntry, reloadedEntry, label) {
+  assert.ok(preSaveEntry, `expected pre-save ${label}`);
+  assert.ok(reloadedEntry, `expected reloaded ${label}`);
+  const expected = makePrtoEntryFieldSnapshot(preSaveEntry);
+  const actual = makePrtoEntryFieldSnapshot(reloadedEntry);
+  assert.equal(actual.size, expected.size, `${label} should reload with the same projected PRTO field count`);
+  expected.forEach((value, key) => {
+    assert.equal(actual.get(key), value, `${label} field ${key} should match the pre-save unit after BIQ reload`);
+  });
+}
+
 function assertRawPrtoScalarFields(record, expected, label = 'PRTO record') {
   const rawKeyByUiKey = {
     requiredtech: 'requiredTech',
@@ -304,6 +346,19 @@ function assertRawPrtoScalarFields(record, expected, label = 'PRTO record') {
     const rawKey = rawKeyByUiKey[String(key).toLowerCase()] || key;
     assert.equal(Number(record && record[rawKey]), Number(value), `${label} ${rawKey} should persist`);
   });
+}
+
+function getRawPrtoScalarSnapshot(record) {
+  return {
+    requiredtech: Number(record && record.requiredTech),
+    requiredresource1: Number(record && record.requiredResource1),
+    requiredresource2: Number(record && record.requiredResource2),
+    requiredresource3: Number(record && record.requiredResource3),
+    attack: Number(record && record.attack),
+    defence: Number(record && record.defence),
+    movement: Number(record && record.movement),
+    shieldcost: Number(record && record.shieldCost)
+  };
 }
 
 function setUnitAiStrategyMask(entry, mask) {
@@ -340,6 +395,86 @@ function makePendingCopiedUnitEntry(sourceEntry, newRef) {
       next.value = entry.name;
     }
     return next;
+  });
+  return entry;
+}
+
+const BLANK_UNIT_DEFAULT_VALUES = {
+  requiredtech: '-1',
+  requiredresource1: '-1',
+  requiredresource2: '-1',
+  requiredresource3: '-1',
+  upgradeto: '-1',
+  enslaveresultsin: '-1',
+  iconindex: '0',
+  movement: '1',
+  availableto: '-2',
+  otherstrategy: '-1',
+  useexactcost: '7',
+  questionmark3: '1',
+  questionmark5: '1',
+  questionmark6: '1'
+};
+
+const BLANK_UNIT_DEFAULT_TRUE_FIELDS = new Set([
+  'offence',
+  'defencestrategy',
+  'skipturn',
+  'wait',
+  'fortify',
+  'disband',
+  'goto',
+  'exploreorder',
+  'sentry',
+  'load',
+  'airlift',
+  'pillage',
+  'upgrade',
+  'capture'
+]);
+
+function makeBlankUnitFieldValueForTest(field) {
+  const base = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(BLANK_UNIT_DEFAULT_VALUES, base)) return BLANK_UNIT_DEFAULT_VALUES[base];
+  if (BLANK_UNIT_DEFAULT_TRUE_FIELDS.has(base)) return 'true';
+  if (base === 'stealth_target' || base === 'stealthtarget' || base === 'stealthtargets'
+    || base === 'legal_unit_telepad' || base === 'legalunittelepad' || base === 'legalunittelepads'
+    || base === 'legal_building_telepad' || base === 'legalbuildingtelepad' || base === 'legalbuildingtelepads') {
+    return '';
+  }
+  if (/^(freetech|prerequisite|reqadvance|requiredtech)/.test(base)) return '';
+  if (base === 'name' || base === 'description' || base === 'civilizationname') return '';
+  const raw = String(field && field.value || '').trim().toLowerCase();
+  if (raw === 'true' || raw === 'false') return 'false';
+  const parsed = parseDisplayedReferenceIndex(field && field.value, NaN);
+  return Number.isFinite(parsed) ? '0' : '';
+}
+
+function makePendingBlankUnitEntry(sourceEntry, newRef, displayName = 'New Unit') {
+  assert.ok(sourceEntry, 'expected source unit entry for pending blank unit');
+  const entry = JSON.parse(JSON.stringify(sourceEntry));
+  const lookupRef = String(newRef || '').trim().toUpperCase();
+  entry.id = lookupRef.startsWith('PRTO_') ? lookupRef.slice(5) : lookupRef;
+  entry.civilopediaKey = lookupRef;
+  entry.displayCivilopediaKey = newRef;
+  entry.rawCivilopediaKey = newRef;
+  entry.rawBiqCivilopediaKey = newRef;
+  entry.linkCivilopediaKey = newRef;
+  entry.lookupCivilopediaKey = lookupRef;
+  entry.biqIndex = null;
+  entry.newRecordRef = lookupRef;
+  entry.isNew = true;
+  entry.name = String(displayName || '').trim() || 'New Unit';
+  entry.biqFields = (Array.isArray(entry.biqFields) ? entry.biqFields : []).map((field) => {
+    const base = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    let value = makeBlankUnitFieldValueForTest(field);
+    if (base === 'civilopediaentry') value = newRef;
+    if (base === 'name') value = entry.name;
+    return {
+      ...field,
+      value,
+      originalValue: ''
+    };
   });
   return entry;
 }
@@ -2209,6 +2344,88 @@ test('BIQ round-trip keeps adjacent unit AI strategy masks attached to the corre
   });
 });
 
+test('BIQ round-trip preserves pending newly added unit multi-strategy rows and existing neighbors', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'unit-ai-pending-add-regression.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const initialParsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(initialParsed.ok, true, String(initialParsed.error || 'initial parse failed'));
+  const neighborBaselines = new Map();
+  ['PRTO_WARRIOR', 'PRTO_ARCHER'].forEach((unitKey) => {
+    const raw = getRawPrtoPrimaryRecordsByCivKey(initialParsed, unitKey)[0];
+    assert.ok(raw, `expected raw primary ${unitKey}`);
+    neighborBaselines.set(unitKey, {
+      scalars: getRawPrtoScalarSnapshot(raw),
+      mask: getMergedRawPrtoStrategyMask(initialParsed, unitKey)
+    });
+  });
+
+  const newUnitRef = makeShortBiqTestRef('PRTO', 'AIADD');
+  const expectedMask = 0b00000000000010000001; // Offence + Air Defence
+  const expectedScalars = {
+    requiredtech: 4,
+    requiredresource1: 1,
+    requiredresource2: -1,
+    attack: 14,
+    defence: 6,
+    movement: 2,
+    shieldcost: 95
+  };
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitsTab = bundle.tabs.units;
+  assert.ok(unitsTab && Array.isArray(unitsTab.entries), 'expected units tab entries');
+  if (!Array.isArray(unitsTab.recordOps)) unitsTab.recordOps = [];
+  const template = getEntryByCivKey(unitsTab.entries, 'PRTO_WARRIOR') || unitsTab.entries[0];
+  assert.ok(template, 'expected unit template for pending add');
+  const pending = makePendingBlankUnitEntry(template, newUnitRef, 'Pending Strategy Unit');
+  setUnitName(pending, 'Pending Strategy Unit');
+  setUnitScalarFields(pending, expectedScalars);
+  setUnitAiStrategyMask(pending, expectedMask);
+
+  unitsTab.entries.push(pending);
+  unitsTab.recordOps.push({ op: 'add', newRecordRef: newUnitRef });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'pending add strategy save failed'));
+
+  const parsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(parsed.ok, true, String(parsed.error || 'parse after pending add strategy save failed'));
+  const rawPending = getRawPrtoPrimaryRecordsByCivKey(parsed, newUnitRef)[0];
+  assert.ok(rawPending, 'expected pending added unit primary after save');
+  assert.equal(String(rawPending.name || '').trim(), 'Pending Strategy Unit');
+  assertRawPrtoScalarFields(rawPending, expectedScalars, 'Pending Strategy Unit');
+  assertRawPrtoStrategyRows(parsed, newUnitRef, expectedMask, 'Pending Strategy Unit');
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedPending = getEntryByCivKey(reloaded.tabs.units.entries, newUnitRef);
+  assertReloadedPrtoEntryFieldsMatchPreSave(pending, reloadedPending, 'Pending Strategy Unit');
+
+  neighborBaselines.forEach((baseline, unitKey) => {
+    const raw = getRawPrtoPrimaryRecordsByCivKey(parsed, unitKey)[0];
+    assert.ok(raw, `expected neighboring primary ${unitKey} after save`);
+    assertRawPrtoScalarFields(raw, baseline.scalars, `${unitKey} neighboring unit`);
+    assert.equal(getMergedRawPrtoStrategyMask(parsed, unitKey), baseline.mask, `${unitKey} should keep neighboring AI strategy mask`);
+  });
+});
+
 test('BIQ round-trip preserves unit AI strategies through pending copies and repeated saves', () => {
   const sampleBiq = getStablePlayableCivsFixturePath();
   assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
@@ -2278,10 +2495,14 @@ test('BIQ round-trip preserves unit AI strategies through pending copies and rep
 
   const reloadedWarrior = getEntryByCivKey(reloaded.tabs.units.entries, 'PRTO_WARRIOR');
   const reloadedCopiedDefender = getEntryByCivKey(reloaded.tabs.units.entries, copiedDefenderRef);
+  const reloadedCopiedAir = getEntryByCivKey(reloaded.tabs.units.entries, copiedAirRef);
   const reloadedWorker = getEntryByCivKey(reloaded.tabs.units.entries, 'PRTO_WORKER');
   assert.ok(reloadedWarrior, 'expected reloaded Warrior unit entry');
   assert.ok(reloadedCopiedDefender, 'expected reloaded copied defender unit entry');
+  assert.ok(reloadedCopiedAir, 'expected reloaded copied air unit entry');
   assert.ok(reloadedWorker, 'expected reloaded Worker unit entry');
+  assertReloadedPrtoEntryFieldsMatchPreSave(copiedDefender, reloadedCopiedDefender, 'copied defender unit');
+  assertReloadedPrtoEntryFieldsMatchPreSave(copiedAir, reloadedCopiedAir, 'copied air unit');
   setUnitAiStrategyMask(reloadedWarrior, nextMasks.get('PRTO_WARRIOR'));
   setUnitAiStrategyMask(reloadedCopiedDefender, nextMasks.get(copiedDefenderRef));
   const workerCost = findField(reloadedWorker, 'shieldcost');
@@ -2524,6 +2745,9 @@ test('BIQ round-trip keeps Civilization LEGENDS duplicate-key unit edits and cop
   assert.ok(reloadedChariot, 'expected reloaded Chariot');
   assert.ok(reloadedWarChariot, 'expected reloaded War Chariot');
   assert.ok(reloadedCopy, 'expected reloaded War Chariot Copy');
+  assertReloadedPrtoEntryFieldsMatchPreSave(chariot, reloadedChariot, 'Chariot');
+  assertReloadedPrtoEntryFieldsMatchPreSave(warChariot, reloadedWarChariot, 'War Chariot');
+  assertReloadedPrtoEntryFieldsMatchPreSave(copiedWarChariot, reloadedCopy, 'War Chariot Copy');
   assert.equal(parseDisplayedReferenceIndex(findField(reloadedChariot, 'requiredtech') && findField(reloadedChariot, 'requiredtech').value, NaN), chariotFields.requiredtech);
   assert.equal(parseDisplayedReferenceIndex(findField(reloadedWarChariot, 'requiredtech') && findField(reloadedWarChariot, 'requiredtech').value, NaN), warChariotFields.requiredtech);
   assert.equal(parseDisplayedReferenceIndex(findField(reloadedCopy, 'requiredtech') && findField(reloadedCopy, 'requiredtech').value, NaN), copyFields.requiredtech);
@@ -3199,6 +3423,28 @@ test('BIQ editable field writer inventory emits save edits and accepted BIQ writ
   const applyResult = applyEdits(fs.readFileSync(sampleBiq), uniqueNonMapEdits);
   assert.equal(applyResult.ok, true, String(applyResult.error || 'applyEdits failed'));
   assert.equal(Number(applyResult.skipped || 0), 0, String(applyResult.warning || 'expected no skipped BIQ writer edits'));
+});
+
+test('BIQ reference edit collection uses BIQ index for existing rows with blank Civilopedia keys', () => {
+  const edits = collectBiqReferenceEdits({
+    governments: {
+      entries: [{
+        civilopediaKey: '',
+        biqIndex: 6,
+        biqFields: [
+          { baseKey: 'name', value: 'Blank Key Government', originalValue: 'Old Government' },
+          { baseKey: 'civilopediaentry', value: '', originalValue: '' }
+        ]
+      }]
+    }
+  });
+
+  assert.deepEqual(edits, [{
+    sectionCode: 'GOVT',
+    recordRef: '@INDEX:6',
+    fieldKey: 'name',
+    value: 'Blank Key Government'
+  }]);
 });
 
 test('BIQ round-trip persists editable reference-tab fields across the other core BIQ tabs', () => {

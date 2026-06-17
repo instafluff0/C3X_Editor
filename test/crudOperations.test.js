@@ -135,6 +135,48 @@ function parseReferenceIndexValue(value, fallback = NaN) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+const PRTO_INDEX_DISPLAY_FIELD_KEYS = new Set([
+  'requiredtech',
+  'requiredresource1',
+  'requiredresource2',
+  'requiredresource3',
+  'upgradeto',
+  'enslaveresultsin',
+  'unitclass'
+]);
+
+function makePrtoEntryFieldSnapshot(entry) {
+  const snapshot = new Map();
+  const occurrenceByBaseKey = new Map();
+  (Array.isArray(entry && entry.biqFields) ? entry.biqFields : []).forEach((field) => {
+    const baseKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    if (!baseKey) return;
+    const occurrence = occurrenceByBaseKey.get(baseKey) || 0;
+    occurrenceByBaseKey.set(baseKey, occurrence + 1);
+    const text = String(field && field.value != null ? field.value : '').trim();
+    const lower = text.toLowerCase();
+    let normalized = text;
+    if (PRTO_INDEX_DISPLAY_FIELD_KEYS.has(baseKey)) {
+      normalized = String(parseReferenceIndexValue(text, -1));
+    } else if (lower === 'true' || lower === 'false') {
+      normalized = lower;
+    }
+    snapshot.set(`${baseKey}#${occurrence}`, normalized);
+  });
+  return snapshot;
+}
+
+function assertReloadedPrtoEntryFieldsMatchPreSave(preSaveEntry, reloadedEntry, label) {
+  assert.ok(preSaveEntry, `expected pre-save ${label}`);
+  assert.ok(reloadedEntry, `expected reloaded ${label}`);
+  const expected = makePrtoEntryFieldSnapshot(preSaveEntry);
+  const actual = makePrtoEntryFieldSnapshot(reloadedEntry);
+  assert.equal(actual.size, expected.size, `${label} should reload with the same projected PRTO field count`);
+  expected.forEach((value, key) => {
+    assert.equal(actual.get(key), value, `${label} field ${key} should match the pre-save unit after BIQ reload`);
+  });
+}
+
 function makeUniqueEntryKey(entries, baseKey) {
   const existing = new Set((Array.isArray(entries) ? entries : []).map((entry) =>
     String(entry && entry.civilopediaKey || '').trim().toUpperCase()
@@ -269,11 +311,74 @@ function getRawRecordsByCivilopediaKey(bundle, sectionCode, key) {
   });
 }
 
+function getRawPrimaryPrtoRecord(bundle, unitKey) {
+  return getRawRecordsByCivilopediaKey(bundle, 'PRTO', unitKey)
+    .find((record) => getRawRecordInt(record, 'otherstrategy', -1) < 0) || null;
+}
+
 function countPrimaryPrtoRecords(bundle) {
   const section = getSection(bundle, 'PRTO');
   return (section && Array.isArray(section.records) ? section.records : []).filter((record) =>
     getRawRecordInt(record, 'otherstrategy', -1) < 0
   ).length;
+}
+
+const UNIT_AI_STRATEGY_FIELD_KEYS = [
+  'offence',
+  'defencestrategy',
+  'artillery',
+  'explorestrategy',
+  'armyunit',
+  'cruisemissileunit',
+  'airbombard',
+  'airdefencestrategy',
+  'navalpower',
+  'airtransport',
+  'navaltransport',
+  'navalcarrier',
+  'terraform',
+  'settle',
+  'leaderunit',
+  'tacticalnuke',
+  'icbm',
+  'navalmissiletransport',
+  'flagstrategy',
+  'kingstrategy'
+];
+
+function countStrategyBits(mask) {
+  const raw = Number(mask) | 0;
+  let count = 0;
+  for (let bit = 0; bit < UNIT_AI_STRATEGY_FIELD_KEYS.length; bit += 1) {
+    if (((raw >>> bit) & 1) === 1) count += 1;
+  }
+  return count;
+}
+
+function setUnitAiStrategyMask(entry, mask) {
+  UNIT_AI_STRATEGY_FIELD_KEYS.forEach((key, bit) => {
+    setFieldVal(entry, key, ((Number(mask) >>> bit) & 1) === 1 ? 'true' : 'false');
+  });
+}
+
+function getRawPrtoStrategyMask(bundle, unitKey) {
+  return getRawRecordsByCivilopediaKey(bundle, 'PRTO', unitKey)
+    .reduce((mask, record) => mask | (getRawRecordInt(record, 'aistrategy', 0) | 0), 0);
+}
+
+function assertRawPrtoStrategyRows(bundle, unitKey, expectedMask, label = unitKey) {
+  const records = getRawRecordsByCivilopediaKey(bundle, 'PRTO', unitKey);
+  const primaries = records.filter((record) => getRawRecordInt(record, 'otherstrategy', -1) < 0);
+  assert.equal(primaries.length, 1, `${label} should have one primary PRTO row`);
+  const primaryIndex = Number.isFinite(Number(primaries[0] && primaries[0].index))
+    ? Number(primaries[0].index)
+    : getRawRecordInt(primaries[0], 'index');
+  assert.equal(records.length, Math.max(1, countStrategyBits(expectedMask)), `${label} should have one raw PRTO row per strategy bit`);
+  records.forEach((record) => {
+    if (record === primaries[0]) return;
+    assert.equal(getRawRecordInt(record, 'otherstrategy'), primaryIndex, `${label} strategy-map row should point to the primary`);
+  });
+  assert.equal(getRawPrtoStrategyMask(bundle, unitKey), expectedMask, `${label} should keep merged AI strategy mask`);
 }
 
 function extractFunctionSource(sourceText, name) {
@@ -352,6 +457,38 @@ function loadRendererImportHelpers(targetBundle) {
       governments: 'GOVT_',
       units: 'PRTO_'
     },
+    BLANK_UNIT_DEFAULT_VALUES: {
+      requiredtech: '-1',
+      requiredresource1: '-1',
+      requiredresource2: '-1',
+      requiredresource3: '-1',
+      upgradeto: '-1',
+      enslaveresultsin: '-1',
+      iconindex: '0',
+      movement: '1',
+      availableto: '-2',
+      otherstrategy: '-1',
+      useexactcost: '7',
+      questionmark3: '1',
+      questionmark5: '1',
+      questionmark6: '1'
+    },
+    BLANK_UNIT_DEFAULT_TRUE_FIELDS: new Set([
+      'offence',
+      'defencestrategy',
+      'skipturn',
+      'wait',
+      'fortify',
+      'disband',
+      'goto',
+      'exploreorder',
+      'sentry',
+      'load',
+      'airlift',
+      'pillage',
+      'upgrade',
+      'capture'
+    ]),
     inferReferenceNameFromKey: () => '',
     dedupeStrings: (values) => {
       const out = [];
@@ -431,6 +568,41 @@ function loadRendererIndexHelpers(targetBundle) {
     + functionNames.map((name) => `${name}: ${name}`).join(', ')
     + ' };';
   vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-index.vm' });
+  return sandbox.__helpers;
+}
+
+function loadRendererReferenceTargetHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = [
+    'normalizeConfigToken',
+    'parseIntFromDisplayValue',
+    'getBaseBiqSectionCount',
+    'getPredictedReferenceRecordIndex',
+    'getReferenceEntryIndexForOption',
+    'getReferenceRecordRefForOps',
+    'findOptionByValue',
+    'resolveReferenceEntryForPicker',
+    'makeReferenceTargetMeta',
+    'setFieldReferenceTargetMeta'
+  ];
+  const sandbox = {
+    state: { bundle: targetBundle },
+    REFERENCE_SECTION_BY_TAB: {
+      civilizations: 'RACE',
+      technologies: 'TECH',
+      resources: 'GOOD',
+      improvements: 'BLDG',
+      governments: 'GOVT',
+      units: 'PRTO'
+    }
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ' };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-reference-target.vm' });
   return sandbox.__helpers;
 }
 
@@ -1924,8 +2096,23 @@ test('copying a reference resets raw/display/link keys to the user-entered key',
   assert.equal(findBiqField(copied, 'name').originalValue, 'Tincture Shop');
 });
 
-test('renderer unit copy ops use BIQ index source refs for duplicate Civilopedia keys', () => {
-  const { makeReferenceCopyRecordOp } = loadRendererDeleteHelpers();
+test('renderer reference copy ops use BIQ index source refs for existing duplicate Civilopedia keys', () => {
+  const { getReferenceRecordRefForOps, makeReferenceCopyRecordOp } = loadRendererDeleteHelpers();
+  [
+    ['civilizations', 'RACE_DUPLICATE', 4, 0],
+    ['technologies', 'TECH_POTTERY', 33, 3],
+    ['resources', 'GOOD_IRON', 14, 4],
+    ['improvements', 'BLDG_DUPLICATE', 21, 2],
+    ['governments', 'GOVT_DUPLICATE', 5, 1],
+    ['units', 'PRTO_WAR_CHARIOT', 57, 3],
+    ['technologies', '', 11, 0]
+  ].forEach(([tabKey, key, biqIndex, fallbackIndex]) => {
+    assert.equal(
+      getReferenceRecordRefForOps(tabKey, { civilopediaKey: key, biqIndex }, fallbackIndex),
+      `@INDEX:${biqIndex}`,
+      `${tabKey} existing rows should use BIQ index identity`
+    );
+  });
   const op = makeReferenceCopyRecordOp(
     'units',
     { civilopediaKey: 'PRTO_WAR_CHARIOT', biqIndex: 57 },
@@ -1937,7 +2124,7 @@ test('renderer unit copy ops use BIQ index source refs for duplicate Civilopedia
   assert.equal(op.newRecordRef, 'PRTO_War_Chariot_Copy');
 });
 
-test('renderer-shaped Civilization LEGENDS War Chariot copy saves and reloads with copied name and prereqs', (t) => {
+test('renderer-shaped Civilization LEGENDS War Chariot copy saves duplicate-key picker prereqs by BIQ index', (t) => {
   if (!CIVILIZATION_LEGENDS_BIQ_EXISTS) {
     t.skip('Civilization LEGENDS BIQ not available for renderer-shaped War Chariot copy regression.');
   }
@@ -1955,6 +2142,26 @@ test('renderer-shaped Civilization LEGENDS War Chariot copy saves and reloads wi
   const copyKey = makeUniqueEntryKey(entries, 'PRTO_War_Chariot_Copy_UI');
   const copyName = 'War Chariot Copy';
   const { buildNewReferenceEntryFromTemplate, makeReferenceCopyRecordOp } = loadRendererImportHelpers(bundle);
+  const { getReferenceEntryIndexForOption, setFieldReferenceTargetMeta } = loadRendererReferenceTargetHelpers(bundle);
+  const makeOptions = (tabKey) => bundle.tabs[tabKey].entries.map((entry, idx) => ({
+    value: String(getReferenceEntryIndexForOption(tabKey, entry, idx, { allowFallback: true })),
+    label: String(entry && entry.name || ''),
+    entry
+  }));
+  const techOptions = makeOptions('technologies');
+  const resourceOptions = makeOptions('resources');
+  const fishing = techOptions.find((option) => option.label === 'Fishing');
+  const tin = resourceOptions.find((option) => option.label === 'Tin');
+  const rareEarths = resourceOptions.find((option) => option.label === 'Rare Earths');
+  assert.ok(fishing, 'expected Civilization LEGENDS Fishing tech');
+  assert.ok(tin, 'expected Civilization LEGENDS Tin resource');
+  assert.ok(rareEarths, 'expected Civilization LEGENDS Rare Earths resource');
+  assert.equal(fishing.entry.civilopediaKey, 'TECH_POTTERY', 'test fixture should cover duplicate tech Civilopedia key');
+  assert.equal(tin.entry.civilopediaKey, 'GOOD_IRON', 'test fixture should cover duplicate resource Civilopedia key');
+  assert.equal(rareEarths.entry.civilopediaKey, 'GOOD_IRON', 'test fixture should cover duplicate resource Civilopedia key');
+  assert.notEqual(fishing.value, '33', 'Fishing must not be the stale Barding index');
+  assert.notEqual(tin.value, '14', 'Tin must not be the stale Mahogany index');
+  assert.notEqual(rareEarths.value, '14', 'Rare Earths must not be the stale Mahogany index');
   const copied = buildNewReferenceEntryFromTemplate({
     tabKey: 'units',
     sourceEntry: warChariot,
@@ -1962,8 +2169,16 @@ test('renderer-shaped Civilization LEGENDS War Chariot copy saves and reloads wi
     mode: 'copy',
     displayName: copyName
   });
-  setFieldVal(copied, 'requiredtech', '33');
-  setFieldVal(copied, 'requiredresource1', '14');
+  const setPickerField = (fieldKey, targetTabKey, option, options) => {
+    const field = findBiqField(copied, fieldKey);
+    assert.ok(field, `expected ${fieldKey} field`);
+    field.value = String(option.value);
+    setFieldReferenceTargetMeta(field, targetTabKey, option, option.value, options);
+    assert.equal(field.referenceTarget && field.referenceTarget.key, `@INDEX:${option.value}`);
+  };
+  setPickerField('requiredtech', 'technologies', fishing, techOptions);
+  setPickerField('requiredresource1', 'resources', tin, resourceOptions);
+  setPickerField('requiredresource2', 'resources', rareEarths, resourceOptions);
 
   unitsTab.entries = [copied];
   unitsTab.recordOps = [makeReferenceCopyRecordOp('units', warChariot, warChariotIndex, copyKey)];
@@ -1983,8 +2198,16 @@ test('renderer-shaped Civilization LEGENDS War Chariot copy saves and reloads wi
   assert.ok(reloadedCopy, 'expected War Chariot copy after reload');
   assert.equal(reloadedCopy.name, copyName);
   assert.equal(fieldVal(reloadedCopy, 'name'), copyName);
-  assert.equal(parseReferenceIndexValue(fieldVal(reloadedCopy, 'requiredtech')), 33);
-  assert.equal(parseReferenceIndexValue(fieldVal(reloadedCopy, 'requiredresource1')), 14);
+  const rawCopy = getRawRecordsByCivilopediaKey(reloaded, 'PRTO', copyKey).find((record) =>
+    getRawRecordInt(record, 'otherstrategy', -1) < 0
+  );
+  assert.ok(rawCopy, 'expected reloaded primary raw PRTO copy');
+  assert.equal(getRawRecordInt(rawCopy, 'requiredtech'), Number(fishing.value));
+  assert.equal(getRawRecordInt(rawCopy, 'requiredresource1'), Number(tin.value));
+  assert.equal(getRawRecordInt(rawCopy, 'requiredresource2'), Number(rareEarths.value));
+  assert.notEqual(getRawRecordInt(rawCopy, 'requiredtech'), 33);
+  assert.notEqual(getRawRecordInt(rawCopy, 'requiredresource1'), 14);
+  assert.notEqual(getRawRecordInt(rawCopy, 'requiredresource2'), 14);
 });
 
 function computeDirtyReferenceIdentitySet(tabKey, currentEntries, cleanEntries) {
@@ -2375,7 +2598,7 @@ test('Renderer blank reference templates use unset cross-reference defaults', ()
         ['legal_building_telepad', '0']
       ],
       expected: {
-        iconindex: '-1',
+        iconindex: '0',
         requiredtech: '-1',
         requiredresource1: '-1',
         requiredresource2: '-1',
@@ -3052,6 +3275,7 @@ test('Import Unit from Tides: attack/defense fields match source', (t) => {
   assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
   const reloaded = getEntry(r.after, 'units', r.newKey);
   assert.ok(reloaded, 'expected reloaded unit entry');
+  assertReloadedPrtoEntryFieldsMatchPreSave(r.importedEntry, reloaded, 'imported unit');
   for (const key of ['attack', 'defense', 'movement']) {
     const srcVal = fieldVal(r.srcEntry, key);
     const dstVal = fieldVal(reloaded, key);
@@ -3059,6 +3283,71 @@ test('Import Unit from Tides: attack/defense fields match source', (t) => {
       assert.equal(dstVal, srcVal, `expected field ${key} to round-trip for imported unit`);
     }
   }
+});
+
+test('Import Unit from Tides: immediate multi-strategy edit preserves imported rows and target neighbors', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Target BIQ not found: ${BASE_BIQ}`);
+  if (!TIDES_BIQ_EXISTS) return t.skip(`Tides of Crimson BIQ not found: ${TIDES_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const tidesBundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath: TIDES_BIQ
+  });
+  const sourceEntry = pickEntry(
+    tidesBundle,
+    'units',
+    (entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_BARRAGE'
+  ) || pickEntry(tidesBundle, 'units', () => true);
+  if (!sourceEntry) return t.skip('No usable Tides unit entry found');
+
+  const before = reload(c3xDir, biqPath);
+  const neighborBaselines = new Map();
+  ['PRTO_WARRIOR', 'PRTO_ARCHER'].forEach((unitKey) => {
+    const raw = getRawPrimaryPrtoRecord(before, unitKey);
+    assert.ok(raw, `expected target neighbor ${unitKey}`);
+    neighborBaselines.set(unitKey, {
+      attack: getRawRecordInt(raw, 'attack'),
+      shieldcost: getRawRecordInt(raw, 'shieldcost'),
+      mask: getRawPrtoStrategyMask(before, unitKey)
+    });
+  });
+
+  const newKey = makeShortTestRef('PRTO_', 'IMP_AI');
+  const importedEntry = simulateRendererImport(before, tidesBundle, 'units', sourceEntry, newKey);
+  const expectedMask = 0b00000000000011000001; // Offence + Air Bombard + Air Defence
+  setFieldVal(importedEntry, 'attack', '17');
+  setFieldVal(importedEntry, 'shieldcost', '123');
+  setUnitAiStrategyMask(importedEntry, expectedMask);
+
+  const saveResult = saveImport(
+    c3xDir,
+    biqPath,
+    'units',
+    newKey,
+    importedEntry,
+    TIDES_BIQ,
+    String(sourceEntry && sourceEntry.civilopediaKey || '').trim().toUpperCase()
+  );
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'imported multi-strategy unit save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const rawImported = getRawPrimaryPrtoRecord(after, newKey);
+  assert.ok(rawImported, 'expected imported unit primary after reload');
+  const reloadedImported = getEntry(after, 'units', newKey);
+  assertReloadedPrtoEntryFieldsMatchPreSave(importedEntry, reloadedImported, 'imported edited unit');
+  assert.equal(getRawRecordInt(rawImported, 'attack'), 17);
+  assert.equal(getRawRecordInt(rawImported, 'shieldcost'), 123);
+  assertRawPrtoStrategyRows(after, newKey, expectedMask, 'imported edited unit');
+
+  neighborBaselines.forEach((baseline, unitKey) => {
+    const raw = getRawPrimaryPrtoRecord(after, unitKey);
+    assert.ok(raw, `expected target neighbor ${unitKey} after import`);
+    assert.equal(getRawRecordInt(raw, 'attack'), baseline.attack, `${unitKey} attack should stay unchanged`);
+    assert.equal(getRawRecordInt(raw, 'shieldcost'), baseline.shieldcost, `${unitKey} cost should stay unchanged`);
+    assert.equal(getRawPrtoStrategyMask(after, unitKey), baseline.mask, `${unitKey} AI strategy mask should stay unchanged`);
+  });
 });
 
 test('Import Arctic Ape from Tides preserves hit-point bonus and support flag', (t) => {

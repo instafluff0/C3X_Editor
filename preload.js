@@ -53,6 +53,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:reload-after-save-selected', listener);
     };
   },
+  onTooltipDelayMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, value) => handler(value);
+    ipcRenderer.on('manager:tooltip-delay-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:tooltip-delay-selected', listener);
+    };
+  },
   onTextFileEncodingMenuSelect: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};
