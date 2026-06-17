@@ -7207,6 +7207,31 @@ details > summary:focus-visible {
   font-size: 0.66rem;
 }
 
+.tech-tree-arrow-frame-warning {
+  position: absolute;
+  z-index: 7;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  max-width: 190px;
+  padding: 3px 7px;
+  border: 1px solid rgba(169, 96, 16, 0.34);
+  border-radius: 6px;
+  background: rgba(255, 241, 206, 0.96);
+  color: #71410d;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: center;
+  pointer-events: none;
+  transform: translate(-50%, 0);
+  box-shadow: 0 4px 12px rgba(66, 39, 10, 0.18);
+}
+
+.tech-tree-arrow-frame-warning.hidden {
+  display: none;
+}
+
 .tech-tree-arrow-style-chevron {
   min-width: 10px;
   text-align: center;
@@ -7482,6 +7507,17 @@ details > summary:focus-visible {
   fill: #eaf4ff;
   stroke: #2a73b8;
   stroke-width: 2.5;
+}
+
+.tech-tree-route-control.has-frame-warning .tech-tree-route-handle {
+  fill: #fff1ce;
+  stroke: #d57919;
+  stroke-width: 2.5;
+}
+
+.tech-tree-route-control.has-frame-warning .tech-tree-route-handle.selected-handle {
+  fill: #ffe3a3;
+  stroke: #9b560c;
 }
 
 .tech-tree-route-control.is-focus-dimmed .tech-tree-route-handle {

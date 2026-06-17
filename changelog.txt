@@ -1,3 +1,10 @@
+* RELEASE 27.16.1
+- Fixed concurrent BIQ record delete plus field-edit saves so edits targeting original indexes are shifted or dropped after deletes, and PRTO copy/delete now preserves or reconciles strategy-map child rows, preventing Civilization LEGENDS and 2021 EXPANSION unit edits/adds/deletes from poisoning neighboring unit fields or AI Strategy masks.
+- Added fixture-backed Civilization LEGENDS and 2021 EXPANSION unit edit/copy regressions so same-key PRTO primaries and Quint-style strategy-map units are tested for adds as well as deletes.
+- Added unit pending-reference regression coverage for logical PRTO primary indices when new units serialize with Quint-style strategy-map duplicate records.
+- Added a floating Tech Tree border warning for dirty Science Advisor arrows that touch protected advisor-frame areas, with amber route highlights and a save-details note.
+- Added BIQ regression coverage for adjacent and duplicate-key unit AI Strategy masks, pending copied units, repeated unit saves, pending copied civilizations, repeated civilization saves, and civilization Flavor masks, guarding against save/reload transfers or losses in the areas reported by mod authors.
+
 * RELEASE 27.16
 - Collapsed trailing source-default C3X era-alias resets before positional backfill, preventing deleted middle-era aliases from pushing earlier blank eras to the previous custom name.
 - Scoped C3X era-alias live autofill to the active focus session and committed serialized alias rows for Save/Undo state.

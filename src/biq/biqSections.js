@@ -2923,6 +2923,48 @@ function dropPrtoStrategyMapDuplicates(records, primaryIndex, keepRecord) {
   return changed;
 }
 
+function reconcilePrtoStrategyMapAfterPrimaryDelete(records, deletedPrimaryIndex, deletedRecord) {
+  if (!Array.isArray(records) || !Number.isFinite(deletedPrimaryIndex) || deletedPrimaryIndex < 0) {
+    return { removed: 0, shifted: 0 };
+  }
+  let removed = 0;
+  let shifted = 0;
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const record = records[i];
+    if (!record || record === deletedRecord) continue;
+    const otherStrategy = Number(record && record.otherStrategy);
+    if (!Number.isFinite(otherStrategy) || otherStrategy < 0) continue;
+    if (otherStrategy === deletedPrimaryIndex) {
+      records.splice(i, 1);
+      removed += 1;
+      continue;
+    }
+    if (otherStrategy > deletedPrimaryIndex) {
+      record.otherStrategy = otherStrategy - 1;
+      shifted += 1;
+    }
+  }
+  return { removed, shifted };
+}
+
+function mergePrtoStrategyMapRowsForCopy(records, sourceRecord, copiedRecord) {
+  if (!Array.isArray(records) || !sourceRecord || !copiedRecord) return false;
+  const sourceOtherStrategy = Number(sourceRecord && sourceRecord.otherStrategy);
+  if (Number.isFinite(sourceOtherStrategy) && sourceOtherStrategy >= 0) return false;
+  const sourceIndex = Number(sourceRecord && sourceRecord.index);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) return false;
+  let merged = Number(copiedRecord && copiedRecord.AIStrategy) | 0;
+  records.forEach((record) => {
+    if (!record || record === sourceRecord) return;
+    const otherStrategy = Number(record && record.otherStrategy);
+    if (!Number.isFinite(otherStrategy) || otherStrategy !== sourceIndex) return;
+    merged |= Number(record && record.AIStrategy) | 0;
+  });
+  if ((Number(copiedRecord && copiedRecord.AIStrategy) | 0) === merged) return false;
+  copiedRecord.AIStrategy = merged;
+  return true;
+}
+
 function applySetToRecord(rec, fieldKey, value, code, io) {
   const ck = canonicalKey(fieldKey);
 
@@ -5429,6 +5471,84 @@ function setCustomRulesSectionsOnParsed(parsed, uiSections) {
 // applyEdits: apply SET/ADD/COPY/DELETE edits to a buffer, return new buffer
 // ---------------------------------------------------------------------------
 
+function parseIndexRecordRef(recordRef) {
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref.startsWith('@INDEX:')) return NaN;
+  const idx = Number.parseInt(ref.slice(7), 10);
+  return Number.isFinite(idx) ? idx : NaN;
+}
+
+function findOriginalDeleteRecordIndex(section, recordRef) {
+  if (!section || !Array.isArray(section.records)) return -1;
+  const explicitIndex = parseIndexRecordRef(recordRef);
+  if (Number.isFinite(explicitIndex) && explicitIndex >= 0) {
+    return section.records.findIndex((record) => Number(record && record.index) === explicitIndex);
+  }
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return -1;
+  return section.records.findIndex((record) => {
+    const ce = String(record && record.civilopediaEntry || '').trim().toUpperCase();
+    if (ce === ref) return true;
+    const newRef = String(record && record.newRecordRef || '').trim().toUpperCase();
+    return newRef === ref;
+  });
+}
+
+function remapSetEditRecordRefsAfterDeletes(parsed, edits) {
+  if (!parsed || !Array.isArray(edits) || edits.length === 0) return edits;
+  const deletedByCode = new Map();
+  edits.forEach((edit) => {
+    if (String(edit && edit.op || '').trim().toLowerCase() !== 'delete') return;
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    if (!code) return;
+    const section = getSectionByCode(parsed, code);
+    const deletedIndex = findOriginalDeleteRecordIndex(section, edit && edit.recordRef);
+    if (!Number.isFinite(deletedIndex) || deletedIndex < 0) return;
+    if (!deletedByCode.has(code)) deletedByCode.set(code, new Set());
+    deletedByCode.get(code).add(deletedIndex);
+  });
+  if (deletedByCode.size === 0) return edits;
+
+  let remapped = 0;
+  let dropped = 0;
+  const out = [];
+  edits.forEach((edit) => {
+    if (String(edit && edit.op || 'set').trim().toLowerCase() !== 'set') {
+      out.push(edit);
+      return;
+    }
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    const deleted = deletedByCode.get(code);
+    if (!deleted || deleted.size === 0) {
+      out.push(edit);
+      return;
+    }
+    const originalIndex = parseIndexRecordRef(edit && edit.recordRef);
+    if (!Number.isFinite(originalIndex) || originalIndex < 0) {
+      out.push(edit);
+      return;
+    }
+    if (deleted.has(originalIndex)) {
+      dropped += 1;
+      return;
+    }
+    const deletedBefore = Array.from(deleted).filter((idx) => idx < originalIndex).length;
+    if (deletedBefore > 0) {
+      out.push({
+        ...edit,
+        recordRef: `@INDEX:${originalIndex - deletedBefore}`
+      });
+      remapped += 1;
+      return;
+    }
+    out.push(edit);
+  });
+  if (remapped > 0 || dropped > 0) {
+    log.debug('BiqApplyEdits', `remapped set edit record refs after deletes: remapped=${remapped} droppedDeletedRecordSets=${dropped}`);
+  }
+  return out;
+}
+
 function applyEdits(buf, edits, options = {}) {
   if (!Array.isArray(edits) || edits.length === 0) {
     return { ok: true, buffer: buf, applied: 0, skipped: 0, warning: '' };
@@ -5454,13 +5574,14 @@ function applyEdits(buf, edits, options = {}) {
   const originalRaceRefs = originalRaceSection && Array.isArray(originalRaceSection.records)
     ? originalRaceSection.records.map((record) => getRecordCivilopediaRef(record))
     : [];
+  const effectiveEdits = remapSetEditRecordRefsAfterDeletes(parsed, edits);
   let sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
 
   let applied = 0;
   let skipped = 0;
   const warnings = [];
 
-  for (const edit of edits) {
+  for (const edit of effectiveEdits) {
     const op = String(edit.op || 'set').toLowerCase();
     if (op === 'removemap') {
       log.debug('BiqApplyEdits', 'op=removemap: removing all map sections');
@@ -5571,6 +5692,9 @@ function applyEdits(buf, edits, options = {}) {
         const src = findRecordByRef(section.records, sourceRef);
         if (src) {
           newRec = copyRecord(src);
+          if (code === 'PRTO' && mergePrtoStrategyMapRowsForCopy(section.records, src, newRec)) {
+            log.debug('BiqApplyEdits', `op=copy PRTO: merged strategy-map rows from ${sourceRef} into copied primary ${newRef}`);
+          }
           newRec.civilopediaEntry = newRef;
           if (newRec._rawData) delete newRec._rawData;
           if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
@@ -5618,9 +5742,23 @@ function applyEdits(buf, edits, options = {}) {
         log.warn('BiqApplyEdits', `op=delete SKIPPED: ${ref} not found in ${code}`);
         continue;
       }
-      log.debug('BiqApplyEdits', `op=delete ${code}: removed record ${ref} (was at index ${idx})`);
       const removedRecord = section.records[idx];
-      section.records.splice(idx, 1);
+      let deleteIdx = idx;
+      if (code === 'PRTO') {
+        const deletedPrimaryIndex = Number(removedRecord && removedRecord.index);
+        const deletedOtherStrategy = Number(removedRecord && removedRecord.otherStrategy);
+        const isPrimary = !Number.isFinite(deletedOtherStrategy) || deletedOtherStrategy < 0;
+        if (isPrimary) {
+          const reconciled = reconcilePrtoStrategyMapAfterPrimaryDelete(section.records, deletedPrimaryIndex, removedRecord);
+          if (reconciled.removed > 0 || reconciled.shifted > 0) {
+            log.debug('BiqApplyEdits', `op=delete PRTO: reconciled strategy-map rows for deleted primary ${deletedPrimaryIndex} (removed=${reconciled.removed}, shifted=${reconciled.shifted})`);
+          }
+          const currentIdx = section.records.indexOf(removedRecord);
+          if (currentIdx >= 0) deleteIdx = currentIdx;
+        }
+      }
+      log.debug('BiqApplyEdits', `op=delete ${code}: removed record ${ref} (was at index ${deleteIdx})`);
+      section.records.splice(deleteIdx, 1);
       // Re-number indices
       section.records.forEach((r, i) => { r.index = i; });
       if (code === 'SLOC' && removedRecord && !hasSlocAtCoords(section, removedRecord.x, removedRecord.y)) {

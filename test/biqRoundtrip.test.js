@@ -83,6 +83,24 @@ function getStableFixtureCiv3Root() {
   return path.resolve(__dirname, '..', '..');
 }
 
+function findTidesOfCrimsonBiqPath() {
+  const conquestsRoot = getStableFixtureCiv3Root();
+  const candidate = path.join(conquestsRoot, 'Scenarios', 'TIDES OF CRIMSON.biq');
+  return fs.existsSync(candidate) ? candidate : '';
+}
+
+function findCivilizationLegendsBiqPath() {
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const candidate = path.join(civ3Root, 'Conquests', 'Scenarios', 'Civilization LEGENDS.biq');
+  return fs.existsSync(candidate) ? candidate : '';
+}
+
+function findExpansion2021BiqPath() {
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const candidate = path.join(civ3Root, 'Conquests', 'Scenarios', '2021 EXPANSION.biq');
+  return fs.existsSync(candidate) ? candidate : '';
+}
+
 function resolveCiv3RootFromBiq(biqPath) {
   return path.resolve(path.dirname(biqPath), '..');
 }
@@ -157,6 +175,52 @@ function getRawPrtoRecordsByCivKey(parsed, civKey) {
   return records.filter((record) => String(record && record.civilopediaEntry || '').trim().toUpperCase() === target);
 }
 
+function isRawPrimaryPrtoRecord(record) {
+  const otherStrategy = Number(record && record.otherStrategy);
+  return !Number.isFinite(otherStrategy) || otherStrategy < 0;
+}
+
+function getRawPrtoPrimaryRecordsByCivKey(parsed, civKey) {
+  return getRawPrtoRecordsByCivKey(parsed, civKey).filter(isRawPrimaryPrtoRecord);
+}
+
+function countPrtoStrategyBits(mask) {
+  const raw = Number(mask) | 0;
+  let count = 0;
+  for (let bit = 0; bit < 20; bit += 1) {
+    if (((raw >>> bit) & 1) === 1) count += 1;
+  }
+  return count;
+}
+
+function assertRawPrtoStrategyRows(parsed, civKey, expectedMask, label = civKey) {
+  const records = getRawPrtoRecordsByCivKey(parsed, civKey);
+  const primaries = records.filter(isRawPrimaryPrtoRecord);
+  assert.equal(primaries.length, 1, `${label} should have exactly one primary PRTO row`);
+  const primaryIndex = Number(primaries[0].index);
+  const expectedRows = Math.max(1, countPrtoStrategyBits(expectedMask));
+  assert.equal(records.length, expectedRows, `${label} should have one raw PRTO row per strategy bit, minimum one`);
+  records.forEach((record) => {
+    if (record === primaries[0]) return;
+    assert.equal(Number(record.otherStrategy), primaryIndex, `${label} strategy-map child should point to the primary index`);
+  });
+  assert.equal(getMergedRawPrtoStrategyMask(parsed, civKey), expectedMask, `${label} should keep merged AI Strategy mask`);
+}
+
+function getRawRaceRecordByCivKey(parsed, civKey) {
+  const target = String(civKey || '').trim().toUpperCase();
+  const race = (parsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'RACE');
+  const records = Array.isArray(race && race.records) ? race.records : [];
+  return records.find((record) => String(record && record.civilopediaEntry || '').trim().toUpperCase() === target) || null;
+}
+
+function getRawRaceRecordsByCivKey(parsed, civKey) {
+  const target = String(civKey || '').trim().toUpperCase();
+  const race = (parsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'RACE');
+  const records = Array.isArray(race && race.records) ? race.records : [];
+  return records.filter((record) => String(record && record.civilopediaEntry || '').trim().toUpperCase() === target);
+}
+
 function parseBiqFileForRawSections(filePath) {
   const raw = fs.readFileSync(filePath);
   const inflated = decompress(raw);
@@ -183,6 +247,203 @@ function decodeSigned32BitmaskIndices(value) {
     if (((mask >>> bit) & 1) === 1) out.push(bit);
   }
   return out;
+}
+
+const UNIT_AI_STRATEGY_FIELD_KEYS = [
+  'offence',
+  'defencestrategy',
+  'artillery',
+  'explorestrategy',
+  'armyunit',
+  'cruisemissileunit',
+  'airbombard',
+  'airdefencestrategy',
+  'navalpower',
+  'airtransport',
+  'navaltransport',
+  'navalcarrier',
+  'terraform',
+  'settle',
+  'leaderunit',
+  'tacticalnuke',
+  'icbm',
+  'navalmissiletransport',
+  'flagstrategy',
+  'kingstrategy'
+];
+
+function setFieldValue(entry, key, value) {
+  const field = findField(entry, key);
+  assert.ok(field, `expected editable field ${key} on ${entry && entry.civilopediaKey}`);
+  field.value = String(value);
+}
+
+function setUnitName(entry, name) {
+  entry.name = String(name);
+  setFieldValue(entry, 'name', entry.name);
+}
+
+function setUnitScalarFields(entry, fields) {
+  Object.entries(fields || {}).forEach(([key, value]) => {
+    setFieldValue(entry, key, String(value));
+  });
+}
+
+function assertRawPrtoScalarFields(record, expected, label = 'PRTO record') {
+  const rawKeyByUiKey = {
+    requiredtech: 'requiredTech',
+    requiredresource1: 'requiredResource1',
+    requiredresource2: 'requiredResource2',
+    requiredresource3: 'requiredResource3',
+    attack: 'attack',
+    defence: 'defence',
+    movement: 'movement',
+    shieldcost: 'shieldCost'
+  };
+  Object.entries(expected || {}).forEach(([key, value]) => {
+    const rawKey = rawKeyByUiKey[String(key).toLowerCase()] || key;
+    assert.equal(Number(record && record[rawKey]), Number(value), `${label} ${rawKey} should persist`);
+  });
+}
+
+function setUnitAiStrategyMask(entry, mask) {
+  UNIT_AI_STRATEGY_FIELD_KEYS.forEach((key, bit) => {
+    setFieldValue(entry, key, ((mask >>> bit) & 1) === 1 ? 'true' : 'false');
+  });
+}
+
+function makePendingCopiedUnitEntry(sourceEntry, newRef) {
+  assert.ok(sourceEntry, 'expected source unit entry for pending copy');
+  const entry = JSON.parse(JSON.stringify(sourceEntry));
+  const lookupRef = String(newRef || '').trim().toUpperCase();
+  entry.id = lookupRef.startsWith('PRTO_') ? lookupRef.slice(5) : lookupRef;
+  entry.civilopediaKey = lookupRef;
+  entry.displayCivilopediaKey = newRef;
+  entry.rawCivilopediaKey = newRef;
+  entry.rawBiqCivilopediaKey = newRef;
+  entry.linkCivilopediaKey = newRef;
+  entry.lookupCivilopediaKey = lookupRef;
+  entry.biqIndex = null;
+  entry.newRecordRef = lookupRef;
+  entry.isNew = true;
+  entry.name = lookupRef.replace(/^PRTO_/, 'Test ');
+  entry.biqFields = (Array.isArray(entry.biqFields) ? entry.biqFields : []).map((field) => {
+    const next = {
+      ...field,
+      originalValue: String(field && field.originalValue != null ? field.originalValue : (field && field.value) || '')
+    };
+    if (String(next.baseKey || next.key || '').trim().toLowerCase() === 'civilopediaentry') {
+      next.value = newRef;
+      next.originalValue = newRef;
+    }
+    if (String(next.baseKey || next.key || '').trim().toLowerCase() === 'name') {
+      next.value = entry.name;
+    }
+    return next;
+  });
+  return entry;
+}
+
+function makePendingCopiedCivilizationEntry(sourceEntry, newRef) {
+  assert.ok(sourceEntry, 'expected source civilization entry for pending copy');
+  const entry = JSON.parse(JSON.stringify(sourceEntry));
+  const lookupRef = String(newRef || '').trim().toUpperCase();
+  entry.id = lookupRef.startsWith('RACE_') ? lookupRef.slice(5) : lookupRef;
+  entry.civilopediaKey = lookupRef;
+  entry.displayCivilopediaKey = newRef;
+  entry.rawCivilopediaKey = newRef;
+  entry.rawBiqCivilopediaKey = newRef;
+  entry.linkCivilopediaKey = newRef;
+  entry.lookupCivilopediaKey = lookupRef;
+  entry.biqIndex = null;
+  entry.newRecordRef = lookupRef;
+  entry.isNew = true;
+  entry.name = lookupRef.replace(/^RACE_/, 'Test ');
+  entry.biqFields = (Array.isArray(entry.biqFields) ? entry.biqFields : []).map((field) => {
+    const next = {
+      ...field,
+      originalValue: String(field && field.originalValue != null ? field.originalValue : (field && field.value) || '')
+    };
+    const base = String(next.baseKey || next.key || '').trim().toLowerCase();
+    if (base === 'civilopediaentry') {
+      next.value = newRef;
+      next.originalValue = newRef;
+    }
+    if (base === 'civilizationname' || base === 'noun' || base === 'adjective') {
+      next.value = entry.name;
+    }
+    return next;
+  });
+  return entry;
+}
+
+function getMergedRawPrtoStrategyMask(parsed, civKey) {
+  const records = getRawPrtoRecordsByCivKey(parsed, civKey);
+  return records.reduce((mask, record) => mask | (Number(record && record.AIStrategy) | 0), 0);
+}
+
+function getMergedRawPrtoStrategyMaskByPrimaryName(parsed, unitName) {
+  const target = String(unitName || '').trim();
+  const prto = (parsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
+  const records = Array.isArray(prto && prto.records) ? prto.records : [];
+  const primary = records.find((record) => {
+    const name = String(record && record.name || '').trim();
+    const otherStrategy = Number(record && record.otherStrategy);
+    return name === target && (!Number.isFinite(otherStrategy) || otherStrategy < 0);
+  });
+  assert.ok(primary, `expected raw primary PRTO record named ${unitName}`);
+  const primaryIndex = Number(primary.index);
+  return records.reduce((mask, record) => {
+    if (record === primary) return mask | (Number(record && record.AIStrategy) | 0);
+    const otherStrategy = Number(record && record.otherStrategy);
+    if (Number.isFinite(primaryIndex) && Number.isFinite(otherStrategy) && otherStrategy === primaryIndex) {
+      return mask | (Number(record && record.AIStrategy) | 0);
+    }
+    return mask;
+  }, 0);
+}
+
+function getRawPrtoPrimaryByName(parsed, unitName) {
+  const target = String(unitName || '').trim();
+  const prto = (parsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
+  const records = Array.isArray(prto && prto.records) ? prto.records : [];
+  return records.find((record) => {
+    const name = String(record && record.name || '').trim();
+    const otherStrategy = Number(record && record.otherStrategy);
+    return name === target && (!Number.isFinite(otherStrategy) || otherStrategy < 0);
+  }) || null;
+}
+
+function assertRawPrtoStrategyMasks(parsed, expectedMasks, label = '') {
+  expectedMasks.forEach((mask, unitKey) => {
+    assert.equal(
+      getMergedRawPrtoStrategyMask(parsed, unitKey),
+      mask,
+      `${unitKey} should keep AI strategy mask ${mask}${label ? ` after ${label}` : ''}`
+    );
+  });
+}
+
+function getRawRaceFlavorMask(parsed, civKey) {
+  const record = getRawRaceRecordByCivKey(parsed, civKey);
+  assert.ok(record, `expected raw RACE record ${civKey}`);
+  return Number(record.flavors) | 0;
+}
+
+function setCivilizationFlavorMask(entry, mask) {
+  for (let idx = 0; idx < 7; idx += 1) {
+    setFieldValue(entry, `flavor_${idx + 1}`, ((mask >>> idx) & 1) === 1 ? 'true' : 'false');
+  }
+}
+
+function assertRawRaceFlavorMasks(parsed, expectedMasks, label = '') {
+  expectedMasks.forEach((mask, civKey) => {
+    assert.equal(
+      getRawRaceFlavorMask(parsed, civKey),
+      mask,
+      `${civKey} should keep civilization flavor mask ${mask}${label ? ` after ${label}` : ''}`
+    );
+  });
 }
 
 function getSection(tab, code) {
@@ -1864,6 +2125,941 @@ test('BIQ round-trip follows Quint PRTO strategy-map handling for duplicate-stra
     reparsedRecords.map((record) => ({ other: Number(record.otherStrategy), ai: Number(record.AIStrategy) })),
     [{ other: -1, ai: 1 }, { other: 12, ai: 8 }]
   );
+});
+
+test('BIQ round-trip keeps adjacent unit AI strategy masks attached to the correct units', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'unit-ai-neighbor-regression.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const desiredMasks = new Map([
+    ['PRTO_WARRIOR', 0b00000000000000000011], // Offence + Defence
+    ['PRTO_ARCHER', 0b00000000000000001001], // Offence + Exploration
+    ['PRTO_SPEARMAN', 0b00000000000010000010], // Defence + Air Defence
+    ['PRTO_PIKEMAN', 0b00000000000001000010] // Defence + Air Bombard
+  ]);
+
+  const initialParsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(initialParsed.ok, true, String(initialParsed.error || 'initial parse failed'));
+  const untouchedBefore = new Map([
+    ['PRTO_SETTLER', getMergedRawPrtoStrategyMask(initialParsed, 'PRTO_SETTLER')],
+    ['PRTO_CHASQUIS_SCOUT', getMergedRawPrtoStrategyMask(initialParsed, 'PRTO_CHASQUIS_SCOUT')],
+    ['PRTO_JAVELIN_THROWER', getMergedRawPrtoStrategyMask(initialParsed, 'PRTO_JAVELIN_THROWER')]
+  ]);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  desiredMasks.forEach((mask, unitKey) => {
+    const entry = getEntryByCivKey(bundle.tabs.units.entries, unitKey);
+    assert.ok(entry, `expected unit entry ${unitKey}`);
+    setUnitAiStrategyMask(entry, mask);
+  });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const afterStrategySave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterStrategySave.ok, true, String(afterStrategySave.error || 'parse after strategy save failed'));
+  desiredMasks.forEach((mask, unitKey) => {
+    assert.equal(getMergedRawPrtoStrategyMask(afterStrategySave, unitKey), mask, `${unitKey} should keep its assigned AI strategy mask`);
+  });
+  untouchedBefore.forEach((mask, unitKey) => {
+    assert.equal(getMergedRawPrtoStrategyMask(afterStrategySave, unitKey), mask, `${unitKey} should not receive a neighboring unit's strategy bits`);
+  });
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const worker = getEntryByCivKey(reloaded.tabs.units.entries, 'PRTO_WORKER');
+  assert.ok(worker, 'expected Worker unit entry for unrelated edit');
+  const workerCost = findField(worker, 'shieldcost');
+  assert.ok(workerCost, 'expected Worker shield cost field');
+  workerCost.value = String(mapCore.parseIntLoose(workerCost.value, 0) + 1);
+
+  const unrelatedSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: reloaded.tabs
+  });
+  assert.equal(unrelatedSave.ok, true, String(unrelatedSave.error || 'unrelated save failed'));
+
+  const afterUnrelatedSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterUnrelatedSave.ok, true, String(afterUnrelatedSave.error || 'parse after unrelated save failed'));
+  desiredMasks.forEach((mask, unitKey) => {
+    assert.equal(getMergedRawPrtoStrategyMask(afterUnrelatedSave, unitKey), mask, `${unitKey} should keep its AI strategy mask after an unrelated unit edit`);
+  });
+  untouchedBefore.forEach((mask, unitKey) => {
+    assert.equal(getMergedRawPrtoStrategyMask(afterUnrelatedSave, unitKey), mask, `${unitKey} should remain untouched after an unrelated unit edit`);
+  });
+});
+
+test('BIQ round-trip preserves unit AI strategies through pending copies and repeated saves', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'unit-ai-pending-copy-regression.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const copiedDefenderRef = makeShortBiqTestRef('PRTO', 'AIDF');
+  const copiedAirRef = makeShortBiqTestRef('PRTO', 'AIAIR');
+  const expectedMasks = new Map([
+    ['PRTO_WARRIOR', 0b00000000000000000011], // Offence + Defence
+    ['PRTO_ARCHER', 0b00000000000000001001], // Offence + Exploration
+    ['PRTO_SPEARMAN', 0b00000000000000000110], // Defence + Artillery
+    ['PRTO_PIKEMAN', 0b00000000000011000000], // Air Bombard + Air Defence
+    [copiedDefenderRef, 0b00000000000000000011],
+    [copiedAirRef, 0b00000000000011000000]
+  ]);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitsTab = bundle.tabs.units;
+  assert.ok(unitsTab && Array.isArray(unitsTab.entries), 'expected units tab entries');
+  if (!Array.isArray(unitsTab.recordOps)) unitsTab.recordOps = [];
+
+  ['PRTO_WARRIOR', 'PRTO_ARCHER', 'PRTO_SPEARMAN', 'PRTO_PIKEMAN'].forEach((unitKey) => {
+    const entry = getEntryByCivKey(unitsTab.entries, unitKey);
+    assert.ok(entry, `expected unit entry ${unitKey}`);
+    setUnitAiStrategyMask(entry, expectedMasks.get(unitKey));
+  });
+
+  const warrior = getEntryByCivKey(unitsTab.entries, 'PRTO_WARRIOR');
+  const pikeman = getEntryByCivKey(unitsTab.entries, 'PRTO_PIKEMAN');
+  const copiedDefender = makePendingCopiedUnitEntry(warrior, copiedDefenderRef);
+  const copiedAir = makePendingCopiedUnitEntry(pikeman, copiedAirRef);
+  setUnitAiStrategyMask(copiedDefender, expectedMasks.get(copiedDefenderRef));
+  setUnitAiStrategyMask(copiedAir, expectedMasks.get(copiedAirRef));
+  unitsTab.entries.push(copiedDefender, copiedAir);
+  unitsTab.recordOps.push(
+    { op: 'copy', sourceRef: 'PRTO_WARRIOR', newRecordRef: copiedDefenderRef },
+    { op: 'copy', sourceRef: 'PRTO_PIKEMAN', newRecordRef: copiedAirRef }
+  );
+
+  const firstSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(firstSave.ok, true, String(firstSave.error || 'first save failed'));
+
+  const afterFirstSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterFirstSave.ok, true, String(afterFirstSave.error || 'parse after first save failed'));
+  assertRawPrtoStrategyMasks(afterFirstSave, expectedMasks, 'first save');
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const nextMasks = new Map(expectedMasks);
+  nextMasks.set('PRTO_WARRIOR', 0b00000000000000000010); // Defence only
+  nextMasks.set(copiedDefenderRef, 0b00000000000000001001); // Offence + Exploration
+
+  const reloadedWarrior = getEntryByCivKey(reloaded.tabs.units.entries, 'PRTO_WARRIOR');
+  const reloadedCopiedDefender = getEntryByCivKey(reloaded.tabs.units.entries, copiedDefenderRef);
+  const reloadedWorker = getEntryByCivKey(reloaded.tabs.units.entries, 'PRTO_WORKER');
+  assert.ok(reloadedWarrior, 'expected reloaded Warrior unit entry');
+  assert.ok(reloadedCopiedDefender, 'expected reloaded copied defender unit entry');
+  assert.ok(reloadedWorker, 'expected reloaded Worker unit entry');
+  setUnitAiStrategyMask(reloadedWarrior, nextMasks.get('PRTO_WARRIOR'));
+  setUnitAiStrategyMask(reloadedCopiedDefender, nextMasks.get(copiedDefenderRef));
+  const workerCost = findField(reloadedWorker, 'shieldcost');
+  assert.ok(workerCost, 'expected Worker shield cost field');
+  workerCost.value = String(mapCore.parseIntLoose(workerCost.value, 0) + 2);
+
+  const secondSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: reloaded.tabs
+  });
+  assert.equal(secondSave.ok, true, String(secondSave.error || 'second save failed'));
+
+  const afterSecondSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterSecondSave.ok, true, String(afterSecondSave.error || 'parse after second save failed'));
+  assertRawPrtoStrategyMasks(afterSecondSave, nextMasks, 'second save');
+
+  const reloadedAgain = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  if (!Array.isArray(reloadedAgain.tabs.units.recordOps)) reloadedAgain.tabs.units.recordOps = [];
+  reloadedAgain.tabs.units.recordOps.push({ op: 'delete', recordRef: copiedAirRef });
+  const archerAgain = getEntryByCivKey(reloadedAgain.tabs.units.entries, 'PRTO_ARCHER');
+  assert.ok(archerAgain, 'expected reloaded Archer unit entry');
+  nextMasks.set('PRTO_ARCHER', 0b00000000000000000001); // Offence only
+  setUnitAiStrategyMask(archerAgain, nextMasks.get('PRTO_ARCHER'));
+
+  const thirdSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: reloadedAgain.tabs
+  });
+  assert.equal(thirdSave.ok, true, String(thirdSave.error || 'third save failed'));
+
+  const afterThirdSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterThirdSave.ok, true, String(afterThirdSave.error || 'parse after third save failed'));
+  nextMasks.delete(copiedAirRef);
+  assertRawPrtoStrategyMasks(afterThirdSave, nextMasks, 'third save');
+  assert.equal(getRawPrtoRecordsByCivKey(afterThirdSave, copiedAirRef).length, 0, 'expected deleted copied air unit to be removed');
+});
+
+test('BIQ round-trip keeps same-Civilopedia-key unit AI strategies attached to the selected BIQ row', (t) => {
+  const sampleBiq = findTidesOfCrimsonBiqPath();
+  if (!sampleBiq) t.skip('Tides of Crimson BIQ not available for duplicate-key unit regression coverage.');
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'unit-ai-duplicate-key-regression.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const entries = (bundle.tabs.units && bundle.tabs.units.entries) || [];
+  const byKey = new Map();
+  entries.forEach((entry) => {
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (!key || !Number.isFinite(Number(entry && entry.biqIndex))) return;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(entry);
+  });
+  const duplicateGroup = Array.from(byKey.values()).find((group) => {
+    const names = new Set(group.map((entry) => String(entry && entry.name || '').trim()).filter(Boolean));
+    return group.length >= 2 && names.size >= 2;
+  });
+  assert.ok(duplicateGroup, 'expected at least one duplicate-key primary unit group');
+
+  const first = duplicateGroup[0];
+  const second = duplicateGroup.find((entry) => String(entry && entry.name || '').trim() !== String(first && first.name || '').trim());
+  assert.ok(second, 'expected a second duplicate-key unit with a distinct name');
+  assert.equal(String(first.civilopediaKey || '').toUpperCase(), String(second.civilopediaKey || '').toUpperCase(), 'expected duplicate-key unit pair');
+  assert.notEqual(Number(first.biqIndex), Number(second.biqIndex), 'expected duplicate-key units to be separate BIQ rows');
+
+  const firstName = String(first.name || '').trim();
+  const secondName = String(second.name || '').trim();
+  setUnitAiStrategyMask(first, 0b00000000000000000011); // Offence + Defence
+  setUnitAiStrategyMask(second, 0b00000000000011000000); // Air Bombard + Air Defence
+
+  const firstSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(firstSave.ok, true, String(firstSave.error || 'duplicate-key strategy save failed'));
+
+  const afterFirstSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterFirstSave.ok, true, String(afterFirstSave.error || 'parse after duplicate-key strategy save failed'));
+  const duplicateKeyPrimaries = getRawPrtoRecordsByCivKey(afterFirstSave, first.civilopediaKey)
+    .filter((record) => {
+      const otherStrategy = Number(record && record.otherStrategy);
+      return !Number.isFinite(otherStrategy) || otherStrategy < 0;
+    });
+  assert.ok(duplicateKeyPrimaries.length >= 2, 'expected same-Civilopedia-key primary units to remain distinct after save');
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(afterFirstSave, firstName), 0b00000000000000000011, `${firstName} should keep its own strategy mask`);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(afterFirstSave, secondName), 0b00000000000011000000, `${secondName} should keep its own strategy mask`);
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedFirst = (reloaded.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.civilopediaKey || '').toUpperCase() === String(first.civilopediaKey || '').toUpperCase()
+    && String(entry && entry.name || '').trim() === firstName);
+  const reloadedSecond = (reloaded.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.civilopediaKey || '').toUpperCase() === String(second.civilopediaKey || '').toUpperCase()
+    && String(entry && entry.name || '').trim() === secondName);
+  assert.ok(reloadedFirst, 'expected first duplicate-key unit after reload');
+  assert.ok(reloadedSecond, 'expected second duplicate-key unit after reload');
+  setUnitAiStrategyMask(reloadedSecond, 0b00000000000000001001); // Offence + Exploration
+
+  const secondSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: reloaded.tabs
+  });
+  assert.equal(secondSave.ok, true, String(secondSave.error || 'duplicate-key second strategy save failed'));
+
+  const afterSecondSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterSecondSave.ok, true, String(afterSecondSave.error || 'parse after duplicate-key second strategy save failed'));
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(afterSecondSave, firstName), 0b00000000000000000011, `${firstName} should stay unchanged after editing its same-key sibling`);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(afterSecondSave, secondName), 0b00000000000000001001, `${secondName} should persist the later edit`);
+});
+
+test('BIQ round-trip keeps Civilization LEGENDS duplicate-key unit edits and copied adds attached without delete', (t) => {
+  const sampleBiq = findCivilizationLegendsBiqPath();
+  if (!sampleBiq) t.skip('Civilization LEGENDS BIQ not available for duplicate-key unit edit/copy regression coverage.');
+
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'civilization-legends-duplicate-prto-edit-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitsTab = bundle.tabs.units;
+  const entries = (unitsTab && unitsTab.entries) || [];
+  const chariot = entries.find((entry) =>
+    String(entry && entry.name || '').trim() === 'Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT');
+  const warChariot = entries.find((entry) =>
+    String(entry && entry.name || '').trim() === 'War Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT');
+  assert.ok(chariot, 'expected Civilization LEGENDS Chariot duplicate-key unit');
+  assert.ok(warChariot, 'expected Civilization LEGENDS War Chariot duplicate-key unit');
+  assert.notEqual(Number(chariot.biqIndex), Number(warChariot.biqIndex), 'duplicate-key units must be distinct BIQ rows');
+
+  const copyKey = makeShortBiqTestRef('PRTO', 'LEG_COPY');
+  const copiedWarChariot = makePendingCopiedUnitEntry(warChariot, copyKey);
+  setUnitName(copiedWarChariot, 'War Chariot Copy');
+
+  const chariotFields = {
+    requiredtech: 43,
+    requiredresource1: 2,
+    requiredresource2: -1,
+    attack: 12,
+    defence: 4,
+    movement: 3,
+    shieldcost: 88
+  };
+  const warChariotFields = {
+    requiredtech: 45,
+    requiredresource1: 7,
+    requiredresource2: -1,
+    attack: 9,
+    defence: 3,
+    movement: 2,
+    shieldcost: 66
+  };
+  const copyFields = {
+    requiredtech: 46,
+    requiredresource1: 2,
+    requiredresource2: 7,
+    attack: 10,
+    defence: 5,
+    movement: 2,
+    shieldcost: 77
+  };
+  setUnitScalarFields(chariot, chariotFields);
+  setUnitAiStrategyMask(chariot, 0b00000000000000001001); // Offence + Exploration
+  setUnitScalarFields(warChariot, warChariotFields);
+  setUnitAiStrategyMask(warChariot, 0b00000000000000000011); // Offence + Defence
+  setUnitScalarFields(copiedWarChariot, copyFields);
+  setUnitAiStrategyMask(copiedWarChariot, 0b00000000000011000000); // Air Bombard + Air Defence
+
+  unitsTab.entries = [chariot, warChariot, copiedWarChariot];
+  unitsTab.recordOps = [
+    { op: 'copy', sourceRef: `@INDEX:${Number(warChariot.biqIndex)}`, newRecordRef: copyKey }
+  ];
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'Civilization LEGENDS duplicate-key edit/copy save failed'));
+
+  const parsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(parsed.ok, true, String(parsed.error || 'parse after Civilization LEGENDS duplicate-key edit/copy save failed'));
+  const rawChariot = getRawPrtoPrimaryByName(parsed, 'Chariot');
+  const rawWarChariot = getRawPrtoPrimaryByName(parsed, 'War Chariot');
+  const rawCopy = getRawPrtoPrimaryByName(parsed, 'War Chariot Copy');
+  assert.ok(rawChariot, 'expected Chariot after save');
+  assert.ok(rawWarChariot, 'expected War Chariot after save');
+  assert.ok(rawCopy, 'expected copied War Chariot after save');
+  assert.equal(getRawPrtoPrimaryRecordsByCivKey(parsed, 'PRTO_WAR_CHARIOT').length, 2, 'same-key primary units must remain separate after edit/copy save');
+  assertRawPrtoScalarFields(rawChariot, chariotFields, 'Chariot');
+  assertRawPrtoScalarFields(rawWarChariot, warChariotFields, 'War Chariot');
+  assertRawPrtoScalarFields(rawCopy, copyFields, 'War Chariot Copy');
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(parsed, 'Chariot'), 0b00000000000000001001);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(parsed, 'War Chariot'), 0b00000000000000000011);
+  assertRawPrtoStrategyRows(parsed, copyKey, 0b00000000000011000000, 'War Chariot Copy');
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedChariot = (reloaded.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.name || '').trim() === 'Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT');
+  const reloadedWarChariot = (reloaded.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.name || '').trim() === 'War Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT');
+  const reloadedCopy = (reloaded.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.name || '').trim() === 'War Chariot Copy'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === copyKey);
+  assert.ok(reloadedChariot, 'expected reloaded Chariot');
+  assert.ok(reloadedWarChariot, 'expected reloaded War Chariot');
+  assert.ok(reloadedCopy, 'expected reloaded War Chariot Copy');
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedChariot, 'requiredtech') && findField(reloadedChariot, 'requiredtech').value, NaN), chariotFields.requiredtech);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedWarChariot, 'requiredtech') && findField(reloadedWarChariot, 'requiredtech').value, NaN), warChariotFields.requiredtech);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedCopy, 'requiredtech') && findField(reloadedCopy, 'requiredtech').value, NaN), copyFields.requiredtech);
+});
+
+test('BIQ round-trip keeps Civilization LEGENDS duplicate-key unit edits attached across delete and replacement', (t) => {
+  const sampleBiq = findCivilizationLegendsBiqPath();
+  if (!sampleBiq) t.skip('Civilization LEGENDS BIQ not available for duplicate-key unit delete/replacement regression coverage.');
+
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'civilization-legends-duplicate-prto-delete.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitsTab = bundle.tabs.units;
+  const entries = (unitsTab && unitsTab.entries) || [];
+  const survivor = entries.find((entry) =>
+    String(entry && entry.name || '').trim() === 'Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT');
+  const doomed = entries.find((entry) =>
+    String(entry && entry.name || '').trim() === 'War Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT');
+  assert.ok(survivor, 'expected Civilization LEGENDS Chariot duplicate-key unit');
+  assert.ok(doomed, 'expected Civilization LEGENDS War Chariot duplicate-key unit');
+  assert.notEqual(Number(survivor.biqIndex), Number(doomed.biqIndex), 'duplicate-key units must be distinct BIQ rows');
+
+  const nextAfterDeleted = entries.find((entry) => Number(entry && entry.biqIndex) === Number(doomed.biqIndex) + 1);
+  assert.ok(nextAfterDeleted, 'expected a unit row immediately after the deleted duplicate-key unit');
+  const nextAfterDeletedName = String(nextAfterDeleted.name || '').trim();
+  const nextAfterDeletedBaseline = {
+    requiredTech: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'requiredtech') && findField(nextAfterDeleted, 'requiredtech').value, NaN),
+    requiredResource1: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'requiredresource1') && findField(nextAfterDeleted, 'requiredresource1').value, NaN),
+    requiredResource2: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'requiredresource2') && findField(nextAfterDeleted, 'requiredresource2').value, NaN),
+    attack: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'attack') && findField(nextAfterDeleted, 'attack').value, NaN),
+    shieldCost: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'shieldcost') && findField(nextAfterDeleted, 'shieldcost').value, NaN)
+  };
+
+  const replacementKey = makeShortBiqTestRef('PRTO', 'LEG_REPL');
+  const replacement = makePendingCopiedUnitEntry(doomed, replacementKey);
+  replacement.name = 'War Chariot Replacement';
+  (replacement.biqFields || []).forEach((field) => {
+    if (String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name') field.value = replacement.name;
+  });
+
+  setFieldValue(survivor, 'requiredtech', '43');
+  setFieldValue(survivor, 'requiredresource1', '2');
+  setFieldValue(survivor, 'requiredresource2', '-1');
+  setFieldValue(survivor, 'attack', '12');
+  setFieldValue(survivor, 'defence', '4');
+  setFieldValue(survivor, 'movement', '3');
+  setFieldValue(survivor, 'shieldcost', '88');
+  setUnitAiStrategyMask(survivor, 0b00000000000000001001); // Offence + Exploration
+
+  setFieldValue(doomed, 'requiredtech', '7');
+  setFieldValue(doomed, 'requiredresource1', '-1');
+  setFieldValue(doomed, 'requiredresource2', '7');
+  setFieldValue(doomed, 'attack', '1');
+  setFieldValue(doomed, 'shieldcost', '22');
+
+  setFieldValue(replacement, 'requiredtech', '45');
+  setFieldValue(replacement, 'requiredresource1', '7');
+  setFieldValue(replacement, 'requiredresource2', '-1');
+  setFieldValue(replacement, 'attack', '9');
+  setFieldValue(replacement, 'defence', '3');
+  setFieldValue(replacement, 'movement', '2');
+  setFieldValue(replacement, 'shieldcost', '66');
+  setUnitAiStrategyMask(replacement, 0b00000000000000000011); // Offence + Defence
+
+  unitsTab.entries = [survivor, doomed, replacement];
+  unitsTab.recordOps = [
+    { op: 'copy', sourceRef: `@INDEX:${Number(doomed.biqIndex)}`, newRecordRef: replacementKey },
+    { op: 'delete', recordRef: `@INDEX:${Number(doomed.biqIndex)}` }
+  ];
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'Civilization LEGENDS duplicate-key unit save failed'));
+
+  const parsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(parsed.ok, true, String(parsed.error || 'parse after Civilization LEGENDS duplicate-key save failed'));
+  const rawSurvivor = getRawPrtoPrimaryByName(parsed, 'Chariot');
+  const rawDoomed = getRawPrtoPrimaryByName(parsed, 'War Chariot');
+  const rawReplacement = getRawPrtoPrimaryByName(parsed, 'War Chariot Replacement');
+  const rawNextAfterDeleted = getRawPrtoPrimaryByName(parsed, nextAfterDeletedName);
+  assert.ok(rawSurvivor, 'expected Chariot survivor after save');
+  assert.equal(rawDoomed, null, 'deleted War Chariot row must not remain');
+  assert.ok(rawReplacement, 'expected replacement unit after save');
+  assert.ok(rawNextAfterDeleted, `expected shifted neighbor "${nextAfterDeletedName}" after save`);
+
+  assert.equal(Number(rawSurvivor.requiredTech), 43);
+  assert.equal(Number(rawSurvivor.requiredResource1), 2);
+  assert.equal(Number(rawSurvivor.requiredResource2), -1);
+  assert.equal(Number(rawSurvivor.attack), 12);
+  assert.equal(Number(rawSurvivor.defence), 4);
+  assert.equal(Number(rawSurvivor.movement), 3);
+  assert.equal(Number(rawSurvivor.shieldCost), 88);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(parsed, 'Chariot'), 0b00000000000000001001);
+
+  assert.equal(Number(rawReplacement.requiredTech), 45);
+  assert.equal(Number(rawReplacement.requiredResource1), 7);
+  assert.equal(Number(rawReplacement.requiredResource2), -1);
+  assert.equal(Number(rawReplacement.attack), 9);
+  assert.equal(Number(rawReplacement.defence), 3);
+  assert.equal(Number(rawReplacement.movement), 2);
+  assert.equal(Number(rawReplacement.shieldCost), 66);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(parsed, 'War Chariot Replacement'), 0b00000000000000000011);
+
+  assert.equal(Number(rawNextAfterDeleted.requiredTech), nextAfterDeletedBaseline.requiredTech);
+  assert.equal(Number(rawNextAfterDeleted.requiredResource1), nextAfterDeletedBaseline.requiredResource1);
+  assert.equal(Number(rawNextAfterDeleted.requiredResource2), nextAfterDeletedBaseline.requiredResource2);
+  assert.equal(Number(rawNextAfterDeleted.attack), nextAfterDeletedBaseline.attack);
+  assert.equal(Number(rawNextAfterDeleted.shieldCost), nextAfterDeletedBaseline.shieldCost);
+  assert.notEqual(Number(rawNextAfterDeleted.requiredTech), 7, 'deleted unit field edits must not poison the shifted neighbor row');
+  assert.notEqual(Number(rawNextAfterDeleted.attack), 1, 'deleted unit stat edits must not poison the shifted neighbor row');
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedSurvivor = (reloaded.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.name || '').trim() === 'Chariot'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_WAR_CHARIOT');
+  const reloadedReplacement = (reloaded.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.name || '').trim() === 'War Chariot Replacement'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === replacementKey);
+  assert.ok(reloadedSurvivor, 'expected Chariot survivor after reload');
+  assert.ok(reloadedReplacement, 'expected replacement unit after reload');
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedSurvivor, 'requiredtech') && findField(reloadedSurvivor, 'requiredtech').value, NaN), 43);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedSurvivor, 'requiredresource1') && findField(reloadedSurvivor, 'requiredresource1').value, NaN), 2);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedSurvivor, 'requiredresource2') && findField(reloadedSurvivor, 'requiredresource2').value, NaN), -1);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedSurvivor, 'attack') && findField(reloadedSurvivor, 'attack').value, NaN), 12);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedReplacement, 'requiredtech') && findField(reloadedReplacement, 'requiredtech').value, NaN), 45);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedReplacement, 'attack') && findField(reloadedReplacement, 'attack').value, NaN), 9);
+});
+
+test('BIQ round-trip keeps 2021 Expansion PRTO strategy-map edits and copied adds attached without delete', (t) => {
+  const sampleBiq = findExpansion2021BiqPath();
+  if (!sampleBiq) t.skip('2021 EXPANSION BIQ not available for PRTO strategy-map edit/copy regression coverage.');
+
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'expansion-2021-prto-strategy-edit-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitsTab = bundle.tabs.units;
+  const entries = (unitsTab && unitsTab.entries) || [];
+  const enkidu = entries.find((entry) =>
+    String(entry && entry.name || '').trim() === 'Enkidu Warrior'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_ENKIDU_WARRIOR');
+  const archer = entries.find((entry) =>
+    String(entry && entry.name || '').trim() === 'Archer'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_ARCHER');
+  assert.ok(enkidu, 'expected 2021 Expansion Enkidu Warrior unit with strategy-map duplicate');
+  assert.ok(archer, 'expected 2021 Expansion Archer neighbor unit');
+  assert.equal(Number(archer.biqIndex), Number(enkidu.biqIndex) + 1, 'fixture assumption: Archer follows Enkidu Warrior');
+
+  const copyKey = makeShortBiqTestRef('PRTO', 'X21_COPY');
+  const copiedEnkidu = makePendingCopiedUnitEntry(enkidu, copyKey);
+  setUnitName(copiedEnkidu, 'Enkidu Warrior Copy');
+
+  const enkiduFields = {
+    requiredtech: 43,
+    requiredresource1: 2,
+    requiredresource2: -1,
+    attack: 8,
+    defence: 5,
+    movement: 2,
+    shieldcost: 52
+  };
+  const archerFields = {
+    requiredtech: 44,
+    requiredresource1: -1,
+    requiredresource2: -1,
+    attack: 6,
+    defence: 2,
+    movement: 1,
+    shieldcost: 34
+  };
+  const copyFields = {
+    requiredtech: 45,
+    requiredresource1: 7,
+    requiredresource2: -1,
+    attack: 9,
+    defence: 4,
+    movement: 2,
+    shieldcost: 64
+  };
+  setUnitScalarFields(enkidu, enkiduFields);
+  setUnitAiStrategyMask(enkidu, 0b00000000000000000011); // Offence + Defence
+  setUnitScalarFields(archer, archerFields);
+  setUnitAiStrategyMask(archer, 0b00000000000000001001); // Offence + Exploration
+  setUnitScalarFields(copiedEnkidu, copyFields);
+  setUnitAiStrategyMask(copiedEnkidu, 0b00000000000000001001); // Offence + Exploration
+
+  unitsTab.entries = [enkidu, archer, copiedEnkidu];
+  unitsTab.recordOps = [
+    { op: 'copy', sourceRef: `@INDEX:${Number(enkidu.biqIndex)}`, newRecordRef: copyKey }
+  ];
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || '2021 Expansion PRTO strategy-map edit/copy save failed'));
+
+  const parsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(parsed.ok, true, String(parsed.error || 'parse after 2021 Expansion strategy-map edit/copy save failed'));
+  const rawEnkidu = getRawPrtoPrimaryByName(parsed, 'Enkidu Warrior');
+  const rawArcher = getRawPrtoPrimaryByName(parsed, 'Archer');
+  const rawCopy = getRawPrtoPrimaryByName(parsed, 'Enkidu Warrior Copy');
+  assert.ok(rawEnkidu, 'expected Enkidu Warrior after save');
+  assert.ok(rawArcher, 'expected Archer after save');
+  assert.ok(rawCopy, 'expected copied Enkidu Warrior after save');
+  assertRawPrtoScalarFields(rawEnkidu, enkiduFields, 'Enkidu Warrior');
+  assertRawPrtoScalarFields(rawArcher, archerFields, 'Archer');
+  assertRawPrtoScalarFields(rawCopy, copyFields, 'Enkidu Warrior Copy');
+  assertRawPrtoStrategyRows(parsed, 'PRTO_ENKIDU_WARRIOR', 0b00000000000000000011, 'Enkidu Warrior');
+  assertRawPrtoStrategyRows(parsed, 'PRTO_ARCHER', 0b00000000000000001001, 'Archer');
+  assertRawPrtoStrategyRows(parsed, copyKey, 0b00000000000000001001, 'Enkidu Warrior Copy');
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedEnkidu = getEntryByCivKey(reloaded.tabs.units.entries, 'PRTO_ENKIDU_WARRIOR');
+  const reloadedArcher = getEntryByCivKey(reloaded.tabs.units.entries, 'PRTO_ARCHER');
+  const reloadedCopy = getEntryByCivKey(reloaded.tabs.units.entries, copyKey);
+  assert.ok(reloadedEnkidu, 'expected reloaded Enkidu Warrior');
+  assert.ok(reloadedArcher, 'expected reloaded Archer');
+  assert.ok(reloadedCopy, 'expected reloaded Enkidu Warrior Copy');
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedEnkidu, 'requiredtech') && findField(reloadedEnkidu, 'requiredtech').value, NaN), enkiduFields.requiredtech);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedArcher, 'requiredtech') && findField(reloadedArcher, 'requiredtech').value, NaN), archerFields.requiredtech);
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedCopy, 'requiredtech') && findField(reloadedCopy, 'requiredtech').value, NaN), copyFields.requiredtech);
+});
+
+test('BIQ round-trip keeps 2021 Expansion PRTO strategy-map rows attached after primary unit delete', (t) => {
+  const sampleBiq = findExpansion2021BiqPath();
+  if (!sampleBiq) t.skip('2021 EXPANSION BIQ not available for PRTO strategy-map delete regression coverage.');
+
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'expansion-2021-prto-strategy-delete.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const initialParsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(initialParsed.ok, true, String(initialParsed.error || 'parse before 2021 strategy-map delete failed'));
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitsTab = bundle.tabs.units;
+  const entries = (unitsTab && unitsTab.entries) || [];
+  const doomed = entries.find((entry) =>
+    String(entry && entry.name || '').trim() === 'Enkidu Warrior'
+    && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'PRTO_ENKIDU_WARRIOR');
+  assert.ok(doomed, 'expected 2021 Expansion Enkidu Warrior unit with strategy-map duplicate');
+
+  const nextAfterDeleted = entries.find((entry) => Number(entry && entry.biqIndex) === Number(doomed.biqIndex) + 1);
+  assert.ok(nextAfterDeleted, 'expected a unit row immediately after Enkidu Warrior');
+  const nextAfterDeletedName = String(nextAfterDeleted.name || '').trim();
+  assert.equal(nextAfterDeletedName, 'Archer', 'fixture assumption: Archer follows Enkidu Warrior');
+  const laterStrategyUnitName = 'Legionary';
+  const nextAfterDeletedBaseline = {
+    requiredTech: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'requiredtech') && findField(nextAfterDeleted, 'requiredtech').value, NaN),
+    requiredResource1: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'requiredresource1') && findField(nextAfterDeleted, 'requiredresource1').value, NaN),
+    requiredResource2: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'requiredresource2') && findField(nextAfterDeleted, 'requiredresource2').value, NaN),
+    attack: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'attack') && findField(nextAfterDeleted, 'attack').value, NaN),
+    shieldCost: parseDisplayedReferenceIndex(findField(nextAfterDeleted, 'shieldcost') && findField(nextAfterDeleted, 'shieldcost').value, NaN),
+    strategyMask: getMergedRawPrtoStrategyMaskByPrimaryName(initialParsed, nextAfterDeletedName)
+  };
+  const laterStrategyBaseline = getMergedRawPrtoStrategyMaskByPrimaryName(initialParsed, laterStrategyUnitName);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(initialParsed, 'Enkidu Warrior'), 0b00000000000000001001);
+  assert.equal(nextAfterDeletedBaseline.strategyMask, 0b00000000000000000001);
+  assert.equal(laterStrategyBaseline, 0b00000000000000000011);
+
+  setFieldValue(doomed, 'requiredtech', '7');
+  setFieldValue(doomed, 'requiredresource1', '7');
+  setFieldValue(doomed, 'requiredresource2', '-1');
+  setFieldValue(doomed, 'attack', '1');
+  setFieldValue(doomed, 'shieldcost', '22');
+
+  unitsTab.entries = [doomed];
+  unitsTab.recordOps = [
+    { op: 'delete', recordRef: `@INDEX:${Number(doomed.biqIndex)}` }
+  ];
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['units'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || '2021 Expansion PRTO strategy-map delete save failed'));
+
+  const parsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(parsed.ok, true, String(parsed.error || 'parse after 2021 strategy-map delete failed'));
+  const rawDoomed = getRawPrtoPrimaryByName(parsed, 'Enkidu Warrior');
+  const rawNextAfterDeleted = getRawPrtoPrimaryByName(parsed, nextAfterDeletedName);
+  assert.equal(rawDoomed, null, 'deleted Enkidu Warrior primary row must not remain');
+  assert.ok(rawNextAfterDeleted, `expected shifted neighbor "${nextAfterDeletedName}" after save`);
+
+  const prto = (parsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
+  const prtoRecords = Array.isArray(prto && prto.records) ? prto.records : [];
+  assert.equal(
+    prtoRecords.filter((record) => String(record && record.name || '').trim() === 'Enkidu Warrior').length,
+    0,
+    'deleted Enkidu Warrior strategy-map duplicate row must be removed with its primary'
+  );
+
+  assert.equal(Number(rawNextAfterDeleted.requiredTech), nextAfterDeletedBaseline.requiredTech);
+  assert.equal(Number(rawNextAfterDeleted.requiredResource1), nextAfterDeletedBaseline.requiredResource1);
+  assert.equal(Number(rawNextAfterDeleted.requiredResource2), nextAfterDeletedBaseline.requiredResource2);
+  assert.equal(Number(rawNextAfterDeleted.attack), nextAfterDeletedBaseline.attack);
+  assert.equal(Number(rawNextAfterDeleted.shieldCost), nextAfterDeletedBaseline.shieldCost);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(parsed, nextAfterDeletedName), nextAfterDeletedBaseline.strategyMask);
+  assert.equal(getMergedRawPrtoStrategyMaskByPrimaryName(parsed, laterStrategyUnitName), laterStrategyBaseline);
+});
+
+test('BIQ round-trip preserves civilization flavor masks across later unrelated civilization edits', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'civilization-flavor-regression.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const desiredFlavorMasks = new Map([
+    ['RACE_MOCHE', 0b0000101],
+    ['RACE_AZTECS', 0b0000010],
+    ['RACE_OLMECS', 0b1000001]
+  ]);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  desiredFlavorMasks.forEach((mask, civKey) => {
+    const entry = getEntryByCivKey(bundle.tabs.civilizations.entries, civKey);
+    assert.ok(entry, `expected civilization entry ${civKey}`);
+    setCivilizationFlavorMask(entry, mask);
+  });
+
+  const flavorSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['civilizations'],
+    tabs: bundle.tabs
+  });
+  assert.equal(flavorSave.ok, true, String(flavorSave.error || 'flavor save failed'));
+
+  const afterFlavorSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterFlavorSave.ok, true, String(afterFlavorSave.error || 'parse after flavor save failed'));
+  desiredFlavorMasks.forEach((mask, civKey) => {
+    assert.equal(getRawRaceFlavorMask(afterFlavorSave, civKey), mask, `${civKey} should persist its assigned flavor mask`);
+  });
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mayans = getEntryByCivKey(reloaded.tabs.civilizations.entries, 'RACE_MAYANS');
+  assert.ok(mayans, 'expected Mayans civilization entry for unrelated edit');
+  const adjective = findField(mayans, 'adjective');
+  assert.ok(adjective, 'expected Mayans adjective field');
+  adjective.value = `${String(adjective.value || 'Mayan').trim()} Test`;
+
+  const unrelatedSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['civilizations'],
+    tabs: reloaded.tabs
+  });
+  assert.equal(unrelatedSave.ok, true, String(unrelatedSave.error || 'unrelated civilization save failed'));
+
+  const afterUnrelatedSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterUnrelatedSave.ok, true, String(afterUnrelatedSave.error || 'parse after unrelated civilization save failed'));
+  desiredFlavorMasks.forEach((mask, civKey) => {
+    assert.equal(getRawRaceFlavorMask(afterUnrelatedSave, civKey), mask, `${civKey} should keep its flavor mask after an unrelated civilization edit`);
+  });
+});
+
+test('BIQ round-trip preserves civilization flavors through pending copies and repeated saves', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'civilization-flavor-pending-copy-regression.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const copiedBuilderRef = makeShortBiqTestRef('RACE', 'FLBLD');
+  const copiedWarriorRef = makeShortBiqTestRef('RACE', 'FLWAR');
+  const expectedMasks = new Map([
+    ['RACE_MOCHE', 0b0000001], // Warrior
+    ['RACE_AZTECS', 0b0000010], // Balanced
+    ['RACE_OLMECS', 0b0000100], // Builder
+    ['RACE_TOLTECS', 0b0000101], // Warrior + Builder
+    [copiedBuilderRef, 0b0000100],
+    [copiedWarriorRef, 0b0000011] // Warrior + Balanced
+  ]);
+
+  const initialParsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(initialParsed.ok, true, String(initialParsed.error || 'initial parse failed'));
+  const untouchedBefore = new Map([
+    ['RACE_INCANS', getRawRaceFlavorMask(initialParsed, 'RACE_INCANS')],
+    ['RACE_MAYANS', getRawRaceFlavorMask(initialParsed, 'RACE_MAYANS')]
+  ]);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const civsTab = bundle.tabs.civilizations;
+  assert.ok(civsTab && Array.isArray(civsTab.entries), 'expected civilization tab entries');
+  if (!Array.isArray(civsTab.recordOps)) civsTab.recordOps = [];
+
+  ['RACE_MOCHE', 'RACE_AZTECS', 'RACE_OLMECS', 'RACE_TOLTECS'].forEach((civKey) => {
+    const entry = getEntryByCivKey(civsTab.entries, civKey);
+    assert.ok(entry, `expected civilization entry ${civKey}`);
+    setCivilizationFlavorMask(entry, expectedMasks.get(civKey));
+  });
+
+  const moche = getEntryByCivKey(civsTab.entries, 'RACE_MOCHE');
+  const aztecs = getEntryByCivKey(civsTab.entries, 'RACE_AZTECS');
+  const copiedBuilder = makePendingCopiedCivilizationEntry(moche, copiedBuilderRef);
+  const copiedWarrior = makePendingCopiedCivilizationEntry(aztecs, copiedWarriorRef);
+  setCivilizationFlavorMask(copiedBuilder, expectedMasks.get(copiedBuilderRef));
+  setCivilizationFlavorMask(copiedWarrior, expectedMasks.get(copiedWarriorRef));
+  civsTab.entries.push(copiedBuilder, copiedWarrior);
+  civsTab.recordOps.push(
+    { op: 'copy', sourceRef: 'RACE_MOCHE', newRecordRef: copiedBuilderRef },
+    { op: 'copy', sourceRef: 'RACE_AZTECS', newRecordRef: copiedWarriorRef }
+  );
+
+  const firstSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['civilizations'],
+    tabs: bundle.tabs
+  });
+  assert.equal(firstSave.ok, true, String(firstSave.error || 'first flavor save failed'));
+
+  const afterFirstSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterFirstSave.ok, true, String(afterFirstSave.error || 'parse after first flavor save failed'));
+  assertRawRaceFlavorMasks(afterFirstSave, expectedMasks, 'first save');
+  untouchedBefore.forEach((mask, civKey) => {
+    assert.equal(getRawRaceFlavorMask(afterFirstSave, civKey), mask, `${civKey} should not receive a neighboring civilization's flavor bits`);
+  });
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const nextMasks = new Map(expectedMasks);
+  nextMasks.set('RACE_MOCHE', 0b0000100); // Builder only
+  nextMasks.set(copiedBuilderRef, 0b0000001); // Warrior only
+
+  const reloadedMoche = getEntryByCivKey(reloaded.tabs.civilizations.entries, 'RACE_MOCHE');
+  const reloadedCopiedBuilder = getEntryByCivKey(reloaded.tabs.civilizations.entries, copiedBuilderRef);
+  const reloadedMayans = getEntryByCivKey(reloaded.tabs.civilizations.entries, 'RACE_MAYANS');
+  assert.ok(reloadedMoche, 'expected reloaded Moche civilization entry');
+  assert.ok(reloadedCopiedBuilder, 'expected reloaded copied builder civilization entry');
+  assert.ok(reloadedMayans, 'expected reloaded Mayans civilization entry');
+  setCivilizationFlavorMask(reloadedMoche, nextMasks.get('RACE_MOCHE'));
+  setCivilizationFlavorMask(reloadedCopiedBuilder, nextMasks.get(copiedBuilderRef));
+  const adjective = findField(reloadedMayans, 'adjective');
+  assert.ok(adjective, 'expected Mayans adjective field');
+  adjective.value = `${String(adjective.value || 'Mayan').trim()} Flavor`;
+
+  const secondSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['civilizations'],
+    tabs: reloaded.tabs
+  });
+  assert.equal(secondSave.ok, true, String(secondSave.error || 'second flavor save failed'));
+
+  const afterSecondSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterSecondSave.ok, true, String(afterSecondSave.error || 'parse after second flavor save failed'));
+  assertRawRaceFlavorMasks(afterSecondSave, nextMasks, 'second save');
+  assert.equal(getRawRaceFlavorMask(afterSecondSave, 'RACE_INCANS'), untouchedBefore.get('RACE_INCANS'), 'RACE_INCANS should remain untouched after second save');
+  assert.equal(getRawRaceFlavorMask(afterSecondSave, 'RACE_MAYANS'), untouchedBefore.get('RACE_MAYANS'), 'RACE_MAYANS should keep its flavor mask after an unrelated adjective edit');
+
+  const reloadedAgain = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  if (!Array.isArray(reloadedAgain.tabs.civilizations.recordOps)) reloadedAgain.tabs.civilizations.recordOps = [];
+  reloadedAgain.tabs.civilizations.recordOps.push({ op: 'delete', recordRef: copiedWarriorRef });
+  const olmecsAgain = getEntryByCivKey(reloadedAgain.tabs.civilizations.entries, 'RACE_OLMECS');
+  assert.ok(olmecsAgain, 'expected reloaded Olmecs civilization entry');
+  nextMasks.set('RACE_OLMECS', 0b0000110); // Balanced + Builder
+  setCivilizationFlavorMask(olmecsAgain, nextMasks.get('RACE_OLMECS'));
+
+  const thirdSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['civilizations'],
+    tabs: reloadedAgain.tabs
+  });
+  assert.equal(thirdSave.ok, true, String(thirdSave.error || 'third flavor save failed'));
+
+  const afterThirdSave = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(afterThirdSave.ok, true, String(afterThirdSave.error || 'parse after third flavor save failed'));
+  nextMasks.delete(copiedWarriorRef);
+  assertRawRaceFlavorMasks(afterThirdSave, nextMasks, 'third save');
+  assert.equal(getRawRaceRecordsByCivKey(afterThirdSave, copiedWarriorRef).length, 0, 'expected deleted copied civilization to be removed');
+  assert.equal(getRawRaceFlavorMask(afterThirdSave, 'RACE_INCANS'), untouchedBefore.get('RACE_INCANS'), 'RACE_INCANS should remain untouched after deleting a copied civilization');
+  assert.equal(getRawRaceFlavorMask(afterThirdSave, 'RACE_MAYANS'), untouchedBefore.get('RACE_MAYANS'), 'RACE_MAYANS should keep its flavor mask after repeated saves');
 });
 
 test('BIQ generated mutation inventory covers every editable BIQ UI field', () => {

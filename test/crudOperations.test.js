@@ -230,6 +230,22 @@ function getRawRecordInt(record, key, fallback = NaN) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function getRawRecordsByCivilopediaKey(bundle, sectionCode, key) {
+  const section = getSection(bundle, sectionCode);
+  const target = String(key || '').trim().toUpperCase();
+  return (section && Array.isArray(section.records) ? section.records : []).filter((record) => {
+    const field = getRawRecordField(record, 'civilopediaentry');
+    return String(field && field.value || '').trim().toUpperCase() === target;
+  });
+}
+
+function countPrimaryPrtoRecords(bundle) {
+  const section = getSection(bundle, 'PRTO');
+  return (section && Array.isArray(section.records) ? section.records : []).filter((record) =>
+    getRawRecordInt(record, 'otherstrategy', -1) < 0
+  ).length;
+}
+
 function extractFunctionSource(sourceText, name) {
   const needle = `function ${name}(`;
   const start = sourceText.indexOf(needle);
@@ -1251,6 +1267,66 @@ test('pending unit scalar and list references survive middle pending unit deleti
   const reloadedHost = getEntry(after, 'units', host.civilopediaKey);
   assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'upgradeto'), survivorIndex);
   assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'stealth_target'), survivorIndex);
+});
+
+test('pending unit references resolve by logical PRTO primary index despite strategy-map duplicates', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+  const before = reload(c3xDir, biqPath);
+  const host = before.tabs.units.entries.find((entry) =>
+    Number.isFinite(Number(entry && entry.biqIndex)) && findBiqField(entry, 'upgradeto')
+  );
+  if (!host) return t.skip('No editable unit reference host found');
+
+  const rawBaseCount = countSection(before, 'PRTO');
+  const primaryBaseCount = countPrimaryPrtoRecords(before);
+  const firstKey = makeShortTestRef('PRTO_', 'STRAT_A');
+  const deletedKey = makeShortTestRef('PRTO_', 'STRAT_B');
+  const survivorKey = makeShortTestRef('PRTO_', 'STRAT_C');
+  const expectedSurvivorIndex = primaryBaseCount + 1;
+  const staleRawAppendIndex = rawBaseCount + 4;
+  assert.notEqual(staleRawAppendIndex, expectedSurvivorIndex, 'test must use a stale raw append index');
+
+  setReferenceField(findBiqField(host, 'upgradeto'), 'units', survivorKey, staleRawAppendIndex);
+  const stealthField = ensureBiqField(host, 'stealth_target', String(staleRawAppendIndex));
+  setReferenceField(stealthField, 'units', survivorKey, staleRawAppendIndex);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: {
+        entries: [host],
+        recordOps: [
+          { op: 'add', newRecordRef: firstKey },
+          { op: 'add', newRecordRef: survivorKey }
+        ]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(getEntry(after, 'units', deletedKey), null, 'deleted pending unit should never be written');
+  const survivorIndex = getEntryIndex(after, 'units', survivorKey);
+  assert.equal(survivorIndex, expectedSurvivorIndex);
+
+  const reloadedHost = getEntry(after, 'units', host.civilopediaKey);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'upgradeto'), survivorIndex);
+  assert.equal(getRawRecordInt({ fields: reloadedHost.biqFields }, 'stealth_target'), survivorIndex);
+  assert.notEqual(getRawRecordInt({ fields: reloadedHost.biqFields }, 'upgradeto'), staleRawAppendIndex);
+  assert.notEqual(getRawRecordInt({ fields: reloadedHost.biqFields }, 'stealth_target'), staleRawAppendIndex);
+
+  const firstRecords = getRawRecordsByCivilopediaKey(after, 'PRTO', firstKey);
+  const survivorRecords = getRawRecordsByCivilopediaKey(after, 'PRTO', survivorKey);
+  assert.equal(firstRecords.length, 2, 'new PRTO A should serialize as primary plus strategy-map duplicate');
+  assert.equal(survivorRecords.length, 2, 'new PRTO C should serialize as primary plus strategy-map duplicate');
+  assert.ok(firstRecords.some((record) => getRawRecordInt(record, 'otherstrategy') === -1));
+  assert.ok(survivorRecords.some((record) => getRawRecordInt(record, 'otherstrategy') === -1));
+  assert.ok(survivorRecords.some((record) => getRawRecordInt(record, 'otherstrategy') === survivorIndex));
 });
 
 test('pending government references in civilizations survive middle pending government deletion', (t) => {
