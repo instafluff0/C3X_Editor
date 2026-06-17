@@ -307,15 +307,27 @@ test('unit import clears orphaned list references and zeroes count fields when n
     imported.biqFields.filter((field) => field.baseKey === 'stealth_target').map((field) => field.value).filter(Boolean).length,
     0
   );
+  assert.deepEqual(
+    Array.from(imported.biqFields.filter((field) => field.baseKey === 'stealth_target').map((field) => field.originalValue).filter(Boolean)),
+    ['4']
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numstealthtargets').value, '0');
   assert.equal(
     imported.biqFields.filter((field) => field.baseKey === 'legal_unit_telepad').map((field) => field.value).filter(Boolean).length,
     0
   );
+  assert.deepEqual(
+    Array.from(imported.biqFields.filter((field) => field.baseKey === 'legal_unit_telepad').map((field) => field.originalValue).filter(Boolean)),
+    ['4']
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalunittelepads').value, '0');
   assert.equal(
     imported.biqFields.filter((field) => field.baseKey === 'legal_building_telepad').map((field) => field.value).filter(Boolean).length,
     0
+  );
+  assert.deepEqual(
+    Array.from(imported.biqFields.filter((field) => field.baseKey === 'legal_building_telepad').map((field) => field.originalValue).filter(Boolean)),
+    ['11']
   );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalbuildingtelepads').value, '0');
 });

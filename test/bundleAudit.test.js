@@ -1036,6 +1036,82 @@ test('auditLoadedBundle reports Civilopedia link target case mismatches only for
   );
 });
 
+test('auditLoadedBundle reports Civilopedia links to missing local entries', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      units: {
+        entries: [
+          {
+            name: 'Arctic Ape',
+            civilopediaKey: 'PRTO_ARCTIC_APE',
+            iconPaths: [],
+            civilopediaSection1: 'Available to $LINK<Trolls=RACE_Trolls> and uses $LINK<Summons=GCON_Summoning>.',
+            civilopediaSection2: ''
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      improvements: { entries: [] },
+      gameConcepts: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 2);
+  const messages = result.tabs.units.sections['0'].map((entry) => entry.message);
+  assert.match(messages[0], /Civilopedia link target "RACE_Trolls" has no matching local entry/);
+  assert.match(messages[1], /Civilopedia link target "GCON_Summoning" has no matching local entry/);
+});
+
+test('auditLoadedBundle ignores missing Civilopedia link targets that are not Civ3 pedia keys', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      units: {
+        entries: [
+          {
+            name: 'Arctic Ape',
+            civilopediaKey: 'PRTO_ARCTIC_APE',
+            iconPaths: [],
+            civilopediaSection1: 'Lore $LINK<Trolls=Trolls>.',
+            civilopediaSection2: ''
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      improvements: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
 test('auditLoadedBundle accepts links matching raw mixed-case Civilopedia keys', () => {
   const civ3Root = mkTmpDir();
   const bundle = makeBundle(civ3Root, {

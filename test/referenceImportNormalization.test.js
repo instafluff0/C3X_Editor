@@ -322,12 +322,13 @@ test('government import remaps prerequisite technology and relation rows by civi
     .map((field) => field.baseKey);
   assert.deepEqual(Array.from(relationHeaders), [
     'performance_of_this_government_versus_government_4',
-    'performance_of_this_government_versus_government_7'
+    'performance_of_this_government_versus_government_7',
+    'performance_of_this_government_versus_government_8'
   ]);
   const relationValues = imported.biqFields
     .filter((field) => field.baseKey === 'canbribe' || field.baseKey === 'resistancemodifier' || field.baseKey === 'briberymodifier')
     .map((field) => field.value);
-  assert.deepEqual(Array.from(relationValues), ['1', '11', '21', '3', '13', '23']);
+  assert.deepEqual(Array.from(relationValues), ['1', '11', '21', '3', '13', '23', '0', '0', '0']);
 });
 
 test('government import remaps immuneto by civilopedia key', () => {

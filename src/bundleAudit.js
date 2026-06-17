@@ -1701,6 +1701,7 @@ function auditScenarioTextHealth(bundle, result) {
 }
 
 const CIVILOPEDIA_LINK_PATTERN = /\$LINK<([^=<>]+)=([^<>]+)>/g;
+const CIVILOPEDIA_LINK_TARGET_PREFIX_RE = /^(?:RACE|TECH|GOOD|BLDG|PRTO|GCON|TERR|TFRM)_/i;
 
 function collectCanonicalCivilopediaKeys(bundle) {
   const keys = new Map();
@@ -1724,7 +1725,7 @@ function collectCanonicalCivilopediaKeys(bundle) {
   return keys;
 }
 
-function auditCivilopediaLinkCase(bundle, result) {
+function auditCivilopediaLinks(bundle, result) {
   const canonicalKeys = collectCanonicalCivilopediaKeys(bundle);
   if (canonicalKeys.size <= 0) return;
   Object.entries(((bundle || {}).tabs || {})).forEach(([tabKey, tab]) => {
@@ -1735,7 +1736,19 @@ function auditCivilopediaLinkCase(bundle, result) {
       for (const match of text.matchAll(CIVILOPEDIA_LINK_PATTERN)) {
         const target = String(match[2] || '').trim();
         const canonical = canonicalKeys.get(target.toUpperCase());
-        if (!target || !canonical || target === canonical) continue;
+        if (!target) continue;
+        if (!canonical) {
+          if (!CIVILOPEDIA_LINK_TARGET_PREFIX_RE.test(target)) continue;
+          addSectionIssue(
+            result,
+            tabKey,
+            index,
+            `${label}: Civilopedia link target "${target}" has no matching local entry.`,
+            'civilopedia-link-target-missing'
+          );
+          continue;
+        }
+        if (target === canonical) continue;
         addSectionIssue(
           result,
           tabKey,
@@ -1822,7 +1835,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditReferenceArt(bundle, result);
   auditScenarioTextCoverage(bundle, result);
   auditScenarioTextHealth(bundle, result);
-  auditCivilopediaLinkCase(bundle, result);
+  auditCivilopediaLinks(bundle, result);
   auditScenarioPlayableCivilizationSlots(bundle, result);
   return result;
 }

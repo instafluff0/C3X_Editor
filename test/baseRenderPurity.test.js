@@ -59,6 +59,17 @@ test('base field renderers do not mutate rows during initial render', () => {
   );
 });
 
+test('Rules Citizens hides dangling BIQ Civilopedia entry field', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /if \(selected\.code === 'CTZN' && baseKeyRaw === 'civilopediaentry'\) return;/,
+    'Citizens should not show CTZN_* Civilopedia keys because stock Civ3 has no per-citizen articles'
+  );
+});
+
 test('building prereq parser preserves quoted multi-word unit names', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

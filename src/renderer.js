@@ -16762,11 +16762,14 @@ function collapseUnitRuleFields(fields) {
   });
 }
 
-function setUnitListFieldValues(entry, key, values) {
+function setUnitListFieldValues(entry, key, values, options = {}) {
   if (!entry || !Array.isArray(entry.biqFields)) return;
   const targetKey = String(key || '').trim();
   const targetCanon = targetKey.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleaned = (Array.isArray(values) ? values : []).map((v) => String(v || '').trim()).filter(Boolean);
+  const originalValues = Array.isArray(options && options.originalValues)
+    ? options.originalValues.map((v) => String(v || '').trim())
+    : null;
   const removedFields = [];
   let insertAt = -1;
   const kept = [];
@@ -16781,14 +16784,16 @@ function setUnitListFieldValues(entry, key, values) {
   });
   if (insertAt < 0) insertAt = kept.length;
   const template = removedFields[0] || { baseKey: targetKey, key: targetKey, label: toFriendlyKey(targetKey) };
-  const preservedCount = Math.max(cleaned.length, removedFields.length);
+  const preservedCount = Math.max(cleaned.length, originalValues ? originalValues.length : 0, removedFields.length);
   const nextFields = Array.from({ length: preservedCount }, (_, idx) => {
     const prior = removedFields[idx] || template;
     const value = idx < cleaned.length ? cleaned[idx] : '';
     return {
       ...prior,
       value,
-      originalValue: String(prior && prior.originalValue || '')
+      originalValue: originalValues
+        ? String(originalValues[idx] || '')
+        : String(prior && prior.originalValue || '')
     };
   });
   kept.splice(insertAt, 0, ...nextFields);
@@ -35611,13 +35616,14 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
       value: makeBlankReferenceFieldValue(field, tabKey),
       originalValue: ''
     }));
+    if (tabKey === 'civilizations') {
+      entry.biqFields = entry.biqFields.filter((field) => !isCivilizationNameListItemField(field));
+    }
     if (tabKey === 'improvements') entry.improvementKind = 'normal';
   } else if (mode === 'import') {
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
-      originalValue: (tabKey === 'units' || tabKey === 'improvements')
-        ? String(field && field.value || '')
-        : ''
+      originalValue: ''
     }));
     normalizeImportedReferenceFields(tabKey, entry);
     if (tabKey === 'units') {
@@ -36002,7 +36008,9 @@ function normalizeImportedIndexedListField(entry, {
       }
     }
   });
-  setUnitListFieldValues(entry, sourceValues.key, dedupeStrings(remapped));
+  setUnitListFieldValues(entry, sourceValues.key, dedupeStrings(remapped), {
+    originalValues: sourceValues.values
+  });
 }
 
 function normalizeImportedUnitAvailableTo(entry) {
@@ -36233,6 +36241,23 @@ function normalizeImportedGovernmentRelationFields(entry) {
     }
     skippingRelationRow = false;
     nextFields.push(field);
+  }
+  targetEntries.forEach((targetEntry, fallbackIdx) => {
+    const rawIndex = targetEntry && (targetEntry.biqIndex != null ? targetEntry.biqIndex : targetEntry.index);
+    const targetIndex = Number.isFinite(rawIndex) ? Number(rawIndex) : fallbackIdx;
+    if (!Number.isFinite(targetIndex) || targetIndex < 0 || mappedRows.has(targetIndex)) return;
+    mappedRows.set(targetIndex, { canBribe: '0', resistanceMod: '0', briberyMod: '0' });
+  });
+  if (entry && entry.isNew) {
+    const pendingIndex = targetEntries.reduce((max, targetEntry, fallbackIdx) => {
+      const rawIndex = targetEntry && (targetEntry.biqIndex != null ? targetEntry.biqIndex : targetEntry.index);
+      const targetIndex = Number.isFinite(rawIndex) ? Number(rawIndex) : fallbackIdx;
+      return Number.isFinite(targetIndex) && targetIndex >= 0 ? Math.max(max, targetIndex) : max;
+    }, -1) + 1;
+    if (pendingIndex >= 0 && !mappedRows.has(pendingIndex)) {
+      targetKeyToName.set(pendingIndex, String(entry.name || entry.civilopediaKey || `Government ${pendingIndex + 1}`));
+      mappedRows.set(pendingIndex, { canBribe: '0', resistanceMod: '0', briberyMod: '0' });
+    }
   }
   Array.from(mappedRows.entries())
     .sort((a, b) => a[0] - b[0])
@@ -40550,6 +40575,7 @@ function renderBiqTab(tab) {
           if (consumedTimeFields.has(field)) return;
           if (consumedSpecialFields.has(field)) return;
           const baseKeyRaw = String(field.baseKey || field.key || '').toLowerCase();
+          if (selected.code === 'CTZN' && baseKeyRaw === 'civilopediaentry') return;
           const row = document.createElement('div');
           row.className = 'rule-row';
           if (selected.code === 'GAME' && groupName === 'Start Date') {
@@ -57160,7 +57186,7 @@ function renderSectionTab(tab, tabKey) {
     empty.className = 'section-card';
     empty.innerHTML = `<p class="hint">No ${schema.entityName.toLowerCase()} entries yet.</p>`;
     const addFirst = document.createElement('button');
-    if (useCompactEntityActions) {
+    if (useInlineFilterActions) {
       addFirst.className = 'ghost action-add';
       addFirst.textContent = '+ Add';
     } else {

@@ -37,3 +37,19 @@ test('district representative preview normalizes detected building columns to av
     'preview card should only reuse the representative image when it still matches a valid picker state'
   );
 });
+
+test('section tab empty state uses the defined compact action flag', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.doesNotMatch(
+    text,
+    /useCompactEntityActions/,
+    'empty section tabs should not reference an undefined compact-action flag'
+  );
+  assert.match(
+    text,
+    /if \(useInlineFilterActions\) \{\s*addFirst\.className = 'ghost action-add';/,
+    'Districts/Wonder Districts/Natural Wonders empty states should use the existing inline action flag'
+  );
+});

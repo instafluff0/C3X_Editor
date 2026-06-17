@@ -1,13 +1,20 @@
 * RELEASE 27.16.1
+- Added async QA warnings for Civilopedia `$LINK` targets that point at missing local Civ3 entries, catching imported scenario prose that still links to source-scenario Civs, units, concepts, or other absent entries.
+- Fixed empty scenario Wonder District fallback screens so incompatible default wonder sets show the create/seed prompt instead of throwing a renderer error after scenarios filter them to zero entries.
 - Added File -> Settings -> Tooltips presets for no delay, short delay at 300ms, medium delay at 800ms, long delay at 2s, or never showing shared blue metadata tooltips.
-- Fixed reference picker metadata to target existing BIQ rows by `@INDEX` instead of Civilopedia key, preventing duplicate-key scenario data such as Civilization LEGENDS Fishing/Tin/Rare Earths from saving as later same-key records.
+- Fixed reference picker metadata to target existing BIQ rows by `@INDEX` instead of Civilopedia key, preventing duplicate-key scenario data from saving as later same-key records.
 - Fixed reference edit collection for existing BIQ rows with blank Civilopedia keys so edits still target the row by `@INDEX`.
 - Fixed copied reference entries so their default copy name is written into the BIQ name field, preventing UI-created unit copies from reloading under the source unit's name.
-- Fixed blank unit creation so new PRTO rows use the same Quint-style defaults shown after save/reload, including `otherstrategy = -1`, movement, AI Strategy, and order/action defaults.
-- Fixed unit copy record operations to use BIQ index source references for duplicate Civilopedia-key units, so Civilization LEGENDS `War Chariot` copies clone the selected row instead of the first `PRTO_WAR_CHARIOT` row.
-- Fixed concurrent BIQ record delete plus field-edit saves so edits targeting original indexes are shifted or dropped after deletes, and PRTO copy/delete now preserves or reconciles strategy-map child rows, preventing Civilization LEGENDS and 2021 EXPANSION unit edits/adds/deletes from poisoning neighboring unit fields or AI Strategy masks.
-- Added fixture-backed Civilization LEGENDS and 2021 EXPANSION unit edit/copy regressions so same-key PRTO primaries and Quint-style strategy-map units are tested for adds as well as deletes.
-- Added unit pending-reference regression coverage for logical PRTO primary indices when new units serialize with Quint-style strategy-map duplicate records.
+- Fixed imported Unit and Improvement BIQ fields so they are saved as imported values even when the imported Civilopedia key already exists in the target BIQ, preventing target-template fields such as Improvement required tech from silently winning.
+- Fixed blank Civilization creation so inherited city, military leader, and scientific leader list rows are not carried into new blank civs.
+- Fixed imported Government relation rows so the pre-save imported editor state is expanded to the target BIQ government list before save/reload.
+- Fixed blank unit creation so new PRTO rows use defaults shown after save/reload, including `otherstrategy = -1`, movement, AI Strategy, and order/action defaults.
+- Fixed unit copy record operations to use BIQ index source references for duplicate Civilopedia-key units, so (for example) Civilization LEGENDS `War Chariot` copies clone the selected row instead of the first `PRTO_WAR_CHARIOT` row.
+- Fixed concurrent BIQ record delete plus field-edit saves so edits targeting original indexes are shifted or dropped after deletes, and PRTO copy/delete now preserves or reconciles strategy-map child rows, preventing unit edits/adds/deletes from poisoning neighboring unit fields or AI Strategy masks.
+- Added full-field saved-BIQ reload assertions for add, edit, copy, delete-survivor, and import CRUD workflows across Civilizations, Technologies, Resources, Improvements, Governments, and Units.
+- Added semantic delete-cascade coverage for every inventoried BIQ reference field affected by CRUD deletes, including Rules default units, Civilization government/unit references, Unit and Improvement prerequisites, leader/player references, terrain resource masks, and government relation tables.
+- Added fixture-backed Civilization LEGENDS and 2021 EXPANSION unit edit/copy regressions so same-key PRTO primaries and strategy-map units are tested for adds as well as deletes.
+- Added unit pending-reference regression coverage for logical PRTO primary indices when new units serialize with strategy-map duplicate records.
 - Added full-field saved-BIQ reload assertions for newly added, copied, and imported PRTO units so regressions such as dropped unit names fail directly.
 - Added BIQ regressions for newly added and imported units edited to multiple AI Strategy bits before first save, including checks that existing neighboring PRTO rows keep their fields and strategy masks.
 - Added per-arrow floating Tech Tree border warnings for dirty Science Advisor arrows that touch protected advisor-frame areas, with red route highlights, stale route-snapshot invalidation for resized tech boxes, cleaner selected-focus route previews, a selected-arrow frame guide, no stray stage focus ring after handle deletion, and a save-details note.
