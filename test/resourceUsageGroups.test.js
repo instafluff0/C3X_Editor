@@ -68,11 +68,21 @@ test('Resources usage UI is mounted in the Resources detail pane and styled', ()
     /if \(tabKey === 'resources'\) \{[\s\S]*?identityMeta\.appendChild\(identityGrid\);[\s\S]*?if \(resourceUtilityStack\) identityMeta\.appendChild\(resourceUtilityStack\);[\s\S]*?resourceIdentityTechStack[\s\S]*?identityMeta\.appendChild\(resourceIdentityTechStack\);[\s\S]*?if \(resourceUsageBoards\) identityMeta\.appendChild\(resourceUsageBoards\);[\s\S]*?\}/,
     'Expected Resources detail order to be identity, Civilopedia\/icons, Required Tech, then usage boards'
   );
+  assert.match(
+    source,
+    /else if \(tabKey !== 'units' && tabKey !== 'resources' && referenceEditable\)/,
+    'Expected Resources to skip the generic fallback Civilopedia editor because it has a top Civilopedia utility section'
+  );
+  assert.ok(source.includes("textCol.querySelectorAll(':scope > .resource-identity-stack > .unit-utility-stack > details')"));
+  assert.ok(source.includes("addStandaloneSection(techStack, 'Required Tech', 0)"));
+  assert.ok(source.includes("textCol.querySelectorAll(':scope > .resource-identity-stack > .resource-usage-boards > .resource-usage-board')"));
+  assert.ok(source.includes("board.querySelectorAll(':scope > .resource-usage-grid > .resource-usage-cell')"));
+  assert.ok(source.includes("textCol.querySelectorAll(':scope > .kv-grid > .rule-group-card')"));
   assert.match(source, /function isResourceUsageSpecEditable\(spec, referenceEditable\) \{[\s\S]*?c3xBuildingResource[\s\S]*?canEditC3XBaseRows[\s\S]*?isResourceUsageSectionGroup\(spec\)[\s\S]*?canEditC3XConfigTab\(spec\.tabKey\)[\s\S]*?return !!referenceEditable/);
 
-  assert.match(styles, /\.resource-identity-stack \{/);
-  assert.match(styles, /\.resource-identity-tech-stack \{/);
-  assert.match(styles, /\.resource-usage-boards \{/);
-  assert.match(styles, /\.technology-unlocks-board,\n\.resource-usage-board \{/);
-  assert.match(styles, /\.technology-unlock-cell,\n\.resource-usage-cell \{/);
+  assert.match(styles, /\.resource-identity-stack,\n\.government-identity-stack \{/);
+  assert.match(styles, /\.resource-identity-tech-stack,\n\.government-identity-tech-stack \{/);
+  assert.match(styles, /\.resource-usage-boards,\n\.government-usage-boards \{/);
+  assert.match(styles, /\.technology-unlocks-board,\n\.resource-usage-board,\n\.government-usage-board \{/);
+  assert.match(styles, /\.technology-unlock-cell,\n\.resource-usage-cell,\n\.government-usage-cell \{/);
 });

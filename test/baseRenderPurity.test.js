@@ -943,6 +943,23 @@ test('reference warning badges include Game Concepts', () => {
   );
 });
 
+test('reference sidebar toggle is available on resource and government detail tabs', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const REFERENCE_CONTEXT_TOGGLE_TABS = new Set\(\['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'\]\)/,
+    'Resources and Governments should use the shared Hide Sidebar / Show Sidebar control'
+  );
+
+  assert.match(
+    text,
+    /if \(REFERENCE_CONTEXT_TOGGLE_TABS\.has\(tabKey\)\) \{[\s\S]*?sidebarLabel\.textContent = visible \? 'Hide Sidebar' : 'Show Sidebar'/,
+    'Inline reference navigation should render the sidebar toggle from the shared tab set'
+  );
+});
+
 test('C3X base warning rows expose Next warning navigation', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');

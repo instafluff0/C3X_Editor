@@ -5776,7 +5776,7 @@ details > summary:focus-visible {
   display: grid;
   gap: 4px;
   margin-top: 2px;
-  padding: 0 4px 2px;
+  padding: 0 0 2px;
 }
 
 .unit-prereq-resource-list {
@@ -6148,7 +6148,8 @@ details > summary:focus-visible {
 }
 
 .technology-unlocks-board,
-.resource-usage-board {
+.resource-usage-board,
+.government-usage-board {
   display: grid;
   gap: 8px;
   padding: 12px;
@@ -6158,23 +6159,27 @@ details > summary:focus-visible {
   box-shadow: 0 8px 20px rgba(38, 28, 72, 0.05);
 }
 
-.resource-usage-boards {
+.resource-usage-boards,
+.government-usage-boards {
   display: grid;
   gap: 12px;
 }
 
-.resource-identity-stack {
+.resource-identity-stack,
+.government-identity-stack {
   display: grid;
   gap: 12px;
 }
 
-.resource-identity-tech-stack {
+.resource-identity-tech-stack,
+.government-identity-tech-stack {
   display: grid;
   gap: 8px;
 }
 
 .technology-unlocks-grid,
-.resource-usage-grid {
+.resource-usage-grid,
+.government-usage-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 10px;
@@ -6182,7 +6187,8 @@ details > summary:focus-visible {
 }
 
 .technology-unlock-cell,
-.resource-usage-cell {
+.resource-usage-cell,
+.government-usage-cell {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -6193,12 +6199,14 @@ details > summary:focus-visible {
 }
 
 .technology-unlock-cell-label,
-.resource-usage-cell-label {
+.resource-usage-cell-label,
+.government-usage-cell-label {
   margin: 0;
 }
 
 .technology-unlock-picker-list,
-.resource-usage-picker-list {
+.resource-usage-picker-list,
+.government-usage-picker-list {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -6215,7 +6223,13 @@ details > summary:focus-visible {
 .resource-usage-picker .tech-picker-btn,
 .resource-usage-add-picker,
 .resource-usage-add-picker .tech-picker-head,
-.resource-usage-add-picker .tech-picker-btn {
+.resource-usage-add-picker .tech-picker-btn,
+.government-usage-picker,
+.government-usage-picker .tech-picker-head,
+.government-usage-picker .tech-picker-btn,
+.government-usage-add-picker,
+.government-usage-add-picker .tech-picker-head,
+.government-usage-add-picker .tech-picker-btn {
   width: 100%;
   min-width: 0;
   max-width: none;
