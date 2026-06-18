@@ -2788,6 +2788,11 @@ function getPrtoStrategyBits(value) {
   return bits;
 }
 
+function isPrtoPrimaryRecord(record) {
+  const otherStrategy = Number(record && record.otherStrategy);
+  return !Number.isFinite(otherStrategy) || otherStrategy < 0;
+}
+
 function buildQuintPrtoOutputRecords(records) {
   const source = Array.isArray(records) ? records : [];
   const duplicatesByPrimary = new Map();
@@ -2835,6 +2840,278 @@ function buildQuintPrtoOutputRecords(records) {
   });
 
   return output;
+}
+
+function normalizeReorderIndexList(order) {
+  if (!Array.isArray(order)) return [];
+  return order
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+}
+
+function summarizeIndexListForLog(values, limit = 12) {
+  const normalized = (Array.isArray(values) ? values : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  const cap = Math.max(1, Number(limit) || 12);
+  const head = normalized.slice(0, cap).join(',');
+  const tail = normalized.length > cap ? normalized.slice(-cap).join(',') : '';
+  let checksum = 0;
+  normalized.forEach((value, index) => {
+    checksum = (checksum + ((value + 1) * (index + 17))) % 1000000007;
+  });
+  return `count:${normalized.length};head:${head || '(empty)'}${tail ? `;tail:${tail}` : ''};checksum:${checksum}`;
+}
+
+function summarizeRemapChangedPairsForLog(remap, limit = 16) {
+  const oldToNew = remap && remap.oldToNew;
+  if (!oldToNew || typeof oldToNew.forEach !== 'function') return 'count:0;sample:(none)';
+  const cap = Math.max(1, Number(limit) || 16);
+  const samples = [];
+  let changed = 0;
+  oldToNew.forEach((nextIndex, oldIndex) => {
+    if (Number(oldIndex) === Number(nextIndex)) return;
+    changed += 1;
+    if (samples.length < cap) samples.push(`${oldIndex}->${nextIndex}`);
+  });
+  return `count:${changed};sample:${samples.join(',') || '(none)'}`;
+}
+
+function countRemappedIndexForLog(value, remap, fallback = -1) {
+  const current = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(current) || current < 0) return 0;
+  const next = remapDeletedSectionIndex(current, remap, fallback);
+  return Number(next) !== current ? 1 : 0;
+}
+
+function countRemappedIndexListForLog(values, remap) {
+  return (Array.isArray(values) ? values : [])
+    .reduce((count, value) => count + countRemappedIndexForLog(value, remap, null), 0);
+}
+
+function summarizePrtoReferenceRemapTouchesForLog(parsed, prtoRemap) {
+  if (!prtoRemap) return '(none)';
+  const touched = [];
+  const countSectionField = (sectionCode, fieldKey, fallback = -1) => {
+    const section = getSectionByCode(parsed, sectionCode);
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    return records.reduce((count, rec) => count + countRemappedIndexForLog(rec && rec[fieldKey], prtoRemap, fallback), 0);
+  };
+  const add = (label, count) => {
+    if (count > 0) touched.push(`${label}:${count}`);
+  };
+  add('RACE.kingUnit', countSectionField('RACE', 'kingUnit', -1));
+  add('BLDG.unitProduced', countSectionField('BLDG', 'unitProduced', -1));
+  const prtoSection = getSectionByCode(parsed, 'PRTO');
+  const prtoRecords = Array.isArray(prtoSection && prtoSection.records) ? prtoSection.records : [];
+  add('PRTO.upgradeTo', prtoRecords.reduce((count, rec) => count + countRemappedIndexForLog(rec && rec.upgradeTo, prtoRemap, -1), 0));
+  add('PRTO.enslaveResultsIn', prtoRecords.reduce((count, rec) => count + countRemappedIndexForLog(rec && rec.enslaveResultsIn, prtoRemap, -1), 0));
+  add('PRTO.legalUnitTelepads', prtoRecords.reduce((count, rec) => count + countRemappedIndexListForLog(rec && rec.legalUnitTelepads, prtoRemap), 0));
+  add('PRTO.stealthTargets', prtoRecords.reduce((count, rec) => count + countRemappedIndexListForLog(rec && rec.stealthTargets, prtoRemap), 0));
+  const ruleFields = [
+    'advancedBarbarian', 'basicBarbarian', 'barbarianSeaUnit', 'battleCreatedUnit',
+    'buildArmyUnit', 'scout', 'slave', 'startUnit1', 'startUnit2', 'flagUnit'
+  ];
+  const ruleSection = getSectionByCode(parsed, 'RULE');
+  const ruleRecords = Array.isArray(ruleSection && ruleSection.records) ? ruleSection.records : [];
+  add('RULE.defaultUnits', ruleRecords.reduce((count, rec) => {
+    return count + ruleFields.reduce((fieldCount, key) => fieldCount + countRemappedIndexForLog(rec && rec[key], prtoRemap, -1), 0);
+  }, 0));
+  add('UNIT.pRTONumber', countSectionField('UNIT', 'pRTONumber', -1));
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const leadRecords = Array.isArray(leadSection && leadSection.records) ? leadSection.records : [];
+  add('LEAD.startUnits', leadRecords.reduce((count, rec) => {
+    const startUnits = Array.isArray(rec && rec.startUnits) ? rec.startUnits : [];
+    return count + startUnits.reduce((unitCount, entry) => unitCount + countRemappedIndexForLog(entry && entry.startUnitIndex, prtoRemap, -1), 0);
+  }, 0));
+  return touched.join(',') || '(none)';
+}
+
+function buildReorderRemap(order, expectedCount = NaN) {
+  const normalized = normalizeReorderIndexList(order);
+  const count = Number.isFinite(Number(expectedCount)) ? Number(expectedCount) : normalized.length;
+  if (normalized.length !== count) {
+    return { ok: false, error: `Reorder expected ${count} index(es), got ${normalized.length}.` };
+  }
+  const seen = new Set();
+  const oldToNew = new Map();
+  for (let newIndex = 0; newIndex < normalized.length; newIndex += 1) {
+    const oldIndex = normalized[newIndex];
+    if (oldIndex < 0 || oldIndex >= count) {
+      return { ok: false, error: `Reorder index ${oldIndex} is outside 0..${Math.max(0, count - 1)}.` };
+    }
+    if (seen.has(oldIndex)) {
+      return { ok: false, error: `Reorder contains duplicate index ${oldIndex}.` };
+    }
+    seen.add(oldIndex);
+    oldToNew.set(oldIndex, newIndex);
+  }
+  return {
+    ok: true,
+    remap: {
+      oldCount: count,
+      finalCount: count,
+      oldToNew
+    },
+    order: normalized
+  };
+}
+
+function buildPrtoPrimaryReorderRemap(order, oldCount, deletedIndices = []) {
+  const normalized = normalizeReorderIndexList(order);
+  const count = Number(oldCount);
+  if (!Number.isInteger(count) || count < 0) {
+    return { ok: false, error: 'PRTO reorder could not determine the original unit count.' };
+  }
+  const deletedSet = new Set((Array.isArray(deletedIndices) ? deletedIndices : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value < count));
+  const expectedLength = Math.max(0, count - deletedSet.size);
+  if (normalized.length !== expectedLength) {
+    return { ok: false, error: `Reorder expected ${expectedLength} surviving PRTO index(es), got ${normalized.length}.` };
+  }
+  const seen = new Set();
+  const oldToNew = new Map();
+  for (let newIndex = 0; newIndex < normalized.length; newIndex += 1) {
+    const oldIndex = normalized[newIndex];
+    if (oldIndex < 0 || oldIndex >= count) {
+      return { ok: false, error: `Reorder index ${oldIndex} is outside 0..${Math.max(0, count - 1)}.` };
+    }
+    if (deletedSet.has(oldIndex)) {
+      return { ok: false, error: `Reorder still includes deleted PRTO index ${oldIndex}.` };
+    }
+    if (seen.has(oldIndex)) {
+      return { ok: false, error: `Reorder contains duplicate PRTO index ${oldIndex}.` };
+    }
+    seen.add(oldIndex);
+    oldToNew.set(oldIndex, newIndex);
+  }
+  for (let oldIndex = 0; oldIndex < count; oldIndex += 1) {
+    if (deletedSet.has(oldIndex)) continue;
+    if (!seen.has(oldIndex)) {
+      return { ok: false, error: `Reorder is missing surviving PRTO index ${oldIndex}.` };
+    }
+  }
+  return {
+    ok: true,
+    remap: {
+      oldCount: count,
+      finalCount: normalized.length,
+      oldToNew
+    },
+    order: normalized
+  };
+}
+
+function getPrtoRecordOriginalPrimaryIndex(record) {
+  const original = Number(record && record._originalPrimaryIndex);
+  if (Number.isInteger(original) && original >= 0) return original;
+  const current = Number(record && record.index);
+  return Number.isInteger(current) && current >= 0 ? current : NaN;
+}
+
+function getPrtoRecordOriginalOtherStrategy(record) {
+  const original = Number(record && record._originalOtherStrategy);
+  if (Number.isInteger(original) && original >= 0) return original;
+  const current = Number(record && record.otherStrategy);
+  return Number.isInteger(current) && current >= 0 ? current : NaN;
+}
+
+function applyPrtoPrimaryReorder(section, order) {
+  if (!section || !Array.isArray(section.records)) {
+    return { ok: false, error: 'PRTO section is missing records.' };
+  }
+  const records = section.records;
+  const primaries = records.filter(isPrtoPrimaryRecord);
+  const normalizedOrder = normalizeReorderIndexList(order);
+
+  const primaryByOldIndex = new Map();
+  primaries.forEach((record) => {
+    const oldIndex = getPrtoRecordOriginalPrimaryIndex(record);
+    if (Number.isInteger(oldIndex) && oldIndex >= 0) primaryByOldIndex.set(oldIndex, record);
+  });
+
+  const nextPrimaries = [];
+  const usedPrimaries = new Set();
+  const oldToNew = new Map();
+  for (const oldIndex of normalizedOrder) {
+    const record = primaryByOldIndex.get(oldIndex);
+    if (!record) {
+      return { ok: false, error: `PRTO reorder could not find primary unit index ${oldIndex}.` };
+    }
+    if (usedPrimaries.has(record)) {
+      return { ok: false, error: `PRTO reorder contains duplicate primary unit index ${oldIndex}.` };
+    }
+    oldToNew.set(oldIndex, nextPrimaries.length);
+    usedPrimaries.add(record);
+    nextPrimaries.push(record);
+  }
+  primaries.forEach((record) => {
+    if (usedPrimaries.has(record)) return;
+    const oldIndex = getPrtoRecordOriginalPrimaryIndex(record);
+    if (Number.isInteger(oldIndex) && oldIndex >= 0) oldToNew.set(oldIndex, nextPrimaries.length);
+    nextPrimaries.push(record);
+  });
+
+  const beforeOrder = primaries.map((record) => Number(record && record.index)).join(',');
+  const afterOrder = nextPrimaries.map((record) => Number(record && record.index)).join(',');
+  if (beforeOrder === afterOrder) {
+    log.debug('BiqApplyEdits', `op=reorder PRTO plan unchanged primaryCount=${primaries.length} childRows=${records.length - primaries.length} order=${summarizeIndexListForLog(normalizedOrder)} changedPrimaries=${summarizeRemapChangedPairsForLog({ oldToNew })}`);
+    return {
+      ok: true,
+      changed: false,
+      remap: {
+        oldCount: primaries.length,
+        finalCount: primaries.length,
+        oldToNew
+      }
+    };
+  }
+
+  nextPrimaries.forEach((record, newIndex) => {
+    record.index = newIndex;
+    if (record._rawData) delete record._rawData;
+    if (record._rawRecord) delete record._rawRecord;
+  });
+
+  const children = records.filter((record) => !isPrtoPrimaryRecord(record));
+  let childOtherStrategyRemaps = 0;
+  let childRowsWithoutPrimary = 0;
+  const childRemapSamples = [];
+  children.forEach((record) => {
+    const oldOther = getPrtoRecordOriginalOtherStrategy(record);
+    if (oldToNew.has(oldOther)) {
+      const nextOther = oldToNew.get(oldOther);
+      if (Number(nextOther) !== Number(oldOther)) {
+        childOtherStrategyRemaps += 1;
+        if (childRemapSamples.length < 16) {
+          childRemapSamples.push(`${record && record.index}:${oldOther}->${nextOther}`);
+        }
+      }
+      record.otherStrategy = nextOther;
+    } else {
+      childRowsWithoutPrimary += 1;
+    }
+    if (record._rawData) delete record._rawData;
+    if (record._rawRecord) delete record._rawRecord;
+  });
+  log.debug('BiqApplyEdits', `op=reorder PRTO plan primaryCount=${primaries.length} childRows=${children.length} order=${summarizeIndexListForLog(normalizedOrder)} changedPrimaries=${summarizeRemapChangedPairsForLog({ oldToNew })} childOtherStrategyRemaps=${childOtherStrategyRemaps}/${children.length} childSamples=${childRemapSamples.join(',') || '(none)'} childRowsWithoutPrimary=${childRowsWithoutPrimary}`);
+
+  section.records = nextPrimaries.concat(children);
+  section.records.forEach((record, index) => {
+    if (!record) return;
+    if (!isPrtoPrimaryRecord(record)) record.index = index;
+  });
+  section._modified = true;
+  return {
+    ok: true,
+    changed: true,
+    remap: {
+      oldCount: primaryByOldIndex.size,
+      finalCount: nextPrimaries.length,
+      oldToNew
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -4156,19 +4433,82 @@ function remapDeletedBitmask(maskValue, remap, maxBits = 32) {
   return nextMask | 0;
 }
 
+function getLastReorderEditForCode(edits, code) {
+  const targetCode = String(code || '').trim().toUpperCase();
+  let hit = null;
+  (Array.isArray(edits) ? edits : []).forEach((edit) => {
+    const op = String(edit && edit.op || '').trim().toLowerCase();
+    const sectionCode = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    if (op === 'reorder' && sectionCode === targetCode) hit = edit;
+  });
+  return hit;
+}
+
+function getDeletedOriginalIndexesForCode(edits, code, originalRefs, oldCount = NaN) {
+  const targetCode = String(code || '').trim().toUpperCase();
+  const refs = Array.isArray(originalRefs) ? originalRefs : [];
+  const count = Number(oldCount);
+  const out = [];
+  (Array.isArray(edits) ? edits : []).forEach((edit) => {
+    if (String(edit && edit.op || '').trim().toLowerCase() !== 'delete') return;
+    if (String(edit && edit.sectionCode || '').trim().toUpperCase() !== targetCode) return;
+    const ref = String(edit && edit.recordRef || '').trim().toUpperCase();
+    if (!ref) return;
+    if (ref.startsWith('@INDEX:')) {
+      const idx = Number.parseInt(ref.slice(7), 10);
+      if (Number.isInteger(idx) && idx >= 0 && (!Number.isInteger(count) || idx < count)) out.push(idx);
+      return;
+    }
+    const idx = refs.indexOf(ref);
+    if (idx >= 0 && (!Number.isInteger(count) || idx < count)) out.push(idx);
+  });
+  return Array.from(new Set(out)).sort((a, b) => a - b);
+}
+
 function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection) {
-  const deleteTouchedCodes = new Set((Array.isArray(edits) ? edits : [])
+  const sourceEdits = Array.isArray(edits) ? edits : [];
+  const deleteTouchedCodes = new Set(sourceEdits
     .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete')
     .map((edit) => String(edit && edit.sectionCode || '').trim().toUpperCase())
     .filter(Boolean));
-  if (deleteTouchedCodes.size === 0) return { ok: true };
+  const reorderTouchedCodes = new Set(sourceEdits
+    .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'reorder')
+    .map((edit) => String(edit && edit.sectionCode || '').trim().toUpperCase())
+    .filter(Boolean));
+  const touchedCodes = new Set([...deleteTouchedCodes, ...reorderTouchedCodes]);
+  if (touchedCodes.size === 0) return { ok: true };
 
   const sections = ((parsed && parsed.sections) || []);
   const remaps = new Map();
-  deleteTouchedCodes.forEach((code) => {
+  for (const code of touchedCodes) {
     const section = getSectionByCode(parsed, code);
+    const reorderEdit = getLastReorderEditForCode(sourceEdits, code);
+    if (reorderEdit) {
+      if (code !== 'PRTO') {
+        return { ok: false, error: `Reordering ${code} records is not supported.` };
+      }
+      const primaryCounts = (originalRefsBySection && originalRefsBySection.__primaryCounts) || {};
+      let oldPrimaryCount = Number(primaryCounts.PRTO);
+      if (!Number.isInteger(oldPrimaryCount) || oldPrimaryCount < 0) {
+        oldPrimaryCount = normalizeReorderIndexList(reorderEdit.order).length;
+      }
+      const deletedIndices = getDeletedOriginalIndexesForCode(
+        sourceEdits,
+        code,
+        (originalRefsBySection && originalRefsBySection[code]) || [],
+        oldPrimaryCount
+      );
+      const remapResult = buildPrtoPrimaryReorderRemap(reorderEdit.order, oldPrimaryCount, deletedIndices);
+      if (!remapResult.ok) return { ok: false, error: remapResult.error || `Invalid ${code} reorder.` };
+      const finalPrimaryCount = section && Array.isArray(section.records)
+        ? section.records.filter(isPrtoPrimaryRecord).length
+        : remapResult.remap.finalCount;
+      remapResult.remap.finalCount = finalPrimaryCount;
+      remaps.set(code, remapResult.remap);
+      continue;
+    }
     const originalRefs = (originalRefsBySection && originalRefsBySection[code]) || [];
-    const deletedIndices = (Array.isArray(edits) ? edits : [])
+    const deletedIndices = sourceEdits
       .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete'
         && String(edit && edit.sectionCode || '').trim().toUpperCase() === code)
       .map((edit) => originalRefs.indexOf(String(edit && edit.recordRef || '').trim().toUpperCase()))
@@ -4177,7 +4517,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       ? section.records.map((record) => getRecordStructureRef(record))
       : [];
     remaps.set(code, buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices));
-  });
+  }
 
   const techRemap = remaps.get('TECH');
   const goodRemap = remaps.get('GOOD');
@@ -4193,6 +4533,10 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const terrRemap = remaps.get('TERR');
   const leadRemap = remaps.get('LEAD');
   const flavRemap = remaps.get('FLAV');
+  const prtoReorderEdit = getLastReorderEditForCode(sourceEdits, 'PRTO');
+  if (prtoRemap && prtoReorderEdit) {
+    log.debug('BiqReferenceNormalize', `PRTO reorder remap oldCount=${prtoRemap.oldCount} finalCount=${prtoRemap.finalCount} order=${summarizeIndexListForLog(prtoReorderEdit.order)} changedPrimaries=${summarizeRemapChangedPairsForLog(prtoRemap)} affectedReferenceFields=${summarizePrtoReferenceRemapTouchesForLog(parsed, prtoRemap)}`);
+  }
   const markModified = (section) => {
     if (section) section._modified = true;
   };
@@ -4321,28 +4665,35 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
 
   const bldgSection = getSectionByCode(parsed, 'BLDG');
   if (bldgSection && Array.isArray(bldgSection.records)) {
+    let bldgChanged = false;
     bldgSection.records.forEach((rec) => {
+      const setRemappedScalar = (key, nextValue) => {
+        if (Number(rec[key]) !== Number(nextValue)) bldgChanged = true;
+        rec[key] = nextValue;
+      };
       if (techRemap) {
-        rec.reqAdvance = remapDeletedSectionIndex(rec.reqAdvance, techRemap, -1);
-        rec.obsoleteBy = remapDeletedSectionIndex(rec.obsoleteBy, techRemap, -1);
+        setRemappedScalar('reqAdvance', remapDeletedSectionIndex(rec.reqAdvance, techRemap, -1));
+        setRemappedScalar('obsoleteBy', remapDeletedSectionIndex(rec.obsoleteBy, techRemap, -1));
       }
       if (goodRemap) {
-        rec.reqResource1 = remapDeletedSectionIndex(rec.reqResource1, goodRemap, -1);
-        rec.reqResource2 = remapDeletedSectionIndex(rec.reqResource2, goodRemap, -1);
+        setRemappedScalar('reqResource1', remapDeletedSectionIndex(rec.reqResource1, goodRemap, -1));
+        setRemappedScalar('reqResource2', remapDeletedSectionIndex(rec.reqResource2, goodRemap, -1));
       }
-      if (govtRemap) rec.reqGovernment = remapDeletedSectionIndex(rec.reqGovernment, govtRemap, -1);
+      if (govtRemap) setRemappedScalar('reqGovernment', remapDeletedSectionIndex(rec.reqGovernment, govtRemap, -1));
       if (bldgRemap) {
-        rec.gainInEveryCity = remapDeletedSectionIndex(rec.gainInEveryCity, bldgRemap, 0);
-        rec.gainOnContinent = remapDeletedSectionIndex(rec.gainOnContinent, bldgRemap, 0);
-        rec.reqImprovement = remapDeletedSectionIndex(rec.reqImprovement, bldgRemap, 0);
-        rec.doublesHappiness = remapDeletedSectionIndex(rec.doublesHappiness, bldgRemap, 0);
+        setRemappedScalar('gainInEveryCity', remapDeletedSectionIndex(rec.gainInEveryCity, bldgRemap, 0));
+        setRemappedScalar('gainOnContinent', remapDeletedSectionIndex(rec.gainOnContinent, bldgRemap, 0));
+        setRemappedScalar('reqImprovement', remapDeletedSectionIndex(rec.reqImprovement, bldgRemap, 0));
+        setRemappedScalar('doublesHappiness', remapDeletedSectionIndex(rec.doublesHappiness, bldgRemap, 0));
       }
-      if (prtoRemap) rec.unitProduced = remapDeletedSectionIndex(rec.unitProduced, prtoRemap, -1);
+      if (prtoRemap) setRemappedScalar('unitProduced', remapDeletedSectionIndex(rec.unitProduced, prtoRemap, -1));
       if (flavRemap && Object.prototype.hasOwnProperty.call(rec, 'flavors')) {
-        rec.flavors = remapDeletedBitmask(rec.flavors, flavRemap);
+        const nextFlavors = remapDeletedBitmask(rec.flavors, flavRemap);
+        if ((Number(rec.flavors) | 0) !== (Number(nextFlavors) | 0)) bldgChanged = true;
+        rec.flavors = nextFlavors;
       }
     });
-    if (techRemap || goodRemap || govtRemap || bldgRemap || prtoRemap || flavRemap) markModified(bldgSection);
+    if (bldgChanged) markModified(bldgSection);
   }
 
   const flavSection = getSectionByCode(parsed, 'FLAV');
@@ -5611,13 +5962,23 @@ function applyEdits(buf, edits, options = {}) {
 
   const { io } = parsed;
   const originalRefsBySection = {};
+  const originalPrimaryCountsBySection = {};
   (Array.isArray(parsed.sections) ? parsed.sections : []).forEach((section) => {
     const code = String(section && section.code || '').trim().toUpperCase();
     if (!code) return;
+    if (code === 'PRTO' && Array.isArray(section.records)) {
+      section.records.forEach((record) => {
+        if (!record) return;
+        if (isPrtoPrimaryRecord(record)) record._originalPrimaryIndex = Number(record.index);
+        else record._originalOtherStrategy = Number(record.otherStrategy);
+      });
+      originalPrimaryCountsBySection[code] = section.records.filter(isPrtoPrimaryRecord).length;
+    }
     originalRefsBySection[code] = Array.isArray(section.records)
       ? section.records.map((record) => getRecordStructureRef(record))
       : [];
   });
+  originalRefsBySection.__primaryCounts = originalPrimaryCountsBySection;
   const originalRaceSection = getSectionByCode(parsed, 'RACE');
   const originalRaceRefs = originalRaceSection && Array.isArray(originalRaceSection.records)
     ? originalRaceSection.records.map((record) => getRecordCivilopediaRef(record))
@@ -5628,9 +5989,14 @@ function applyEdits(buf, edits, options = {}) {
   let applied = 0;
   let skipped = 0;
   const warnings = [];
+  const deferredReorderEdits = [];
 
   for (const edit of effectiveEdits) {
     const op = String(edit.op || 'set').toLowerCase();
+    if (op === 'reorder') {
+      deferredReorderEdits.push(edit);
+      continue;
+    }
     if (op === 'removemap') {
       log.debug('BiqApplyEdits', 'op=removemap: removing all map sections');
       removeMapSectionsFromParsed(parsed);
@@ -5763,6 +6129,8 @@ function applyEdits(buf, edits, options = {}) {
         newRec = createDefaultRecord(code, newRef, io);
       }
       newRec.newRecordRef = newRef;
+      delete newRec._originalPrimaryIndex;
+      delete newRec._originalOtherStrategy;
       newRec.index = section.records.length;
       section.records.push(newRec);
       if (code === 'SLOC') syncSLocRecordTileStartFlag(parsed, newRec);
@@ -5862,6 +6230,33 @@ function applyEdits(buf, edits, options = {}) {
       skipped++;
       log.warn('BiqApplyEdits', `op=set SKIPPED: ${code}[${edit.recordRef}].${fieldKey} — applySetToRecord returned false`);
     }
+  }
+
+  for (const edit of deferredReorderEdits) {
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    const section = sectionByCode.get(code);
+    if (!section) {
+      skipped++;
+      warnings.push(`reorder: section ${code} not found`);
+      log.warn('BiqApplyEdits', `op=reorder SKIPPED: section ${code} not found`);
+      continue;
+    }
+    if (code !== 'PRTO') {
+      skipped++;
+      warnings.push(`reorder: ${code} is not supported`);
+      log.warn('BiqApplyEdits', `op=reorder SKIPPED: ${code} is not supported`);
+      continue;
+    }
+    const result = applyPrtoPrimaryReorder(section, edit && edit.order);
+    if (!result.ok) {
+      const errorText = result.error || 'Invalid PRTO reorder.';
+      log.error('BiqApplyEdits', `op=reorder PRTO rejected: ${errorText}`);
+      return { ok: false, error: errorText };
+    }
+    if (result.changed) {
+      log.debug('BiqApplyEdits', `op=reorder PRTO: applied ${Array.isArray(edit && edit.order) ? edit.order.length : 0} primary unit index(es)`);
+    }
+    applied++;
   }
 
   log.debug('BiqApplyEdits', `loop complete: applied=${applied} skipped=${skipped}`);

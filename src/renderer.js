@@ -2944,6 +2944,33 @@ function buildSerializedReferenceEntrySnapshot(tabKey, identity, entry, selected
   };
 }
 
+function buildUnitReorderUndoSnapshot() {
+  const tabKey = 'units';
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  if (!tab || entries.length === 0) return 'null';
+  const pendingRows = [];
+  entries.forEach((entry, idx) => {
+    const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+    if (!identity) return;
+    pendingRows.push({
+      identity,
+      pendingBiqIndex: Object.prototype.hasOwnProperty.call(entry || {}, 'pendingBiqIndex')
+        ? entry.pendingBiqIndex
+        : null,
+      hasPendingBiqIndex: Object.prototype.hasOwnProperty.call(entry || {}, 'pendingBiqIndex')
+    });
+  });
+  return {
+    kind: 'unit-reorder',
+    scope: 'reference:units',
+    recordOpsJson: JSON.stringify(Array.isArray(tab.recordOps) ? tab.recordOps : []),
+    pendingRowsJson: JSON.stringify(pendingRows),
+    selectedIndex: Number.isFinite(Number(state.referenceSelection[tabKey])) ? Number(state.referenceSelection[tabKey]) : null,
+    listScrollTop: Number.isFinite(Number(state.referenceListScrollTop[tabKey])) ? Number(state.referenceListScrollTop[tabKey]) : null
+  };
+}
+
 function buildSectionItemUndoKey(tabKey, section, fallbackIndex) {
   const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
   if (!normalizedTabKey || !EDITABLE_TAB_KEYS.includes(normalizedTabKey) || !section) return '';
@@ -3037,6 +3064,9 @@ function getUndoSnapshotForKey(key = '') {
     const identity = String(key || '').trim().split(':').slice(1).join(':').trim();
     return buildTechTreeNodeDragSnapshot(identity);
   }
+  if (normalizedKey === 'UNIT_REORDER' || normalizedKey === 'UNIT_REORDER:UNITS') {
+    return buildUnitReorderUndoSnapshot();
+  }
   if (normalizedKey.startsWith('REFERENCE_TAB:')) {
     const parts = normalizedKey.split(':');
     const tabKey = String(parts[1] || '').trim().toLowerCase();
@@ -3119,6 +3149,9 @@ function getUndoSnapshotScope(snapshot) {
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'tech-tree-node-drag') {
     return 'reference:technologies';
+  }
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'unit-reorder') {
+    return 'reference:units';
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'map-record-diff') {
     const explicitScope = String(snapshot.scope || '').trim().toLowerCase();
@@ -4099,6 +4132,7 @@ function extractUnitIniDirtyPayload(editor) {
 function normalizeReferenceEntryForDirty(entry) {
   if (!entry) return null;
   const normalized = JSON.parse(JSON.stringify(entry));
+  delete normalized.pendingBiqIndex;
   const unitIniPayload = extractUnitIniDirtyPayload(entry.unitIniEditor);
   if (unitIniPayload) normalized.unitIniEditor = unitIniPayload;
   else delete normalized.unitIniEditor;
@@ -4174,6 +4208,31 @@ function hasReferenceEntryChangedFromClean(currentEntry, cleanEntry, options = {
   return changed;
 }
 
+function getReferenceTabUnitReorderMovedIndexes(tab) {
+  const moved = new Set();
+  const ops = Array.isArray(tab && tab.recordOps) ? tab.recordOps : [];
+  ops.forEach((op) => {
+    if (!isUnitReferenceReorderOp(op)) return;
+    normalizeUnitReorderMovedIndexes(op && op.movedIndexes).forEach((idx) => moved.add(idx));
+  });
+  return moved;
+}
+
+function hasReferenceEntryStructuralDirtyState(tabKey, entry, options = {}) {
+  const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  if (normalizedTabKey !== 'units' || !entry) return false;
+  const pendingIndex = normalizeUnitBiqIndexBadgeNumber(entry.pendingBiqIndex);
+  const savedIndex = normalizeUnitBiqIndexBadgeNumber(entry.biqIndex);
+  if (pendingIndex == null || savedIndex == null || pendingIndex === savedIndex) return false;
+  const movedIndexes = getReferenceTabUnitReorderMovedIndexes(options && options.tab);
+  return movedIndexes.has(savedIndex);
+}
+
+function isReferenceEntryDirtyForCache(tabKey, entry, cleanEntry, fallbackIndex, options = {}) {
+  return hasReferenceEntryChangedFromClean(entry, cleanEntry, Object.assign({}, options, { tabKey, fallbackIndex }))
+    || hasReferenceEntryStructuralDirtyState(tabKey, entry, options);
+}
+
 function getEffectiveCleanTabForDirty(tabKey) {
   const cleanTabs = getCleanTabsObject();
   const cleanTab = cleanTabs[tabKey] || null;
@@ -4219,6 +4278,16 @@ function countCivilizationDiplomacySlotChanges(currentTab, cleanTab) {
   return rawChanged ? Math.max(1, changed) : changed;
 }
 
+function getReferenceRecordOpDirtyCount(tab) {
+  return Array.isArray(tab && tab.recordOps) ? tab.recordOps.length : 0;
+}
+
+function combineReferenceDirtyCountWithRecordOps(entryDirtyCount, tab) {
+  const baseCount = Math.max(0, Number(entryDirtyCount) || 0);
+  const opCount = getReferenceRecordOpDirtyCount(tab);
+  return opCount > 0 ? Math.max(baseCount, opCount) : baseCount;
+}
+
 function isTabDirty(tabKey) {
   if (!state.isDirty || !state.bundle || !state.bundle.tabs) return false;
   if (!EDITABLE_TAB_KEYS.includes(tabKey)) return false;
@@ -4244,14 +4313,14 @@ function computeTabDirtyCount(tabKey) {
     cur.forEach((entry, idx) => {
       const identity = getReferenceEntryIdentity(tabKey, entry, idx);
       if (!identity) return;
-      if (hasReferenceEntryChangedFromClean(entry, prevByIdentity.get(identity) || null, { tabKey, fallbackIndex: idx })) changed += 1;
+      if (isReferenceEntryDirtyForCache(tabKey, entry, prevByIdentity.get(identity) || null, idx, { tab: currentTab })) changed += 1;
       prevByIdentity.delete(identity);
     });
     changed += prevByIdentity.size;
     if (tabKey === 'civilizations') {
       changed += countCivilizationDiplomacySlotChanges(currentTab, cleanTab);
     }
-    return changed;
+    return combineReferenceDirtyCountWithRecordOps(changed, currentTab);
   }
 
   if (currentTab.model && Array.isArray(currentTab.model.sections)) {
@@ -4376,20 +4445,17 @@ function updateActiveDirtyCaches() {
     if (!identity) return;
     const set = ensureReferenceDirtySet(tabKey);
     const cleanEntry = getCleanReferenceEntry(tabKey, entry, selectedIndex);
-    if (hasReferenceEntryChangedFromClean(entry, cleanEntry, {
-      tabKey,
-      fallbackIndex: selectedIndex,
-      logPerformance: true
-    })) set.add(identity);
+    if (isReferenceEntryDirtyForCache(tabKey, entry, cleanEntry, selectedIndex, { tab, logPerformance: true })) set.add(identity);
     else set.delete(identity);
     const cleanTab = getEffectiveCleanTabForDirty(tabKey);
     const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
-    setTabDirtyCount(tabKey, set.size + extra);
+    const dirtyCount = combineReferenceDirtyCountWithRecordOps(set.size + extra, tab);
+    setTabDirtyCount(tabKey, dirtyCount);
     appendReferencePerfLog('biq-ref:dirty-cache-update', {
       tabKey,
       mode: 'selected-entry',
       selectedIndex,
-      dirtyCount: set.size + extra,
+      dirtyCount,
       totalMs: Number((debugNowMs() - startedAt).toFixed(2))
     });
     return;
@@ -4417,11 +4483,11 @@ function rebuildDirtyTabCounts() {
         const identity = getReferenceEntryIdentity(tabKey, entry, idx);
         if (!identity) return;
         const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
-        if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex: idx })) set.add(identity);
+        if (isReferenceEntryDirtyForCache(tabKey, entry, cleanEntry, idx, { tab })) set.add(identity);
       });
       const cleanTab = getEffectiveCleanTabForDirty(tabKey);
       const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
-      setTabDirtyCount(tabKey, set.size + extra);
+      setTabDirtyCount(tabKey, combineReferenceDirtyCountWithRecordOps(set.size + extra, tab));
       return;
     }
     if (tab.model && Array.isArray(tab.model.sections)) {
@@ -4451,13 +4517,13 @@ function rebuildReferenceDirtyCacheForTab(tabKey, tabOverride = null) {
     const identity = getReferenceEntryIdentity(normalizedTabKey, entry, idx);
     if (!identity) return;
     const cleanEntry = getCleanReferenceEntry(normalizedTabKey, entry, idx);
-    if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey: normalizedTabKey, fallbackIndex: idx })) {
+    if (isReferenceEntryDirtyForCache(normalizedTabKey, entry, cleanEntry, idx, { tab })) {
       set.add(identity);
     }
   });
   const cleanTab = getEffectiveCleanTabForDirty(normalizedTabKey);
   const extra = normalizedTabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
-  setTabDirtyCount(normalizedTabKey, set.size + extra);
+  setTabDirtyCount(normalizedTabKey, combineReferenceDirtyCountWithRecordOps(set.size + extra, tab));
   return true;
 }
 
@@ -4488,12 +4554,12 @@ function recomputeDirtyStateForSerializedReferenceEntrySnapshot(snapshot) {
   const dirtySet = ensureReferenceDirtySet(tabKey);
   if (entry && identity) {
     const cleanEntry = getCleanReferenceEntry(tabKey, entry, resolvedIndex);
-    if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex: resolvedIndex })) dirtySet.add(identity);
+    if (isReferenceEntryDirtyForCache(tabKey, entry, cleanEntry, resolvedIndex, { tab })) dirtySet.add(identity);
     else dirtySet.delete(identity);
   }
   const cleanTab = getEffectiveCleanTabForDirty(tabKey);
   const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
-  setTabDirtyCount(tabKey, dirtySet.size + extra);
+  setTabDirtyCount(tabKey, combineReferenceDirtyCountWithRecordOps(dirtySet.size + extra, tab));
   state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
   return true;
 }
@@ -4669,11 +4735,11 @@ function rebuildUnitTableDirtyCache(tab = null) {
     const identity = getReferenceEntryIdentity(tabKey, entry, idx);
     if (!identity) return;
     const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
-    if (hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex: idx })) {
+    if (isReferenceEntryDirtyForCache(tabKey, entry, cleanEntry, idx, { tab: resolvedTab })) {
       dirtySet.add(identity);
     }
   });
-  setTabDirtyCount(tabKey, dirtySet.size);
+  setTabDirtyCount(tabKey, combineReferenceDirtyCountWithRecordOps(dirtySet.size, resolvedTab));
   unitTableModal.dirtyCacheInitialized = true;
   return dirtySet.size;
 }
@@ -4684,7 +4750,7 @@ function isReferenceEntryDirty(tabKey, entry) {
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   const fallbackIndex = entries.indexOf(entry);
   const cleanEntry = getCleanReferenceEntry(tabKey, entry, fallbackIndex);
-  return hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex });
+  return isReferenceEntryDirtyForCache(tabKey, entry, cleanEntry, fallbackIndex, { tab });
 }
 
 function isSectionItemDirty(tabKey, sectionIndex, sectionObj) {
@@ -5074,7 +5140,7 @@ function refreshActiveReferenceListDirtyBadges() {
       // Keep active row precise during live typing.
       if (entry && identity === activeIdentity) {
         const cleanEntry = getCleanReferenceEntry(tabKey, entry, item && item.idx);
-        isDirty = hasReferenceEntryChangedFromClean(entry, cleanEntry, { tabKey, fallbackIndex: item && item.idx });
+        isDirty = isReferenceEntryDirtyForCache(tabKey, entry, cleanEntry, item && item.idx, { tab });
         if (isDirty) dirtySet.add(identity);
         else dirtySet.delete(identity);
       }
@@ -11773,6 +11839,30 @@ function paintReferenceListThumbnailPreview(holder, preview) {
   if (outerThumb) outerThumb.classList.remove('art-pending');
 }
 
+function copyCanvasPixelsToClone(sourceNode, cloneNode) {
+  if (!sourceNode || !cloneNode || typeof sourceNode.querySelectorAll !== 'function' || typeof cloneNode.querySelectorAll !== 'function') return 0;
+  const sourceCanvases = Array.from(sourceNode.querySelectorAll('canvas'));
+  const cloneCanvases = Array.from(cloneNode.querySelectorAll('canvas'));
+  let copied = 0;
+  sourceCanvases.forEach((sourceCanvas, index) => {
+    const cloneCanvas = cloneCanvases[index];
+    if (!sourceCanvas || !cloneCanvas || typeof cloneCanvas.getContext !== 'function') return;
+    const width = Number(sourceCanvas.width) || 0;
+    const height = Number(sourceCanvas.height) || 0;
+    if (width <= 0 || height <= 0) return;
+    cloneCanvas.width = width;
+    cloneCanvas.height = height;
+    const ctx = cloneCanvas.getContext('2d');
+    if (!ctx || typeof ctx.drawImage !== 'function') return;
+    try {
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(sourceCanvas, 0, 0);
+      copied += 1;
+    } catch (_err) {}
+  });
+  return copied;
+}
+
 function loadReferenceListThumbnail(tabKey, entry, holder) {
   const resolvedScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
   const resolvedScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
@@ -16116,7 +16206,7 @@ function getRuleFieldByBaseKey(fields, baseKey) {
   return (Array.isArray(fields) ? fields : []).find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === target) || null;
 }
 
-function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selectedBaseIndex, referenceEditable }) {
+function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selectedBaseIndex, referenceEditable, onFieldValueChange = null }) {
   (Array.isArray(fields) ? fields : []).forEach((field) => {
     const spec = getRuleFieldSpec(tabKey, field) || {};
     const row = document.createElement('div');
@@ -16151,6 +16241,9 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
     const useResourceTypeSegmented = tabKey === 'resources' && normalizeRuleLookupKey(baseKey) === 'type' && enumOptions.length > 0;
     const useColorSlotPicker = tabKey === 'civilizations' && (baseKey === 'defaultcolor' || baseKey === 'uniquecolor');
     const fieldEditable = referenceEditable && !isReadonlyRuleField(tabKey, field);
+    const notifyFieldValueChange = () => {
+      if (typeof onFieldValueChange === 'function') onFieldValueChange({ entry, field, baseKey });
+    };
 
     if (fieldEditable) {
       const hasEnumOptions = enumOptions.length > 0;
@@ -16169,6 +16262,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             rememberUndoSnapshotForKey(fieldUndoKey);
             field.value = String(selected.value);
             setDirty(true);
+            notifyFieldValueChange();
           }
         );
         controlWrap.appendChild(segmented);
@@ -16186,6 +16280,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             setUnitListFieldValues(entry, String(field.baseKey || field.key || 'stealth_target'), values);
             setUnitListReferenceTargets(entry, String(field.baseKey || field.key || 'stealth_target'), 'units', values, unitListOptions);
             setDirty(true);
+            notifyFieldValueChange();
             renderActiveTab({ preserveTabScroll: true });
           }
         });
@@ -16196,6 +16291,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           field.value = String(value);
           if (entry && entry._pendingImportedUnitIcon) delete entry._pendingImportedUnitIcon;
           setDirty(true);
+          notifyFieldValueChange();
         }, entry);
         controlWrap.appendChild(picker);
         const iconWarnEl = document.createElement('div');
@@ -16226,6 +16322,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             rememberUndoSnapshotForKey(fieldUndoKey);
             field.value = String(value);
             setDirty(true);
+            notifyFieldValueChange();
             refreshMapAfterOwnerSupportChange(tabKey, baseKey);
           }
         });
@@ -16252,6 +16349,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             field.value = String(value);
             setFieldReferenceTargetMeta(field, targetTabKey, option, value, refOptions);
             setDirty(true);
+            notifyFieldValueChange();
             refreshMapAfterOwnerSupportChange(tabKey, baseKey);
           }
         });
@@ -16281,6 +16379,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           valueText.textContent = range.value;
           field.value = String(range.value);
           setDirty(true);
+          notifyFieldValueChange();
         });
         wrap.appendChild(range);
         wrap.appendChild(valueText);
@@ -16313,6 +16412,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             setFieldReferenceTargetMeta(field, targetTabKey, selectedOpt, field.value, refOptions);
           }
           setDirty(true);
+          notifyFieldValueChange();
           refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         controlWrap.appendChild(select);
@@ -16329,6 +16429,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
           field.value = check.checked ? 'true' : 'false';
           t.textContent = check.checked ? 'Enabled' : 'Disabled';
           setDirty(true);
+          notifyFieldValueChange();
           refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         checkWrap.appendChild(check);
@@ -16349,6 +16450,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         num.addEventListener('input', () => {
           field.value = num.value;
           setDirty(true);
+          notifyFieldValueChange();
           refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         controlWrap.appendChild(num);
@@ -16363,6 +16465,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         input.addEventListener('input', () => {
           field.value = input.value;
           setDirty(true);
+          notifyFieldValueChange();
           refreshMapAfterOwnerSupportChange(tabKey, baseKey);
         });
         controlWrap.appendChild(input);
@@ -18762,7 +18865,7 @@ function enableWideDetailsToggle(details, { ignoreSelectors = '' } = {}) {
   });
 }
 
-function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex = null) {
+function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex = null, onFieldValueChange = null) {
   const groupCard = document.createElement('div');
   groupCard.className = 'rule-group-card unit-matrix-card';
   const groupTitle = document.createElement('div');
@@ -18797,6 +18900,7 @@ function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, reference
         field.value = check.checked ? 'true' : 'false';
         item.classList.toggle('active', check.checked);
         setDirty(true);
+        if (typeof onFieldValueChange === 'function') onFieldValueChange({ entry, field, baseKey: normalizeRuleLookupKey(field && (field.baseKey || field.key)) });
       });
     }
     item.classList.toggle('active', check.checked);
@@ -18817,7 +18921,8 @@ function renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, reference
       entry,
       tabKey,
       selectedBaseIndex,
-      referenceEditable
+      referenceEditable,
+      onFieldValueChange
     });
   }
   return groupCard;
@@ -19169,7 +19274,7 @@ function renderUnitBuildingPrereqsControl(entry, c3xEditable) {
   return cell;
 }
 
-function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields }) {
+function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenceEditable, groupedFields, onFieldValueChange = null }) {
   const wrapper = document.createElement('div');
   wrapper.className = 'unit-rules-layout';
   const c3xEditable = canEditC3XBaseRows();
@@ -19239,7 +19344,8 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
           entry,
           tabKey,
           selectedBaseIndex,
-          referenceEditable
+          referenceEditable,
+          onFieldValueChange
         });
         compactRow.appendChild(classWrap);
       }
@@ -19252,7 +19358,8 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
           entry,
           tabKey,
           selectedBaseIndex,
-          referenceEditable
+          referenceEditable,
+          onFieldValueChange
         });
         compactRow.appendChild(upgradeWrap);
       }
@@ -19286,7 +19393,8 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
       entry,
       tabKey,
       selectedBaseIndex,
-      referenceEditable
+      referenceEditable,
+      onFieldValueChange
     });
     statsCol.appendChild(groupCard);
     groupedFields.delete('Unit Statistics');
@@ -19299,13 +19407,13 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
   ].forEach((groupName) => {
     const fields = groupedFields.get(groupName);
     if (!fields || fields.length === 0) return;
-    middleCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex));
+    middleCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex, onFieldValueChange));
     groupedFields.delete(groupName);
   });
 
   const specialOrderFields = groupedFields.get('Special Orders');
   if (specialOrderFields && specialOrderFields.length > 0) {
-    middleCol.appendChild(renderUnitBooleanMatrixCard('Special Orders', specialOrderFields, entry, tabKey, referenceEditable, selectedBaseIndex));
+    middleCol.appendChild(renderUnitBooleanMatrixCard('Special Orders', specialOrderFields, entry, tabKey, referenceEditable, selectedBaseIndex, onFieldValueChange));
     groupedFields.delete('Special Orders');
   }
 
@@ -19316,7 +19424,7 @@ function renderUnitDenseRulesLayout({ entry, tabKey, selectedBaseIndex, referenc
   ].forEach((groupName) => {
     const fields = groupedFields.get(groupName);
     if (!fields || fields.length === 0) return;
-    rightCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex));
+    rightCol.appendChild(renderUnitBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex, onFieldValueChange));
     groupedFields.delete(groupName);
   });
 
@@ -30253,11 +30361,214 @@ function getUnitReferenceSortOptions(options = {}) {
   return out;
 }
 
+function normalizeUnitPrimaryReorderOrder(order) {
+  if (!Array.isArray(order)) return [];
+  return order
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+}
+
+function summarizeUnitReorderOrderForLog(order, limit = 10) {
+  const normalized = normalizeUnitPrimaryReorderOrder(order);
+  const cap = Math.max(1, Number(limit) || 10);
+  const head = normalized.slice(0, cap).join(',');
+  const tail = normalized.length > cap ? normalized.slice(-cap).join(',') : '';
+  let checksum = 0;
+  normalized.forEach((value, index) => {
+    checksum = (checksum + ((value + 1) * (index + 17))) % 1000000007;
+  });
+  return `count:${normalized.length};head:${head || '(empty)'}${tail ? `;tail:${tail}` : ''};checksum:${checksum}`;
+}
+
+function normalizeUnitReorderMovedIndexes(indexes) {
+  if (!Array.isArray(indexes)) return [];
+  return indexes
+    .map((value) => {
+      if (value == null || String(value).trim() === '') return null;
+      const idx = Number(value);
+      return Number.isInteger(idx) && idx >= 0 ? idx : null;
+    })
+    .filter((idx) => idx != null);
+}
+
+function isUnitReferenceReorderOp(op) {
+  const kind = String(op && op.op || '').trim().toLowerCase();
+  const sectionCode = String(op && op.sectionCode || '').trim().toUpperCase();
+  return kind === 'reorder' && (!sectionCode || sectionCode === 'PRTO');
+}
+
 function getUnitReferenceInGameSortIndex(entry) {
-  const raw = entry && entry.biqIndex;
+  const pendingRaw = entry && entry.pendingBiqIndex;
+  const raw = pendingRaw == null || pendingRaw === ''
+    ? entry && entry.biqIndex
+    : pendingRaw;
   if (raw == null || raw === '') return null;
   const idx = Number(raw);
   return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
+function normalizeUnitBiqIndexBadgeNumber(value) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const idx = Number(raw);
+  return Number.isInteger(idx) && idx >= 0 ? idx : null;
+}
+
+function getUnitBiqIndexBadgeRows(entry, plannedRows = null) {
+  const plannedPrimary = normalizeUnitBiqIndexBadgeNumber(plannedRows && plannedRows.primaryIndex);
+  const fallbackPrimary = normalizeUnitBiqIndexBadgeNumber(entry && entry.pendingBiqIndex) != null
+    ? normalizeUnitBiqIndexBadgeNumber(entry && entry.pendingBiqIndex)
+    : normalizeUnitBiqIndexBadgeNumber(entry && entry.biqIndex);
+  const primaryIndex = plannedPrimary != null ? plannedPrimary : fallbackPrimary;
+  if (primaryIndex == null) return null;
+  const sourceStrategyRows = Array.isArray(plannedRows && plannedRows.strategyRows)
+    ? plannedRows.strategyRows
+    : (entry && entry.pendingPrtoStrategyRowIndexes);
+  const strategyRows = Array.isArray(sourceStrategyRows)
+    ? sourceStrategyRows
+      .map(normalizeUnitBiqIndexBadgeNumber)
+      .filter((idx) => idx != null)
+    : Array.isArray(entry && entry.prtoStrategyRowIndexes)
+    ? entry.prtoStrategyRowIndexes
+      .map(normalizeUnitBiqIndexBadgeNumber)
+      .filter((idx) => idx != null)
+    : [];
+  return { primaryIndex, strategyRows };
+}
+
+function buildUnitBiqIndexBadgeText(entry, plannedRows = null) {
+  const rows = getUnitBiqIndexBadgeRows(entry, plannedRows);
+  if (!rows) return '';
+  const childText = rows.strategyRows.length > 0
+    ? ` (${rows.strategyRows.join(', ')})`
+    : '';
+  return `${rows.primaryIndex}${childText}`;
+}
+
+function getUnitAiStrategyLabelsForBadge(entry) {
+  const mask = getUnitAiStrategyMaskForBadge(entry);
+  return Object.entries(UNIT_AI_STRATEGY_BADGE_BITS)
+    .filter(([, bit]) => Number.isInteger(bit) && bit >= 0 && (mask & (1 << bit)) === (1 << bit))
+    .sort((a, b) => a[1] - b[1])
+    .map(([key]) => UNIT_AI_STRATEGY_BADGE_LABELS[key] || key);
+}
+
+function buildUnitBiqIndexBadgeTitle(entry, plannedRows = null) {
+  const rows = getUnitBiqIndexBadgeRows(entry, plannedRows);
+  if (!rows) return '';
+  const strategyLabels = getUnitAiStrategyLabelsForBadge(entry);
+  const lines = [`Primary Index: ${rows.primaryIndex}`];
+  if (strategyLabels.length > 0) {
+    lines.push(`Primary AI strategy: ${strategyLabels[0]}`);
+  }
+  if (rows.strategyRows.length > 0) {
+    const hiddenStrategyLabels = strategyLabels.slice(1);
+    const rowText = rows.strategyRows.map((idx, rowIndex) => {
+      const label = hiddenStrategyLabels[rowIndex] || '';
+      return label ? `${idx} ${label}` : String(idx);
+    }).join(', ');
+    lines.push(`AI strategy rows: ${rowText}`);
+  }
+  const savedIndex = normalizeUnitBiqIndexBadgeNumber(entry && entry.biqIndex);
+  if (savedIndex != null && savedIndex !== rows.primaryIndex) {
+    lines.push(`Saved PRTO index: ${savedIndex}`);
+  }
+  return lines.join('\n');
+}
+
+function getUnitAiStrategyBitCountFromMask(mask) {
+  const raw = Number(mask) | 0;
+  let count = 0;
+  for (let bit = 0; bit < 20; bit += 1) {
+    if ((raw & (1 << bit)) === (1 << bit)) count += 1;
+  }
+  return count;
+}
+
+const UNIT_AI_STRATEGY_BADGE_BITS = {
+  offence: 0,
+  defencestrategy: 1,
+  artillery: 2,
+  explorestrategy: 3,
+  armyunit: 4,
+  cruisemissileunit: 5,
+  airbombard: 6,
+  airdefencestrategy: 7,
+  navalpower: 8,
+  airtransport: 9,
+  navaltransport: 10,
+  navalcarrier: 11,
+  terraform: 12,
+  settle: 13,
+  leaderunit: 14,
+  tacticalnuke: 15,
+  icbm: 16,
+  navalmissiletransport: 17,
+  flagstrategy: 18,
+  kingstrategy: 19
+};
+
+const UNIT_AI_STRATEGY_BADGE_LABELS = {
+  offence: 'Attack',
+  defencestrategy: 'Defense',
+  artillery: 'Bombard',
+  explorestrategy: 'Explore',
+  armyunit: 'Army',
+  cruisemissileunit: 'Cruise Missile',
+  airbombard: 'Air Bombard',
+  airdefencestrategy: 'Air Defense',
+  navalpower: 'Naval Power',
+  airtransport: 'Air Transport',
+  navaltransport: 'Naval Transport',
+  navalcarrier: 'Naval Carrier',
+  terraform: 'Terraform',
+  settle: 'Settle',
+  leaderunit: 'Leader',
+  tacticalnuke: 'Tactical Nuke',
+  icbm: 'ICBM',
+  navalmissiletransport: 'Naval Missile Transport',
+  flagstrategy: 'Flag',
+  kingstrategy: 'King'
+};
+
+function isTruthyUnitBadgeFieldValue(value) {
+  const raw = String(value == null ? '' : value).trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function getUnitAiStrategyMaskForBadge(entry) {
+  let mask = 0;
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  fields.forEach((field) => {
+    const baseKey = normalizeRuleLookupKey(field && (field.baseKey || field.key));
+    if (baseKey === 'aistrategy') {
+      mask |= Number(field && field.value) | 0;
+      return;
+    }
+    const bit = UNIT_AI_STRATEGY_BADGE_BITS[baseKey];
+    if (!Number.isInteger(bit) || bit < 0) return;
+    if (isTruthyUnitBadgeFieldValue(field && field.value)) mask |= (1 << bit);
+  });
+  return mask;
+}
+
+function getUnitReorderAutoScrollSpeed(clientY, paneTop, paneBottom, options = {}) {
+  const y = Number(clientY);
+  const top = Number(paneTop);
+  const bottom = Number(paneBottom);
+  if (!Number.isFinite(y) || !Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) return 0;
+  const threshold = Math.max(12, Number(options.threshold) || 72);
+  const maxSpeed = Math.max(1, Number(options.maxSpeed) || 22);
+  if (y < top + threshold) {
+    const ratio = Math.min(1, Math.max(0, (top + threshold - y) / threshold));
+    return -Math.max(1, Math.round(maxSpeed * ratio));
+  }
+  if (y > bottom - threshold) {
+    const ratio = Math.min(1, Math.max(0, (y - (bottom - threshold)) / threshold));
+    return Math.max(1, Math.round(maxSpeed * ratio));
+  }
+  return 0;
 }
 
 function compareUnitReferenceInGameOrder(a, b, options = {}) {
@@ -31220,7 +31531,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
 
   const syncUnitTableDirtyCount = () => {
     const dirtySet = ensureReferenceDirtySet('units');
-    setTabDirtyCount('units', dirtySet.size);
+    setTabDirtyCount('units', combineReferenceDirtyCountWithRecordOps(dirtySet.size, tab));
   };
 
   const updateUnitTableRowDirtyState = (row) => {
@@ -31229,10 +31540,7 @@ function createUnitTablePanel({ tab, referenceEditable }) {
     const identity = String(row.identity || '').trim();
     if (!identity) return false;
     const cleanEntry = getCleanReferenceEntry('units', row.entry, row.entry && row.entry.biqIndex);
-    const activeDirty = hasReferenceEntryChangedFromClean(row.entry, cleanEntry, {
-      tabKey: 'units',
-      fallbackIndex: row.entry && row.entry.biqIndex
-    });
+    const activeDirty = isReferenceEntryDirtyForCache('units', row.entry, cleanEntry, row.entry && row.entry.biqIndex, { tab });
     if (activeDirty) dirtySet.add(identity);
     else dirtySet.delete(identity);
     syncUnitTableDirtyCount();
@@ -38358,7 +38666,9 @@ function renderReferenceTab(tab, tabKey) {
   let kindFilter = null;
   let eraFilterSelect = null;
   let techTreeBtn = null;
+  let addBtn = null;
   let copyBtn = null;
+  let importBtn = null;
   let deleteBtn = null;
   const nextWarningBtn = createNextWarningButton();
   controlsRight.appendChild(nextWarningBtn);
@@ -38452,7 +38762,7 @@ function renderReferenceTab(tab, tabKey) {
   if (referenceEditable && REFERENCE_MUTABLE_ENTITY_TABS.has(tabKey)) {
     const actionRow = document.createElement('div');
     actionRow.className = 'reference-entity-actions';
-    const addBtn = document.createElement('button');
+    addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.className = 'ghost action-add';
     addBtn.textContent = '＋ Add';
@@ -38460,7 +38770,7 @@ function renderReferenceTab(tab, tabKey) {
     copyBtn.type = 'button';
     copyBtn.className = 'ghost action-copy';
     copyBtn.textContent = '⧉ Copy';
-    const importBtn = document.createElement('button');
+    importBtn = document.createElement('button');
     importBtn.type = 'button';
     importBtn.className = 'ghost action-import';
     importBtn.textContent = '⇪ Import';
@@ -38473,6 +38783,7 @@ function renderReferenceTab(tab, tabKey) {
     deleteBtn.disabled = !selectedEntry;
 
     addBtn.addEventListener('click', () => {
+      const hadPendingUnitReorder = tabKey === 'units' && hasPendingUnitReorderOp();
       const selectedEntry = getSelectedEntry();
       const singular = String(tab.title || 'Entry').replace(/s$/, '') || 'Entry';
       const displayName = `New ${singular}`;
@@ -38492,6 +38803,7 @@ function renderReferenceTab(tab, tabKey) {
       });
       _dbgLog('INF', 'BiqCRUD', `reference add: tabKey=${tabKey} newRef=${key}`);
       tab.entries.unshift(newEntry);
+      if (hadPendingUnitReorder) refreshPendingUnitReorderFromCurrentState();
       state.referenceSelection[tabKey] = 0;
       state.isDirty = true;
       rebuildReferenceDirtyCacheForTab(tabKey, tab);
@@ -38501,6 +38813,7 @@ function renderReferenceTab(tab, tabKey) {
     });
 
     copyBtn.addEventListener('click', () => {
+      const hadPendingUnitReorder = tabKey === 'units' && hasPendingUnitReorderOp();
       const selectedEntry = getSelectedEntry();
       if (!selectedEntry) return;
       const copyName = `${selectedEntry.name || inferReferenceNameFromKey(selectedEntry.civilopediaKey, tabKey)} Copy`;
@@ -38519,6 +38832,7 @@ function renderReferenceTab(tab, tabKey) {
       ops.push(copyOp);
       _dbgLog('INF', 'BiqCRUD', `reference copy: tabKey=${tabKey} source=${String(copyOp.sourceRef || '').toUpperCase()} -> newRef=${key}`);
       tab.entries.unshift(newEntry);
+      if (hadPendingUnitReorder) refreshPendingUnitReorderFromCurrentState();
       state.referenceSelection[tabKey] = 0;
       state.isDirty = true;
       rebuildReferenceDirtyCacheForTab(tabKey, tab);
@@ -38528,6 +38842,7 @@ function renderReferenceTab(tab, tabKey) {
     });
 
     importBtn.addEventListener('click', async () => {
+      const hadPendingUnitReorder = tabKey === 'units' && hasPendingUnitReorderOp();
       const selectedEntry = getSelectedEntry();
       try {
         appendDebugLog('reference-import:click', {
@@ -38654,6 +38969,7 @@ function renderReferenceTab(tab, tabKey) {
           opCount: Array.isArray(tab && tab.recordOps) ? tab.recordOps.length : -1
         });
         tab.entries.unshift(newEntry);
+        if (hadPendingUnitReorder) refreshPendingUnitReorderFromCurrentState();
         if (tabKey === 'resources') {
           refreshPendingImportedResourceIconAssignments(tab).then((changed) => {
             if (!changed) return;
@@ -38741,6 +39057,7 @@ function renderReferenceTab(tab, tabKey) {
     });
 
     deleteBtn.addEventListener('click', async () => {
+      const hadPendingUnitReorder = tabKey === 'units' && hasPendingUnitReorderOp();
       const selectedEntry = getSelectedEntry();
       if (!selectedEntry) return;
       const confirmed = await promptReferenceDeleteAction({ tab, selectedEntry });
@@ -38770,6 +39087,7 @@ function renderReferenceTab(tab, tabKey) {
       } else {
         _dbgLog('INF', 'BiqCRUD', `reference delete (was new, reverted create op): tabKey=${tabKey} ref=${targetKey}`);
       }
+      if (hadPendingUnitReorder) refreshPendingUnitReorderFromCurrentState();
       state.referenceSelection[tabKey] = 0;
       state.isDirty = true;
       rebuildReferenceDirtyCacheForTab(tabKey, tab);
@@ -38823,10 +39141,367 @@ function renderReferenceTab(tab, tabKey) {
   let referenceSelectionRenderTimer = 0;
   let referenceSelectionRenderToken = 0;
   const listThumbsInFlight = new Set();
+  let unitReorderDrag = null;
+  let unitReorderDragPreview = null;
+  let unitReorderAutoScrollRaf = 0;
+  let unitReorderAutoScrollSpeed = 0;
+  let unitReorderLastDragoverKey = '';
+  let unitBiqIndexBadgeRowsByIdentity = new Map();
+
+  const logUnitReorder = (phase, details = {}) => {
+    const parts = Object.entries(details || {})
+      .map(([key, value]) => `${key}=${String(value == null ? '' : value)}`)
+      .join(' ');
+    _dbgLog('INF', 'UnitReorder', `${phase}${parts ? ` ${parts}` : ''}`);
+  };
+
+  const getUnitReorderOps = () => {
+    if (tabKey !== 'units' || !Array.isArray(tab && tab.recordOps)) return [];
+    return tab.recordOps.filter((op) => isUnitReferenceReorderOp(op));
+  };
+
+  const hasPendingUnitReorderOp = () => getUnitReorderOps().length > 0;
+
+  const getUnitReorderDisabledReason = () => {
+    if (tabKey !== 'units') return 'Only units can be reordered here.';
+    if (state.settings && state.settings.enableUnitReordering === false) return 'Unit reordering is disabled in File > Settings > Units.';
+    if (!referenceEditable) return 'Switch to Scenario mode to reorder units.';
+    if (String(state.referenceFilter[tabKey] || '').trim()) return 'Clear the unit search before reordering units.';
+    if (String(state.referenceEraFilter[tabKey] || 'all') !== 'all') return 'Show All Eras before reordering units.';
+    if (normalizeMainUnitReferenceSort(state.referenceUnitSort[tabKey]) !== 'ingame') return 'Switch to In-game order before reordering units.';
+    return '';
+  };
+
+  const isUnitReorderableEntry = (entry) => {
+    if (tabKey !== 'units' || !entry || entry.isNew) return false;
+    if (isUnitEraVariantReferenceEntry(entry)) return false;
+    const idx = Number(entry.biqIndex);
+    return Number.isInteger(idx) && idx >= 0;
+  };
+
+  const getUnitReorderEntryBySavedIndex = () => {
+    const out = new Map();
+    (Array.isArray(tab && tab.entries) ? tab.entries : []).forEach((entry) => {
+      if (!isUnitReorderableEntry(entry)) return;
+      out.set(Number(entry.biqIndex), entry);
+    });
+    return out;
+  };
+
+  const clearUnitReorderPendingIndexes = () => {
+    (Array.isArray(tab && tab.entries) ? tab.entries : []).forEach((entry) => {
+      if (entry) delete entry.pendingBiqIndex;
+    });
+  };
+
+  const getCurrentUnitReorderOrder = (visibleEntries) => {
+    return (Array.isArray(visibleEntries) ? visibleEntries : [])
+      .filter(({ entry }) => isUnitReorderableEntry(entry))
+      .map(({ entry }) => Number(entry.biqIndex));
+  };
+
+  const getUnitReorderOrderFromCurrentTabState = () => {
+    return (Array.isArray(tab && tab.entries) ? tab.entries : [])
+      .filter((entry) => isUnitReorderableEntry(entry))
+      .sort((a, b) => {
+        const order = compareUnitReferenceInGameOrder(a, b);
+        if (order) return order;
+        return Number(a && a.biqIndex) - Number(b && b.biqIndex);
+      })
+      .map((entry) => Number(entry.biqIndex));
+  };
+
+  const getNaturalUnitReorderOrder = () => {
+    return Array.from(getUnitReorderEntryBySavedIndex().keys()).sort((a, b) => a - b);
+  };
+
+  const isSameUnitReorderOrder = (a, b) => {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (Number(a[i]) !== Number(b[i])) return false;
+    }
+    return true;
+  };
+
+  const applyPendingUnitReorderOrder = (order, options = {}) => {
+    const normalizedOrder = normalizeUnitPrimaryReorderOrder(order);
+    const entriesBySavedIndex = getUnitReorderEntryBySavedIndex();
+    const naturalOrder = getNaturalUnitReorderOrder();
+    const movedIndexes = new Set(getReferenceTabUnitReorderMovedIndexes(tab));
+    const movedSavedIndex = normalizeUnitBiqIndexBadgeNumber(options && options.movedSavedIndex);
+    if (movedSavedIndex != null) movedIndexes.add(movedSavedIndex);
+    const nextOps = (Array.isArray(tab && tab.recordOps) ? tab.recordOps : [])
+      .filter((op) => !isUnitReferenceReorderOp(op));
+    if (
+      normalizedOrder.length === 0
+      || normalizedOrder.length !== entriesBySavedIndex.size
+      || isSameUnitReorderOrder(normalizedOrder, naturalOrder)
+    ) {
+      clearUnitReorderPendingIndexes();
+      tab.recordOps = nextOps;
+      return false;
+    }
+    normalizedOrder.forEach((oldIndex, newIndex) => {
+      const entry = entriesBySavedIndex.get(oldIndex);
+      if (entry) entry.pendingBiqIndex = newIndex;
+    });
+    const movedIndexList = Array.from(movedIndexes)
+      .filter((idx) => entriesBySavedIndex.has(idx))
+      .sort((a, b) => a - b);
+    tab.recordOps = nextOps.concat([{
+      op: 'reorder',
+      sectionCode: 'PRTO',
+      order: normalizedOrder,
+      movedIndexes: movedIndexList
+    }]);
+    return true;
+  };
+
+  const refreshPendingUnitReorderFromCurrentState = () => {
+    if (tabKey !== 'units' || !hasPendingUnitReorderOp()) return false;
+    return applyPendingUnitReorderOrder(getUnitReorderOrderFromCurrentTabState());
+  };
+
+  const getUnitEntryPlanningKey = (entry) => String(entry && (entry.civilopediaKey || entry.lookupCivilopediaKey) || '').trim().toUpperCase();
+
+  const findUnitNewEntryForRecordRef = (recordRef, planned) => {
+    const ref = String(recordRef || '').trim().toUpperCase();
+    if (!ref) return null;
+    const plannedEntries = new Set((Array.isArray(planned) ? planned : []).map((record) => record && record.entry).filter(Boolean));
+    return (Array.isArray(tab && tab.entries) ? tab.entries : []).find((entry) => {
+      if (!entry || plannedEntries.has(entry)) return false;
+      if (isUnitEraVariantReferenceEntry(entry)) return false;
+      return getUnitEntryPlanningKey(entry) === ref;
+    }) || null;
+  };
+
+  const findUnitPlannedRecordIndex = (planned, recordRef) => {
+    const ref = String(recordRef || '').trim().toUpperCase();
+    if (!ref) return -1;
+    if (ref.startsWith('@INDEX:')) {
+      const idx = Number.parseInt(ref.slice(7), 10);
+      if (!Number.isInteger(idx) || idx < 0) return -1;
+      return planned.findIndex((record) => record && (record.originalIndex === idx || record.index === idx));
+    }
+    return planned.findIndex((record) => (
+      getUnitEntryPlanningKey(record && record.entry) === ref
+      || String(record && record.newRecordRef || '').trim().toUpperCase() === ref
+    ));
+  };
+
+  const applyUnitPlannedRecordReorder = (planned, order) => {
+    if (!Array.isArray(planned) || planned.length === 0) return false;
+    const normalizedOrder = normalizeUnitPrimaryReorderOrder(order);
+    if (normalizedOrder.length === 0) return false;
+    const byOriginalIndex = new Map();
+    planned.forEach((record) => {
+      if (Number.isInteger(record && record.originalIndex) && record.originalIndex >= 0) {
+        byOriginalIndex.set(record.originalIndex, record);
+      }
+    });
+    const used = new Set();
+    const next = [];
+    normalizedOrder.forEach((oldIndex) => {
+      const record = byOriginalIndex.get(oldIndex);
+      if (!record || used.has(record)) return;
+      used.add(record);
+      next.push(record);
+    });
+    planned.forEach((record) => {
+      if (!record || used.has(record)) return;
+      used.add(record);
+      next.push(record);
+    });
+    if (next.length !== planned.length) return false;
+    planned.splice(0, planned.length, ...next);
+    return true;
+  };
+
+  const buildUnitBiqIndexBadgeRowsByIdentity = () => {
+    const out = new Map();
+    if (tabKey !== 'units' || !state.settings || state.settings.showUnitBiqIndices !== true) return out;
+    const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+    const entryRows = entries.map((entry, baseIndex) => ({ entry, baseIndex }));
+    const planned = entryRows
+      .map(({ entry, baseIndex }) => {
+        const savedIndex = normalizeUnitBiqIndexBadgeNumber(entry && entry.biqIndex);
+        if (savedIndex == null || isUnitEraVariantReferenceEntry(entry)) return null;
+        return {
+          entry,
+          baseIndex,
+          originalIndex: savedIndex,
+          index: savedIndex
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.index - b.index);
+    const ops = Array.isArray(tab && tab.recordOps) ? tab.recordOps : [];
+    const reorderOps = [];
+    ops.forEach((op) => {
+      const kind = String(op && op.op || '').trim().toLowerCase();
+      if (kind === 'reorder') {
+        reorderOps.push(op);
+        return;
+      }
+      if (kind === 'add' || kind === 'copy') {
+        const newRecordRef = String(op && op.newRecordRef || '').trim();
+        if (!newRecordRef) return;
+        if (findUnitPlannedRecordIndex(planned, newRecordRef) >= 0) return;
+        const entry = findUnitNewEntryForRecordRef(newRecordRef, planned);
+        if (!entry) return;
+        const baseIndex = entries.indexOf(entry);
+        planned.push({
+          entry,
+          baseIndex,
+          newRecordRef,
+          originalIndex: null,
+          index: planned.length
+        });
+      }
+    });
+    const lastReorder = reorderOps.length > 0 ? reorderOps[reorderOps.length - 1] : null;
+    if (lastReorder) applyUnitPlannedRecordReorder(planned, lastReorder.order);
+    let nextStrategyRowIndex = planned.length;
+    planned.forEach((record, primaryIndex) => {
+      if (!record || !record.entry) return;
+      const mask = getUnitAiStrategyMaskForBadge(record.entry);
+      const strategyRowCount = Math.max(0, getUnitAiStrategyBitCountFromMask(mask) - 1);
+      const strategyRows = [];
+      for (let i = 0; i < strategyRowCount; i += 1) {
+        strategyRows.push(nextStrategyRowIndex);
+        nextStrategyRowIndex += 1;
+      }
+      const identity = getReferenceEntryIdentity(tabKey, record.entry, record.baseIndex);
+      if (identity) out.set(identity, { primaryIndex, strategyRows });
+    });
+    return out;
+  };
+
+  const upsertUnitBiqIndexBadge = (itemBtn, entry, plannedRows) => {
+    if (!itemBtn) return;
+    const biqIndexText = tabKey === 'units' && state.settings && state.settings.showUnitBiqIndices === true
+      ? buildUnitBiqIndexBadgeText(entry, plannedRows)
+      : '';
+    let biqIndexBadge = itemBtn.querySelector('.entry-list-biq-index');
+    if (!biqIndexText) {
+      if (biqIndexBadge && biqIndexBadge.parentNode) biqIndexBadge.parentNode.removeChild(biqIndexBadge);
+      itemBtn.classList.remove('entry-list-item-has-biq-index');
+      delete itemBtn.dataset.unitBiqIndexTooltip;
+      return;
+    }
+    itemBtn.classList.add('entry-list-item-has-biq-index');
+    if (!biqIndexBadge) {
+      biqIndexBadge = document.createElement('span');
+      biqIndexBadge.className = 'entry-list-biq-index';
+      itemBtn.appendChild(biqIndexBadge);
+    }
+    biqIndexBadge.textContent = biqIndexText;
+    biqIndexBadge.removeAttribute('title');
+    const showTooltip = state.settings && state.settings.showUnitBiqIndexTooltips !== false;
+    if (showTooltip) {
+      itemBtn.dataset.unitBiqIndexTooltip = buildUnitBiqIndexBadgeTitle(entry, plannedRows);
+      if (!itemBtn.dataset.unitBiqIndexTooltipBound) {
+        attachRichTooltip(itemBtn, () => itemBtn.dataset.unitBiqIndexTooltip || '');
+        itemBtn.dataset.unitBiqIndexTooltipBound = '1';
+      }
+    } else {
+      delete itemBtn.dataset.unitBiqIndexTooltip;
+    }
+  };
+
+  const refreshUnitBiqIndexBadges = () => {
+    if (tabKey !== 'units') return;
+    unitBiqIndexBadgeRowsByIdentity = buildUnitBiqIndexBadgeRowsByIdentity();
+    const entriesByIdentity = new Map();
+    (Array.isArray(tab && tab.entries) ? tab.entries : []).forEach((entry, baseIndex) => {
+      entriesByIdentity.set(getReferenceEntryIdentity(tabKey, entry, baseIndex), entry);
+    });
+    Array.from(listPane.querySelectorAll('.entry-list-item[data-entry-id]')).forEach((itemBtn) => {
+      const identity = String(itemBtn.getAttribute('data-entry-id') || '');
+      const entry = entriesByIdentity.get(identity) || null;
+      upsertUnitBiqIndexBadge(itemBtn, entry, unitBiqIndexBadgeRowsByIdentity.get(identity) || null);
+    });
+  };
+
+  const clearUnitReorderDropIndicators = () => {
+    Array.from(listPane.querySelectorAll('.unit-reorder-drop-before, .unit-reorder-drop-after')).forEach((itemBtn) => {
+      itemBtn.classList.remove('unit-reorder-drop-before', 'unit-reorder-drop-after');
+    });
+  };
+
+  const cleanupUnitReorderDragPreview = () => {
+    if (unitReorderDragPreview && unitReorderDragPreview.parentNode) {
+      unitReorderDragPreview.parentNode.removeChild(unitReorderDragPreview);
+    }
+    unitReorderDragPreview = null;
+  };
+
+  const stopUnitReorderAutoScroll = () => {
+    unitReorderAutoScrollSpeed = 0;
+    if (unitReorderAutoScrollRaf) {
+      window.cancelAnimationFrame(unitReorderAutoScrollRaf);
+      unitReorderAutoScrollRaf = 0;
+    }
+  };
+
+  const startUnitReorderAutoScroll = () => {
+    if (unitReorderAutoScrollRaf) return;
+    const tick = () => {
+      unitReorderAutoScrollRaf = 0;
+      if (!unitReorderDrag || !listPane.isConnected || !unitReorderAutoScrollSpeed) return;
+      const before = listPane.scrollTop;
+      listPane.scrollTop = Math.max(0, before + unitReorderAutoScrollSpeed);
+      if (listPane.scrollTop !== before) {
+        state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+      }
+      if (unitReorderDrag && unitReorderAutoScrollSpeed) {
+        unitReorderAutoScrollRaf = window.requestAnimationFrame(tick);
+      }
+    };
+    unitReorderAutoScrollRaf = window.requestAnimationFrame(tick);
+  };
+
+  const updateUnitReorderAutoScroll = (clientY) => {
+    if (!unitReorderDrag || !listPane.isConnected) {
+      stopUnitReorderAutoScroll();
+      return;
+    }
+    const rect = listPane.getBoundingClientRect();
+    unitReorderAutoScrollSpeed = getUnitReorderAutoScrollSpeed(clientY, rect.top, rect.bottom);
+    if (unitReorderAutoScrollSpeed) startUnitReorderAutoScroll();
+    else stopUnitReorderAutoScroll();
+  };
+
+  const ensureUnitReorderSourceThumbnail = (itemBtn, entry) => {
+    const thumb = itemBtn && itemBtn.querySelector ? itemBtn.querySelector('.entry-thumb') : null;
+    if (!thumb || thumb.querySelector('canvas') || thumb.dataset.thumbLoading === '1') return;
+    thumb.dataset.thumbPending = '0';
+    thumb.dataset.thumbLoading = '1';
+    Promise.resolve(loadReferenceListThumbnail(tabKey, entry, thumb))
+      .catch(() => false)
+      .finally(() => {
+        if (thumb && thumb.isConnected) delete thumb.dataset.thumbLoading;
+      });
+  };
+
+  const createUnitReorderDragPreview = (sourceButton) => {
+    cleanupUnitReorderDragPreview();
+    if (!sourceButton || !document.body) return null;
+    const clone = sourceButton.cloneNode(true);
+    clone.classList.remove('active', 'unit-reorder-dragging', 'unit-reorder-drop-before', 'unit-reorder-drop-after');
+    clone.classList.add('unit-reorder-drag-preview');
+    clone.style.width = `${Math.max(220, Math.min(360, sourceButton.getBoundingClientRect().width || 260))}px`;
+    document.body.appendChild(clone);
+    copyCanvasPixelsToClone(sourceButton, clone);
+    unitReorderDragPreview = clone;
+    return clone;
+  };
 
   const updateSelectionActionButtons = () => {
     const selectedEntry = getSelectedEntry();
+    if (addBtn) addBtn.disabled = false;
     if (copyBtn) copyBtn.disabled = !selectedEntry;
+    if (importBtn) importBtn.disabled = false;
     if (deleteBtn) deleteBtn.disabled = !selectedEntry;
   };
 
@@ -38994,6 +39669,33 @@ function renderReferenceTab(tab, tabKey) {
     const hasFilterText = !!String(state.referenceFilter[tabKey] || '').trim();
     scheduleHydrateVisibleReferenceListThumbs(hasFilterText ? 40 : 24);
   });
+  listPane.addEventListener('dragover', (event) => {
+    if (!unitReorderDrag) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    updateUnitReorderAutoScroll(event.clientY);
+  });
+  listPane.addEventListener('dragleave', (event) => {
+    if (!unitReorderDrag) return;
+    const related = event.relatedTarget;
+    if (related && listPane.contains(related)) return;
+    logUnitReorder('pane-dragleave', {
+      sourceIndex: unitReorderDrag && unitReorderDrag.savedIndex,
+      lastTarget: unitReorderLastDragoverKey || '(none)'
+    });
+    clearUnitReorderDropIndicators();
+    stopUnitReorderAutoScroll();
+  });
+  listPane.addEventListener('drop', (event) => {
+    if (unitReorderDrag) {
+      logUnitReorder('pane-drop-no-row-handler', {
+        sourceIndex: unitReorderDrag && unitReorderDrag.savedIndex,
+        lastTarget: unitReorderLastDragoverKey || '(none)',
+        targetClass: event && event.target && event.target.className || ''
+      });
+    }
+    stopUnitReorderAutoScroll();
+  });
   detailPane.addEventListener('scroll', () => {
     state.referenceDetailScrollTop[tabKey] = detailPane.scrollTop;
   });
@@ -39120,6 +39822,7 @@ function renderReferenceTab(tab, tabKey) {
   const activeBaseIndex = filteredEntries[selectedFilteredIndex]
     ? filteredEntries[selectedFilteredIndex].baseIndex
     : -1;
+  unitBiqIndexBadgeRowsByIdentity = buildUnitBiqIndexBadgeRowsByIdentity();
   const warningEntries = filteredEntries
     .map((item, filteredIndex) => Object.assign({ filteredIndex }, item))
     .filter(({ entry, baseIndex }) => hasReferenceEntryQualityIssue(tabKey, entry, baseIndex));
@@ -39144,7 +39847,8 @@ function renderReferenceTab(tab, tabKey) {
     itemBtn.className = 'entry-list-item';
     if (isChild) itemBtn.classList.add('entry-list-item-child');
     itemBtn.type = 'button';
-    itemBtn.setAttribute('data-entry-id', getReferenceEntryIdentity(tabKey, entry, baseIndex));
+    const entryIdentity = getReferenceEntryIdentity(tabKey, entry, baseIndex);
+    itemBtn.setAttribute('data-entry-id', entryIdentity);
     itemBtn.classList.toggle('active', baseIndex === activeBaseIndex);
     const showListThumb = tabKey !== 'gameConcepts' && !isUnitEraVariantEntry(entry);
     if (!showListThumb) itemBtn.classList.add('no-thumb');
@@ -39154,6 +39858,7 @@ function renderReferenceTab(tab, tabKey) {
     title.textContent = entry.name;
     if (thumb) itemBtn.appendChild(thumb);
     itemBtn.appendChild(title);
+    upsertUnitBiqIndexBadge(itemBtn, entry, unitBiqIndexBadgeRowsByIdentity.get(entryIdentity) || null);
     if (isReferenceEntryDirty(tabKey, entry)) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
@@ -39201,6 +39906,183 @@ function renderReferenceTab(tab, tabKey) {
     itemBtn.addEventListener('click', () => {
       selectReferenceEntry(baseIndex);
     });
+    if (tabKey === 'units') {
+      const reorderDisabledReason = getUnitReorderDisabledReason();
+      const canDragUnit = !reorderDisabledReason && isUnitReorderableEntry(entry);
+      if (canDragUnit) {
+        itemBtn.draggable = true;
+        itemBtn.classList.add('unit-reorder-draggable');
+        if (!(state.settings && state.settings.showUnitBiqIndices === true)) {
+          itemBtn.title = 'Drag to reorder units in the saved BIQ order.';
+        }
+        itemBtn.addEventListener('mousedown', () => {
+          ensureUnitReorderSourceThumbnail(itemBtn, entry);
+        });
+        itemBtn.addEventListener('pointerenter', () => {
+          ensureUnitReorderSourceThumbnail(itemBtn, entry);
+        });
+        itemBtn.addEventListener('dragstart', (event) => {
+          if (!isUnitReorderableEntry(entry) || getUnitReorderDisabledReason()) {
+            logUnitReorder('dragstart-blocked', {
+              name: entry && (entry.name || entry.civilopediaKey) || '',
+              biqIndex: entry && entry.biqIndex,
+              disabled: getUnitReorderDisabledReason() || 'not-reorderable'
+            });
+            event.preventDefault();
+            return;
+          }
+          ensureUnitReorderSourceThumbnail(itemBtn, entry);
+          const savedIndex = Number(entry.biqIndex);
+          unitReorderDrag = {
+            savedIndex,
+            baseIndex,
+            identity: getReferenceEntryIdentity(tabKey, entry, baseIndex)
+          };
+          unitReorderLastDragoverKey = '';
+          logUnitReorder('dragstart', {
+            name: entry && (entry.name || entry.civilopediaKey) || '',
+            sourceIndex: savedIndex,
+            baseIndex,
+            identity: unitReorderDrag.identity,
+            visibleOrderCount: getCurrentUnitReorderOrder(filteredEntries).length
+          });
+          itemBtn.classList.add('unit-reorder-dragging');
+          if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', String(savedIndex));
+            const preview = createUnitReorderDragPreview(itemBtn);
+            if (preview && typeof event.dataTransfer.setDragImage === 'function') {
+              event.dataTransfer.setDragImage(preview, 18, 18);
+            }
+          }
+        });
+        itemBtn.addEventListener('dragover', (event) => {
+          if (!unitReorderDrag || !isUnitReorderableEntry(entry)) return;
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+          updateUnitReorderAutoScroll(event.clientY);
+          const rect = itemBtn.getBoundingClientRect();
+          const dropAfter = event.clientY > rect.top + rect.height / 2;
+          clearUnitReorderDropIndicators();
+          itemBtn.classList.add(dropAfter ? 'unit-reorder-drop-after' : 'unit-reorder-drop-before');
+          const dragoverKey = `${entry && entry.biqIndex}:${dropAfter ? 'after' : 'before'}`;
+          if (dragoverKey !== unitReorderLastDragoverKey) {
+            unitReorderLastDragoverKey = dragoverKey;
+            logUnitReorder('dragover-target', {
+              sourceIndex: unitReorderDrag && unitReorderDrag.savedIndex,
+              targetIndex: entry && entry.biqIndex,
+              targetName: entry && (entry.name || entry.civilopediaKey) || '',
+              side: dropAfter ? 'after' : 'before',
+              y: Math.round(event.clientY),
+              top: Math.round(rect.top),
+              bottom: Math.round(rect.bottom)
+            });
+          }
+        });
+        itemBtn.addEventListener('drop', (event) => {
+          if (!unitReorderDrag || !isUnitReorderableEntry(entry)) {
+            logUnitReorder('drop-blocked', {
+              hasDrag: !!unitReorderDrag,
+              targetName: entry && (entry.name || entry.civilopediaKey) || '',
+              targetIndex: entry && entry.biqIndex,
+              reason: !unitReorderDrag ? 'no-active-drag' : 'target-not-reorderable'
+            });
+            return;
+          }
+          event.preventDefault();
+          stopUnitReorderAutoScroll();
+          clearUnitReorderDropIndicators();
+          const sourceSavedIndex = Number(unitReorderDrag.savedIndex);
+          const targetSavedIndex = Number(entry.biqIndex);
+          const currentOrder = getCurrentUnitReorderOrder(filteredEntries);
+          const sourcePos = currentOrder.indexOf(sourceSavedIndex);
+          const targetPos = currentOrder.indexOf(targetSavedIndex);
+          logUnitReorder('drop', {
+            sourceIndex: sourceSavedIndex,
+            targetIndex: targetSavedIndex,
+            targetName: entry && (entry.name || entry.civilopediaKey) || '',
+            sourcePos,
+            targetPos,
+            orderCount: currentOrder.length,
+            dropEffect: event.dataTransfer && event.dataTransfer.dropEffect || ''
+          });
+          if (sourcePos < 0 || targetPos < 0) {
+            logUnitReorder('drop-abort-missing-index', {
+              sourceIndex: sourceSavedIndex,
+              targetIndex: targetSavedIndex,
+              sourcePos,
+              targetPos,
+              order: currentOrder.join(',')
+            });
+            return;
+          }
+          const rect = itemBtn.getBoundingClientRect();
+          const dropAfter = event.clientY > rect.top + rect.height / 2;
+          let insertAt = targetPos + (dropAfter ? 1 : 0);
+          if (sourcePos < insertAt) insertAt -= 1;
+          if (insertAt === sourcePos) {
+            logUnitReorder('drop-noop', {
+              sourceIndex: sourceSavedIndex,
+              targetIndex: targetSavedIndex,
+              side: dropAfter ? 'after' : 'before',
+              insertAt,
+              sourcePos
+            });
+            return;
+          }
+          const nextOrder = currentOrder.slice();
+          const [movedIndex] = nextOrder.splice(sourcePos, 1);
+          nextOrder.splice(insertAt, 0, movedIndex);
+          rememberUndoSnapshotForKey('UNIT_REORDER:units');
+          const hasReorder = applyPendingUnitReorderOrder(nextOrder, { movedSavedIndex: sourceSavedIndex });
+          const appliedReorderOp = (tab.recordOps || []).find((op) => isUnitReferenceReorderOp(op)) || null;
+          const movedEntry = getUnitReorderEntryBySavedIndex().get(sourceSavedIndex);
+          if (movedEntry) {
+            const nextBaseIndex = (tab.entries || []).indexOf(movedEntry);
+            if (nextBaseIndex >= 0) state.referenceSelection[tabKey] = nextBaseIndex;
+          }
+          state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+          rebuildReferenceDirtyCacheForTab(tabKey, tab);
+          const dirtyNow = snapshotTabs() !== state.cleanSnapshot;
+          if (dirtyNow) {
+            state.isDirty = true;
+            setDirty(true, { knownDirtyTab: tabKey, reason: 'unit-reorder' });
+          } else {
+            setDirty(false);
+          }
+          updateSelectionActionButtons();
+          setStatus(hasReorder
+            ? `Moved "${(movedEntry && (movedEntry.name || movedEntry.civilopediaKey)) || entry.name || entry.civilopediaKey}" in the unit order.`
+            : 'Unit order restored to the saved BIQ order.');
+          logUnitReorder('drop-applied', {
+            sourceIndex: sourceSavedIndex,
+            targetIndex: targetSavedIndex,
+            insertAt,
+            hasReorder,
+            dirty: dirtyNow,
+            orderSummary: summarizeUnitReorderOrderForLog(nextOrder),
+            movedIndexes: normalizeUnitReorderMovedIndexes(appliedReorderOp && appliedReorderOp.movedIndexes).join(','),
+            nextOrder: nextOrder.join(',')
+          });
+          renderReferenceBody({ preserveDetailIfSameSelection: true });
+        });
+        itemBtn.addEventListener('dragend', (event) => {
+          logUnitReorder('dragend', {
+            sourceIndex: unitReorderDrag && unitReorderDrag.savedIndex,
+            dropEffect: event.dataTransfer && event.dataTransfer.dropEffect || '',
+            lastTarget: unitReorderLastDragoverKey || '(none)'
+          });
+          itemBtn.classList.remove('unit-reorder-dragging');
+          stopUnitReorderAutoScroll();
+          clearUnitReorderDropIndicators();
+          cleanupUnitReorderDragPreview();
+          unitReorderDrag = null;
+          unitReorderLastDragoverKey = '';
+        });
+      } else if (reorderDisabledReason && isUnitReorderableEntry(entry) && !itemBtn.title) {
+        itemBtn.title = reorderDisabledReason;
+      }
+    }
     if (!skipListRebuild) listPane.appendChild(itemBtn);
   };
 
@@ -39212,6 +40094,7 @@ function renderReferenceTab(tab, tabKey) {
     const activeIdentity = filteredEntries[selectedFilteredIndex]
       ? getReferenceEntryIdentity(tabKey, filteredEntries[selectedFilteredIndex].entry, filteredEntries[selectedFilteredIndex].baseIndex)
       : '';
+    if (tabKey === 'units') refreshUnitBiqIndexBadges();
     rebuildPendingReferenceListThumbQueue(filteredEntries);
     Array.from(listPane.querySelectorAll('.entry-list-item')).forEach((itemBtn) => {
       const isActive = String(itemBtn.getAttribute('data-entry-id') || '') === activeIdentity;
@@ -40056,7 +40939,8 @@ function renderReferenceTab(tab, tabKey) {
           tabKey,
           selectedBaseIndex,
           referenceEditable,
-          groupedFields: groups
+          groupedFields: groups,
+          onFieldValueChange: refreshUnitBiqIndexBadges
         }));
       } else if (tabKey === 'improvements') {
         rulesGrid.appendChild(renderImprovementDenseRulesLayout({
@@ -60409,6 +61293,11 @@ function reconcileReferenceTabsAfterNoReloadSave(options = {}) {
     totalOps += ops.length;
 
     const selectedEntry = entries[Number(state.referenceSelection[tabKey] || 0)] || null;
+    const originalIndexByEntry = new Map();
+    entries.forEach((entry) => {
+      const idx = Number(entry && entry.biqIndex);
+      if (Number.isInteger(idx) && idx >= 0) originalIndexByEntry.set(entry, idx);
+    });
     const section = getBiqSectionByCode(sectionCode);
     const records = Array.isArray(section && section.records) ? section.records : [];
     let currentCount = Number(section && section.count);
@@ -60433,6 +61322,32 @@ function reconcileReferenceTabsAfterNoReloadSave(options = {}) {
 
     ops.forEach((op) => {
       const kind = String(op && op.op || '').trim().toLowerCase();
+      if (kind === 'reorder' && tabKey === 'units') {
+        const order = normalizeUnitPrimaryReorderOrder(op && op.order);
+        if (order.length === 0) return;
+        const entryByOriginalIndex = new Map();
+        entries.forEach((entry) => {
+          if (!entry) return;
+          const idx = originalIndexByEntry.has(entry)
+            ? originalIndexByEntry.get(entry)
+            : Number(entry.biqIndex);
+          if (Number.isInteger(idx) && idx >= 0) entryByOriginalIndex.set(idx, entry);
+        });
+        order.forEach((oldIndex, newIndex) => {
+          const entry = entryByOriginalIndex.get(oldIndex);
+          if (!entry) return;
+          if (Number(entry.biqIndex) !== newIndex || entry.pendingBiqIndex != null) {
+            entry.biqIndex = newIndex;
+            entry.id = `biq-${String(sectionCode || '').toLowerCase()}-${newIndex}`;
+            delete entry.pendingBiqIndex;
+            changed = true;
+          }
+        });
+        entries.forEach((entry) => {
+          if (entry) delete entry.pendingBiqIndex;
+        });
+        return;
+      }
       if (kind === 'add' || kind === 'copy') {
         const entry = findEntryByKey(op && op.newRecordRef);
         if (entry) {
@@ -61022,6 +61937,7 @@ function markReferenceTabEntryOriginals(tab) {
   }
   tab.entries.forEach((entry) => {
     if (!entry) return;
+    delete entry.pendingBiqIndex;
     entry.isNew = false;
     entry.originalCivilopediaSection1 = String(entry.civilopediaSection1 || '');
     entry.originalCivilopediaSection2 = String(entry.civilopediaSection2 || '');
@@ -61299,6 +62215,11 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && typeof targetSnapshot === 'object'
     && targetSnapshot.kind === 'tech-tree-node-drag'
   );
+  const isUnitReorderSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'unit-reorder'
+  );
   const restoredSearchFolder = Object.prototype.hasOwnProperty.call(restoredEditableTabs, 'scenarioSettings')
     ? getScenarioSearchFolderValueFromTabs(restoredEditableTabs)
     : getScenarioSearchFolderValueFromTabs(state.bundle && state.bundle.tabs ? state.bundle.tabs : {});
@@ -61310,6 +62231,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && !isScopedTabSnapshot
     && !isTechTreeArrowStyleSnapshot
     && !isTechTreeNodeDragSnapshot
+    && !isUnitReorderSnapshot
     && state.settings
     && state.settings.mode === 'scenario'
     && state.settings.scenarioPath
@@ -61360,6 +62282,53 @@ function applySerializedReferenceEntrySnapshotToTabs(mergedTabs, snapshot) {
   return true;
 }
 
+function applyUnitReorderUndoSnapshotToTabs(mergedTabs, snapshot) {
+  const tabKey = 'units';
+  const currentTab = mergedTabs && mergedTabs[tabKey];
+  const currentEntries = currentTab && Array.isArray(currentTab.entries) ? currentTab.entries : null;
+  if (!currentTab || !currentEntries) return false;
+  let recordOps = [];
+  let pendingRows = [];
+  try {
+    recordOps = JSON.parse(String(snapshot && snapshot.recordOpsJson || '[]'));
+  } catch (_err) {
+    recordOps = [];
+  }
+  try {
+    pendingRows = JSON.parse(String(snapshot && snapshot.pendingRowsJson || '[]'));
+  } catch (_err) {
+    pendingRows = [];
+  }
+  const pendingByIdentity = new Map();
+  (Array.isArray(pendingRows) ? pendingRows : []).forEach((row) => {
+    const identity = String(row && row.identity || '').trim();
+    if (!identity) return;
+    pendingByIdentity.set(identity, {
+      hasPendingBiqIndex: row && row.hasPendingBiqIndex === true,
+      pendingBiqIndex: row ? row.pendingBiqIndex : null
+    });
+  });
+  currentEntries.forEach((entry, idx) => {
+    if (!entry) return;
+    const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+    const row = identity ? pendingByIdentity.get(identity) : null;
+    if (row && row.hasPendingBiqIndex) entry.pendingBiqIndex = row.pendingBiqIndex;
+    else delete entry.pendingBiqIndex;
+  });
+  mergedTabs[tabKey] = Object.assign({}, currentTab, {
+    recordOps: Array.isArray(recordOps) ? recordOps : []
+  });
+  const selectedIndex = Number(snapshot && snapshot.selectedIndex);
+  if (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < currentEntries.length) {
+    state.referenceSelection[tabKey] = selectedIndex;
+  }
+  const listScrollTop = Number(snapshot && snapshot.listScrollTop);
+  if (Number.isFinite(listScrollTop) && listScrollTop >= 0) {
+    state.referenceListScrollTop[tabKey] = listScrollTop;
+  }
+  return true;
+}
+
 function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   if (!state.bundle) {
     return false;
@@ -61395,6 +62364,11 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
     && typeof targetSnapshot === 'object'
     && targetSnapshot.kind === 'tech-tree-node-drag'
   );
+  const isUnitReorderSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'unit-reorder'
+  );
   const techTreeNodeDragEntrySnapshot = isTechTreeNodeDragSnapshot
     ? (targetSnapshot.entrySnapshot || null)
     : null;
@@ -61418,6 +62392,9 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   if (isTechTreeNodeDragSnapshot && techTreeNodeDragEntrySnapshot) {
     applySerializedReferenceEntrySnapshotToTabs(mergedTabs, techTreeNodeDragEntrySnapshot);
   }
+  if (isUnitReorderSnapshot) {
+    applyUnitReorderUndoSnapshotToTabs(mergedTabs, targetSnapshot);
+  }
   if (isSerializedSectionSnapshot) {
     applySerializedSectionSnapshotToTabs(mergedTabs, targetSnapshot);
   }
@@ -61434,7 +62411,7 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   if (restoredKeys.length === 0) {
     if (isMapRecordDiffSnapshot) {
       state.bundle.tabs = mergedTabs;
-    } else if (isSerializedReferenceEntrySnapshot || isSerializedSectionSnapshot || isTechTreeNodeDragSnapshot) {
+    } else if (isSerializedReferenceEntrySnapshot || isSerializedSectionSnapshot || isTechTreeNodeDragSnapshot || isUnitReorderSnapshot) {
       state.bundle.tabs = mergedTabs;
     } else if (isTechTreeArrowStyleSnapshot) {
       state.bundle.tabs = mergedTabs;
@@ -61818,6 +62795,15 @@ async function init() {
   if (typeof state.settings.autoAddImportedUnitIcons !== 'boolean') {
     state.settings.autoAddImportedUnitIcons = true;
   }
+  if (typeof state.settings.showUnitBiqIndices !== 'boolean') {
+    state.settings.showUnitBiqIndices = false;
+  }
+  if (typeof state.settings.showUnitBiqIndexTooltips !== 'boolean') {
+    state.settings.showUnitBiqIndexTooltips = true;
+  }
+  if (typeof state.settings.enableUnitReordering !== 'boolean') {
+    state.settings.enableUnitReordering = true;
+  }
   if (typeof state.settings.autoAddImportedBuildingCityIcons !== 'boolean') {
     state.settings.autoAddImportedBuildingCityIcons = true;
   }
@@ -62057,12 +63043,45 @@ async function init() {
   if (window.c3xManager && typeof window.c3xManager.onUnitSettingsMenuSelect === 'function') {
     state.unitSettingsMenuUnsubscribe = window.c3xManager.onUnitSettingsMenuSelect((settings) => {
       if (!state.settings || !settings || typeof settings !== 'object') return;
-      if (!Object.prototype.hasOwnProperty.call(settings, 'autoAddImportedUnitIcons')) return;
-      state.settings.autoAddImportedUnitIcons = settings.autoAddImportedUnitIcons !== false;
-      void window.c3xManager.setSettings(state.settings);
-      setStatus(state.settings.autoAddImportedUnitIcons
-        ? 'Automatic imported unit icon updates enabled.'
-        : 'Automatic imported unit icon updates disabled.');
+      let handled = false;
+      if (Object.prototype.hasOwnProperty.call(settings, 'autoAddImportedUnitIcons')) {
+        state.settings.autoAddImportedUnitIcons = settings.autoAddImportedUnitIcons !== false;
+        handled = true;
+        setStatus(state.settings.autoAddImportedUnitIcons
+          ? 'Automatic imported unit icon updates enabled.'
+          : 'Automatic imported unit icon updates disabled.');
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, 'showUnitBiqIndices')) {
+        state.settings.showUnitBiqIndices = settings.showUnitBiqIndices === true;
+        handled = true;
+        setStatus(state.settings.showUnitBiqIndices
+          ? 'Unit BIQ indices visible in the Units list.'
+          : 'Unit BIQ indices hidden in the Units list.');
+        if (state.activeTab === 'units') {
+          renderActiveTab({ preserveTabScroll: true });
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, 'showUnitBiqIndexTooltips')) {
+        state.settings.showUnitBiqIndexTooltips = settings.showUnitBiqIndexTooltips !== false;
+        handled = true;
+        setStatus(state.settings.showUnitBiqIndexTooltips
+          ? 'Unit BIQ index hover details enabled.'
+          : 'Unit BIQ index hover details disabled.');
+        if (state.activeTab === 'units') {
+          renderActiveTab({ preserveTabScroll: true });
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, 'enableUnitReordering')) {
+        state.settings.enableUnitReordering = settings.enableUnitReordering !== false;
+        handled = true;
+        setStatus(state.settings.enableUnitReordering
+          ? 'Unit reordering enabled.'
+          : 'Unit reordering disabled.');
+        if (state.activeTab === 'units') {
+          renderActiveTab({ preserveTabScroll: true });
+        }
+      }
+      if (handled) void window.c3xManager.setSettings(state.settings);
     });
     window.addEventListener('beforeunload', () => {
       if (state.unitSettingsMenuUnsubscribe) {

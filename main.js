@@ -115,6 +115,39 @@ function readStartupAutoAddImportedUnitIcons() {
   }
 }
 
+function readStartupShowUnitBiqIndices() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return false;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeShowUnitBiqIndices(raw && raw.showUnitBiqIndices);
+  } catch (_err) {
+    return false;
+  }
+}
+
+function readStartupShowUnitBiqIndexTooltips() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeShowUnitBiqIndexTooltips(raw && raw.showUnitBiqIndexTooltips);
+  } catch (_err) {
+    return true;
+  }
+}
+
+function readStartupEnableUnitReordering() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeEnableUnitReordering(raw && raw.enableUnitReordering);
+  } catch (_err) {
+    return true;
+  }
+}
+
 function readStartupAutoAddImportedBuildingCityIcons() {
   try {
     const settingsPath = getSettingsPathUnsafe();
@@ -223,6 +256,18 @@ function normalizeAutoAddImportedUnitIcons(value) {
   return value !== false;
 }
 
+function normalizeShowUnitBiqIndices(value) {
+  return value === true;
+}
+
+function normalizeShowUnitBiqIndexTooltips(value) {
+  return value !== false;
+}
+
+function normalizeEnableUnitReordering(value) {
+  return value !== false;
+}
+
 function normalizeAutoAddImportedBuildingCityIcons(value) {
   return value !== false;
 }
@@ -299,6 +344,9 @@ const startupReloadAfterSave = readStartupReloadAfterSave();
 const startupTooltipDelay = readStartupTooltipDelay();
 const startupAutoAddImportedResourceIcons = readStartupAutoAddImportedResourceIcons();
 const startupAutoAddImportedUnitIcons = readStartupAutoAddImportedUnitIcons();
+const startupShowUnitBiqIndices = readStartupShowUnitBiqIndices();
+const startupShowUnitBiqIndexTooltips = readStartupShowUnitBiqIndexTooltips();
+const startupEnableUnitReordering = readStartupEnableUnitReordering();
 const startupAutoAddImportedBuildingCityIcons = readStartupAutoAddImportedBuildingCityIcons();
 const startupAutoUpdateScienceAdvisorArrows = readStartupAutoUpdateScienceAdvisorArrows();
 const startupTextFileEncoding = readStartupTextFileEncoding();
@@ -311,6 +359,9 @@ let currentReloadAfterSave = startupReloadAfterSave;
 let currentTooltipDelay = startupTooltipDelay;
 let currentAutoAddImportedResourceIcons = startupAutoAddImportedResourceIcons;
 let currentAutoAddImportedUnitIcons = startupAutoAddImportedUnitIcons;
+let currentShowUnitBiqIndices = startupShowUnitBiqIndices;
+let currentShowUnitBiqIndexTooltips = startupShowUnitBiqIndexTooltips;
+let currentEnableUnitReordering = startupEnableUnitReordering;
 let currentAutoAddImportedBuildingCityIcons = startupAutoAddImportedBuildingCityIcons;
 let currentAutoUpdateScienceAdvisorArrows = startupAutoUpdateScienceAdvisorArrows;
 let currentTextFileEncoding = startupTextFileEncoding;
@@ -732,6 +783,51 @@ function sendAutoAddImportedUnitIconsSelection(enabled) {
   });
 }
 
+function sendShowUnitBiqIndicesSelection(enabled) {
+  currentShowUnitBiqIndices = normalizeShowUnitBiqIndices(enabled);
+  try {
+    persistSettingsPatch({ showUnitBiqIndices: currentShowUnitBiqIndices });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:unit-settings-selected', {
+    showUnitBiqIndices: currentShowUnitBiqIndices
+  });
+}
+
+function sendShowUnitBiqIndexTooltipsSelection(enabled) {
+  currentShowUnitBiqIndexTooltips = normalizeShowUnitBiqIndexTooltips(enabled);
+  try {
+    persistSettingsPatch({ showUnitBiqIndexTooltips: currentShowUnitBiqIndexTooltips });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:unit-settings-selected', {
+    showUnitBiqIndexTooltips: currentShowUnitBiqIndexTooltips
+  });
+}
+
+function sendEnableUnitReorderingSelection(enabled) {
+  currentEnableUnitReordering = normalizeEnableUnitReordering(enabled);
+  try {
+    persistSettingsPatch({ enableUnitReordering: currentEnableUnitReordering });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:unit-settings-selected', {
+    enableUnitReordering: currentEnableUnitReordering
+  });
+}
+
 function sendAutoAddImportedBuildingCityIconsSelection(enabled) {
   currentAutoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(enabled);
   try {
@@ -950,6 +1046,24 @@ function buildAppMenu() {
                 type: 'checkbox',
                 checked: currentAutoAddImportedUnitIcons,
                 click: (item) => sendAutoAddImportedUnitIconsSelection(item && item.checked)
+              },
+              {
+                label: 'Show Unit BIQ Indices',
+                type: 'checkbox',
+                checked: currentShowUnitBiqIndices,
+                click: (item) => sendShowUnitBiqIndicesSelection(item && item.checked)
+              },
+              {
+                label: 'Show Unit BIQ Index Details on Hover',
+                type: 'checkbox',
+                checked: currentShowUnitBiqIndexTooltips,
+                click: (item) => sendShowUnitBiqIndexTooltipsSelection(item && item.checked)
+              },
+              {
+                label: 'Enable Unit Reordering',
+                type: 'checkbox',
+                checked: currentEnableUnitReordering,
+                click: (item) => sendEnableUnitReorderingSelection(item && item.checked)
               }
             ]
           },
@@ -1077,6 +1191,9 @@ ipcMain.handle('manager:get-settings', async () => {
     tooltipDelay: 'medium',
     autoAddImportedResourceIcons: true,
     autoAddImportedUnitIcons: true,
+    showUnitBiqIndices: false,
+    showUnitBiqIndexTooltips: true,
+    enableUnitReordering: true,
     autoAddImportedBuildingCityIcons: true,
     autoUpdateScienceAdvisorArrows: false,
     mapAutoDockTileInfoLeft: true,
@@ -1094,6 +1211,9 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.tooltipDelay = normalizeTooltipDelay(merged.tooltipDelay);
   merged.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(merged.autoAddImportedResourceIcons);
   merged.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(merged.autoAddImportedUnitIcons);
+  merged.showUnitBiqIndices = normalizeShowUnitBiqIndices(merged.showUnitBiqIndices);
+  merged.showUnitBiqIndexTooltips = normalizeShowUnitBiqIndexTooltips(merged.showUnitBiqIndexTooltips);
+  merged.enableUnitReordering = normalizeEnableUnitReordering(merged.enableUnitReordering);
   merged.autoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(merged.autoAddImportedBuildingCityIcons);
   merged.autoUpdateScienceAdvisorArrows = normalizeAutoUpdateScienceAdvisorArrows(merged.autoUpdateScienceAdvisorArrows);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
@@ -1108,6 +1228,9 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.tooltipDelay = normalizeTooltipDelay(inferred.tooltipDelay);
   inferred.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(inferred.autoAddImportedResourceIcons);
   inferred.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(inferred.autoAddImportedUnitIcons);
+  inferred.showUnitBiqIndices = normalizeShowUnitBiqIndices(inferred.showUnitBiqIndices);
+  inferred.showUnitBiqIndexTooltips = normalizeShowUnitBiqIndexTooltips(inferred.showUnitBiqIndexTooltips);
+  inferred.enableUnitReordering = normalizeEnableUnitReordering(inferred.enableUnitReordering);
   inferred.autoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(inferred.autoAddImportedBuildingCityIcons);
   inferred.autoUpdateScienceAdvisorArrows = normalizeAutoUpdateScienceAdvisorArrows(inferred.autoUpdateScienceAdvisorArrows);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
@@ -1120,6 +1243,9 @@ ipcMain.handle('manager:get-settings', async () => {
   currentTooltipDelay = inferred.tooltipDelay;
   currentAutoAddImportedResourceIcons = inferred.autoAddImportedResourceIcons;
   currentAutoAddImportedUnitIcons = inferred.autoAddImportedUnitIcons;
+  currentShowUnitBiqIndices = inferred.showUnitBiqIndices;
+  currentShowUnitBiqIndexTooltips = inferred.showUnitBiqIndexTooltips;
+  currentEnableUnitReordering = inferred.enableUnitReordering;
   currentAutoAddImportedBuildingCityIcons = inferred.autoAddImportedBuildingCityIcons;
   currentAutoUpdateScienceAdvisorArrows = inferred.autoUpdateScienceAdvisorArrows;
   currentTextFileEncoding = inferred.textFileEncoding;
@@ -1134,7 +1260,7 @@ ipcMain.handle('manager:get-settings', async () => {
   applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
-  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${inferred.tooltipDelay}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${inferred.tooltipDelay}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${inferred.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${inferred.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${inferred.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
   log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
   if (inferred.mode === 'scenario') {
@@ -1156,6 +1282,9 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     tooltipDelay: normalizeTooltipDelay(settings && settings.tooltipDelay),
     autoAddImportedResourceIcons: normalizeAutoAddImportedResourceIcons(settings && settings.autoAddImportedResourceIcons),
     autoAddImportedUnitIcons: normalizeAutoAddImportedUnitIcons(settings && settings.autoAddImportedUnitIcons),
+    showUnitBiqIndices: normalizeShowUnitBiqIndices(settings && settings.showUnitBiqIndices),
+    showUnitBiqIndexTooltips: normalizeShowUnitBiqIndexTooltips(settings && settings.showUnitBiqIndexTooltips),
+    enableUnitReordering: normalizeEnableUnitReordering(settings && settings.enableUnitReordering),
     autoAddImportedBuildingCityIcons: normalizeAutoAddImportedBuildingCityIcons(settings && settings.autoAddImportedBuildingCityIcons),
     autoUpdateScienceAdvisorArrows: normalizeAutoUpdateScienceAdvisorArrows(settings && settings.autoUpdateScienceAdvisorArrows),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
@@ -1167,7 +1296,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   log.setCiv3Root(normalized.civ3Path || '');
   applyLogContextFromPayload(normalized);
   log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
-  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${normalized.tooltipDelay}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${normalized.tooltipDelay}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${normalized.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${normalized.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${normalized.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
     log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
@@ -1196,6 +1325,18 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentAutoAddImportedUnitIcons !== normalized.autoAddImportedUnitIcons) {
     currentAutoAddImportedUnitIcons = normalized.autoAddImportedUnitIcons;
+    buildAppMenu();
+  }
+  if (currentShowUnitBiqIndices !== normalized.showUnitBiqIndices) {
+    currentShowUnitBiqIndices = normalized.showUnitBiqIndices;
+    buildAppMenu();
+  }
+  if (currentShowUnitBiqIndexTooltips !== normalized.showUnitBiqIndexTooltips) {
+    currentShowUnitBiqIndexTooltips = normalized.showUnitBiqIndexTooltips;
+    buildAppMenu();
+  }
+  if (currentEnableUnitReordering !== normalized.enableUnitReordering) {
+    currentEnableUnitReordering = normalized.enableUnitReordering;
     buildAppMenu();
   }
   if (currentAutoAddImportedBuildingCityIcons !== normalized.autoAddImportedBuildingCityIcons) {
