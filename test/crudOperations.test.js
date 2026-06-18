@@ -927,7 +927,13 @@ function loadRendererNoReloadCleanHelpers(targetBundle) {
 function loadRendererReferenceDirtyHelpers(targetBundle) {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
-  const functionNames = ['rebuildReferenceDirtyCacheForTab'];
+  const functionNames = [
+    'hasReferenceEntryStructuralDirtyState',
+    'isReferenceEntryDirtyForCache',
+    'getReferenceRecordOpDirtyCount',
+    'combineReferenceDirtyCountWithRecordOps',
+    'rebuildReferenceDirtyCacheForTab'
+  ];
   const sandbox = {
     state: {
       bundle: targetBundle,

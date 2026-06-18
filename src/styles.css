@@ -4391,6 +4391,26 @@ button.danger:hover {
   grid-template-columns: 1fr;
 }
 
+.entry-list-biq-index {
+  position: absolute;
+  right: 9px;
+  bottom: 5px;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(73, 69, 98, 0.48);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.56rem;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.entry-list-item.active .entry-list-biq-index {
+  color: rgba(20, 77, 76, 0.58);
+}
+
 .players-playable-civs-panel {
   gap: 8px;
 }
@@ -4443,6 +4463,69 @@ button.danger:hover {
 .entry-list-item.active {
   border-color: rgba(11, 127, 120, 0.35);
   background: rgba(232, 255, 252, 0.8);
+}
+
+.entry-list-item.unit-reorder-draggable {
+  cursor: grab;
+}
+
+.entry-list-item.unit-reorder-draggable:hover,
+.entry-list-item.unit-reorder-draggable.active,
+.entry-list-item.unit-reorder-draggable.help-hover-target,
+.entry-list-item.unit-reorder-draggable.help-hover-target:hover {
+  cursor: grab;
+}
+
+.entry-list-item.unit-reorder-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.entry-list-item.unit-reorder-dragging:hover,
+.entry-list-item.unit-reorder-dragging.active,
+.entry-list-item.unit-reorder-dragging.help-hover-target,
+.entry-list-item.unit-reorder-dragging.help-hover-target:hover {
+  cursor: grabbing;
+}
+
+.entry-list-item.unit-reorder-drop-before::before,
+.entry-list-item.unit-reorder-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 999px;
+  background: #2f80ed;
+  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.14);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.entry-list-item.unit-reorder-drop-before::before {
+  top: -6px;
+}
+
+.entry-list-item.unit-reorder-drop-after::after {
+  bottom: -6px;
+}
+
+.entry-list-item.unit-reorder-drop-before::before,
+.entry-list-item.unit-reorder-drop-after::after,
+.unit-reorder-drag-preview {
+  box-sizing: border-box;
+}
+
+.unit-reorder-drag-preview {
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.96;
+  background: #ffffff;
+  border-color: rgba(47, 128, 237, 0.4);
+  box-shadow: 0 12px 30px rgba(31, 36, 58, 0.2);
 }
 
 .entry-list-group {
@@ -10357,6 +10440,21 @@ button.unit-ini-delete-btn:disabled {
 .entry-list-item.help-hover-target,
 .district-entry-item.help-hover-target {
   cursor: pointer;
+}
+
+.entry-list-item.help-hover-target {
+  padding: 7px 8px;
+  border-radius: 10px;
+}
+
+.entry-list-item.unit-reorder-draggable.help-hover-target,
+.entry-list-item.unit-reorder-draggable.help-hover-target:hover {
+  cursor: grab;
+}
+
+.entry-list-item.unit-reorder-dragging.help-hover-target,
+.entry-list-item.unit-reorder-dragging.help-hover-target:hover {
+  cursor: grabbing;
 }
 
 .biq-subtab-btn.help-hover-target {

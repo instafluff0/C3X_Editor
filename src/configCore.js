@@ -4485,6 +4485,9 @@ function mergePrtoStrategyMapRecords(biqTab) {
     let mergedValue = parseAiBits(aiField && aiField.value, 0);
     let mergedOriginal = parseAiBits(aiField && aiField.originalValue, mergedValue);
     const duplicates = duplicatesByPrimary.get(idx) || [];
+    const prtoStrategyRowIndexes = duplicates
+      .map((dupRecord) => Number(dupRecord && dupRecord.index))
+      .filter((rowIndex) => Number.isInteger(rowIndex) && rowIndex >= 0);
     duplicates.forEach((dupRecord) => {
       mergedValue |= parseAiBits(getRecordFieldValue(dupRecord, 'PRTO', 'AIStrategy'), 0);
       const dupAiField = Array.isArray(dupRecord && dupRecord.fields)
@@ -4500,7 +4503,8 @@ function mergePrtoStrategyMapRecords(biqTab) {
     out.push({
       ...record,
       fields: baseFields,
-      index: idx
+      index: idx,
+      prtoStrategyRowIndexes
     });
   });
   return out;
@@ -4576,6 +4580,9 @@ function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
     rawBiqCivilopediaKey: civilopediaEntry || '',
     linkCivilopediaKey: civilopediaEntry || '',
     biqIndex: Number.isFinite(index) ? index : null,
+    prtoStrategyRowIndexes: Array.isArray(record && record.prtoStrategyRowIndexes)
+      ? record.prtoStrategyRowIndexes.slice()
+      : [],
     name,
     civilopediaSection1: '',
     originalCivilopediaSection1: '',
@@ -4958,7 +4965,10 @@ function buildReferenceTabs(civ3Path, options = {}) {
           rawCivilopediaKey,
           rawBiqCivilopediaKey: rawCivilopediaKey,
           biqRecord: record,
-          biqIndex: Number.isFinite(idx) ? idx : null
+          biqIndex: Number.isFinite(idx) ? idx : null,
+          prtoStrategyRowIndexes: tabSpec.key === 'units' && Array.isArray(record && record.prtoStrategyRowIndexes)
+            ? record.prtoStrategyRowIndexes.slice()
+            : []
         });
       });
       const allowedKeys = biqKeySets && biqKeySets[tabSpec.key] instanceof Set ? biqKeySets[tabSpec.key] : null;
@@ -4980,7 +4990,8 @@ function buildReferenceTabs(civ3Path, options = {}) {
             rawCivilopediaKey,
             rawBiqCivilopediaKey: '',
             biqRecord: null,
-            biqIndex: null
+            biqIndex: null,
+            prtoStrategyRowIndexes: []
           });
         };
         Object.keys(civilopediaSections)
@@ -5183,6 +5194,9 @@ function buildReferenceTabs(civ3Path, options = {}) {
           biqIndex: Number.isFinite(entry && entry.biqIndex)
             ? Number(entry.biqIndex)
             : (biqRecord ? Number(biqRecord.index) : null),
+          prtoStrategyRowIndexes: tabSpec.key === 'units' && Array.isArray(entry && entry.prtoStrategyRowIndexes)
+            ? entry.prtoStrategyRowIndexes.slice()
+            : [],
           name: displayName,
           civilopediaSection1: section1RawText,
           originalCivilopediaSection1: section1RawText,
@@ -10651,12 +10665,50 @@ function findPlannedRecordIndex(records, recordRef) {
   if (ref.startsWith('@INDEX:')) {
     const idx = Number.parseInt(ref.slice(7), 10);
     if (!Number.isFinite(idx)) return -1;
-    return records.findIndex((record) => parseAssignedBiqIndex(record && record.index) === idx);
+    return records.findIndex((record) => (
+      parseAssignedBiqIndex(record && record.originalIndex) === idx
+      || parseAssignedBiqIndex(record && record.index) === idx
+    ));
   }
   return records.findIndex((record) => (
     String(record && record.key || '').trim().toUpperCase() === ref
     || String(record && record.newRecordRef || '').trim().toUpperCase() === ref
   ));
+}
+
+function normalizePlannedReorderOrder(order) {
+  if (!Array.isArray(order)) return [];
+  return order
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+}
+
+function applyPlannedRecordReorder(planned, order) {
+  if (!Array.isArray(planned) || planned.length === 0) return false;
+  const normalized = normalizePlannedReorderOrder(order);
+  if (normalized.length === 0) return false;
+  const byOriginalIndex = new Map();
+  planned.forEach((record) => {
+    const originalIndex = parseAssignedBiqIndex(record && record.originalIndex);
+    if (Number.isFinite(originalIndex) && originalIndex >= 0) byOriginalIndex.set(originalIndex, record);
+  });
+  const used = new Set();
+  const next = [];
+  normalized.forEach((oldIndex) => {
+    const record = byOriginalIndex.get(oldIndex);
+    if (!record || used.has(record)) return;
+    used.add(record);
+    next.push(record);
+  });
+  planned.forEach((record) => {
+    if (used.has(record)) return;
+    used.add(record);
+    next.push(record);
+  });
+  if (next.length !== planned.length) return false;
+  planned.splice(0, planned.length, ...next);
+  planned.forEach((record, idx) => { record.index = idx; });
+  return true;
 }
 
 function getReferenceRecordOpsForPlanning(tabs, tabKey) {
@@ -10682,8 +10734,14 @@ function buildPlannedReferenceIndexMaps(tabs, biqTab) {
         originalIndex: Number.isFinite(recordIndex) ? recordIndex : idx
       };
     });
-    getReferenceRecordOpsForPlanning(tabs, tabKey).forEach((op) => {
+    const planningOps = getReferenceRecordOpsForPlanning(tabs, tabKey);
+    const reorderOps = [];
+    planningOps.forEach((op) => {
       const kind = String(op && op.op || '').trim().toLowerCase();
+      if (kind === 'reorder') {
+        reorderOps.push(op);
+        return;
+      }
       if (kind === 'add' || kind === 'copy') {
         const newRecordRef = String(op && op.newRecordRef || '').trim().toUpperCase();
         if (!newRecordRef) return;
@@ -10705,6 +10763,10 @@ function buildPlannedReferenceIndexMaps(tabs, biqTab) {
         planned.forEach((record, idx) => { record.index = idx; });
       }
     });
+    const lastReorder = reorderOps.length > 0 ? reorderOps[reorderOps.length - 1] : null;
+    if (lastReorder && String(sectionCode || '').trim().toUpperCase() === 'PRTO') {
+      applyPlannedRecordReorder(planned, lastReorder.order);
+    }
     const byKey = new Map();
     planned.forEach((record, idx) => {
       const key = String(record && record.key || '').trim().toUpperCase();
@@ -11448,6 +11510,22 @@ function collectBiqReferenceRecordOps(tabs) {
           recordRef
         });
         log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=delete ${sectionCode} ref=${recordRef}`);
+        return;
+      }
+      if (kind === 'reorder') {
+        if (sectionCode !== 'PRTO') return;
+        const order = Array.isArray(op.order)
+          ? op.order
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 0)
+          : [];
+        if (order.length === 0) return;
+        ops.push({
+          op: 'reorder',
+          sectionCode,
+          order
+        });
+        log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=reorder ${sectionCode} count=${order.length}`);
       }
     });
   }
