@@ -39379,6 +39379,16 @@ function renderReferenceTab(tab, tabKey) {
 
   const upsertUnitBiqIndexBadge = (itemBtn, entry, plannedRows) => {
     if (!itemBtn) return;
+    const showTooltip = tabKey === 'units' && state.settings && state.settings.showUnitBiqIndexTooltips !== false;
+    if (showTooltip) {
+      itemBtn.dataset.unitBiqIndexTooltip = buildUnitBiqIndexBadgeTitle(entry, plannedRows);
+      if (!itemBtn.dataset.unitBiqIndexTooltipBound) {
+        attachRichTooltip(itemBtn, () => itemBtn.dataset.unitBiqIndexTooltip || '');
+        itemBtn.dataset.unitBiqIndexTooltipBound = '1';
+      }
+    } else {
+      delete itemBtn.dataset.unitBiqIndexTooltip;
+    }
     const biqIndexText = tabKey === 'units' && state.settings && state.settings.showUnitBiqIndices === true
       ? buildUnitBiqIndexBadgeText(entry, plannedRows)
       : '';
@@ -39386,7 +39396,6 @@ function renderReferenceTab(tab, tabKey) {
     if (!biqIndexText) {
       if (biqIndexBadge && biqIndexBadge.parentNode) biqIndexBadge.parentNode.removeChild(biqIndexBadge);
       itemBtn.classList.remove('entry-list-item-has-biq-index');
-      delete itemBtn.dataset.unitBiqIndexTooltip;
       return;
     }
     itemBtn.classList.add('entry-list-item-has-biq-index');
@@ -39397,16 +39406,6 @@ function renderReferenceTab(tab, tabKey) {
     }
     biqIndexBadge.textContent = biqIndexText;
     biqIndexBadge.removeAttribute('title');
-    const showTooltip = state.settings && state.settings.showUnitBiqIndexTooltips !== false;
-    if (showTooltip) {
-      itemBtn.dataset.unitBiqIndexTooltip = buildUnitBiqIndexBadgeTitle(entry, plannedRows);
-      if (!itemBtn.dataset.unitBiqIndexTooltipBound) {
-        attachRichTooltip(itemBtn, () => itemBtn.dataset.unitBiqIndexTooltip || '');
-        itemBtn.dataset.unitBiqIndexTooltipBound = '1';
-      }
-    } else {
-      delete itemBtn.dataset.unitBiqIndexTooltip;
-    }
   };
 
   const refreshUnitBiqIndexBadges = () => {
@@ -39922,6 +39921,8 @@ function renderReferenceTab(tab, tabKey) {
           ensureUnitReorderSourceThumbnail(itemBtn, entry);
         });
         itemBtn.addEventListener('dragstart', (event) => {
+          richTooltip.active = false;
+          hideRichTooltip();
           if (!isUnitReorderableEntry(entry) || getUnitReorderDisabledReason()) {
             logUnitReorder('dragstart-blocked', {
               name: entry && (entry.name || entry.civilopediaKey) || '',
@@ -40067,6 +40068,8 @@ function renderReferenceTab(tab, tabKey) {
           renderReferenceBody({ preserveDetailIfSameSelection: true });
         });
         itemBtn.addEventListener('dragend', (event) => {
+          richTooltip.active = false;
+          hideRichTooltip();
           logUnitReorder('dragend', {
             sourceIndex: unitReorderDrag && unitReorderDrag.savedIndex,
             dropEffect: event.dataTransfer && event.dataTransfer.dropEffect || '',

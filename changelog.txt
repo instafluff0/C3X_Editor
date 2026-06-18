@@ -1,5 +1,8 @@
 * RELEASE 27.18
-- Added Units-list reorder diagnostics for drag start, highlighted drop target changes, row drops, pane-only drops, no-op drops, and applied reorder results.
+- Fixed Units-list BIQ index hover details so they still work when visible index badges are hidden and are cancelled immediately when a unit drag starts or ends.
+- Fixed the reference dirty-cache regression harness so it extracts the renderer dirty-state helper used by `rebuildReferenceDirtyCacheForTab`.
+- Added a hostile multi-turn saved-BIQ unit regression that composes add, copy, delete, reorder, repeated save/reload, AI-strategy changes, PRTO self-reference lists, hidden strategy rows, and downstream unit-index references in one workflow.
+- Added Units-list and BIQ save diagnostics for unit reordering, including drag start, highlighted drop target changes, row drops, pane-only drops, no-op drops, applied order fingerprints, PRTO primary remap summaries, hidden AI-strategy child-row remaps, and downstream unit-reference field families touched during save.
 - Fixed Units-list BIQ index hover styling so rows keep the same thumbnail padding with indices shown and drag-enabled rows keep the grab cursor.
 - Added a default-on File -> Settings -> Units toggle for Units-list BIQ index hover details and shortened the tooltip's first label to "Primary Index" to avoid truncation.
 - Switched Units-list BIQ index annotations to the app's rich blue tooltip on row hover, including primary PRTO index and named hidden AI-strategy rows.

@@ -383,8 +383,23 @@ test('File Settings Units can toggle Unit BIQ index badges without reloading', (
   assert.match(rendererText, /buildUnitBiqIndexBadgeText\(entry/);
   assert.match(rendererText, /attachRichTooltip\(itemBtn,\s*\(\) => itemBtn\.dataset\.unitBiqIndexTooltip \|\| ''\)/);
   assert.match(rendererText, /biqIndexBadge\.removeAttribute\('title'\)/);
-  assert.match(rendererText, /const showTooltip = state\.settings && state\.settings\.showUnitBiqIndexTooltips !== false/);
+  assert.match(rendererText, /const showTooltip = tabKey === 'units' && state\.settings && state\.settings\.showUnitBiqIndexTooltips !== false/);
   assert.match(rendererText, /itemBtn\.dataset\.unitBiqIndexTooltip = buildUnitBiqIndexBadgeTitle\(entry,\s*plannedRows\)/);
+  assert.match(
+    rendererText,
+    /const showTooltip = tabKey === 'units' && state\.settings && state\.settings\.showUnitBiqIndexTooltips !== false;[\s\S]*?itemBtn\.dataset\.unitBiqIndexTooltip = buildUnitBiqIndexBadgeTitle\(entry,\s*plannedRows\);[\s\S]*?const biqIndexText = tabKey === 'units' && state\.settings && state\.settings\.showUnitBiqIndices === true/,
+    'hover tooltip setup must not depend on visible BIQ index badges'
+  );
+  assert.match(
+    rendererText,
+    /itemBtn\.addEventListener\('dragstart', \(event\) => \{[\s\S]*?richTooltip\.active = false;[\s\S]*?hideRichTooltip\(\);/,
+    'unit drag start should cancel any visible rich tooltip'
+  );
+  assert.match(
+    rendererText,
+    /itemBtn\.addEventListener\('dragend', \(event\) => \{[\s\S]*?richTooltip\.active = false;[\s\S]*?hideRichTooltip\(\);/,
+    'unit drag end should cancel any visible rich tooltip'
+  );
   assert.match(rendererText, /buildUnitBiqIndexBadgeRowsByIdentity/);
   assert.match(rendererText, /getUnitAiStrategyMaskForBadge/);
   assert.match(rendererText, /onFieldValueChange: refreshUnitBiqIndexBadges/);
