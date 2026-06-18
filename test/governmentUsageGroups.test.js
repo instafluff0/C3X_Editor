@@ -64,6 +64,21 @@ test('Governments usage UI is mounted in the Governments detail pane and styled'
     /else if \(tabKey === 'governments'\) \{[\s\S]*?identityMeta\.appendChild\(identityGrid\);[\s\S]*?if \(governmentUtilityStack\) identityMeta\.appendChild\(governmentUtilityStack\);[\s\S]*?governmentIdentityTechStack[\s\S]*?identityMeta\.appendChild\(governmentIdentityTechStack\);[\s\S]*?if \(governmentUsageBoards\) identityMeta\.appendChild\(governmentUsageBoards\);[\s\S]*?\}/,
     'Expected Governments detail order to be identity, Civilopedia\/icons, Required Tech, then Required By'
   );
+  assert.match(
+    source,
+    /function renderGovernmentUsagePicker[\s\S]*?attachRichTooltip\(picker, createRelationshipPickerTooltip\(\{[\s\S]*?relationLabel: 'Required By'/,
+    'Expected Government Required By picker cards to expose downstream source tooltips'
+  );
+  assert.match(
+    source,
+    /function renderGovernmentUsageGroup[\s\S]*?attachRichTooltip\(label, createRelationshipPickerTooltip\(\{[\s\S]*?mode: 'group'[\s\S]*?relationLabel: 'Required By'/,
+    'Expected Government Required By group labels to expose downstream source tooltips directly'
+  );
+  assert.match(
+    source,
+    /function makeGovernmentUsageDeferredPicker[\s\S]*?attachRichTooltip\(host, createRelationshipPickerTooltip\(\{[\s\S]*?relationLabel: 'Required By'/,
+    'Expected deferred Government Required By cards to expose the same downstream source tooltip'
+  );
 
   assert.match(styles, /\.resource-identity-stack,\n\.government-identity-stack \{/);
   assert.match(styles, /\.resource-identity-tech-stack,\n\.government-identity-tech-stack \{/);

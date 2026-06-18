@@ -59,6 +59,46 @@ test('Techs Enables Worker Jobs thumbnails use TFRM command buttons', () => {
   );
 });
 
+test('Techs Enables pickers expose relationship source tooltips', () => {
+  const source = fs.readFileSync(RENDERER_PATH, 'utf8');
+
+  assert.match(
+    source,
+    /function createRelationshipPickerTooltip\(\{[\s\S]*?Target:[\s\S]*?Field:[\s\S]*?not the selected record itself/,
+    'Expected reverse relationship cards to describe the downstream target and field they edit'
+  );
+  assert.match(
+    source,
+    /function renderTechnologyUnlockPicker[\s\S]*?attachRichTooltip\(picker, createRelationshipPickerTooltip\(\{[\s\S]*?relationLabel: 'Enables'/,
+    'Expected Tech Enables picker cards to expose the shared relationship tooltip'
+  );
+  assert.match(
+    source,
+    /function renderTechnologyUnlockGroup[\s\S]*?attachRichTooltip\(label, createRelationshipPickerTooltip\(\{[\s\S]*?mode: 'group'[\s\S]*?relationLabel: 'Enables'/,
+    'Expected Tech Enables group labels to expose the relationship tooltip directly'
+  );
+  assert.match(
+    source,
+    /function makeTechnologyUnlockDeferredPicker[\s\S]*?attachRichTooltip\(host, createRelationshipPickerTooltip\(\{[\s\S]*?relationLabel: 'Enables'/,
+    'Expected deferred Tech Enables cards to expose the same tooltip before hydration'
+  );
+  assert.match(
+    source,
+    /function getBiqSourceMeta\(tab = null\) \{[\s\S]*?state\.bundle && state\.bundle\.biq && state\.bundle\.biq\.sourcePath[\s\S]*?source: 'BIQ'/,
+    'Expected relationship tooltips to have a BIQ source fallback for group labels and add cards'
+  );
+  assert.match(
+    source,
+    /isTechnologyUnlockBiqStructureGroup\(spec\) \|\| isResourceUsageBiqStructureGroup\(spec\)[\s\S]*?formatSourceInfo\(getBiqSourceMeta\(sourceTab\), 'BIQ'\)[\s\S]*?Section: \$\{spec\.sectionCode/,
+    'Expected Worker Jobs and other BIQ structure relationships to report BIQ source metadata, not C3X effective config metadata'
+  );
+  assert.doesNotMatch(
+    source,
+    /isTechnologyUnlockBiqStructureGroup\(spec\) \|\| isResourceUsageBiqStructureGroup\(spec\)[\s\S]*?getSectionTabSourceMeta\(sourceTab\)/,
+    'BIQ structure relationship tooltips must not use sectioned C3X config source metadata'
+  );
+});
+
 test('Tech Tree boxes include obsoleted improvements with red X thumbnails', () => {
   const source = fs.readFileSync(RENDERER_PATH, 'utf8');
   assert.match(
