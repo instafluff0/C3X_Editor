@@ -3,6 +3,7 @@
 - Added lazy thumbnails to Terrain Type reference dropdowns, so Pollution Yields shows terrain art and Worker Terraform Action shows worker command-button art without preloading hidden option rows.
 - Added a Map city Bulk Improvements modal with thumbnail multi-selects, city-owner/population/coastal filters, sorted affected-city preview with unchanged rows de-emphasized, clearer exact-set wording, and one-step undoable apply behavior.
 - Tightened the single-city Map Improvements panel with compact rows, full-width search, aligned present-count text, and a Multi-City Edit action.
+- Fixed single-city Map city edits so name, population, culture, owner, and improvement changes immediately enable the Map modal Save, Undo, and Undo All controls, including Cmd/Ctrl+Z for active improvement toggles.
 - Fixed Units-list BIQ index hover details so they still work when visible index badges are hidden and are cancelled immediately when a unit drag starts or ends.
 - Fixed the reference dirty-cache regression harness so it extracts the renderer dirty-state helper used by `rebuildReferenceDirtyCacheForTab`.
 - Added a hostile multi-turn saved-BIQ unit regression that composes add, copy, delete, reorder, repeated save/reload, AI-strategy changes, PRTO self-reference lists, hidden strategy rows, and downstream unit-index references in one workflow.

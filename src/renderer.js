@@ -3632,8 +3632,26 @@ function refreshUnitTableModalActionButtons() {
   });
 }
 
+function hasChangedTrackedEditSession(key, getValue) {
+  const sessionKey = String(key || '');
+  const session = sessionKey && state.editSessionByKey
+    ? state.editSessionByKey[sessionKey]
+    : null;
+  return !!(session
+    && typeof getValue === 'function'
+    && normalizeEditSessionValue(getValue()) !== normalizeEditSessionValue(session.initialValue));
+}
+
+function hasActiveChangedMapCityEditSession() {
+  return hasChangedTrackedEditSession(
+    state.activeMapCityEditSessionKey,
+    state.activeMapCityEditSessionGetValue
+  );
+}
+
 function hasMapModalUndoableChanges() {
-  return hasTrackedUnsavedMapChanges() && !!getLatestScopedUndoSnapshot('map');
+  return hasTrackedUnsavedMapChanges()
+    && (!!getLatestScopedUndoSnapshot('map') || hasActiveChangedMapCityEditSession());
 }
 
 function getMapCityEditSessionKey(cityRef) {
@@ -3722,6 +3740,11 @@ function syncActiveMapUnitEditSession(nextKey, getValue) {
     if (state.activeMapUnitEditSessionKey !== normalizedNextKey) return;
     ensureTrackedEditSession(normalizedNextKey, getValue());
   }, 0);
+}
+
+function commitActiveMapEditSessions() {
+  commitActiveMapCityEditSession();
+  commitActiveMapUnitEditSession();
 }
 
 function wireGroupedUndoSession(input, { key, undoKey, getValue, commitOnChange = false } = {}) {
@@ -55900,7 +55923,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const cityUndoSessionKey = getMapCityEditSessionKey(cityRef);
     const getCityUndoSessionValue = () => getMapCityEditSessionValue(cityRecord);
     const ensureCityUndoSession = () => {
-      ensureTrackedEditSession(cityUndoSessionKey, getCityUndoSessionValue());
+      syncActiveMapCityEditSession(cityUndoSessionKey, getCityUndoSessionValue);
+      ensureTrackedEditSession(cityUndoSessionKey, getCityUndoSessionValue(), getCityUndoSessionValue);
+    };
+    const markCityDirty = (reason) => {
+      setDirty(true, { knownDirtyTab: 'map', reason });
+      refreshMapModalUndoButtons();
     };
     const syncTileInfoCityTint = () => {
       const ownerValue = getCityOwnerPickerValue();
@@ -55955,7 +55983,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           if (shouldCommit && nextValue !== previousValue) {
             ensureCityUndoSession();
             setMapFieldValue(cityRecord, 'name', nextValue, 'Name');
-            setDirty(true);
+            markCityDirty('city-title');
             scheduleMapPartialRefresh([state.biqMapSelectedTile], 120, {
               source: 'city-title',
               cityRef: String(cityRef),
@@ -56002,7 +56030,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         if (!confirmed) return;
         rememberMapUndoSnapshot();
         if (removeCityByIndex(cityRecord && cityRecord.index != null ? cityRecord.index : cityRef)) {
-          setDirty(true);
+          markCityDirty('city-delete');
           rerenderMapViewPreservingScroll();
         }
       });
@@ -56034,7 +56062,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         setMapFieldValue(record, 'owner', String(ownerSpec.owner), 'Owner');
       });
       syncTileInfoCityTint();
-      setDirty(true);
+      markCityDirty(options && options.source || 'city-owner');
       scheduleMapEditRerender(0, {
         source: options && options.source || 'city-owner',
         cityRef: String(cityRef),
@@ -56140,7 +56168,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         if (nextValue === previousValue) return;
         ensureCityUndoSession();
         setMapFieldValue(cityRecord, key, nextValue, label);
-        setDirty(true);
+        markCityDirty('city-field');
         if (refreshMode === 'partial') {
           scheduleMapPartialRefresh([state.biqMapSelectedTile], 180, {
             source: 'city-field',
@@ -56280,7 +56308,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	          else currentSet.add(idx);
 	          setCityBuildingSet(cityRecord, currentSet);
 	          const wallsChanged = syncCityWallsFlagFromBuildings(cityRecord, currentSet, bldgRecords);
-	          setDirty(true);
+	          markCityDirty('city-building');
 	          const isActive = currentSet.has(idx);
             const afterCount = countVisibleCityBuildings(currentSet, bldgRecords);
 	          row.classList.toggle('active', isActive);
@@ -63346,6 +63374,8 @@ async function undoOneStep(options = {}) {
 
 async function undoMapOneStep() {
   const startedAt = mapPerfNowMs();
+  flushDirtyUiRefresh();
+  commitActiveMapEditSessions();
   const undoSnapshot = getLatestScopedUndoSnapshot('map');
   if (!state.bundle || !undoSnapshot) {
     setStatus('No unsaved map changes to undo.');
@@ -63424,6 +63454,8 @@ async function undoAllChanges(options = {}) {
 }
 
 async function undoAllMapChanges() {
+  flushDirtyUiRefresh();
+  commitActiveMapEditSessions();
   if (!state.bundle || !hasTrackedUnsavedMapChanges()) {
     setStatus('No unsaved map changes to undo.');
     return false;

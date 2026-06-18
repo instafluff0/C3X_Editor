@@ -97,7 +97,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /async function undoMapOneStep\(\) \{[\s\S]*?appendDebugLog\('biq-map:undo-start', \{[\s\S]*?const restorePrepareStartedAt = mapPerfNowMs\(\);[\s\S]*?const historyBuildStartedAt = mapPerfNowMs\(\);[\s\S]*?appendDebugLog\('biq-map:undo-end', \{[\s\S]*?restorePrepareMs,[\s\S]*?historyBuildMs,[\s\S]*?applyMs:[\s\S]*?totalMs:/,
+    /async function undoMapOneStep\(\) \{[\s\S]*?flushDirtyUiRefresh\(\);[\s\S]*?commitActiveMapEditSessions\(\);[\s\S]*?appendDebugLog\('biq-map:undo-start', \{[\s\S]*?const restorePrepareStartedAt = mapPerfNowMs\(\);[\s\S]*?const historyBuildStartedAt = mapPerfNowMs\(\);[\s\S]*?appendDebugLog\('biq-map:undo-end', \{[\s\S]*?restorePrepareMs,[\s\S]*?historyBuildMs,[\s\S]*?applyMs:[\s\S]*?totalMs:/,
     'map undo should log restore preparation, history rebuild, and apply timings so remaining undo stalls can be profiled directly'
   );
   assert.match(
@@ -515,7 +515,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /setMapFieldValue\(cityRecord, 'name', nextValue, 'Name'\);[\s\S]*?setDirty\(true\);[\s\S]*?scheduleMapPartialRefresh\(\[state\.biqMapSelectedTile\], 120, \{[\s\S]*?source: 'city-title'/,
+    /setMapFieldValue\(cityRecord, 'name', nextValue, 'Name'\);[\s\S]*?markCityDirty\('city-title'\);[\s\S]*?scheduleMapPartialRefresh\(\[state\.biqMapSelectedTile\], 120, \{[\s\S]*?source: 'city-title'/,
     'renaming a city should redraw only the selected map area instead of refreshing the whole map canvas'
   );
   assert.match(
@@ -1312,8 +1312,8 @@ test('map modal undo all follows tracked map dirty state', () => {
   );
   assert.match(
     rendererText,
-    /function hasMapModalUndoableChanges\(\) \{[\s\S]*?return hasTrackedUnsavedMapChanges\(\) && !!getLatestScopedUndoSnapshot\('map'\);[\s\S]*?\}[\s\S]*?setModalUndoSaveButtonState\(mapModal, \{[\s\S]*?canEdit: isScenarioMode\(\),[\s\S]*?hasUndoable,[\s\S]*?hasSaveable: hasUndoable && hasTrackedUnsavedMapChanges\(\)/,
-    'map modal Undo and Undo All should disable together unless tracked map changes have a map-scoped undo snapshot'
+    /function hasActiveChangedMapCityEditSession\(\) \{[\s\S]*?state\.activeMapCityEditSessionKey[\s\S]*?state\.activeMapCityEditSessionGetValue[\s\S]*?\}[\s\S]*?function hasMapModalUndoableChanges\(\) \{[\s\S]*?return hasTrackedUnsavedMapChanges\(\)[\s\S]*?getLatestScopedUndoSnapshot\('map'\)[\s\S]*?hasActiveChangedMapCityEditSession\(\)[\s\S]*?\}[\s\S]*?setModalUndoSaveButtonState\(mapModal, \{[\s\S]*?canEdit: isScenarioMode\(\),[\s\S]*?hasUndoable,[\s\S]*?hasSaveable: hasUndoable && hasTrackedUnsavedMapChanges\(\)/,
+    'map modal Undo and Undo All should enable for tracked map changes with a committed map snapshot or an active changed city session'
   );
   assert.match(
     rendererText,

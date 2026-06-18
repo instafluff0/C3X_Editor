@@ -234,6 +234,12 @@ test('Undo and Undo All activation use effective unsaved state across main app a
     /getTabDirtyCount\('map'\) > 0[\s\S]*?hasPendingMapWriteState\(mapTab\)[\s\S]*?getLatestScopedUndoSnapshot\('map'\)[\s\S]*?hasChangedFromClean\(mapTab, getCleanTabsObject\(\)\.map \|\| null\)/,
     'map dirty tracking must account for badge counts, pending map write state, scoped undo snapshots, and clean-snapshot comparison'
   );
+
+  assert.match(
+    source,
+    /const ensureCityUndoSession = \(\) => \{[\s\S]*?syncActiveMapCityEditSession\(cityUndoSessionKey, getCityUndoSessionValue\);[\s\S]*?ensureTrackedEditSession\(cityUndoSessionKey, getCityUndoSessionValue\(\), getCityUndoSessionValue\);[\s\S]*?\};[\s\S]*?const markCityDirty = \(reason\) => \{[\s\S]*?setDirty\(true, \{ knownDirtyTab: 'map', reason \}\);[\s\S]*?refreshMapModalUndoButtons\(\);[\s\S]*?\};[\s\S]*?setMapFieldValue\(cityRecord, 'name', nextValue, 'Name'\);[\s\S]*?markCityDirty\('city-title'\);[\s\S]*?setMapFieldValue\(cityRecord, key, nextValue, label\);[\s\S]*?markCityDirty\('city-field'\);[\s\S]*?setCityBuildingSet\(cityRecord, currentSet\);[\s\S]*?markCityDirty\('city-building'\);/,
+    'single-city Map editor edits must become active map-scoped dirty/undo changes immediately'
+  );
 });
 
 test('Save and Undo shortcuts route through the shared main and modal command contract', () => {
@@ -345,8 +351,8 @@ test('Undo and Undo All effects restore snapshots and refresh all dirty badge su
   const undoAllMapChanges = extractFunctionSource(source, 'undoAllMapChanges');
   assert.match(
     undoAllMapChanges,
-    /if \(!state\.bundle \|\| !hasTrackedUnsavedMapChanges\(\)\)[\s\S]*?const cleanMapSnapshot = getCleanMapUndoSnapshot\(\);[\s\S]*?applyMapUndoSnapshotToCurrentBundle\(cleanMapSnapshot, \{[\s\S]*?removeAll: true/,
-    'map Undo All must use map-scoped clean snapshots and remove map-scoped undo history'
+    /flushDirtyUiRefresh\(\);[\s\S]*?commitActiveMapEditSessions\(\);[\s\S]*?if \(!state\.bundle \|\| !hasTrackedUnsavedMapChanges\(\)\)[\s\S]*?const cleanMapSnapshot = getCleanMapUndoSnapshot\(\);[\s\S]*?applyMapUndoSnapshotToCurrentBundle\(cleanMapSnapshot, \{[\s\S]*?removeAll: true/,
+    'map Undo All must commit active map edit sessions, use map-scoped clean snapshots, and remove map-scoped undo history'
   );
 });
 
