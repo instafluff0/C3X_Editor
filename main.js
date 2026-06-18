@@ -966,10 +966,22 @@ function sendScenarioOptionToggle(channel) {
   target.webContents.send(channel);
 }
 
+function sendAppCommand(command) {
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:app-command', { command });
+}
+
 function buildAppMenu() {
   const fileMenu = {
     label: 'File',
     submenu: [
+      {
+        label: 'Save',
+        accelerator: 'CommandOrControl+S',
+        click: () => sendAppCommand('save')
+      },
+      { type: 'separator' },
       {
         label: 'Enable Custom Rules',
         type: 'checkbox',

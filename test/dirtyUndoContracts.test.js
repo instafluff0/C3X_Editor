@@ -4,9 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const RENDERER_PATH = path.join(__dirname, '..', 'src', 'renderer.js');
+const MAIN_PATH = path.join(__dirname, '..', 'main.js');
+const PRELOAD_PATH = path.join(__dirname, '..', 'preload.js');
 
 function rendererSource() {
   return fs.readFileSync(RENDERER_PATH, 'utf8');
+}
+
+function mainSource() {
+  return fs.readFileSync(MAIN_PATH, 'utf8');
+}
+
+function preloadSource() {
+  return fs.readFileSync(PRELOAD_PATH, 'utf8');
 }
 
 function extractFunctionSource(source, name) {
@@ -223,6 +233,71 @@ test('Undo and Undo All activation use effective unsaved state across main app a
     hasTrackedUnsavedMapChanges,
     /getTabDirtyCount\('map'\) > 0[\s\S]*?hasPendingMapWriteState\(mapTab\)[\s\S]*?getLatestScopedUndoSnapshot\('map'\)[\s\S]*?hasChangedFromClean\(mapTab, getCleanTabsObject\(\)\.map \|\| null\)/,
     'map dirty tracking must account for badge counts, pending map write state, scoped undo snapshots, and clean-snapshot comparison'
+  );
+});
+
+test('Save and Undo shortcuts route through the shared main and modal command contract', () => {
+  const renderer = rendererSource();
+  const main = mainSource();
+  const preload = preloadSource();
+
+  assert.match(
+    main,
+    /function sendAppCommand\(command\)[\s\S]*?webContents\.send\('manager:app-command', \{ command \}\);/,
+    'main process should send app command requests to the focused renderer'
+  );
+  assert.match(
+    main,
+    /label: 'Save',[\s\S]*?accelerator: 'CommandOrControl\+S',[\s\S]*?click: \(\) => sendAppCommand\('save'\)/,
+    'File menu Save should expose the platform-native CommandOrControl+S accelerator'
+  );
+  assert.match(
+    preload,
+    /onAppCommand: \(handler\) => \{[\s\S]*?ipcRenderer\.on\('manager:app-command', listener\);[\s\S]*?ipcRenderer\.removeListener\('manager:app-command', listener\);/,
+    'preload should expose a removable app-command listener'
+  );
+
+  const dispatchAppCommand = extractFunctionSource(renderer, 'dispatchAppCommand');
+  assert.match(
+    dispatchAppCommand,
+    /if \(isBlockingShortcutModalOpen\(\)\) return false;[\s\S]*?flushDirtyUiRefresh\(\);[\s\S]*?refreshDirtyUi\(\);[\s\S]*?clickEnabledButton\(getActiveShortcutActionButton\(key\)\)/,
+    'shortcut dispatch should refresh shared dirty state and click the active shared button only when no blocking modal is open'
+  );
+
+  const getActiveShortcutActionButton = extractFunctionSource(renderer, 'getActiveShortcutActionButton');
+  assert.match(
+    getActiveShortcutActionButton,
+    /isModalVisible\(mapModal\)[\s\S]*?mapModal\.undoBtn[\s\S]*?mapModal\.saveBtn/,
+    'Map modal shortcut routing must prefer map-scoped Save and Undo buttons'
+  );
+  assert.match(
+    getActiveShortcutActionButton,
+    /isModalVisible\(techTreeModal\)[\s\S]*?techTreeModal\.undoBtn[\s\S]*?techTreeModal\.saveBtn[\s\S]*?isModalVisible\(unitAvailabilityModal\)[\s\S]*?unitAvailabilityModal\.undoBtn[\s\S]*?unitAvailabilityModal\.saveBtn[\s\S]*?isModalVisible\(unitTableModal\)[\s\S]*?unitTableModal\.undoBtn[\s\S]*?unitTableModal\.saveBtn[\s\S]*?el\.undoBtn[\s\S]*?el\.saveBtn/,
+    'shortcut routing should fall through modal action clusters before the main toolbar'
+  );
+
+  const handleAppShortcutKeydown = extractFunctionSource(renderer, 'handleAppShortcutKeydown');
+  assert.match(
+    handleAppShortcutKeydown,
+    /command === 'undo' && isNativeTextUndoTarget\(ev\.target\)/,
+    'Ctrl/Cmd+Z should preserve native text-field undo instead of stealing focused text edits'
+  );
+  assert.match(
+    handleAppShortcutKeydown,
+    /ev\.preventDefault\(\);[\s\S]*?ev\.stopPropagation\(\);[\s\S]*?dispatchAppCommand\(command\);/,
+    'handled shortcuts should suppress browser defaults and use the shared dispatcher'
+  );
+
+  const init = extractFunctionSource(renderer, 'init');
+  assert.match(
+    init,
+    /document\.addEventListener\('keydown', handleAppShortcutKeydown, \{ capture: true \}\);/,
+    'shortcut handling should be installed as a capture listener'
+  );
+  assert.match(
+    init,
+    /onAppCommand[\s\S]*?dispatchAppCommand\(command\);/,
+    'menu app commands should route through the same renderer dispatcher as keydown shortcuts'
   );
 });
 

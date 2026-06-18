@@ -69,6 +69,32 @@ test('Tech Tree worker-job unlocks draw 32px command button thumbnails', () => {
   );
 });
 
+test('Terrain type reference pickers lazy-load pollution and worker-action thumbnails', () => {
+  const source = fs.readFileSync(RENDERER_PATH, 'utf8');
+  assert.match(
+    source,
+    /function getBiqStructureReferenceThumbRenderer\(sectionCode, baseKey, refSpec\) \{[\s\S]*?code === 'TERR' && canon === 'pollutioneffect' && targetSection === 'TERR'[\s\S]*?renderTerrainReferenceThumb\([\s\S]*?code === 'TERR' && canon === 'workerjob' && targetSection === 'TFRM'[\s\S]*?loadTfrmCommandButtonThumbnail\(\{ index: workerIndex \}, holder\)/,
+    'Expected Terrain Type reference fields to choose terrain and worker-command thumbnail renderers'
+  );
+  assert.match(
+    source,
+    /const referenceThumbRenderer = getBiqStructureReferenceThumbRenderer\(selected\.code, baseKey, refSpec\);[\s\S]*?createReferencePicker\(\{[\s\S]*?renderOptionThumb: referenceThumbRenderer/,
+    'Expected BIQ structure reference pickers to receive the field-specific thumbnail renderer'
+  );
+  assert.match(
+    source,
+    /const customRenderer = typeof thumbNode\.__thumbRenderer === 'function'[\s\S]*?customRenderer\(\{[\s\S]*?selected: false[\s\S]*?const hydrateFirstPendingOptionThumbs = \(limit = 32\) => \{[\s\S]*?if \(loaded === 0\) hydrateFirstPendingOptionThumbs\(limit\);[\s\S]*?if \(showOptionThumbs && \(renderOptionThumb \|\| \(rowThumbEntry && targetTabKey\)\)\) \{[\s\S]*?thumb\.__thumbRenderer = renderOptionThumb/,
+    'Expected custom picker thumbnails to hydrate through the same visible-row queue as regular thumbnails'
+  );
+  const terrainThumbStart = source.indexOf('function renderTerrainReferenceThumb(holder, optionLabel)');
+  assert.ok(terrainThumbStart >= 0, 'Expected terrain reference thumbnail renderer');
+  const terrainThumbEnd = source.indexOf('function renderNaturalWonderPrereqEditor', terrainThumbStart);
+  const terrainThumbSource = source.slice(terrainThumbStart, terrainThumbEnd);
+  assert.ok(terrainThumbSource.includes('findTerrainPreviewEntry(optionLabel)'), 'Expected terrain thumbs to resolve the pedia entry directly');
+  assert.ok(terrainThumbSource.includes('loadReferenceListThumbnail(found.tabKey, found.entry, holder)'), 'Expected terrain thumbs to use the shared thumbnail loader');
+  assert.equal(terrainThumbSource.includes('cloneNode'), false, 'Terrain reference thumbnails should not clone an async-empty placeholder');
+});
+
 test('Worker command button preview resolves NormButtons through Conquests art lookup', () => {
   const source = fs.readFileSync(ART_PREVIEW_PATH, 'utf8');
   assert.match(

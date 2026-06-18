@@ -265,6 +265,7 @@ const state = {
   mapSettingsMenuUnsubscribe: null,
   resourceSettingsMenuUnsubscribe: null,
   textFileEncodingMenuUnsubscribe: null,
+  appCommandUnsubscribe: null,
   startupPerformanceMode: 'high',
   sectionValidationError: '',
   copyDebugFeedbackTimer: null,
@@ -2437,6 +2438,117 @@ function updateDeleteScenarioButtonState() {
   el.deleteScenarioBtn.title = '';
 }
 
+function isMacShortcutPlatform() {
+  const platform = typeof navigator !== 'undefined' ? String(navigator.platform || '') : '';
+  return /Mac|iPhone|iPad|iPod/i.test(platform);
+}
+
+function getShortcutLabel(command) {
+  const prefix = isMacShortcutPlatform() ? 'Cmd' : 'Ctrl';
+  const key = String(command || '').toLowerCase() === 'undo' ? 'Z' : 'S';
+  return `${prefix}+${key}`;
+}
+
+function getShortcutTitle(label, command) {
+  return `${label} (${getShortcutLabel(command)})`;
+}
+
+function isVisibleElement(node) {
+  return !!(node && node.isConnected && !node.classList.contains('hidden'));
+}
+
+function isModalVisible(modal) {
+  return !!(modal && isVisibleElement(modal.node));
+}
+
+function isNativeTextUndoTarget(target) {
+  const element = target instanceof Element ? target : null;
+  if (!element) return false;
+  if (element.closest('[contenteditable=""], [contenteditable="true"]')) return true;
+  const input = element.closest('input, textarea');
+  if (!input) return false;
+  if (input instanceof HTMLTextAreaElement) return true;
+  if (!(input instanceof HTMLInputElement)) return false;
+  const type = String(input.type || 'text').toLowerCase();
+  return [
+    'date',
+    'datetime-local',
+    'email',
+    'month',
+    'number',
+    'password',
+    'search',
+    'tel',
+    'text',
+    'time',
+    'url',
+    'week'
+  ].includes(type);
+}
+
+function isShortcutModifierEvent(ev) {
+  if (!ev || ev.altKey || ev.shiftKey) return false;
+  return isMacShortcutPlatform()
+    ? !!ev.metaKey && !ev.ctrlKey
+    : !!ev.ctrlKey && !ev.metaKey;
+}
+
+function getShortcutCommandFromEvent(ev) {
+  if (!isShortcutModifierEvent(ev)) return '';
+  const key = String(ev.key || '').toLowerCase();
+  if (key === 's') return 'save';
+  if (key === 'z') return 'undo';
+  return '';
+}
+
+function isBlockingShortcutModalOpen() {
+  if (state.unsavedModal.open || state.undoAllModal.open || state.deleteScenarioModal.open || state.scenarioSearchFolderModal.open || state.entityModal.open) {
+    return true;
+  }
+  if (isVisibleElement(el.aboutModalOverlay)
+    || isVisibleElement(el.filesReadModalOverlay)
+    || isVisibleElement(el.fileDiffModalOverlay)
+    || isVisibleElement(el.saveProgressModalOverlay)) {
+    return true;
+  }
+  const confirmOverlay = document.querySelector('.confirm-modal-overlay:not(.hidden)');
+  return !!confirmOverlay;
+}
+
+function getActiveShortcutActionButton(command) {
+  const key = String(command || '').toLowerCase();
+  if (isModalVisible(mapModal)) return key === 'undo' ? mapModal.undoBtn : mapModal.saveBtn;
+  if (isModalVisible(techTreeModal)) return key === 'undo' ? techTreeModal.undoBtn : techTreeModal.saveBtn;
+  if (isModalVisible(unitAvailabilityModal)) return key === 'undo' ? unitAvailabilityModal.undoBtn : unitAvailabilityModal.saveBtn;
+  if (isModalVisible(unitTableModal)) return key === 'undo' ? unitTableModal.undoBtn : unitTableModal.saveBtn;
+  return key === 'undo' ? el.undoBtn : el.saveBtn;
+}
+
+function clickEnabledButton(button) {
+  if (!button || !button.isConnected || button.disabled) return false;
+  button.click();
+  return true;
+}
+
+function dispatchAppCommand(command) {
+  const key = String(command || '').toLowerCase();
+  if (key !== 'save' && key !== 'undo') return false;
+  if (isBlockingShortcutModalOpen()) return false;
+  flushDirtyUiRefresh();
+  refreshDirtyUi();
+  return clickEnabledButton(getActiveShortcutActionButton(key));
+}
+
+function handleAppShortcutKeydown(ev) {
+  if (!ev || ev.defaultPrevented || ev.isComposing) return;
+  const command = getShortcutCommandFromEvent(ev);
+  if (!command) return;
+  if (command === 'undo' && isNativeTextUndoTarget(ev.target)) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  dispatchAppCommand(command);
+}
+
 function closeFilesReadModal() {
   if (!el.filesReadModalOverlay) return;
   el.filesReadModalOverlay.classList.add('hidden');
@@ -2524,10 +2636,11 @@ function refreshDirtyUi() {
   const saveBtnTitleBefore = el.saveBtn ? String(el.saveBtn.title || '') : '';
   if (saveButtons.length > 0) {
     const saveDisabled = !state.isDirty || state.isLoading || state.isSaving || !!state.sectionValidationError;
-    const saveTitle = state.sectionValidationError || '';
+    const saveTitle = state.sectionValidationError || getShortcutTitle('Save', 'save');
     saveButtons.forEach((btn) => {
       btn.disabled = saveDisabled;
       btn.title = saveTitle;
+      btn.setAttribute('aria-keyshortcuts', isMacShortcutPlatform() ? 'Meta+S' : 'Control+S');
     });
     saveBtnDisabledChanged = saveBtnDisabledBefore !== el.saveBtn.disabled;
     saveBtnTitleChanged = saveBtnTitleBefore !== String(el.saveBtn.title || '');
@@ -2546,6 +2659,8 @@ function refreshDirtyUi() {
   const undoBtnDisabledBefore = !!(el.undoBtn && el.undoBtn.disabled);
   if (el.undoBtn) {
     el.undoBtn.disabled = !hasUndoHistory || state.isLoading;
+    el.undoBtn.title = getShortcutTitle('Undo', 'undo');
+    el.undoBtn.setAttribute('aria-keyshortcuts', isMacShortcutPlatform() ? 'Meta+Z' : 'Control+Z');
     undoBtnDisabledChanged = undoBtnDisabledBefore !== el.undoBtn.disabled;
   }
   const undoAllBtnDisabledBefore = !!(el.undoAllBtn && el.undoAllBtn.disabled);
@@ -3474,11 +3589,16 @@ function hasImmediateEffectiveUndoableChanges() {
 
 function setModalUndoSaveButtonState(modal, { canEdit = true, hasUndoable = false, hasSaveable = false } = {}) {
   const undoDisabled = !canEdit || !hasUndoable || state.isLoading;
-  if (modal && modal.undoBtn) modal.undoBtn.disabled = undoDisabled;
+  if (modal && modal.undoBtn) {
+    modal.undoBtn.disabled = undoDisabled;
+    modal.undoBtn.title = getShortcutTitle('Undo', 'undo');
+    modal.undoBtn.setAttribute('aria-keyshortcuts', isMacShortcutPlatform() ? 'Meta+Z' : 'Control+Z');
+  }
   if (modal && modal.undoAllBtn) modal.undoAllBtn.disabled = undoDisabled;
   if (modal && modal.saveBtn) {
     modal.saveBtn.disabled = undoDisabled || !hasSaveable || state.isSaving || !state.bundle || !!state.sectionValidationError;
-    modal.saveBtn.title = state.sectionValidationError || '';
+    modal.saveBtn.title = state.sectionValidationError || getShortcutTitle('Save', 'save');
+    modal.saveBtn.setAttribute('aria-keyshortcuts', isMacShortcutPlatform() ? 'Meta+S' : 'Control+S');
   }
 }
 
@@ -14925,6 +15045,36 @@ function getBiqStructureRefSpec(sectionCode, baseKey) {
   return null;
 }
 
+function getBiqStructureReferenceThumbRenderer(sectionCode, baseKey, refSpec) {
+  const code = String(sectionCode || '').toUpperCase();
+  const canon = String(baseKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetSection = String(refSpec && refSpec.section || '').toUpperCase();
+  if (code === 'TERR' && canon === 'pollutioneffect' && targetSection === 'TERR') {
+    return ({ holder, option }) => renderTerrainReferenceThumb(
+      holder,
+      option && (option.displayLabel || option.label || option.value)
+    );
+  }
+  if (code === 'TERR' && canon === 'workerjob' && targetSection === 'TFRM') {
+    return ({ holder, option, value }) => {
+      const workerIndex = Number.parseInt(String((option && option.value) || value || ''), 10);
+      if (!Number.isFinite(workerIndex) || workerIndex < 0) return false;
+      const fallbackEntry = option && option.entry;
+      loadTfrmCommandButtonThumbnail({ index: workerIndex }, holder).then((ok) => {
+        if (!ok && holder && holder.isConnected && fallbackEntry) {
+          loadReferenceListThumbnail('workerActions', fallbackEntry, holder);
+        }
+      }).catch(() => {
+        if (holder && holder.isConnected && fallbackEntry) {
+          loadReferenceListThumbnail('workerActions', fallbackEntry, holder);
+        }
+      });
+      return true;
+    };
+  }
+  return null;
+}
+
 function getBiqStructureFieldSpec(sectionCode, field) {
   const code = String(sectionCode || '').toUpperCase();
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
@@ -24632,16 +24782,46 @@ function createReferencePicker(config) {
   const pendingThumbNodes = [];
   const maybeLoadThumbForNode = (thumbNode) => {
     if (!thumbNode || thumbNode.dataset.thumbPending !== '1') return false;
-    if (!showOptionThumbs || !targetTabKey) return false;
+    if (!showOptionThumbs) return false;
+    const customRenderer = typeof thumbNode.__thumbRenderer === 'function' ? thumbNode.__thumbRenderer : null;
+    const option = thumbNode.__thumbOption || null;
+    const value = String(thumbNode.__thumbValue ?? '');
     const entry = thumbNode.__thumbEntry || null;
-    if (!entry) return false;
     thumbNode.dataset.thumbPending = '0';
+    if (customRenderer) {
+      const painted = !!customRenderer({
+        holder: thumbNode,
+        option,
+        value,
+        targetTabKey,
+        selected: false
+      });
+      if (painted) return true;
+    }
+    if (!targetTabKey || !entry) return false;
     loadReferenceListThumbnail(targetTabKey, entry, thumbNode);
     return true;
   };
-  const hydrateVisibleOptionThumbs = (limit = 32) => {
-    if (!showOptionThumbs || !targetTabKey) return;
+  const hydrateFirstPendingOptionThumbs = (limit = 32) => {
+    if (!showOptionThumbs) return 0;
     let remaining = Math.max(1, Number(limit) || 32);
+    let loaded = 0;
+    for (let i = 0; i < pendingThumbNodes.length && remaining > 0; i += 1) {
+      const node = pendingThumbNodes[i];
+      if (!node || node.dataset.thumbPending !== '1') continue;
+      const row = node.closest('.tech-picker-row');
+      if (!row || row.classList.contains('hidden')) continue;
+      if (maybeLoadThumbForNode(node)) {
+        remaining -= 1;
+        loaded += 1;
+      }
+    }
+    return loaded;
+  };
+  const hydrateVisibleOptionThumbs = (limit = 32) => {
+    if (!showOptionThumbs) return;
+    let remaining = Math.max(1, Number(limit) || 32);
+    let loaded = 0;
     const menuRect = menu.getBoundingClientRect();
     for (let i = 0; i < pendingThumbNodes.length && remaining > 0; i += 1) {
       const node = pendingThumbNodes[i];
@@ -24650,8 +24830,12 @@ function createReferencePicker(config) {
       if (!row || row.classList.contains('hidden')) continue;
       const rowRect = row.getBoundingClientRect();
       if (rowRect.bottom < (menuRect.top - 42) || rowRect.top > (menuRect.bottom + 42)) continue;
-      if (maybeLoadThumbForNode(node)) remaining -= 1;
+      if (maybeLoadThumbForNode(node)) {
+        remaining -= 1;
+        loaded += 1;
+      }
     }
+    if (loaded === 0) hydrateFirstPendingOptionThumbs(limit);
   };
   let menuRowsBuilt = false;
   const buildMenuRows = () => {
@@ -24692,19 +24876,12 @@ function createReferencePicker(config) {
         if (hasThumbData(opt.entry)) return opt.entry;
         return resolvedRowThumbEntry || opt.entry || null;
       })();
-      let customThumbPainted = false;
-      if (showOptionThumbs && renderOptionThumb) {
-        customThumbPainted = !!renderOptionThumb({
-          holder: thumb,
-          option: opt,
-          value: opt.value,
-          targetTabKey,
-          selected: false
-        });
-      }
-      if (showOptionThumbs && !customThumbPainted && rowThumbEntry && targetTabKey) {
+      if (showOptionThumbs && (renderOptionThumb || (rowThumbEntry && targetTabKey))) {
         thumb.dataset.thumbPending = '1';
         thumb.__thumbEntry = rowThumbEntry;
+        thumb.__thumbOption = opt;
+        thumb.__thumbValue = opt.value;
+        if (renderOptionThumb) thumb.__thumbRenderer = renderOptionThumb;
         pendingThumbNodes.push(thumb);
       }
       selectBtn.appendChild(thumb);
@@ -43052,16 +43229,14 @@ function renderBiqTab(tab) {
               });
               controlWrap.appendChild(colorPicker);
             } else if (refOptions.length > 0) {
-              const useTerrainThumbFallback = selected.code === 'TERR' && baseKey === 'pollutioneffect';
+              const referenceThumbRenderer = getBiqStructureReferenceThumbRenderer(selected.code, baseKey, refSpec);
               const picker = createReferencePicker({
                 options: refOptions,
                 targetTabKey: refTargetTabKey,
                 currentValue: parsed == null ? '-1' : String(parsed),
                 searchPlaceholder: `Search ${String(refSpec.section || '').toUpperCase()}...`,
                 noneLabel: '(none)',
-                renderOptionThumb: useTerrainThumbFallback
-                  ? ({ holder, option }) => renderTerrainReferenceThumb(holder, option && option.label)
-                  : null,
+                renderOptionThumb: referenceThumbRenderer,
                 onSelect: (value, option) => {
                   rememberUndoSnapshot();
                   field.value = String(value);
@@ -45558,6 +45733,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   toolRow.appendChild(ownerTypeWrap);
 
+  const bulkCityImprovementsBtn = document.createElement('button');
+  bulkCityImprovementsBtn.type = 'button';
+  bulkCityImprovementsBtn.className = 'secondary map-toolbar-bulk-city-improvements';
+  bulkCityImprovementsBtn.innerHTML = '<span class="btn-icon">🏛</span>Bulk Improvements';
+  bulkCityImprovementsBtn.disabled = !isScenarioMode();
+  bulkCityImprovementsBtn.addEventListener('click', () => {
+    openBulkCityImprovementsModal();
+  });
+  toolRow.appendChild(bulkCityImprovementsBtn);
+
   const unitWrap = document.createElement('label');
   unitWrap.className = 'hint';
   unitWrap.textContent = 'Unit Type';
@@ -45633,6 +45818,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     showForMode(naturalWonderWrap, ['naturalWonder']);
     showForMode(ownerWrap, ['city', 'startingLocation', 'unit']);
     showForMode(ownerTypeWrap, ['city', 'startingLocation', 'unit']);
+    showForMode(bulkCityImprovementsBtn, ['city']);
     showForMode(unitWrap, ['unit']);
     if (mapPane) {
       mapPane.classList.toggle('map-mode-move', effectiveInteractionMode === 'move');
@@ -54406,6 +54592,499 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	    });
 	    return count;
 	  };
+  const getMapVisibleCityBuildingOptions = () => {
+    const records = Array.isArray(bldgSection && bldgSection.records) ? bldgSection.records : [];
+    return records.map((buildingRecord, idx) => {
+      const improvementEntry = resolveReferenceEntryForPicker('improvements', String(idx));
+      if (isCapitalizationImprovementRecord(buildingRecord, improvementEntry, idx)) return null;
+      return {
+        id: idx,
+        label: String((improvementEntry && improvementEntry.name) || (buildingRecord && buildingRecord.name) || `Building ${idx}`),
+        buildingRecord,
+        improvementEntry
+      };
+    }).filter(Boolean);
+  };
+  const getMapCityOwnerValue = (cityRecord) => {
+    const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || getMapFieldValue(cityRecord, 'ownertype', '3'));
+    const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || getMapFieldValue(cityRecord, 'owner', '0'));
+    return getMapOwnerPickerValueFromOwnership(ownerTypeRaw, ownerRaw);
+  };
+  const getMapCityOwnerLabel = (ownerValue) => {
+    const allOwners = []
+      .concat(getMapOwnerPickerOptions(1))
+      .concat(getMapOwnerPickerOptions(2))
+      .concat(getMapOwnerPickerOptions(3));
+    const match = allOwners.find((opt) => String(opt && opt.value || '') === String(ownerValue || ''));
+    return String(match && (match.displayLabel || match.label) || ownerValue || 'Unassigned');
+  };
+  const isMapCityCoastal = (cityRecord) => {
+    if (!cityRecord) return false;
+    const cityX = parseIntLoose(getMapFieldValue(cityRecord, 'x', ''), NaN);
+    const cityY = parseIntLoose(getMapFieldValue(cityRecord, 'y', ''), NaN);
+    if (!Number.isFinite(cityX) || !Number.isFinite(cityY)) return false;
+    const centerIdx = getTileIndexAtCoord(cityX, cityY);
+    const indexes = centerIdx >= 0 ? [centerIdx].concat(mapTileNeighborIndexes(centerIdx)) : [];
+    return indexes.some((idx) => {
+      const tile = tiles[idx] || null;
+      if (!tile) return false;
+      const info = terrainInfo(tile);
+      return isWaterTerrain(info.baseTerrain) || isWaterTerrain(info.realTerrain);
+    });
+  };
+  const computeBulkCityBuildingSet = (currentSet, selectedIds, mode, visibleBuildingIds) => {
+    const next = new Set(currentSet || []);
+    const selected = new Set(selectedIds || []);
+    if (mode === 'remove') {
+      selected.forEach((buildingId) => next.delete(buildingId));
+      return next;
+    }
+    if (mode === 'replace') {
+      (visibleBuildingIds || new Set()).forEach((buildingId) => next.delete(buildingId));
+    }
+    selected.forEach((buildingId) => next.add(buildingId));
+    return next;
+  };
+  const setsHaveSameValues = (a, b) => {
+    const left = a || new Set();
+    const right = b || new Set();
+    if (left.size !== right.size) return false;
+    for (const value of left) {
+      if (!right.has(value)) return false;
+    }
+    return true;
+  };
+  const openBulkCityImprovementsModal = (config = {}) => {
+    const buildingOptions = getMapVisibleCityBuildingOptions();
+    const cityRecords = citySection && Array.isArray(citySection.records) ? citySection.records : [];
+    if (!isScenarioMode() || buildingOptions.length === 0 || cityRecords.length === 0) return;
+    const visibleBuildingIds = new Set(buildingOptions.map((option) => option.id));
+    const selectedIds = new Set(
+      Array.isArray(config.initialBuildingIds)
+        ? config.initialBuildingIds.map((value) => parseIntLoose(value, NaN)).filter((value) => Number.isFinite(value) && visibleBuildingIds.has(value))
+        : []
+    );
+    const cityOwnerValues = new Set(cityRecords.map((cityRecord) => getMapCityOwnerValue(cityRecord)).filter(Boolean));
+    const ownerOptions = []
+      .concat(getMapOwnerPickerOptions(1))
+      .concat(getMapOwnerPickerOptions(2))
+      .concat(getMapOwnerPickerOptions(3))
+      .filter((opt, idx, arr) => {
+        const value = String(opt && opt.value || '');
+        return value
+          && cityOwnerValues.has(value)
+          && arr.findIndex((candidate) => String(candidate && candidate.value || '') === value) === idx;
+      });
+    const filters = {
+      query: '',
+      ownerValues: new Set(),
+      coastalOnly: false,
+      minSize: 1,
+      maxSize: 99,
+      mode: 'add'
+    };
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay map-bulk-city-improvements-overlay';
+    overlay.setAttribute('aria-hidden', 'false');
+    overlay.innerHTML = `
+      <div class="confirm-modal map-bulk-city-improvements-modal" role="dialog" aria-modal="true" aria-labelledby="map-bulk-city-improvements-title">
+        <div class="map-bulk-modal-header">
+          <h3 id="map-bulk-city-improvements-title">Bulk City Improvements</h3>
+          <button type="button" class="ghost map-bulk-close" data-act="cancel" aria-label="Close">Close</button>
+        </div>
+        <div class="map-bulk-toolbar">
+          <label class="map-bulk-field map-bulk-field-mode">
+            <span class="field-meta">Operation</span>
+            <select data-role="mode">
+              <option value="add">Add</option>
+              <option value="remove">Remove</option>
+              <option value="replace">Set Exact List</option>
+            </select>
+          </label>
+          <label class="map-bulk-field map-bulk-number-field">
+            <span class="field-meta">Min Pop</span>
+            <input type="number" min="1" data-role="min-size" value="1">
+          </label>
+          <label class="map-bulk-field map-bulk-number-field">
+            <span class="field-meta">Max Pop</span>
+            <input type="number" min="1" data-role="max-size" value="99">
+          </label>
+          <label class="bool-toggle map-bulk-toggle">
+            <input type="checkbox" data-role="coastal-only">
+            <span>Coastal only</span>
+          </label>
+          <div class="map-bulk-owner-menu map-bulk-owner-field">
+            <span class="field-meta">Limit to Owners</span>
+            <button type="button" class="ghost map-bulk-owner-menu-btn" data-act="owner-menu" aria-expanded="false" title="Choose owner filters">None selected ▾</button>
+            <div class="map-bulk-owner-popover hidden" data-role="owner-popover">
+              <div class="map-bulk-owner-top">
+                <strong>Limit to Owners</strong>
+                <span class="map-bulk-owner-actions">
+                  <button type="button" class="ghost" data-act="select-all-owners">All</button>
+                  <button type="button" class="ghost" data-act="clear-owners">None</button>
+                </span>
+              </div>
+              <div class="map-bulk-owner-list" data-role="owner-list"></div>
+            </div>
+          </div>
+        </div>
+        <div class="map-bulk-body">
+          <section class="map-bulk-panel map-bulk-buildings">
+            <div class="map-bulk-panel-top">
+              <strong>Improvements</strong>
+            </div>
+            <div class="map-bulk-building-filter-row">
+              <div class="map-bulk-building-tools">
+                <input type="search" class="app-search-input" data-role="building-search" placeholder="Search improvements">
+                <button type="button" class="ghost" data-act="select-visible">All</button>
+                <button type="button" class="ghost" data-act="clear-buildings">Clear</button>
+              </div>
+            </div>
+            <div class="map-bulk-building-grid" data-role="building-grid"></div>
+          </section>
+          <section class="map-bulk-panel map-bulk-preview">
+            <div class="map-bulk-panel-top">
+              <strong>Affected Cities</strong>
+              <span class="hint" data-role="affected-count"></span>
+            </div>
+            <div class="map-bulk-city-list" data-role="city-list"></div>
+          </section>
+        </div>
+        <div class="confirm-modal-actions map-bulk-actions">
+          <button type="button" class="ghost" data-act="cancel">Cancel</button>
+          <button type="button" class="secondary" data-act="confirm">Add Improvements</button>
+        </div>
+      </div>
+    `;
+    let handleOwnerOutsideClick = null;
+    const close = () => {
+      if (typeof handleOwnerOutsideClick === 'function') {
+        document.removeEventListener('click', handleOwnerOutsideClick, true);
+      }
+      overlay.remove();
+    };
+    const buildingSearch = overlay.querySelector('[data-role="building-search"]');
+    const buildingGrid = overlay.querySelector('[data-role="building-grid"]');
+    const modeSelect = overlay.querySelector('[data-role="mode"]');
+    const minSizeInput = overlay.querySelector('[data-role="min-size"]');
+    const maxSizeInput = overlay.querySelector('[data-role="max-size"]');
+    const coastalOnlyInput = overlay.querySelector('[data-role="coastal-only"]');
+    const ownerList = overlay.querySelector('[data-role="owner-list"]');
+    const cityList = overlay.querySelector('[data-role="city-list"]');
+    const affectedCount = overlay.querySelector('[data-role="affected-count"]');
+    const confirmBtn = overlay.querySelector('[data-act="confirm"]');
+    const selectAllOwnersBtn = overlay.querySelector('[data-act="select-all-owners"]');
+    const clearOwnersBtn = overlay.querySelector('[data-act="clear-owners"]');
+    const ownerMenuBtn = overlay.querySelector('[data-act="owner-menu"]');
+    const ownerPopover = overlay.querySelector('[data-role="owner-popover"]');
+    const selectVisibleBtn = overlay.querySelector('[data-act="select-visible"]');
+    const clearBuildingsBtn = overlay.querySelector('[data-act="clear-buildings"]');
+    const formatCountLabel = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
+    const formatBulkActionLabel = (buildingCount, cityCount) => {
+      const buildingText = formatCountLabel(buildingCount, 'Improvement', 'Improvements');
+      const cityText = formatCountLabel(cityCount, 'City', 'Cities');
+      if (filters.mode === 'remove') return `Remove ${buildingText} from ${cityText}`;
+      if (filters.mode === 'replace') return `Set ${buildingText} in ${cityText}`;
+      return `Add ${buildingText} to ${cityText}`;
+    };
+    const getFilteredBuildingOptions = () => {
+      const q = normalizeConfigToken(filters.query).toLowerCase();
+      return buildingOptions.filter((option) => !q || normalizeConfigToken(option.label).toLowerCase().includes(q));
+    };
+    const getFilteredAffectedCities = () => {
+      const minSize = Math.max(1, parseIntLoose(filters.minSize, 1));
+      const maxSize = Math.max(minSize, parseIntLoose(filters.maxSize, 99));
+      const selected = Array.from(selectedIds);
+      if (selected.length === 0) return { matchedCount: 0, rows: [], changed: [] };
+      if (filters.ownerValues.size === 0) return { matchedCount: 0, rows: [], changed: [] };
+      const rows = [];
+      cityRecords.forEach((cityRecord, cityPos) => {
+        const size = Math.max(1, parseIntLoose(getMapFieldValue(cityRecord, 'size', '1'), 1));
+        if (size < minSize || size > maxSize) return;
+        const ownerValue = getMapCityOwnerValue(cityRecord);
+        if (!filters.ownerValues.has(ownerValue)) return;
+        if (filters.coastalOnly && !isMapCityCoastal(cityRecord)) return;
+        const current = getCityBuildingSet(cityRecord);
+        const next = computeBulkCityBuildingSet(current, selected, filters.mode, visibleBuildingIds);
+        const willChange = !setsHaveSameValues(current, next);
+        const beforeCount = countVisibleCityBuildings(current, bldgSection.records);
+        const afterCount = countVisibleCityBuildings(next, bldgSection.records);
+        const entry = {
+          cityRecord,
+          cityPos,
+          cityName: String(getFieldByBaseKey(cityRecord, 'name')?.value || `City ${cityPos + 1}`),
+          ownerValue,
+          ownerLabel: getMapCityOwnerLabel(ownerValue),
+          size,
+          coastal: isMapCityCoastal(cityRecord),
+          beforeCount,
+          afterCount,
+          willChange,
+          next
+        };
+        rows.push(entry);
+      });
+      rows.sort((a, b) => {
+        if (a.willChange !== b.willChange) return a.willChange ? -1 : 1;
+        const ownerCmp = String(a.ownerLabel || '').localeCompare(String(b.ownerLabel || ''), undefined, { sensitivity: 'base' });
+        if (ownerCmp !== 0) return ownerCmp;
+        return String(a.cityName || '').localeCompare(String(b.cityName || ''), undefined, { sensitivity: 'base' });
+      });
+      const changed = rows.filter((entry) => entry.willChange);
+      return { matchedCount: rows.length, rows, changed };
+    };
+    const renderBuildings = () => {
+      buildingGrid.innerHTML = '';
+      const filtered = getFilteredBuildingOptions();
+      filtered.forEach((option) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'map-bulk-building-option';
+        btn.classList.toggle('active', selectedIds.has(option.id));
+        btn.setAttribute('aria-pressed', selectedIds.has(option.id) ? 'true' : 'false');
+        const thumb = document.createElement('span');
+        thumb.className = 'entry-thumb map-building-thumb';
+        if (option.improvementEntry) loadReferenceListThumbnail('improvements', option.improvementEntry, thumb);
+        else thumb.textContent = '•';
+        const check = document.createElement('span');
+        check.className = 'map-building-marker';
+        check.textContent = selectedIds.has(option.id) ? '✓' : '';
+        const name = document.createElement('span');
+        name.className = 'map-building-name';
+        name.textContent = option.label;
+        btn.appendChild(thumb);
+        btn.appendChild(check);
+        btn.appendChild(name);
+        btn.addEventListener('click', () => {
+          if (selectedIds.has(option.id)) selectedIds.delete(option.id);
+          else selectedIds.add(option.id);
+          renderBuildings();
+          renderPreview();
+        });
+        buildingGrid.appendChild(btn);
+      });
+      if (filtered.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'map-info-summary';
+        empty.textContent = 'No improvements match this search.';
+        buildingGrid.appendChild(empty);
+      }
+    };
+    const renderOwners = () => {
+      ownerList.innerHTML = '';
+      selectAllOwnersBtn.classList.toggle('active', ownerOptions.length > 0 && filters.ownerValues.size === ownerOptions.length);
+      clearOwnersBtn.classList.toggle('active', filters.ownerValues.size === 0);
+      const selectedOwnerLabels = ownerOptions
+        .filter((option) => filters.ownerValues.has(String(option && option.value || '')))
+        .map((option) => String(option && (option.displayLabel || option.label) || '').trim())
+        .filter(Boolean);
+      const ownerLabel = filters.ownerValues.size === 0
+        ? 'None selected'
+        : formatCountLabel(filters.ownerValues.size, 'selected', 'selected');
+      ownerMenuBtn.innerHTML = '';
+      const ownerLabelSpan = document.createElement('span');
+      ownerLabelSpan.className = 'map-bulk-owner-menu-label';
+      ownerLabelSpan.textContent = ownerLabel;
+      const ownerCaret = document.createElement('span');
+      ownerCaret.className = 'map-bulk-owner-menu-caret';
+      ownerCaret.textContent = '▾';
+      ownerMenuBtn.title = selectedOwnerLabels.length > 0 ? selectedOwnerLabels.join(', ') : 'Choose owner filters';
+      ownerMenuBtn.appendChild(ownerLabelSpan);
+      ownerMenuBtn.appendChild(ownerCaret);
+      ownerOptions.forEach((option) => {
+        const value = String(option && option.value || '');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'map-bulk-owner-option';
+        btn.classList.toggle('active', filters.ownerValues.has(value));
+        btn.setAttribute('aria-pressed', filters.ownerValues.has(value) ? 'true' : 'false');
+        const swatch = document.createElement('span');
+        swatch.className = 'entry-thumb map-bulk-owner-thumb';
+        if (option && option.entry) loadReferenceListThumbnail('civilizations', option.entry, swatch);
+        const label = document.createElement('span');
+        label.textContent = String(option && (option.displayLabel || option.label) || value);
+        btn.appendChild(swatch);
+        btn.appendChild(label);
+        btn.addEventListener('click', () => {
+          if (filters.ownerValues.has(value)) filters.ownerValues.delete(value);
+          else filters.ownerValues.add(value);
+          renderOwners();
+          renderPreview();
+        });
+        ownerList.appendChild(btn);
+      });
+      if (ownerOptions.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'map-info-summary';
+        empty.textContent = 'No owner records are available.';
+        ownerList.appendChild(empty);
+      }
+    };
+    const renderPreview = () => {
+      const result = getFilteredAffectedCities();
+      const selectedCount = selectedIds.size;
+      affectedCount.textContent = `${result.rows.length} cities`;
+      cityList.innerHTML = '';
+      const header = document.createElement('div');
+      header.className = 'map-bulk-city-table-head';
+      ['City', 'Owner', 'Pop', 'Buildings'].forEach((labelText) => {
+        const label = document.createElement('span');
+        label.textContent = labelText;
+        header.appendChild(label);
+      });
+      cityList.appendChild(header);
+      result.rows.slice(0, 250).forEach((entry) => {
+        const row = document.createElement('div');
+        row.className = 'map-bulk-city-row';
+        row.classList.toggle('will-not-change', !entry.willChange);
+        const swatch = document.createElement('span');
+        swatch.className = 'map-select-icon map-select-icon-color';
+        const colorSlot = getMapOwnerColorSlotForPickerValue(entry.ownerValue);
+        swatch.style.background = Number.isFinite(colorSlot) ? getCivSlotUiColor(colorSlot) : colorFromNumber(entry.cityPos + 1);
+        const text = document.createElement('span');
+        text.className = 'map-bulk-city-text';
+        const name = document.createElement('strong');
+        name.textContent = entry.cityName;
+        text.appendChild(name);
+        if (entry.coastal) {
+          const coast = document.createElement('span');
+          coast.className = 'map-bulk-city-tag';
+          coast.textContent = 'Coastal';
+          text.appendChild(coast);
+        }
+        const owner = document.createElement('span');
+        owner.className = 'map-bulk-city-owner';
+        owner.textContent = entry.ownerLabel;
+        const pop = document.createElement('span');
+        pop.className = 'map-bulk-city-pop';
+        pop.textContent = String(entry.size);
+        const count = document.createElement('span');
+        count.className = 'map-bulk-city-count';
+        count.textContent = `${entry.beforeCount} → ${entry.afterCount}`;
+        row.appendChild(swatch);
+        row.appendChild(text);
+        row.appendChild(owner);
+        row.appendChild(pop);
+        row.appendChild(count);
+        cityList.appendChild(row);
+      });
+      if (result.rows.length > 250) {
+        const more = document.createElement('div');
+        more.className = 'map-info-summary';
+        more.textContent = `${result.rows.length - 250} more cities match the current filters.`;
+        cityList.appendChild(more);
+      }
+      if (result.rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'map-info-summary';
+        empty.textContent = selectedCount === 0
+          ? 'Select one or more improvements.'
+          : (filters.ownerValues.size === 0 ? 'Choose one or more owners.' : 'No cities match the current filters.');
+        cityList.appendChild(empty);
+      }
+      confirmBtn.textContent = formatBulkActionLabel(selectedCount, result.changed.length);
+      confirmBtn.disabled = result.changed.length === 0;
+      return result;
+    };
+    const syncFilters = () => {
+      filters.query = buildingSearch.value || '';
+      filters.mode = modeSelect.value || 'add';
+      filters.coastalOnly = !!coastalOnlyInput.checked;
+      filters.minSize = Math.max(1, parseIntLoose(minSizeInput.value, 1));
+      filters.maxSize = Math.max(filters.minSize, parseIntLoose(maxSizeInput.value, 99));
+      minSizeInput.value = String(filters.minSize);
+      maxSizeInput.value = String(filters.maxSize);
+      renderPreview();
+    };
+    buildingSearch.addEventListener('input', () => {
+      filters.query = buildingSearch.value || '';
+      renderBuildings();
+    });
+    modeSelect.addEventListener('change', syncFilters);
+    minSizeInput.addEventListener('change', syncFilters);
+    maxSizeInput.addEventListener('change', syncFilters);
+    coastalOnlyInput.addEventListener('change', syncFilters);
+    selectAllOwnersBtn.addEventListener('click', () => {
+      ownerOptions.forEach((option) => {
+        const value = String(option && option.value || '');
+        if (value) filters.ownerValues.add(value);
+      });
+      renderOwners();
+      renderPreview();
+    });
+    clearOwnersBtn.addEventListener('click', () => {
+      filters.ownerValues.clear();
+      renderOwners();
+      renderPreview();
+    });
+    ownerMenuBtn.addEventListener('click', () => {
+      const open = ownerPopover.classList.toggle('hidden') === false;
+      ownerMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    selectVisibleBtn.addEventListener('click', () => {
+      getFilteredBuildingOptions().forEach((option) => selectedIds.add(option.id));
+      renderBuildings();
+      renderPreview();
+    });
+    clearBuildingsBtn.addEventListener('click', () => {
+      selectedIds.clear();
+      renderBuildings();
+      renderPreview();
+    });
+    handleOwnerOutsideClick = (ev) => {
+      if (!overlay.isConnected || !ownerPopover || ownerPopover.classList.contains('hidden')) return;
+      if (ownerPopover.contains(ev.target) || ownerMenuBtn.contains(ev.target)) return;
+      ownerPopover.classList.add('hidden');
+      ownerMenuBtn.setAttribute('aria-expanded', 'false');
+    };
+    document.addEventListener('click', handleOwnerOutsideClick, true);
+    overlay.querySelectorAll('[data-act="cancel"]').forEach((btn) => {
+      btn.addEventListener('click', close);
+    });
+    overlay.addEventListener('click', (ev) => {
+      if (ev.target === overlay) close();
+    });
+    confirmBtn.addEventListener('click', () => {
+      const result = renderPreview();
+      if (!result.changed.length) return;
+      const startedAt = mapToolNowMs();
+      rememberMapUndoSnapshot();
+      const refreshIndexes = new Set();
+      let wallsChangedCount = 0;
+      result.changed.forEach((entry) => {
+        setCityBuildingSet(entry.cityRecord, entry.next);
+        if (syncCityWallsFlagFromBuildings(entry.cityRecord, entry.next, bldgSection.records)) wallsChangedCount += 1;
+        if (getCityBuildingSetForCityPos._cache) getCityBuildingSetForCityPos._cache.delete(entry.cityPos);
+        getTileIndexesAroundCityForDistrictRefresh(entry.cityRecord).forEach((idx) => refreshIndexes.add(idx));
+      });
+      setDirty(true, { knownDirtyTab: 'map', reason: 'bulk-city-improvements' });
+      close();
+      const refreshList = Array.from(refreshIndexes);
+      const meta = {
+        source: 'bulk-city-improvements',
+        mode: filters.mode,
+        selectedBuildingCount: selectedIds.size,
+        changedCityCount: result.changed.length,
+        wallsChangedCount,
+        durationMs: Number((mapToolNowMs() - startedAt).toFixed(2))
+      };
+      appendDebugLog('biq-map:bulk-city-improvements-apply', meta);
+      if (refreshList.length > 180) {
+        scheduleMapCanvasRefresh(40, meta);
+      } else {
+        scheduleMapPartialRefresh(refreshList, 40, meta);
+      }
+      renderTileInfoPanel();
+      refreshMapModalUndoButtons();
+    });
+    document.body.appendChild(overlay);
+    renderBuildings();
+    renderOwners();
+    renderPreview();
+    window.requestAnimationFrame(() => {
+      if (buildingSearch && buildingSearch.isConnected) buildingSearch.focus({ preventScroll: true });
+    });
+  };
   const applySelectedTileEdit = (editFn, options = {}) => {
     if (!isScenarioMode()) return false;
     const tile = tiles[state.biqMapSelectedTile] || null;
@@ -55516,6 +56195,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	    buildingWrap.className = 'map-city-buildings';
 	    const buildingTop = document.createElement('div');
 	    buildingTop.className = 'section-top compact';
+	    const buildingTitleGroup = document.createElement('span');
+	    buildingTitleGroup.className = 'map-city-buildings-title';
 	    const buildingTitle = document.createElement('strong');
 	    buildingTitle.textContent = 'Improvements';
 	    const buildingCount = document.createElement('span');
@@ -55524,13 +56205,47 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 	      buildingCount.textContent = `${countVisibleCityBuildings(buildingSet, bldgRecords)} present`;
 	    };
 	    updateBuildingCount(getCityBuildingSet(cityRecord));
-	    buildingTop.appendChild(buildingTitle);
-	    buildingTop.appendChild(buildingCount);
+	    const bulkBuildingsBtn = document.createElement('button');
+	    bulkBuildingsBtn.type = 'button';
+	    bulkBuildingsBtn.className = 'ghost map-city-bulk-buildings-btn';
+	    bulkBuildingsBtn.textContent = 'Multi-City Edit';
+	    bulkBuildingsBtn.disabled = !isScenarioMode();
+	    bulkBuildingsBtn.addEventListener('click', () => {
+	      const visibleIds = new Set(getMapVisibleCityBuildingOptions().map((option) => option.id));
+	      const initialBuildingIds = Array.from(getCityBuildingSet(cityRecord)).filter((buildingId) => visibleIds.has(buildingId));
+	      openBulkCityImprovementsModal({ initialBuildingIds });
+	    });
+	    buildingTitleGroup.appendChild(buildingTitle);
+	    buildingTitleGroup.appendChild(buildingCount);
+	    buildingTop.appendChild(buildingTitleGroup);
+	    buildingTop.appendChild(bulkBuildingsBtn);
 	    buildingWrap.appendChild(buildingTop);
 	    if (bldgRecords.length > 0) {
 	      const currentSet = getCityBuildingSet(cityRecord);
+	      const filterRow = document.createElement('div');
+	      filterRow.className = 'map-city-building-filter-row';
+	      const buildingSearch = document.createElement('input');
+	      buildingSearch.type = 'search';
+	      buildingSearch.className = 'app-search-input';
+	      buildingSearch.placeholder = 'Search improvements';
+	      filterRow.appendChild(buildingSearch);
+	      buildingWrap.appendChild(filterRow);
 	      const grid = document.createElement('div');
 	      grid.className = 'map-building-grid';
+	      const buildingRows = [];
+	      const updateBuildingFilter = () => {
+	        const q = normalizeConfigToken(buildingSearch.value || '').toLowerCase();
+	        let visibleCount = 0;
+	        buildingRows.forEach((item) => {
+	          const matches = !q || item.searchText.includes(q);
+	          item.row.style.display = matches ? '' : 'none';
+	          if (matches) visibleCount += 1;
+	        });
+	        emptyFilteredBuildings.style.display = visibleCount === 0 ? '' : 'none';
+	      };
+	      const emptyFilteredBuildings = document.createElement('div');
+	      emptyFilteredBuildings.className = 'map-info-summary';
+	      emptyFilteredBuildings.textContent = 'No improvements match this search.';
 	      bldgRecords.forEach((buildingRecord, idx) => {
 	        const improvementEntry = resolveReferenceEntryForPicker('improvements', String(idx));
 	        if (isCapitalizationImprovementRecord(buildingRecord, improvementEntry, idx)) return;
@@ -55596,7 +56311,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
               redrawQueued: false,
               durationMs: Number((mapToolNowMs() - startedAt).toFixed(2))
             });
-	        });
+        });
         row.appendChild(btn);
         const linkBtn = document.createElement('button');
         linkBtn.type = 'button';
@@ -55611,8 +56326,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         });
         row.appendChild(linkBtn);
         grid.appendChild(row);
+        buildingRows.push({
+          row,
+          searchText: normalizeConfigToken(name.textContent).toLowerCase()
+        });
       });
+      buildingSearch.addEventListener('input', updateBuildingFilter);
       buildingWrap.appendChild(grid);
+      buildingWrap.appendChild(emptyFilteredBuildings);
+      updateBuildingFilter();
     } else {
       const emptyBuildings = document.createElement('div');
       emptyBuildings.className = 'map-info-summary';
@@ -57924,11 +58646,10 @@ function buildNaturalWonderChipButton(name, selected, onToggle) {
 
 function renderTerrainReferenceThumb(holder, optionLabel) {
   if (!holder) return false;
-  const icon = makeTerrainOptionPreviewIcon(optionLabel);
-  if (!icon) return false;
-  if (!icon.childNodes || icon.childNodes.length === 0) return false;
+  const found = findTerrainPreviewEntry(optionLabel);
+  if (!found) return false;
   holder.innerHTML = '';
-  holder.appendChild(icon.firstChild.cloneNode(true));
+  loadReferenceListThumbnail(found.tabKey, found.entry, holder);
   return true;
 }
 
@@ -62841,6 +63562,7 @@ async function init() {
   };
   document.addEventListener('pointerdown', unlockDirtyTracking, { capture: true });
   document.addEventListener('keydown', unlockDirtyTracking, { capture: true });
+  document.addEventListener('keydown', handleAppShortcutKeydown, { capture: true });
 
   el.modeGlobal.addEventListener('click', async () => {
     const allow = await confirmResolveUnsavedChanges('switching to Standard Game');
@@ -62988,6 +63710,18 @@ async function init() {
       if (state.textFileEncodingMenuUnsubscribe) {
         state.textFileEncodingMenuUnsubscribe();
         state.textFileEncodingMenuUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onAppCommand === 'function') {
+    state.appCommandUnsubscribe = window.c3xManager.onAppCommand((payload) => {
+      const command = typeof payload === 'string' ? payload : String(payload && payload.command || '');
+      dispatchAppCommand(command);
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.appCommandUnsubscribe) {
+        state.appCommandUnsubscribe();
+        state.appCommandUnsubscribe = null;
       }
     }, { once: true });
   }

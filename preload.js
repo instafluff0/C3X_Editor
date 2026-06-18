@@ -143,6 +143,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:toggle-custom-player-data', listener);
     };
   },
+  onAppCommand: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('manager:app-command', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:app-command', listener);
+    };
+  },
   onLog: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};
