@@ -242,6 +242,23 @@ test('Undo and Undo All activation use effective unsaved state across main app a
   );
 });
 
+test('scenario seed saves use the shared save progress modal lifecycle', () => {
+  const source = rendererSource();
+
+  const handleOperationProgress = extractFunctionSource(source, 'handleOperationProgress');
+  assert.match(
+    handleOperationProgress,
+    /if \(!state\.saveUi\.isActive && stage\) return;[\s\S]*?openSaveProgressModal\(\);/,
+    'late save progress events after completion must not reopen the modal'
+  );
+
+  assert.match(
+    source,
+    /async function performSeedScenarioTab\(tabKey\) \{[\s\S]*?beginOperationProgress\([\s\S]*?const res = await window\.c3xManager\.saveBundle\(payload\);[\s\S]*?setOperationProgressState\(\{[\s\S]*?active: false,[\s\S]*?showSaveToast\([\s\S]*?scheduleCloseSaveProgressModal\(\);[\s\S]*?if \(!res\.ok\)/,
+    'Districts/Wonders scenario seed saves should close the details modal through the shared delayed close'
+  );
+});
+
 test('Save and Undo shortcuts route through the shared main and modal command contract', () => {
   const renderer = rendererSource();
   const main = mainSource();

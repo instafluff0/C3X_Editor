@@ -258,6 +258,63 @@ test('auditLoadedBundle accepts acyclic technology prerequisite chains', () => {
   assert.equal(result.tabs.technologies, undefined);
 });
 
+test('auditLoadedBundle reports out-of-range technology prerequisite fields by fixed slot', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('High-Density Batteries', 0, ['None']),
+          makeTechEntry('Gravimetric Maneuver', 1, ['High-Density Batteries (0)', 'None', '100', 'None'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.technologies.sections['1'] || [];
+  assert.equal(issues[0].code, 'biq-reference-out-of-range');
+  assert.equal(issues[0].fieldKey, 'prerequisite3');
+  assert.equal(issues[0].target, 'technologies');
+  assert.equal(issues[0].value, 100);
+  assert.match(issues[0].message, /Gravimetric Maneuver Prerequisite 3 points to missing tech index 100/);
+  assert.match(result.tabs.base.general[0].message, /1 BIQ reference index/);
+});
+
+test('auditLoadedBundle reports out-of-range non-tech BIQ reference fields', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['None'])
+        ]
+      },
+      resources: {
+        entries: [
+          {
+            name: 'Strategic Spice',
+            civilopediaKey: 'GOOD_STRATEGIC_SPICE',
+            biqIndex: 0,
+            biqFields: [
+              { key: 'prerequisite', baseKey: 'prerequisite', label: 'Prerequisite', value: '12' }
+            ]
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.resources.sections['0'] || [];
+  assert.equal(issues[0].code, 'biq-reference-out-of-range');
+  assert.equal(issues[0].fieldKey, 'prerequisite');
+  assert.equal(issues[0].target, 'technologies');
+  assert.match(issues[0].message, /Strategic Spice Prerequisite points to missing tech index 12/);
+});
+
 test('auditLoadedBundle reports playable civs that have no fixed Scenario Player slot', () => {
   const c3xRoot = mkTmpDir();
   const bundle = makeScenarioPlayersBundle(c3xRoot, {

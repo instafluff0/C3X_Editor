@@ -6140,10 +6140,37 @@ details > summary:focus-visible {
 
 .improvement-c3x-top-control,
 .improvement-c3x-resource-list,
-.improvement-c3x-resource-items {
+.improvement-c3x-resource-items,
+.improvement-required-unit-list {
   display: grid;
   gap: 8px;
   width: 100%;
+}
+
+.improvement-required-unit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.improvement-required-unit-remove {
+  min-width: 30px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.improvement-required-unit-remove .remove-icon {
+  margin-right: 0;
+}
+
+.improvement-required-unit-picker {
+  margin-top: 6px;
 }
 
 .improvement-c3x-resource-card {
@@ -11710,6 +11737,7 @@ button.unit-ini-delete-btn:disabled {
 
   .improvement-top-grid-primary,
   .improvement-top-grid-secondary,
+  .improvement-top-grid-c3x,
   .improvement-dashboard-grid,
   .improvement-boolean-matrix,
   .unit-main-board,

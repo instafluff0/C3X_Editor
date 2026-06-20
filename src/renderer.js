@@ -18716,6 +18716,34 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
     label.className = 'unit-list-panel-title';
     label.textContent = cfg.label;
     labelRow.appendChild(label);
+    if (referenceEditable && cfg.kind === 'availableTo') {
+      const allSelectedValues = civOptions.map((opt) => normalizeConfigToken(opt && opt.value)).filter(Boolean);
+      const selectedValues = decodeAvailableToIndices(availableField && availableField.value).map((idx) => String(idx));
+      const canAddAll = allSelectedValues.length > 0
+        && allSelectedValues.some((value) => !selectedValues.includes(value));
+      const addAllBtn = document.createElement('button');
+      addAllBtn.type = 'button';
+      addAllBtn.className = 'unit-list-remove-all-btn';
+      addAllBtn.textContent = 'Add All';
+      addAllBtn.disabled = !canAddAll;
+      addAllBtn.title = canAddAll ? 'Add all civilizations' : 'All civilizations are already available';
+      addAllBtn.addEventListener('click', () => {
+        if (addAllBtn.disabled) return;
+        rememberUndoSnapshotForKey(entryUndoKey);
+        let field = availableField;
+        if (!field) {
+          if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+          field = { key: 'availableto', baseKey: 'availableto', label: 'Available To', value: '0', originalValue: '0', editable: true };
+          entry.biqFields.push(field);
+        }
+        field.value = encodeAvailableToFromIndices(allSelectedValues);
+        setFieldReferenceTargetsMeta(field, 'civilizations', allSelectedValues, civOptions);
+        setDirty(true);
+        renderActiveTab({ preserveTabScroll: true });
+        setStatus('Added all available civilizations.');
+      });
+      labelRow.appendChild(addAllBtn);
+    }
     if (referenceEditable && ['abilities', 'availableTo', 'stealthTargets'].includes(cfg.kind)) {
       const removeAllBtn = document.createElement('button');
       removeAllBtn.type = 'button';
@@ -18813,27 +18841,10 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       }
       const selectedIndices = decodeAvailableToIndices(field && field.value);
       const selectedCivValues = selectedIndices.map((idx) => String(idx));
-      const allCivsSelected = civOptions.length > 0
-        && civOptions.every((opt) => selectedCivValues.includes(normalizeConfigToken(opt && opt.value)));
       const editor = makeNamedListTokenEditor({
         tabKey: 'civilizations',
         options: civOptions,
         values: selectedCivValues,
-        specialOptions: allCivsSelected ? [] : [
-          {
-            value: '__all_civs__',
-            label: 'All Civs',
-            onSelect: (currentValues, availableOptions) => {
-              const next = Array.isArray(currentValues) ? currentValues.slice() : [];
-              (Array.isArray(availableOptions) ? availableOptions : []).forEach((opt) => {
-                const value = normalizeConfigToken(opt && opt.value);
-                if (value && !next.includes(value)) next.push(value);
-              });
-              return next;
-            }
-          },
-          { separator: true, label: 'Civilizations' }
-        ],
         onValuesChange: (values) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           if (field) field.value = encodeAvailableToFromIndices(values);
@@ -23761,6 +23772,151 @@ function renderImprovementGeneratedResourcesControl(entry, c3xEditable) {
   return cell;
 }
 
+function getImprovementRequiredByUnitNames(entry, row = null) {
+  const buildingName = getImprovementC3XName(entry);
+  const sourceRow = row || getC3XBaseRow('building_prereqs_for_units');
+  if (!buildingName || !sourceRow) return [];
+  const out = [];
+  parseBuildingPrereqItems(sourceRow.value).forEach((item) => {
+    if (!c3xNameMatches(item && item.building, buildingName)) return;
+    (Array.isArray(item && item.units) ? item.units : []).forEach((unit) => {
+      const normalized = normalizeConfigToken(unit);
+      if (normalized && !out.some((existing) => c3xNameMatches(existing, normalized))) out.push(normalized);
+    });
+  });
+  return out;
+}
+
+function setImprovementRequiredByUnitMembership(entry, row, unitNames) {
+  const buildingName = getImprovementC3XName(entry);
+  if (!buildingName || !row) return;
+  const selectedUnits = [];
+  (Array.isArray(unitNames) ? unitNames : []).forEach((unit) => {
+    const normalized = normalizeConfigToken(unit);
+    if (normalized && !selectedUnits.some((existing) => c3xNameMatches(existing, normalized))) selectedUnits.push(normalized);
+  });
+  const nextItems = [];
+  let replaced = false;
+  parseBuildingPrereqItems(row.value).forEach((item) => {
+    const building = normalizeConfigToken(item && item.building);
+    if (!building) return;
+    if (c3xNameMatches(building, buildingName)) {
+      if (!replaced && selectedUnits.length > 0) {
+        nextItems.push({ building: buildingName, units: selectedUnits.slice() });
+      }
+      replaced = true;
+      return;
+    }
+    const units = (Array.isArray(item && item.units) ? item.units : [])
+      .map((unit) => normalizeConfigToken(unit))
+      .filter(Boolean);
+    if (units.length > 0) nextItems.push({ building, units });
+  });
+  if (!replaced && selectedUnits.length > 0) {
+    nextItems.push({ building: buildingName, units: selectedUnits.slice() });
+  }
+  setC3XBaseRowValue(row, serializeBuildingPrereqItems(nextItems));
+}
+
+function renderImprovementRequiredByUnitsControl(entry, c3xEditable) {
+  const baseKey = 'building_prereqs_for_units';
+  const { cell, control, row } = createImprovementC3XTopBoardCell(
+    'Required By Units',
+    baseKey,
+    'Reverse view of unit building prerequisites. Editing here updates the C3X base row, not the selected BIQ improvement record.'
+  );
+  const buildingName = getImprovementC3XName(entry);
+  const unitOptions = getNamedReferenceOptionsForTab('units');
+  if (!row || !buildingName || unitOptions.length === 0) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = '(unavailable)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const selectedUnits = getImprovementRequiredByUnitNames(entry, row);
+  const canEdit = !!c3xEditable && canEditC3XBaseRows(row);
+  if (!canEdit) {
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = selectedUnits.length > 0 ? selectedUnits.join(', ') : '(none)';
+    control.appendChild(chip);
+    return cell;
+  }
+
+  const commitUnits = (nextUnits) => {
+    setImprovementRequiredByUnitMembership(entry, row, nextUnits);
+    renderActiveTab({ preserveTabScroll: true });
+  };
+  const selectedSet = new Set(selectedUnits.map((unit) => normalizeConfigToken(unit).toLowerCase()));
+  const list = document.createElement('div');
+  list.className = 'improvement-required-unit-list';
+
+  selectedUnits.forEach((unitName, idx) => {
+    const line = document.createElement('div');
+    line.className = 'improvement-required-unit-row';
+    const currentKey = normalizeConfigToken(unitName).toLowerCase();
+    const pickerOptions = unitOptions.filter((opt) => {
+      const key = normalizeConfigToken(opt && opt.value).toLowerCase();
+      return key && (!selectedSet.has(key) || key === currentKey);
+    });
+    const picker = createReferencePicker({
+      options: pickerOptions,
+      targetTabKey: 'units',
+      currentValue: unitName || '-1',
+      searchPlaceholder: 'Search Unit...',
+      noneLabel: '(none)',
+      showOptionThumbs: true,
+      onSelect: (next) => {
+        const normalized = normalizeConfigToken(next);
+        const nextUnits = selectedUnits.slice();
+        if (!normalized || normalized === '-1') nextUnits.splice(idx, 1);
+        else nextUnits[idx] = normalized;
+        commitUnits(nextUnits);
+      }
+    });
+    line.appendChild(picker);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'ghost improvement-required-unit-remove';
+    withRemoveIcon(remove, '');
+    remove.title = `Remove ${unitName}`;
+    remove.setAttribute('aria-label', `Remove ${unitName}`);
+    remove.addEventListener('click', () => {
+      commitUnits(selectedUnits.filter((value) => !c3xNameMatches(value, unitName)));
+    });
+    line.appendChild(remove);
+    list.appendChild(line);
+  });
+
+  if (list.childElementCount > 0) control.appendChild(list);
+
+  const availableOptions = unitOptions.filter((opt) => {
+    const key = normalizeConfigToken(opt && opt.value).toLowerCase();
+    return key && !selectedSet.has(key);
+  });
+  if (availableOptions.length > 0) {
+    const addPicker = createReferencePicker({
+      options: availableOptions,
+      targetTabKey: 'units',
+      currentValue: '-1',
+      searchPlaceholder: 'Add Unit...',
+      noneLabel: 'Add Unit...',
+      resetAfterSelect: true,
+      showOptionThumbs: true,
+      onSelect: (next) => {
+        const normalized = normalizeConfigToken(next);
+        if (!normalized || normalized === '-1') return;
+        commitUnits([...selectedUnits, normalized]);
+      }
+    });
+    addPicker.classList.add('improvement-required-unit-picker');
+    control.appendChild(addPicker);
+  }
+  return cell;
+}
+
 function getDistrictSectionsForImprovementDependency(entry) {
   const buildingName = getImprovementC3XName(entry);
   const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.districts;
@@ -24142,6 +24298,7 @@ function renderImprovementDenseTopBoard(entry, tabKey, selectedBaseIndex, refere
     c3xRow.className = 'improvement-top-grid improvement-top-grid-c3x';
     c3xRow.appendChild(renderImprovementRequiredDistrictsControl(entry, c3xDistrictEditable));
     c3xRow.appendChild(renderImprovementGeneratedResourcesControl(entry, c3xBaseEditable));
+    c3xRow.appendChild(renderImprovementRequiredByUnitsControl(entry, c3xBaseEditable));
     c3xRow.appendChild(renderImprovementProductionPerfumeControl(entry, c3xBaseEditable));
     wrap.appendChild(c3xRow);
   }
@@ -24354,6 +24511,38 @@ function getReferenceOptionsForField(tabKey, field) {
   }
   const options = makeIndexOptionsForTab(target);
   return options;
+}
+
+function getReferenceTargetDisplayNoun(targetTabKey) {
+  const key = String(targetTabKey || '').trim();
+  const labels = {
+    technologies: 'tech',
+    resources: 'resource',
+    governments: 'government',
+    improvements: 'improvement',
+    units: 'unit',
+    civilizations: 'civilization',
+    eras: 'era',
+    espionage: 'espionage mission'
+  };
+  return labels[key] || 'reference';
+}
+
+function makeInvalidReferenceOption(targetTabKey, value) {
+  const raw = String(value == null ? '' : value).trim();
+  const noun = getReferenceTargetDisplayNoun(targetTabKey);
+  const parsed = parseIntFromDisplayValue(raw);
+  const label = parsed == null
+    ? `Invalid ${noun} reference: ${raw || '(blank)'}`
+    : `Invalid ${noun} index: ${parsed}`;
+  return {
+    value: parsed == null ? raw : String(parsed),
+    label,
+    displayLabel: label,
+    entry: null,
+    special: true,
+    invalidReference: true
+  };
 }
 
 function getRuleSectionIndexOptions(sectionCode, { includeNone = false } = {}) {
@@ -24591,7 +24780,10 @@ function createReferencePicker(config) {
   const menuPortalRootResolver = typeof opts.menuPortalRoot === 'function'
     ? opts.menuPortalRoot
     : () => opts.menuPortalRoot || null;
-  const rawCurrentValue = String(opts.currentValue ?? '-1');
+  const rawCurrentLabel = String(opts.currentValue ?? '-1').trim();
+  const rawCurrentValue = (!rawCurrentLabel || /^none$/i.test(rawCurrentLabel) || rawCurrentLabel === '(none)')
+    ? '-1'
+    : rawCurrentLabel;
   const parsedCurrent = parseIntFromDisplayValue(rawCurrentValue);
   const currentValue = parsedCurrent == null ? rawCurrentValue : String(parsedCurrent);
   const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
@@ -24632,6 +24824,9 @@ function createReferencePicker(config) {
       special: !!opt.special
     });
   });
+  if (currentValue && currentValue !== '-1' && !findOptionByValue(normalizedOptions, currentValue)) {
+    normalizedOptions.push(makeInvalidReferenceOption(targetTabKey, currentValue));
+  }
 
   const wrap = document.createElement('div');
   wrap.className = 'tech-picker';
@@ -37654,6 +37849,8 @@ function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExist
       if (!op) return;
       if (String(op.newRecordRef || '').toUpperCase() === oldKey) op.newRecordRef = nextKey;
       if (String(op.recordRef || '').toUpperCase() === oldKey) op.recordRef = nextKey;
+      if (String(op.sourceRef || '').toUpperCase() === oldKey) op.sourceRef = nextKey;
+      if (String(op.copyFromRef || '').toUpperCase() === oldKey) op.copyFromRef = nextKey;
     });
   } else {
     const hasDelete = ops.some((op) => String(op && op.op || '').toLowerCase() === 'delete' && String(op && op.recordRef || '').toUpperCase() === oldKey);
@@ -37936,18 +38133,8 @@ function normalizeImportedIndexedListField(entry, {
 function normalizeImportedUnitAvailableTo(entry) {
   const field = getBiqFieldByBaseKey(entry, 'availableto');
   if (!field) return;
-  const sourceIndexToKey = new Map(
-    getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, 'civilizations')
-      .map((item) => [Number(item.index), item.civilopediaKey])
-  );
-  const targetIndexByKey = getTargetReferenceIndexByKey('civilizations');
-  const remapped = decodeAvailableToIndices(field.value).map((sourceIndex) => {
-    const key = sourceIndexToKey.get(sourceIndex);
-    if (!key) return null;
-    const targetIndex = targetIndexByKey.get(key);
-    return Number.isFinite(targetIndex) ? String(targetIndex) : null;
-  }).filter(Boolean);
-  field.value = encodeAvailableToFromIndices(dedupeStrings(remapped));
+  field.value = '0';
+  delete field.referenceTargets;
 }
 
 function normalizeImportedScalarReferenceField(entry, {
@@ -61568,6 +61755,7 @@ function handleOperationProgress(entry) {
   const label = String(entry.label || '').trim();
   const pathValue = String(entry.path || '').trim();
   const kind = String(entry.kind || '').trim();
+  if (!state.saveUi.isActive && stage) return;
   if (!state.saveUi.detailOpen && (stage === 'start' || stage === 'scan' || stage === 'item-start')) {
     openSaveProgressModal();
   }
@@ -62028,10 +62216,101 @@ function getReferenceRecordIndexFromOriginalBiq(sectionCode, recordRef) {
   return Number.isFinite(idx) ? idx : NaN;
 }
 
+function remapNoReloadDeletedReferenceIndex(value, deletedIndexes) {
+  let next = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(next) || next < 0) return next;
+  const deletes = Array.isArray(deletedIndexes) ? deletedIndexes : [];
+  for (let i = 0; i < deletes.length; i += 1) {
+    const deletedIdx = Number(deletes[i]);
+    if (!Number.isInteger(deletedIdx) || deletedIdx < 0) continue;
+    if (next === deletedIdx) return -1;
+    if (next > deletedIdx) next -= 1;
+  }
+  return next;
+}
+
+function remapNoReloadScalarReferenceField(field, deletedIndexes) {
+  if (!field) return false;
+  const parsed = parseIntFromDisplayValue(field.value);
+  if (parsed == null || parsed < 0) return false;
+  const next = remapNoReloadDeletedReferenceIndex(parsed, deletedIndexes);
+  if (next === parsed) return false;
+  const nextText = String(next);
+  field.value = nextText;
+  field.originalValue = nextText;
+  if (next < 0) {
+    delete field.referenceTarget;
+    delete field.referenceTargets;
+  }
+  return true;
+}
+
+function remapNoReloadAvailableToField(field, deletedIndexes) {
+  if (!field || !Array.isArray(deletedIndexes) || deletedIndexes.length === 0) return false;
+  const before = decodeAvailableToIndices(field.value);
+  const after = [];
+  const seen = new Set();
+  before.forEach((idx) => {
+    const next = remapNoReloadDeletedReferenceIndex(idx, deletedIndexes);
+    if (!Number.isInteger(next) || next < 0 || next > 31 || seen.has(next)) return;
+    seen.add(next);
+    after.push(next);
+  });
+  const beforeKey = before.join(',');
+  const afterKey = after.join(',');
+  if (beforeKey === afterKey) return false;
+  const nextText = encodeAvailableToFromIndices(after);
+  field.value = nextText;
+  field.originalValue = nextText;
+  delete field.referenceTargets;
+  return true;
+}
+
+function applyNoReloadReferenceDeleteRemaps(deletedIndexesByTab) {
+  if (!state.bundle || !state.bundle.tabs || !(deletedIndexesByTab instanceof Map) || deletedIndexesByTab.size === 0) {
+    return false;
+  }
+  let changed = false;
+  Object.entries(state.bundle.tabs).forEach(([tabKey, tab]) => {
+    const fieldRefs = BIQ_FIELD_REFS[tabKey] || {};
+    const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+    entries.forEach((entry) => {
+      const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+      fields.forEach((field) => {
+        const fieldKey = canonicalBiqFieldKey(field);
+        if (tabKey === 'units' && fieldKey === 'availableto' && deletedIndexesByTab.has('civilizations')) {
+          if (remapNoReloadAvailableToField(field, deletedIndexesByTab.get('civilizations'))) changed = true;
+          return;
+        }
+        const targetTabKey = fieldRefs[fieldKey] || '';
+        if (!targetTabKey || !deletedIndexesByTab.has(targetTabKey)) return;
+        if (remapNoReloadScalarReferenceField(field, deletedIndexesByTab.get(targetTabKey))) changed = true;
+      });
+    });
+
+    const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+    sections.forEach((section) => {
+      const sectionCode = String(section && section.code || '').toUpperCase();
+      const records = Array.isArray(section && section.records) ? section.records : [];
+      records.forEach((record) => {
+        const fields = Array.isArray(record && record.fields) ? record.fields : [];
+        fields.forEach((field) => {
+          const refSpec = getBiqStructureRefSpec(sectionCode, field && (field.baseKey || field.key));
+          const targetTabKey = refSpec ? (BIQ_SECTION_TO_REFERENCE_TAB[String(refSpec.section || '').toUpperCase()] || '') : '';
+          if (!targetTabKey || !deletedIndexesByTab.has(targetTabKey)) return;
+          if (remapNoReloadScalarReferenceField(field, deletedIndexesByTab.get(targetTabKey))) changed = true;
+        });
+      });
+    });
+  });
+  return changed;
+}
+
 function reconcileReferenceTabsAfterNoReloadSave(options = {}) {
   if (!state.bundle || !state.bundle.tabs) return false;
   let changed = false;
   let totalOps = 0;
+  const deletedIndexesByTab = new Map();
   Object.entries(REFERENCE_SECTION_BY_TAB).forEach(([tabKey, sectionCode]) => {
     const tab = state.bundle.tabs[tabKey];
     const entries = Array.isArray(tab && tab.entries) ? tab.entries : null;
@@ -62117,6 +62396,8 @@ function reconcileReferenceTabsAfterNoReloadSave(options = {}) {
         const originalIdx = getReferenceRecordIndexFromOriginalBiq(sectionCode, op && op.recordRef);
         const idx = remapOriginalIndex(originalIdx);
         if (!Number.isFinite(idx) || idx < 0) return;
+        if (!deletedIndexesByTab.has(tabKey)) deletedIndexesByTab.set(tabKey, []);
+        deletedIndexesByTab.get(tabKey).push(idx);
         entries.forEach((entry) => {
           const entryIdx = Number(entry && entry.biqIndex);
           if (Number.isFinite(entryIdx) && entryIdx > idx) {
@@ -62152,6 +62433,7 @@ function reconcileReferenceTabsAfterNoReloadSave(options = {}) {
       changed = true;
     }
   });
+  if (applyNoReloadReferenceDeleteRemaps(deletedIndexesByTab)) changed = true;
   if (totalOps > 0 && typeof _dbgLog === 'function') {
     _dbgLog('INF', 'saveBundle', `No-reload reference reconciliation: ops=${totalOps}, changed=${changed ? 'yes' : 'no'}`);
   }
@@ -62476,12 +62758,13 @@ async function saveCurrentBundle() {
 
     const paths = res.saveReport.map((r) => _dbgRelPath(r.path)).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
-    const hasBiqSaveWarning = !!(biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim()));
+    const hasBiqSkippedEdits = !!(biqReport && Number(biqReport.skipped || 0) > 0);
+    const hasBiqSaveWarning = !!(biqReport && (hasBiqSkippedEdits || String(biqReport.warning || '').trim()));
     if (!shouldReloadBundleAfterSave()) {
-      if (hasBiqSaveWarning) {
+      if (hasBiqSkippedEdits) {
         const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
         const suffix = warningText ? ` ${warningText}` : '';
-        _dbgWarn('saveBundle', 'Skipped post-save bundle reload, but kept BIQ changes dirty because the BIQ save reported skipped edits or warnings');
+        _dbgWarn('saveBundle', 'Skipped post-save bundle reload, but kept BIQ changes dirty because the BIQ save reported skipped edits');
         rerunQualityChecksAfterNoReloadSave();
         setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
         return true;
@@ -62494,7 +62777,13 @@ async function saveCurrentBundle() {
       _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload because Reload After Save is off');
       rerunQualityChecksAfterNoReloadSave();
       if (rerenderAfterAtlasSave) renderActiveTab({ preserveTabScroll: true });
-      setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
+      if (hasBiqSaveWarning) {
+        const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
+        const suffix = warningText ? ` ${warningText}` : '';
+        setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
+      } else {
+        setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
+      }
       return true;
     }
 
@@ -62591,7 +62880,7 @@ async function performSeedScenarioTab(tabKey) {
       body: outcome.body,
       autoHideMs: outcome.phase === 'success' ? 14000 : 20000
     });
-    closeSaveProgressModal();
+    scheduleCloseSaveProgressModal();
     if (!res.ok) {
       setStatus(`Seed save failed: ${res.error || 'unknown error'}`, true);
       return;
@@ -62633,6 +62922,12 @@ async function performSeedScenarioTab(tabKey) {
       summary: outcome.summary,
       rollbackSummary: outcome.rollbackSummary,
       rollbackHasWarning: outcome.rollbackHasWarning
+    });
+    setOperationProgressState({
+      active: false,
+      label: getOperationCompleteText('save', true),
+      completed: 0,
+      total: Array.isArray(outcome.items) ? outcome.items.length : 0
     });
     showSaveToast({
       phase: outcome.phase,

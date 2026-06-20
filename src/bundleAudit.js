@@ -1224,6 +1224,167 @@ function getTechnologyAuditName(node) {
   ).trim() || `Technology ${node.index}`;
 }
 
+const BIQ_REFERENCE_TARGETS = {
+  technologies: { tabKey: 'technologies', sectionCode: 'TECH', label: 'tech' },
+  resources: { tabKey: 'resources', sectionCode: 'GOOD', label: 'resource' },
+  governments: { tabKey: 'governments', sectionCode: 'GOVT', label: 'government' },
+  improvements: { tabKey: 'improvements', sectionCode: 'BLDG', label: 'improvement' },
+  units: { tabKey: 'units', sectionCode: 'PRTO', label: 'unit' },
+  civilizations: { tabKey: 'civilizations', sectionCode: 'RACE', label: 'civilization' },
+  eras: { tabKey: '', sectionCode: 'ERAS', label: 'era' }
+};
+
+const BIQ_REFERENCE_FIELD_RULES = {
+  resources: [
+    { key: 'prerequisite', target: 'technologies', allowed: [-1] }
+  ],
+  improvements: [
+    { key: 'reqimprovement', target: 'improvements', allowed: [-1] },
+    { key: 'reqgovernment', target: 'governments', allowed: [-1] },
+    { key: 'reqadvance', target: 'technologies', allowed: [-1] },
+    { key: 'obsoleteby', target: 'technologies', allowed: [-1] },
+    { key: 'reqresource1', target: 'resources', allowed: [-1] },
+    { key: 'reqresource2', target: 'resources', allowed: [-1] },
+    { key: 'unitproduced', target: 'units', allowed: [-1] },
+    { key: 'gainineverycity', target: 'improvements', allowed: [-1] },
+    { key: 'gainoncontinent', target: 'improvements', allowed: [-1] },
+    { key: 'doubleshappiness', target: 'improvements', allowed: [-1] }
+  ],
+  units: [
+    { key: 'requiredtech', target: 'technologies', allowed: [-1] },
+    { key: 'upgradeto', target: 'units', allowed: [-1] },
+    { key: 'requiredresource1', target: 'resources', allowed: [-1] },
+    { key: 'requiredresource2', target: 'resources', allowed: [-1] },
+    { key: 'requiredresource3', target: 'resources', allowed: [-1] },
+    { key: 'enslaveresultsin', target: 'units', allowed: [-1] },
+    { key: 'enslaveresultsinto', target: 'units', allowed: [-1] }
+  ],
+  civilizations: [
+    { key: 'freetech1index', target: 'technologies', allowed: [-1] },
+    { key: 'freetech2index', target: 'technologies', allowed: [-1] },
+    { key: 'freetech3index', target: 'technologies', allowed: [-1] },
+    { key: 'freetech4index', target: 'technologies', allowed: [-1] },
+    { key: 'shunnedgovernment', target: 'governments', allowed: [-1] },
+    { key: 'favoritegovernment', target: 'governments', allowed: [-1] },
+    { key: 'kingunit', target: 'units', allowed: [-1] }
+  ],
+  governments: [
+    { key: 'prerequisitetechnology', target: 'technologies', allowed: [-1] }
+  ],
+  technologies: [
+    { key: 'era', target: 'eras', allowed: [] },
+    { key: 'prerequisite1', target: 'technologies', allowed: [-1] },
+    { key: 'prerequisite2', target: 'technologies', allowed: [-1] },
+    { key: 'prerequisite3', target: 'technologies', allowed: [-1] },
+    { key: 'prerequisite4', target: 'technologies', allowed: [-1] }
+  ]
+};
+
+function getBiqSectionByCode(bundle, sectionCode) {
+  const target = String(sectionCode || '').trim().toUpperCase();
+  if (!target) return null;
+  const directSections = ((bundle || {}).biq || {}).sections;
+  if (Array.isArray(directSections)) {
+    const match = directSections.find((section) => String(section && section.code || '').trim().toUpperCase() === target);
+    if (match) return match;
+  }
+  const tabs = ((bundle || {}).tabs) || {};
+  for (const tab of Object.values(tabs)) {
+    const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+    const match = sections.find((section) => String(section && section.code || '').trim().toUpperCase() === target);
+    if (match) return match;
+  }
+  return null;
+}
+
+function getReferenceTargetIndexSet(bundle, targetKey) {
+  const target = BIQ_REFERENCE_TARGETS[targetKey];
+  const out = new Set();
+  if (!target) return out;
+  const tab = target.tabKey ? (((bundle || {}).tabs || {})[target.tabKey]) : null;
+  if (tab && Array.isArray(tab.entries)) {
+    tab.entries.forEach((entry, fallbackIndex) => {
+      const rawIndex = entry && entry.biqIndex;
+      const parsed = rawIndex == null || String(rawIndex).trim() === ''
+        ? fallbackIndex
+        : Number.parseInt(String(rawIndex), 10);
+      if (Number.isFinite(parsed) && parsed >= 0) out.add(parsed);
+    });
+  }
+  const section = getBiqSectionByCode(bundle, target.sectionCode);
+  const records = Array.isArray(section && section.fullRecords) && section.fullRecords.length > 0
+    ? section.fullRecords
+    : (Array.isArray(section && section.records) ? section.records : []);
+  records.forEach((record, fallbackIndex) => {
+    const parsed = Number.parseInt(String(record && record.index != null ? record.index : fallbackIndex), 10);
+    if (Number.isFinite(parsed) && parsed >= 0) out.add(parsed);
+  });
+  return out;
+}
+
+function getReferenceEntryAuditName(entry, fallbackIndex) {
+  return String(
+    entry
+    && (
+      entry.name
+      || getReferenceEntryFieldValue(entry, 'name')
+      || entry.civilopediaKey
+    )
+    || `Record ${Number(fallbackIndex) + 1}`
+  ).trim() || `Record ${Number(fallbackIndex) + 1}`;
+}
+
+function auditBiqReferenceIndexIntegrity(bundle, result) {
+  const targetIndexSets = new Map();
+  Object.keys(BIQ_REFERENCE_TARGETS).forEach((key) => {
+    targetIndexSets.set(key, getReferenceTargetIndexSet(bundle, key));
+  });
+
+  let issueCount = 0;
+  Object.entries(BIQ_REFERENCE_FIELD_RULES).forEach(([tabKey, rules]) => {
+    const tab = (((bundle || {}).tabs || {})[tabKey]) || null;
+    const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+    entries.forEach((entry, entryIndex) => {
+      rules.forEach((rule) => {
+        const field = getReferenceEntryField(entry, rule.key);
+        if (!field) return;
+        const raw = String(field.value == null ? '' : field.value).trim();
+        if (!raw || /^none$/i.test(raw)) return;
+        const idx = parseBiqReferenceIndex(raw, NaN);
+        if (!Number.isFinite(idx)) return;
+        if (Array.isArray(rule.allowed) && rule.allowed.includes(idx)) return;
+        const validIndexes = targetIndexSets.get(rule.target) || new Set();
+        if (validIndexes.has(idx)) return;
+        const target = BIQ_REFERENCE_TARGETS[rule.target] || { label: 'record' };
+        const label = String(field.label || rule.key || '').trim() || rule.key;
+        const entryName = getReferenceEntryAuditName(entry, entryIndex);
+        addSectionIssue(
+          result,
+          tabKey,
+          entryIndex,
+          `${entryName} ${label} points to missing ${target.label} index ${idx}. Civ3 can crash or hide dependent content when BIQ references point outside the target table.`,
+          'biq-reference-out-of-range',
+          {
+            fieldKey: rule.key,
+            target: rule.target,
+            value: idx
+          }
+        );
+        issueCount += 1;
+      });
+    });
+  });
+
+  if (issueCount > 0) {
+    addGeneralIssue(
+      result,
+      'base',
+      `${issueCount} BIQ reference index${issueCount === 1 ? '' : 'es'} point outside their target tables. Fix these before opening the scenario in Civ3.`,
+      'biq-reference-integrity'
+    );
+  }
+}
+
 function getTechnologyPrerequisiteIndexes(entry) {
   const out = [];
   ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'].forEach((key) => {
@@ -1831,6 +1992,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditCurrentWonderArt(bundle, result);
   auditCurrentNaturalWonderArt(bundle, result);
   auditDayNightAssets(bundle, result);
+  auditBiqReferenceIndexIntegrity(bundle, result);
   auditTechnologyPrerequisiteCycles(bundle, result);
   auditReferenceArt(bundle, result);
   auditScenarioTextCoverage(bundle, result);

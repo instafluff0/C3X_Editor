@@ -137,7 +137,7 @@ function makeEntry(civilopediaKey, biqIndex) {
   return { civilopediaKey, biqIndex, name: civilopediaKey };
 }
 
-test('unit import remaps mutual references by civilopedia key and filters non-matches', () => {
+test('unit import clears civ availability and remaps mutual references by civilopedia key', () => {
   const targetBundle = {
     tabs: {
       civilizations: {
@@ -229,7 +229,7 @@ test('unit import remaps mutual references by civilopedia key and filters non-ma
   const byBaseKey = (key) => imported.biqFields.filter((field) => field.baseKey === key);
   const availableTo = imported.biqFields.find((field) => field.baseKey === 'availableto');
 
-  assert.deepEqual(Array.from(decodeAvailableToIndices(availableTo.value)), [5, 7]);
+  assert.deepEqual(Array.from(decodeAvailableToIndices(availableTo.value)), []);
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredtech').value, '13');
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredresource1').value, '17');
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'upgradeto').value, '10');

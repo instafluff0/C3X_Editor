@@ -1,4 +1,10 @@
 * RELEASE 27.18
+- Added an Improvements `Required By Units` C3X reverse editor for `building_prereqs_for_units`, placed under Generated Resources.
+- Fixed no-reload BIQ save reconciliation so deleting a reference record updates already-open downstream reference fields, preventing shifted resources such as Helium-3 from temporarily displaying as the next resource until Refresh.
+- Changed unit import so imported units start with no civilizations in Available To, and added a visible Add All action to the Unit Available To editor.
+- Added async QA warnings for known BIQ reference fields that point outside their target tables, and made reference pickers display unresolved current values as invalid indexes instead of `(none)`.
+- Fixed no-reload BIQ saves so successful saves with non-fatal warnings clear dirty badges and pending Save state, and kept same-session copied reference chains pointed at renamed pending source entries.
+- Fixed Districts/Wonder Districts "Include in this scenario" saves so late progress events cannot reopen the save details modal after the save completes.
 - Added app-wide Save and Undo keyboard shortcuts, with Ctrl+S/Ctrl+Z on Windows and Cmd+S/Cmd+Z on macOS routed through the shared main and modal action contract.
 - Added lazy thumbnails to Terrain Type reference dropdowns, so Pollution Yields shows terrain art and Worker Terraform Action shows worker command-button art without preloading hidden option rows.
 - Added a Map city Bulk Improvements modal with thumbnail multi-selects, city-owner/population/coastal filters, sorted affected-city preview with unchanged rows de-emphasized, clearer exact-set wording, and one-step undoable apply behavior.

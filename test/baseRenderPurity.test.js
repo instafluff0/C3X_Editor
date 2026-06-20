@@ -91,6 +91,32 @@ test('building prereq parser preserves quoted multi-word unit names', () => {
   );
 });
 
+test('Improvement Required By Units is a reverse editor for building_prereqs_for_units', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function getImprovementRequiredByUnitNames\(entry, row = null\) \{[\s\S]*?parseBuildingPrereqItems\(sourceRow\.value\)[\s\S]*?c3xNameMatches\(item && item\.building, buildingName\)/,
+    'Improvement Required By Units should find units from entries whose building matches the selected improvement'
+  );
+  assert.match(
+    text,
+    /function renderImprovementRequiredByUnitsControl\(entry, c3xEditable\) \{[\s\S]*?targetTabKey: 'units'[\s\S]*?searchPlaceholder: 'Add Unit\.\.\.'[\s\S]*?commitUnits\(\[\.\.\.selectedUnits, normalized\]\)/,
+    'Improvement Required By Units should provide an Add Unit picker backed by Units'
+  );
+  assert.match(
+    text,
+    /function renderImprovementRequiredByUnitsControl\(entry, c3xEditable\) \{[\s\S]*?withRemoveIcon\(remove, ''\)[\s\S]*?commitUnits\(selectedUnits\.filter/,
+    'Improvement Required By Units should remove individual unit prerequisites'
+  );
+  assert.match(
+    text,
+    /function renderImprovementRequiredByUnitsControl\(entry, c3xEditable\) \{[\s\S]*?const baseKey = 'building_prereqs_for_units'[\s\S]*?createImprovementC3XTopBoardCell\([\s\S]*?'Required By Units'[\s\S]*?baseKey[\s\S]*?Reverse view of unit building prerequisites/,
+    'Improvement Required By Units tooltip should identify the C3X reverse relationship'
+  );
+});
+
 test('C3X name/value parsers keep single colon entries intact', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
@@ -746,6 +772,22 @@ test('reference CRUD captures undo before pending BIQ record ops mutate', () => 
   assertBefore(importHandler, 'rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);', 'ops.push({', 'reference import');
 });
 
+test('renaming a pending reference entry updates pending copy sources that point at it', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const start = text.indexOf('function renameReferenceEntryKey(');
+  assert.notEqual(start, -1, 'Expected renameReferenceEntryKey function');
+  const end = text.indexOf('function hideEntityModal()', start);
+  assert.notEqual(end, -1, 'Expected function after renameReferenceEntryKey');
+  const fn = text.slice(start, end);
+
+  assert.match(
+    fn,
+    /if \(String\(op\.newRecordRef \|\| ''\)\.toUpperCase\(\) === oldKey\) op\.newRecordRef = nextKey;[\s\S]*?if \(String\(op\.sourceRef \|\| ''\)\.toUpperCase\(\) === oldKey\) op\.sourceRef = nextKey;[\s\S]*?if \(String\(op\.copyFromRef \|\| ''\)\.toUpperCase\(\) === oldKey\) op\.copyFromRef = nextKey;/,
+    'pending same-session copy chains must follow the final key of a renamed unsaved reference row'
+  );
+});
+
 test('BIQ reference tab count text uses filtered counts and countable unit rows', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const stylePath = path.join(__dirname, '..', 'src', 'styles.css');
@@ -927,6 +969,24 @@ test('contextual C3X reference-tab controls use C3X editability instead of BIQ e
 
   assert.match(
     text,
+    /function renderImprovementDenseTopBoard[\s\S]*?renderImprovementGeneratedResourcesControl\(entry, c3xBaseEditable\)[\s\S]*?renderImprovementRequiredByUnitsControl\(entry, c3xBaseEditable\)[\s\S]*?renderImprovementProductionPerfumeControl\(entry, c3xBaseEditable\)/,
+    'Improvement C3X base controls should place Required By Units after Generated Resources and before Production Perfume'
+  );
+
+  assert.match(
+    text,
+    /function renderImprovementRequiredByUnitsControl\(entry, c3xEditable\) \{[\s\S]*?const baseKey = 'building_prereqs_for_units'[\s\S]*?createImprovementC3XTopBoardCell\([\s\S]*?'Required By Units'[\s\S]*?baseKey/,
+    'Improvement Required By Units should edit the C3X building_prereqs_for_units base row'
+  );
+
+  assert.match(
+    text,
+    /function setImprovementRequiredByUnitMembership\(entry, row, unitNames\) \{[\s\S]*?parseBuildingPrereqItems\(row\.value\)[\s\S]*?serializeBuildingPrereqItems\(nextItems\)/,
+    'Improvement Required By Units should preserve the building_prereqs_for_units structured format'
+  );
+
+  assert.match(
+    text,
     /function renderTechnologyDenseRulesLayout[\s\S]*?const c3xEditable = canEditC3XBaseRows\(\);[\s\S]*?renderTechnologyPerfumeControl\(entry, c3xEditable\)/,
     'Technology perfume should be available as a contextual C3X base control'
   );
@@ -1013,5 +1073,33 @@ test('BIQ reference picker search placeholders use display labels', () => {
     text,
     /const labelText = String\(displayLabel \|\| field\.label \|\| field\.key \|\| 'value'\)\.trim\(\);[\s\S]*?searchPlaceholder: `Search \$\{labelText\}\.\.\.`/,
     'BIQ reference picker search placeholders should use readable display labels instead of raw field keys like gainineverycity'
+  );
+});
+
+test('BIQ reference pickers display unresolved current values as invalid references', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function makeInvalidReferenceOption\(targetTabKey, value\)[\s\S]*?`Invalid \$\{noun\} index: \$\{parsed\}`/,
+    'Reference pickers should format unresolved numeric current values as invalid target indexes'
+  );
+
+  assert.match(
+    text,
+    /if \(currentValue && currentValue !== '-1' && !findOptionByValue\(normalizedOptions, currentValue\)\) \{[\s\S]*?normalizedOptions\.push\(makeInvalidReferenceOption\(targetTabKey, currentValue\)\);[\s\S]*?\}/,
+    'Reference pickers should add the unresolved current value as a selectable invalid option instead of falling back to none'
+  );
+});
+
+test('Unit Available To panel exposes a visible Add All action', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /if \(referenceEditable && cfg\.kind === 'availableTo'\) \{[\s\S]*?addAllBtn\.textContent = 'Add All';[\s\S]*?field\.value = encodeAvailableToFromIndices\(allSelectedValues\);/,
+    'Unit Available To should provide a visible Add All action that writes all civilization indexes into the bitmask'
   );
 });

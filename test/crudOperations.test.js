@@ -796,9 +796,20 @@ function loadRendererNoReloadSaveHelpers(targetBundle) {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
   const functionNames = [
+    'parseIntFromDisplayValue',
+    'canonicalBiqFieldKey',
+    'parseSigned32FromValue',
+    'toSigned32StringFromUnsigned',
+    'decodeAvailableToIndices',
+    'encodeAvailableToFromIndices',
     'getFieldByBaseKey',
     'getBiqSectionByCode',
+    'getBiqStructureRefSpec',
     'getReferenceRecordIndexFromOriginalBiq',
+    'remapNoReloadDeletedReferenceIndex',
+    'remapNoReloadScalarReferenceField',
+    'remapNoReloadAvailableToField',
+    'applyNoReloadReferenceDeleteRemaps',
     'reconcileReferenceTabsAfterNoReloadSave'
   ];
   const sandbox = {
@@ -813,6 +824,71 @@ function loadRendererNoReloadSaveHelpers(targetBundle) {
       improvements: 'BLDG',
       governments: 'GOVT',
       units: 'PRTO'
+    },
+    BIQ_SECTION_TO_REFERENCE_TAB: {
+      RACE: 'civilizations',
+      TECH: 'technologies',
+      GOOD: 'resources',
+      BLDG: 'improvements',
+      GOVT: 'governments',
+      PRTO: 'units'
+    },
+    BIQ_FIELD_REFS: {
+      resources: { prerequisite: 'technologies' },
+      improvements: {
+        reqimprovement: 'improvements',
+        reqgovernment: 'governments',
+        reqadvance: 'technologies',
+        obsoleteby: 'technologies',
+        reqresource1: 'resources',
+        reqresource2: 'resources',
+        unitproduced: 'units',
+        gainineverycity: 'improvements',
+        gainoncontinent: 'improvements',
+        doubleshappiness: 'improvements'
+      },
+      units: {
+        requiredtech: 'technologies',
+        upgradeto: 'units',
+        requiredresource1: 'resources',
+        requiredresource2: 'resources',
+        requiredresource3: 'resources',
+        enslaveresultsin: 'units',
+        enslaveresultsinto: 'units'
+      },
+      civilizations: {
+        freetech1index: 'technologies',
+        freetech2index: 'technologies',
+        freetech3index: 'technologies',
+        freetech4index: 'technologies',
+        shunnedgovernment: 'governments',
+        favoritegovernment: 'governments',
+        kingunit: 'units'
+      },
+      governments: {
+        prerequisitetechnology: 'technologies',
+        immuneto: 'espionage'
+      },
+      technologies: {
+        era: 'eras',
+        prerequisite1: 'technologies',
+        prerequisite2: 'technologies',
+        prerequisite3: 'technologies',
+        prerequisite4: 'technologies'
+      },
+      rules: {
+        slave: 'units',
+        startunit1: 'units',
+        startunit2: 'units',
+        scout: 'units',
+        battlecreatedunit: 'units',
+        buildarmyunit: 'units',
+        basicbarbarian: 'units',
+        advancedbarbarian: 'units',
+        barbarianseaunit: 'units',
+        flagunit: 'units',
+        defaultmoneyresource: 'resources'
+      }
     }
   };
   sandbox.globalThis = sandbox;
@@ -2083,6 +2159,84 @@ test('no-reload save reconciliation assigns new reference indexes and reload ord
   );
   assert.equal(bundle.biq.sections[0].count, 4);
   assert.equal(state.referenceSelection.technologies, 3);
+});
+
+test('no-reload save reconciliation remaps downstream fields after reference delete cascades', () => {
+  const unitFields = [
+    { baseKey: 'requiredresource1', key: 'requiredresource1', value: '2', originalValue: '2' },
+    { baseKey: 'requiredresource2', key: 'requiredresource2', value: '1', originalValue: '1', referenceTarget: { targetTabKey: 'resources', index: 1 } },
+    { baseKey: 'requiredresource3', key: 'requiredresource3', value: '3', originalValue: '3' }
+  ];
+  const ruleFields = [
+    { baseKey: 'defaultmoneyresource', key: 'defaultmoneyresource', value: '3', originalValue: '3' }
+  ];
+  const workerFields = [
+    { baseKey: 'requiredresource1', key: 'requiredresource1', value: '2', originalValue: '2' }
+  ];
+  const bundle = {
+    biq: {
+      sections: [{
+        code: 'GOOD',
+        count: 4,
+        records: [
+          { index: 0, fields: [{ baseKey: 'civilopediaentry', key: 'civilopediaentry', value: 'GOOD_ALPHA' }] },
+          { index: 1, fields: [{ baseKey: 'civilopediaentry', key: 'civilopediaentry', value: 'GOOD_DELETED' }] },
+          { index: 2, fields: [{ baseKey: 'civilopediaentry', key: 'civilopediaentry', value: 'GOOD_HELIUM3' }] },
+          { index: 3, fields: [{ baseKey: 'civilopediaentry', key: 'civilopediaentry', value: 'GOOD_STONE' }] }
+        ]
+      }]
+    },
+    tabs: {
+      resources: {
+        type: 'reference',
+        entries: [
+          { civilopediaKey: 'GOOD_ALPHA', name: 'Alpha', biqIndex: 0 },
+          { civilopediaKey: 'GOOD_HELIUM3', name: 'Helium-3', biqIndex: 2 },
+          { civilopediaKey: 'GOOD_STONE', name: 'Stone', biqIndex: 3 }
+        ],
+        recordOps: [{ op: 'delete', recordRef: '@INDEX:1' }]
+      },
+      units: {
+        type: 'reference',
+        entries: [
+          { civilopediaKey: 'PRTO_PHOTON', name: 'Photon Wave Infantry', biqIndex: 0, biqFields: unitFields }
+        ],
+        recordOps: []
+      },
+      rules: {
+        sections: [{
+          code: 'RULE',
+          records: [{ fields: ruleFields }]
+        }]
+      },
+      workerJobs: {
+        sections: [{
+          code: 'TFRM',
+          records: [{ fields: workerFields }]
+        }]
+      }
+    }
+  };
+  const { reconcileReferenceTabsAfterNoReloadSave } = loadRendererNoReloadSaveHelpers(bundle);
+  const savedOps = JSON.parse(JSON.stringify(bundle.tabs.resources.recordOps));
+  bundle.tabs.resources.recordOps = [];
+
+  assert.equal(reconcileReferenceTabsAfterNoReloadSave({
+    referenceOpsByTab: { resources: savedOps }
+  }), true);
+
+  assert.deepEqual(
+    bundle.tabs.resources.entries.map((entry) => `${entry.civilopediaKey}:${entry.biqIndex}`),
+    ['GOOD_ALPHA:0', 'GOOD_HELIUM3:1', 'GOOD_STONE:2']
+  );
+  assert.equal(bundle.biq.sections[0].count, 3);
+  assert.deepEqual(unitFields.map((field) => field.value), ['1', '-1', '2']);
+  assert.deepEqual(unitFields.map((field) => field.originalValue), ['1', '-1', '2']);
+  assert.equal(unitFields[1].referenceTarget, undefined);
+  assert.equal(ruleFields[0].value, '2');
+  assert.equal(ruleFields[0].originalValue, '2');
+  assert.equal(workerFields[0].value, '1');
+  assert.equal(workerFields[0].originalValue, '1');
 });
 
 test('no-reload save marks map edits clean for future dirty checks', () => {

@@ -455,6 +455,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const hasBiqSkippedEdits = !!\(biqReport && Number\(biqReport\.skipped \|\| 0\) > 0\);[\s\S]*?if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?if \(hasBiqSkippedEdits\) \{[\s\S]*?kept BIQ changes dirty because the BIQ save reported skipped edits[\s\S]*?return true;[\s\S]*?markCurrentBundleCleanAfterSave\(/,
+    'no-reload saves should preserve dirty state only for skipped BIQ edits, not successful BIQ warnings'
+  );
+  assert.match(
+    rendererText,
     /function rerunQualityChecksAfterNoReloadSave\(\) \{[\s\S]*?void runBundleAudit\(buildAuditPayloadFromState\(\)\);[\s\S]*?\}/,
     'no-reload saves should rerun quality checks against the current in-memory bundle so stale warnings clear'
   );

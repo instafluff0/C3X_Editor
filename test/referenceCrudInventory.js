@@ -103,7 +103,7 @@ const IMPORT_REFERENCE_INVENTORY = [
   { id: 'import-bldg-gainoncontinent', tabKey: 'improvements', field: 'gainoncontinent', kind: 'scalar', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' },
   { id: 'import-bldg-reqgovernment', tabKey: 'improvements', field: 'reqgovernment', kind: 'scalar', sourceTabKey: 'governments', targetTabKey: 'governments', status: 'covered' },
 
-  { id: 'import-prto-availableto', tabKey: 'units', field: 'availableto', kind: 'bitmask', sourceTabKey: 'civilizations', targetTabKey: 'civilizations', status: 'covered' },
+  { id: 'import-prto-availableto', tabKey: 'units', field: 'availableto', kind: 'bitmask', sourceTabKey: 'civilizations', targetTabKey: 'civilizations', status: 'gap', reason: 'Imported units clear Available To instead of preserving source scenario civilization masks.' },
   { id: 'import-prto-requiredtech', tabKey: 'units', field: 'requiredtech', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
   { id: 'import-prto-requiredresource1', tabKey: 'units', field: 'requiredresource1', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
   { id: 'import-prto-requiredresource2', tabKey: 'units', field: 'requiredresource2', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
