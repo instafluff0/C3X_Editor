@@ -4363,11 +4363,21 @@ function getReferenceTabUnitReorderMovedIndexes(tab) {
 
 function hasReferenceEntryStructuralDirtyState(tabKey, entry, options = {}) {
   const normalizedTabKey = String(tabKey || '').trim().toLowerCase();
+  const tab = options && options.tab;
+  const entryKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+  if (entry && entry.isNew && entryKey && Array.isArray(tab && tab.recordOps)) {
+    const hasPendingCreateOp = tab.recordOps.some((op) => {
+      const kind = String(op && op.op || '').trim().toLowerCase();
+      if (kind !== 'add' && kind !== 'copy') return false;
+      return String(op && op.newRecordRef || '').trim().toUpperCase() === entryKey;
+    });
+    if (hasPendingCreateOp) return true;
+  }
   if (normalizedTabKey !== 'units' || !entry) return false;
   const pendingIndex = normalizeUnitBiqIndexBadgeNumber(entry.pendingBiqIndex);
   const savedIndex = normalizeUnitBiqIndexBadgeNumber(entry.biqIndex);
   if (pendingIndex == null || savedIndex == null || pendingIndex === savedIndex) return false;
-  const movedIndexes = getReferenceTabUnitReorderMovedIndexes(options && options.tab);
+  const movedIndexes = getReferenceTabUnitReorderMovedIndexes(tab);
   return movedIndexes.has(savedIndex);
 }
 
@@ -4909,6 +4919,10 @@ function isSectionItemDirty(tabKey, sectionIndex, sectionObj) {
 
 function isBiqRecordDirty(tabKey, sectionCode, recordObj) {
   if (!state.isDirty) return false;
+  return isBiqRecordChangedFromClean(tabKey, sectionCode, recordObj);
+}
+
+function isBiqRecordChangedFromClean(tabKey, sectionCode, recordObj) {
   const cleanTab = getEffectiveCleanTabForDirty(tabKey);
   const cleanSections = cleanTab && Array.isArray(cleanTab.sections) ? cleanTab.sections : [];
   const cleanSection = cleanSections.find((s) => String(s && s.code || '').toUpperCase() === String(sectionCode || '').toUpperCase()) || null;
@@ -4916,6 +4930,21 @@ function isBiqRecordDirty(tabKey, sectionCode, recordObj) {
   const recordIndex = Number(recordObj && recordObj.index);
   const cleanRecord = cleanRecords.find((r) => Number(r && r.index) === recordIndex) || null;
   return hasChangedFromClean(recordObj, cleanRecord);
+}
+
+function countDirtyBiqStructureRecords(tabKey) {
+  const key = String(tabKey || '').trim();
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[key];
+  const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+  let count = 0;
+  sections.forEach((section) => {
+    const sectionCode = String(section && section.code || '').toUpperCase();
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.forEach((record) => {
+      if (isBiqRecordChangedFromClean(key, sectionCode, record)) count += 1;
+    });
+  });
+  return count;
 }
 
 function appendDirtyBadge(target, label = 'Modified', count = null) {
@@ -16101,18 +16130,20 @@ const UNIT_RULE_FRIENDLY_LABELS = Object.freeze({
   blitz: 'Blitz',
   cruisemissile: 'Cruise Missile',
   detectinvisible: 'Detect Invisible',
-  draftable: 'Draftable',
-  footsoldier: 'Foot Soldier',
+  draftable: 'Draft',
+  flagunit: 'Flag Unit',
+  footsoldier: 'Foot Unit',
   hiddennationality: 'Hidden Nationality',
   immobile: 'Immobile',
   infinitebombardrange: 'Infinite Bombard Range',
   invisible: 'Invisible',
+  king: 'King',
   leader: 'Leader',
   lethallandbombardment: 'Lethal Land Bombardment',
   lethalseabombardment: 'Lethal Sea Bombardment',
   nuclearweapon: 'Nuclear Weapon',
   radar: 'Radar',
-  rangedattackanimations: 'Ranged Attack Animations',
+  rangedattackanimations: 'Ranged Attack Animation',
   requiresescort: 'Requires Escort',
   rotatebeforeattack: 'Rotate Before Attack',
   sinksinocean: 'Sinks In Ocean',
@@ -16120,7 +16151,7 @@ const UNIT_RULE_FRIENDLY_LABELS = Object.freeze({
   startsgoldenage: 'Starts Golden Age',
   stealth: 'Stealth',
   tacticalmissile: 'Tactical Missile',
-  transportsonlyairunits: 'Transports Only Air Units',
+  transportsonlyairunits: 'Transports Only Aircraft',
   transportsonlyfootunits: 'Transports Only Foot Units',
   transportsonlytacticalmissiles: 'Transports Only Tactical Missiles',
   wheeled: 'Wheeled'
@@ -17179,6 +17210,87 @@ function renderTerrainFlagEditor(entry, values, onValuesChange) {
       const updated = Array.from({ length: Math.max(rows.length, Array.isArray(currentState.values) ? currentState.values.length : 0) }, (_, valueIdx) => String((Array.isArray(currentState.values) && currentState.values[valueIdx] != null) ? currentState.values[valueIdx] : '0'));
       updated[idx] = check.checked ? '1' : '0';
       if (typeof onValuesChange === 'function') onValuesChange(updated);
+    });
+    line.appendChild(check);
+    wrap.appendChild(line);
+  });
+  return wrap;
+}
+
+function renderUnitAbilityCheckboxEditor(entry, { readOnly = false, onValuesChange = null } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'unit-checkbox-list unit-ability-checkbox-list';
+  const selected = new Set(getUnitAbilitySelections(entry));
+  UNIT_ABILITY_OPTION_KEYS.forEach((key) => {
+    const line = document.createElement('label');
+    line.className = 'unit-checkbox-row unit-ability-checkbox-row';
+    line.style.cursor = readOnly ? 'default' : 'pointer';
+
+    const text = document.createElement('span');
+    text.textContent = UNIT_RULE_FRIENDLY_LABELS[key] || toFriendlyKey(key);
+    line.appendChild(text);
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = selected.has(key);
+    check.disabled = !!readOnly;
+    check.addEventListener('change', () => {
+      if (readOnly) return;
+      const next = new Set(getUnitAbilitySelections(entry));
+      const had = next.has(key);
+      if (check.checked) next.add(key);
+      else next.delete(key);
+      if (had === next.has(key)) return;
+      if (typeof onValuesChange === 'function') onValuesChange(Array.from(next));
+    });
+    line.appendChild(check);
+    wrap.appendChild(line);
+  });
+  return wrap;
+}
+
+function renderUnitAvailableToCheckboxEditor(entry, options, { readOnly = false, onValuesChange = null } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'unit-checkbox-list unit-available-to-checkbox-list';
+  const availableField = getBiqFieldByBaseKey(entry, 'availableto');
+  const selected = new Set(decodeAvailableToIndices(availableField && availableField.value).map((idx) => String(idx)));
+  const rows = (Array.isArray(options) ? options : []).filter((opt) => normalizeConfigToken(opt && opt.value));
+  if (rows.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'field-meta';
+    hint.textContent = '(No civilization data found)';
+    wrap.appendChild(hint);
+    return wrap;
+  }
+  rows.forEach((opt) => {
+    const value = normalizeConfigToken(opt && opt.value);
+    const labelText = String(opt && opt.label || value || '').trim() || `Civilization ${value}`;
+    const line = document.createElement('label');
+    line.className = 'unit-checkbox-row unit-available-to-checkbox-row';
+    line.style.cursor = readOnly ? 'default' : 'pointer';
+
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb unit-available-to-thumb';
+    if (opt && opt.entry) loadReferenceListThumbnail('civilizations', opt.entry, thumb);
+    line.appendChild(thumb);
+
+    const text = document.createElement('span');
+    text.textContent = labelText;
+    line.appendChild(text);
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = selected.has(value);
+    check.disabled = !!readOnly;
+    check.addEventListener('change', () => {
+      if (readOnly) return;
+      const field = ensureUnitAvailableToField(entry);
+      const current = new Set(decodeAvailableToIndices(field && field.value).map((idx) => String(idx)));
+      const had = current.has(value);
+      if (check.checked) current.add(value);
+      else current.delete(value);
+      if (had === current.has(value)) return;
+      if (typeof onValuesChange === 'function') onValuesChange(Array.from(current).sort((a, b) => Number(a) - Number(b)));
     });
     line.appendChild(check);
     wrap.appendChild(line);
@@ -18708,7 +18820,6 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
     const legalUnitTelepadState = getUnitListFieldState(entry, ['legal_unit_telepad', 'legalunittelepad'], 'legal_unit_telepad');
     const legalBuildingTelepadState = getUnitListFieldState(entry, ['legal_building_telepad', 'legalbuildingtelepad'], 'legal_building_telepad');
     const civOptions = getCivilizationBitmaskOptions();
-    const civNameByIdx = new Map(civOptions.map((opt) => [Number.parseInt(String(opt.value), 10), String(opt.label || '')]));
     const availableField = getBiqFieldByBaseKey(entry, 'availableto');
     const labelRow = document.createElement('div');
     labelRow.className = 'unit-list-panel-head';
@@ -18781,50 +18892,45 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
     }
     panel.appendChild(labelRow);
     if (!referenceEditable) {
-      const text = document.createElement('div');
-      text.className = 'field-meta unit-list-panel-text';
       if (cfg.kind === 'abilities') {
-        const selected = getUnitAbilitySelections(entry).map((k) => toFriendlyKey(k));
-        text.textContent = selected.length ? selected.join(', ') : '(none)';
+        controlWrap.appendChild(renderUnitAbilityCheckboxEditor(entry, { readOnly: true }));
       } else if (cfg.kind === 'availableTo') {
-        const selected = decodeAvailableToIndices(availableField && availableField.value);
-        const labels = selected.map((idx) => civNameByIdx.get(idx) || `Civ ${idx}`).filter(Boolean);
-        text.textContent = labels.length ? labels.join(', ') : '(none)';
-      } else if (cfg.kind === 'stealthTargets') {
+        controlWrap.appendChild(renderUnitAvailableToCheckboxEditor(entry, civOptions, { readOnly: true }));
+      } else {
+        const text = document.createElement('div');
+        text.className = 'field-meta unit-list-panel-text';
+        if (cfg.kind === 'stealthTargets') {
         const unitLabelByIdx = makeUnitIndexToLabelMap();
         const labels = stealthState.values.map((v) => unitLabelByIdx.get(v) || v);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
-      } else if (cfg.kind === 'ignoreMovement') {
+        } else if (cfg.kind === 'ignoreMovement') {
         const terrainRows = getTerrainFlagRowsForUnits();
         const labels = terrainRows
           .filter((row, idx) => String(ignoreMoveState.values[idx] || '').trim() === '1')
           .map((row) => row.label)
           .filter(Boolean);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
-      } else if (cfg.kind === 'legalUnitTelepads') {
+        } else if (cfg.kind === 'legalUnitTelepads') {
         const unitOpts = makeIndexOptionsForTab('units');
         const unitLabelByIdx = new Map(unitOpts.map((o) => [o.value, o.label]));
         const labels = legalUnitTelepadState.values.map((v) => unitLabelByIdx.get(v) || v);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
-      } else if (cfg.kind === 'legalBuildingTelepads') {
+        } else if (cfg.kind === 'legalBuildingTelepads') {
         const improvOpts = makeIndexOptionsForTab('improvements');
         const improvLabelByIdx = new Map(improvOpts.map((o) => [o.value, o.label]));
         const labels = legalBuildingTelepadState.values.map((v) => improvLabelByIdx.get(v) || v);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
-      } else {
+        } else {
         text.textContent = '(none)';
+        }
+        controlWrap.appendChild(text);
       }
-      controlWrap.appendChild(text);
       panel.appendChild(controlWrap);
       grid.appendChild(panel);
       return;
     }
     if (cfg.kind === 'abilities') {
-      const options = UNIT_ABILITY_OPTION_KEYS.map((key) => ({ value: key, label: toFriendlyKey(key) }));
-      const editor = makeNamedListTokenEditor({
-        tabKey: '',
-        options,
-        values: getUnitAbilitySelections(entry),
+      const editor = renderUnitAbilityCheckboxEditor(entry, {
         onValuesChange: (values) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           setUnitAbilitySelections(entry, values);
@@ -18839,12 +18945,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
         field = { key: 'availableto', baseKey: 'availableto', label: 'Available To', value: '0', originalValue: '0', editable: true };
         entry.biqFields.push(field);
       }
-      const selectedIndices = decodeAvailableToIndices(field && field.value);
-      const selectedCivValues = selectedIndices.map((idx) => String(idx));
-      const editor = makeNamedListTokenEditor({
-        tabKey: 'civilizations',
-        options: civOptions,
-        values: selectedCivValues,
+      const editor = renderUnitAvailableToCheckboxEditor(entry, civOptions, {
         onValuesChange: (values) => {
           rememberUndoSnapshotForKey(entryUndoKey);
           if (field) field.value = encodeAvailableToFromIndices(values);
@@ -24854,6 +24955,7 @@ function createReferencePicker(config) {
   let selectedOption = null;
   let selectedJumpTarget = null;
   let selectedJumpLabel = '';
+  let selectedPickerValue = currentValue;
   const resolveOptionJumpTarget = (option, value) => {
     if (!option) return null;
     if (resolveJumpTarget) {
@@ -24878,14 +24980,27 @@ function createReferencePicker(config) {
       navigateToReferenceEntry(targetTabKey, jumpTarget);
     }
   };
+  const getOptionDisplayLabel = (option, fallback = noneLabel) => {
+    if (!option) return String(fallback || noneLabel);
+    if (!option.separator && !option.special && option.entry && targetTabKey) {
+      const liveLabel = String(
+        getReferenceEntryDisplayName(targetTabKey, option.entry)
+        || option.entry.name
+        || ''
+      ).trim();
+      if (liveLabel) return liveLabel;
+    }
+    return String(option.displayLabel || option.label || fallback || noneLabel);
+  };
   const renderButton = (value) => {
     const normalizedValue = (() => {
       const parsed = parseIntFromDisplayValue(value);
       return parsed == null ? String(value ?? '') : String(parsed);
     })();
     const selected = findOptionByValue(normalizedOptions, normalizedValue) || normalizedOptions[0] || null;
+    selectedPickerValue = normalizedValue;
     selectedOption = selected;
-    const selectedLabel = selected ? String(selected.displayLabel || selected.label || noneLabel) : noneLabel;
+    const selectedLabel = getOptionDisplayLabel(selected, noneLabel);
     selectedJumpLabel = selectedLabel;
     buttonText.textContent = selectedLabel;
     buttonText.title = selectedLabel;
@@ -25056,6 +25171,21 @@ function createReferencePicker(config) {
     if (loaded === 0) hydrateFirstPendingOptionThumbs(limit);
   };
   let menuRowsBuilt = false;
+  const refreshMenuRowsLabels = () => {
+    Array.from(listWrap.querySelectorAll('.tech-picker-row')).forEach((row) => {
+      const opt = row.__referencePickerOption || null;
+      if (!opt) return;
+      const label = getOptionDisplayLabel(opt, opt.label);
+      row.dataset.search = label.toLowerCase();
+      const text = row.querySelector('.tech-picker-row-label');
+      if (text) text.textContent = label;
+      const jumpBtn = row.querySelector('.tech-picker-row-jump');
+      if (jumpBtn) {
+        jumpBtn.title = `Open ${label}`;
+        jumpBtn.setAttribute('aria-label', `Open ${label}`);
+      }
+    });
+  };
   const buildMenuRows = () => {
     if (menuRowsBuilt) return;
     menuRowsBuilt = true;
@@ -25070,7 +25200,9 @@ function createReferencePicker(config) {
       const row = document.createElement('div');
       row.className = 'tech-picker-row';
       if (opt.special) row.classList.add('special');
-      row.dataset.search = String(opt.label || '').toLowerCase();
+      row.__referencePickerOption = opt;
+      const optionLabel = getOptionDisplayLabel(opt, opt.label);
+      row.dataset.search = optionLabel.toLowerCase();
       const rowJumpTarget = resolveOptionJumpTarget(opt, opt.value);
       const selectBtn = document.createElement('button');
       selectBtn.type = 'button';
@@ -25107,7 +25239,7 @@ function createReferencePicker(config) {
       textWrap.className = 'tech-picker-row-text';
       const text = document.createElement('span');
       text.className = 'tech-picker-row-label';
-      text.textContent = String(opt.label || '');
+      text.textContent = optionLabel;
       textWrap.appendChild(text);
       const metaText = getOptionMetaText ? String(getOptionMetaText(opt) || '').trim() : '';
       if (metaText) {
@@ -25131,8 +25263,8 @@ function createReferencePicker(config) {
         jumpBtn.type = 'button';
         jumpBtn.className = 'tech-picker-row-jump';
         jumpBtn.textContent = '↗';
-        jumpBtn.title = `Open ${opt.label}`;
-        jumpBtn.setAttribute('aria-label', `Open ${opt.label}`);
+        jumpBtn.title = `Open ${optionLabel}`;
+        jumpBtn.setAttribute('aria-label', `Open ${optionLabel}`);
         jumpBtn.addEventListener('click', (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
@@ -25183,7 +25315,9 @@ function createReferencePicker(config) {
       activeReferencePickerCloser();
     }
     activeReferencePickerCloser = closeMenu;
+    renderButton(selectedPickerValue);
     buildMenuRows();
+    refreshMenuRowsLabels();
     menu.classList.remove('hidden');
     if (!menu.classList.contains('hidden')) {
       if (usePortaledMenu) {
@@ -37685,8 +37819,61 @@ function makeBlankReferenceFieldValue(field, tabKey = '') {
   return '';
 }
 
+function makeBlankPcxRgbaBase64(width, height) {
+  const w = Math.max(1, Number(width) | 0);
+  const h = Math.max(1, Number(height) | 0);
+  const data = new Uint8Array(w * h * 4);
+  for (let i = 0; i < w * h; i += 1) {
+    const off = i * 4;
+    data[off] = 255;
+    data[off + 1] = 255;
+    data[off + 2] = 255;
+    data[off + 3] = 255;
+  }
+  if (typeof Buffer !== 'undefined') return Buffer.from(data).toString('base64');
+  let binary = '';
+  for (let i = 0; i < data.length; i += 1) binary += String.fromCharCode(data[i]);
+  return btoa(binary);
+}
+
+function makePlaceholderTechIconStem(civilopediaKey) {
+  const raw = String(civilopediaKey || '').trim() || 'TECH_PLACEHOLDER';
+  return raw.replace(/^TECH_/i, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    || 'TECH_PLACEHOLDER';
+}
+
+function applyBlankTechIconPlaceholders(entry, civilopediaKey) {
+  if (!entry || typeof entry !== 'object') return false;
+  const key = String(civilopediaKey || entry.rawBiqCivilopediaKey || entry.displayCivilopediaKey || entry.civilopediaKey || '').trim();
+  if (!/^TECH_/i.test(key)) return false;
+  const stem = makePlaceholderTechIconStem(key);
+  const largePath = `Art\\tech chooser\\Icons\\${stem}_blank_large.pcx`;
+  const smallPath = `Art\\tech chooser\\Icons\\${stem}_blank_small.pcx`;
+  entry.iconPaths = [largePath, smallPath];
+  entry.thumbPath = largePath;
+  if (!entry.pendingArtConversions || typeof entry.pendingArtConversions !== 'object') entry.pendingArtConversions = {};
+  entry.pendingArtConversions['iconPaths:0'] = {
+    sourcePath: largePath,
+    width: 128,
+    height: 128,
+    rgbaBase64: makeBlankPcxRgbaBase64(128, 128)
+  };
+  entry.pendingArtConversions['iconPaths:1'] = {
+    sourcePath: smallPath,
+    width: 32,
+    height: 32,
+    rgbaBase64: makeBlankPcxRgbaBase64(32, 32)
+  };
+  return true;
+}
+
 function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKey, mode, displayName = '' }) {
   const src = sourceEntry ? JSON.parse(JSON.stringify(sourceEntry)) : {};
+  const sourceTechIconPaths = tabKey === 'technologies' && Array.isArray(sourceEntry && sourceEntry.iconPaths)
+    ? sourceEntry.iconPaths.map((value) => String(value || '').trim()).filter(Boolean).slice(0, 2)
+    : [];
   const inferred = inferReferenceNameFromKey(civilopediaKey, tabKey);
   const name = String(displayName || '').trim() || inferred;
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
@@ -37713,8 +37900,14 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     entry.civilopediaSection1 = '';
     entry.civilopediaSection2 = '';
     entry.iconPaths = [];
-    entry.racePaths = [];
     entry.thumbPath = '';
+    if (sourceTechIconPaths.length > 0) {
+      entry.iconPaths = sourceTechIconPaths;
+      entry.thumbPath = sourceTechIconPaths[0] || '';
+    } else if (tabKey === 'technologies') {
+      applyBlankTechIconPlaceholders(entry, civilopediaKey);
+    }
+    entry.racePaths = [];
     entry.buildingIconKind = '';
     entry.buildingIconIndex = '';
     entry.wonderSplashPath = '';
@@ -37914,16 +38107,33 @@ async function loadImportMapTab(filePath) {
   return loaded;
 }
 
-async function loadImportEntriesForTab(tabKey, filePath) {
-  const loaded = await window.c3xManager.loadBundle(buildLoadBundlePayload({
-    mode: 'scenario',
-    scenarioPath: filePath
-  }));
+async function loadImportEntriesForTab(tabKey, source) {
+  const sourceInfo = (source && typeof source === 'object')
+    ? source
+    : { kind: 'scenario', scenarioPath: source };
+  const sourceKind = String(sourceInfo.kind || 'scenario').trim().toLowerCase() === 'standard'
+    ? 'standard'
+    : 'scenario';
+  const scenarioPath = String(sourceInfo.scenarioPath || sourceInfo.filePath || '').trim();
+  const loaded = await window.c3xManager.loadBundle(buildLoadBundlePayload(sourceKind === 'standard'
+    ? {
+        mode: 'global',
+        scenarioPath: ''
+      }
+    : {
+        mode: 'scenario',
+        scenarioPath
+      }));
   if (!loaded || !loaded.tabs || !loaded.tabs[tabKey] || !Array.isArray(loaded.tabs[tabKey].entries)) {
-    throw new Error('Could not load import source scenario.');
+    throw new Error(sourceKind === 'standard'
+      ? 'Could not load Standard Game import source.'
+      : 'Could not load import source scenario.');
   }
   const srcTab = loaded.tabs[tabKey];
   const importScenarioPaths = Array.isArray(loaded.scenarioSearchPaths) ? loaded.scenarioSearchPaths : [];
+  const importSourcePath = sourceKind === 'standard'
+    ? String(loaded && loaded.biq && loaded.biq.sourcePath || '').trim()
+    : scenarioPath;
   const buildReferenceIndexMap = (entries) => (Array.isArray(entries) ? entries : []).map((entry, fallbackIdx) => ({
     index: Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx,
     civilopediaKey: String(entry && entry.civilopediaKey || '').trim().toUpperCase(),
@@ -37940,10 +38150,18 @@ async function loadImportEntriesForTab(tabKey, filePath) {
       name: String(record && (record.name || record.eraName || record.description) || '').trim()
     })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && (item.civilopediaKey || item.name));
   };
+  const entries = tabKey === 'resources'
+    ? srcTab.entries.map((entry) => ({
+        ...entry,
+        _importResourceTerrainMembership: buildImportedResourceTerrainMembership(loaded, entry)
+      }))
+    : srcTab.entries;
   return {
-    entries: srcTab.entries,
+    entries,
     diplomacySlots: srcTab.diplomacySlots || [],
     importScenarioPaths,
+    importSourceKind: sourceKind,
+    importSourcePath,
     referenceIndexMaps: {
       civilizations: buildReferenceIndexMap(loaded.tabs.civilizations && loaded.tabs.civilizations.entries),
       technologies: buildReferenceIndexMap(loaded.tabs.technologies && loaded.tabs.technologies.entries),
@@ -37964,6 +38182,114 @@ function getImportReferenceIndexMap(sourceMaps, tabKey) {
   const maps = sourceMaps && typeof sourceMaps === 'object' ? sourceMaps : {};
   const items = maps[tabKey];
   return Array.isArray(items) ? items : [];
+}
+
+function getBiqRecordFieldByBaseKey(record, baseKey) {
+  const target = String(baseKey || '').trim().toLowerCase();
+  if (!record || !target) return null;
+  const fields = Array.isArray(record.fields) ? record.fields : [];
+  return fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target) || null;
+}
+
+function parsePossibleResourceMaskList(rawValue) {
+  const raw = String(rawValue == null ? '' : rawValue).trim();
+  if (!raw) return [];
+  return raw.split(/[,\s]+/)
+    .filter((part) => part !== '')
+    .map((part) => (Number.parseInt(part, 10) ? 1 : 0));
+}
+
+function possibleResourceMaskHasIndex(rawValue, resourceIndex) {
+  const idx = Number(resourceIndex);
+  if (!Number.isFinite(idx) || idx < 0) return false;
+  const values = parsePossibleResourceMaskList(rawValue);
+  return values[idx] === 1;
+}
+
+function setPossibleResourceMaskIndex(record, resourceIndex) {
+  const idx = Number(resourceIndex);
+  if (!record || !Number.isFinite(idx) || idx < 0) return false;
+  const maskField = getBiqRecordFieldByBaseKey(record, 'possibleResourcesMask');
+  if (!maskField) return false;
+  const values = parsePossibleResourceMaskList(maskField.value);
+  while (values.length <= idx) values.push(0);
+  if (values[idx] === 1) return false;
+  values[idx] = 1;
+  maskField.value = values.join(',');
+  const countField = getBiqRecordFieldByBaseKey(record, 'numPossibleResources');
+  if (countField) {
+    const currentCount = parseIntFromDisplayValue(countField.value);
+    if (!Number.isFinite(currentCount) || currentCount < values.length) {
+      countField.value = String(values.length);
+    }
+  }
+  return true;
+}
+
+function buildImportedResourceTerrainMembership(loadedBundle, sourceResourceEntry) {
+  const sourceResourceIndex = Number(sourceResourceEntry && sourceResourceEntry.biqIndex);
+  if (!Number.isFinite(sourceResourceIndex) || sourceResourceIndex < 0) return [];
+  const terrainTab = loadedBundle && loadedBundle.tabs && loadedBundle.tabs.terrain;
+  const terrainSection = Array.isArray(terrainTab && terrainTab.sections)
+    ? terrainTab.sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'TERR')
+    : null;
+  const records = Array.isArray(terrainSection && terrainSection.records) ? terrainSection.records : [];
+  return records.map((record, fallbackIdx) => {
+    const maskField = getBiqRecordFieldByBaseKey(record, 'possibleResourcesMask');
+    if (!possibleResourceMaskHasIndex(maskField && maskField.value, sourceResourceIndex)) return null;
+    const keyField = getBiqRecordFieldByBaseKey(record, 'civilopediaEntry');
+    const nameField = getBiqRecordFieldByBaseKey(record, 'name');
+    const index = Number.isFinite(record && record.index) ? Number(record.index) : fallbackIdx;
+    return {
+      index,
+      civilopediaKey: String(keyField && keyField.value || record && record.civilopediaKey || record && record.civilopediaEntry || '').trim().toUpperCase(),
+      name: String(nameField && nameField.value || record && record.name || '').trim()
+    };
+  }).filter((item) => item && Number.isFinite(item.index) && item.index >= 0 && (item.civilopediaKey || item.name));
+}
+
+function applyImportedResourceTerrainMembership(entry) {
+  const membership = Array.isArray(entry && entry._importResourceTerrainMembership)
+    ? entry._importResourceTerrainMembership
+    : [];
+  if (membership.length === 0) return 0;
+  const targetResourceIndex = getPredictedReferenceRecordIndex('resources', entry);
+  if (!Number.isFinite(targetResourceIndex) || targetResourceIndex < 0) return 0;
+  const terrainTab = state.bundle && state.bundle.tabs && state.bundle.tabs.terrain;
+  const terrainSection = Array.isArray(terrainTab && terrainTab.sections)
+    ? terrainTab.sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'TERR')
+    : null;
+  const records = Array.isArray(terrainSection && terrainSection.records) ? terrainSection.records : [];
+  if (records.length === 0) return 0;
+
+  const byKey = new Map();
+  const byName = new Map();
+  const duplicateNames = new Set();
+  records.forEach((record) => {
+    const keyField = getBiqRecordFieldByBaseKey(record, 'civilopediaEntry');
+    const nameField = getBiqRecordFieldByBaseKey(record, 'name');
+    const key = String(keyField && keyField.value || record && record.civilopediaKey || record && record.civilopediaEntry || '').trim().toUpperCase();
+    const name = String(nameField && nameField.value || record && record.name || '').trim().toLowerCase();
+    if (key) byKey.set(key, record);
+    if (name) {
+      if (byName.has(name)) {
+        byName.delete(name);
+        duplicateNames.add(name);
+      } else if (!duplicateNames.has(name)) {
+        byName.set(name, record);
+      }
+    }
+  });
+
+  let changed = 0;
+  membership.forEach((item) => {
+    const key = String(item && item.civilopediaKey || '').trim().toUpperCase();
+    const name = String(item && item.name || '').trim().toLowerCase();
+    const record = (key && byKey.get(key)) || (name && byName.get(name)) || null;
+    if (record && setPossibleResourceMaskIndex(record, targetResourceIndex)) changed += 1;
+  });
+  if (changed > 0) setTabDirtyCount('terrain', Math.max(1, countDirtyBiqStructureRecords('terrain')));
+  return changed;
 }
 
 function buildImportedTerrainOverlayMapSections(sourceMapTab) {
@@ -38560,13 +38886,13 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   let nameEditedManually = false;
   if (el.entityModalTitle) {
     el.entityModalTitle.textContent = (lockMode && initialMode === 'import')
-      ? `${entityName}: Import From Scenario`
+      ? `${entityName}: Import`
       : `${entityName}: Add / Copy / Import`;
   }
   if (el.entityModalBody) {
     el.entityModalBody.textContent = (lockMode && initialMode === 'import')
-      ? 'Select a source scenario, pick an item, then confirm the Name and Key for the new item in this scenario.'
-      : 'Choose how to create the new entry. Import copies an item from another scenario into this one.';
+      ? 'Select Standard Game or a source scenario, pick an item, then confirm the Name and Key for the new item in this scenario.'
+      : 'Choose how to create the new entry. Import copies an item from Standard Game or another scenario into this one.';
   }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = 'Create';
@@ -38616,7 +38942,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   const modeOptions = [
     { value: 'blank', label: 'Blank template' },
     { value: 'copy', label: selectedEntry ? 'Copy selected entry' : 'Copy selected entry (unavailable)', disabled: !selectedEntry },
-    { value: 'import', label: 'Import from another scenario' }
+    { value: 'import', label: 'Import from Standard Game or scenario' }
   ];
   modeOptions.forEach((opt) => {
     const o = document.createElement('option');
@@ -38638,13 +38964,17 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   importWrap.className = 'entity-modal-content hidden';
   const importToolbar = document.createElement('div');
   importToolbar.className = 'entity-import-toolbar';
-  // Purple pill-styled scenario select — mirrors the main scenario select UX
+  // Purple pill-styled source select mirrors the main scenario select UX.
   const importSourcePill = document.createElement('select');
   importSourcePill.className = 'entity-import-scenario-pill';
   const importPillPlaceholder = document.createElement('option');
   importPillPlaceholder.value = '';
-  importPillPlaceholder.textContent = 'Scenario...';
+  importPillPlaceholder.textContent = 'Source...';
   importSourcePill.appendChild(importPillPlaceholder);
+  const importPillStandard = document.createElement('option');
+  importPillStandard.value = '__standard__';
+  importPillStandard.textContent = 'Standard Game';
+  importSourcePill.appendChild(importPillStandard);
   const importPillManual = document.createElement('option');
   importPillManual.value = '__manual__';
   importPillManual.textContent = 'Manual / Browse...';
@@ -38675,11 +39005,15 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   el.entityModalContent.appendChild(form);
 
   let importFilePath = '';
+  let importSourceKind = 'scenario';
   let importEntries = [];
   let importDiplomacySlots = [];
   let selectedImportKey = '';
-  const loadImportSource = async (filePath) => {
-    if (!filePath) return;
+  const loadImportSource = async (source) => {
+    const sourceInfo = (source && typeof source === 'object')
+      ? source
+      : { kind: 'scenario', scenarioPath: source };
+    if (String(sourceInfo.kind || '') !== 'standard' && !String(sourceInfo.scenarioPath || sourceInfo.filePath || '').trim()) return;
     importSourcePill.disabled = true;
     importEntries = [];
     importDiplomacySlots = [];
@@ -38687,12 +39021,13 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     renderImportPicker();
     updateConfirmButtonState();
     try {
-      const loaded = await loadImportEntriesForTab(tabKey, filePath);
-      importFilePath = filePath;
+      const loaded = await loadImportEntriesForTab(tabKey, sourceInfo);
+      importFilePath = String(loaded.importSourcePath || sourceInfo.scenarioPath || sourceInfo.filePath || '').trim();
+      importSourceKind = String(loaded.importSourceKind || sourceInfo.kind || 'scenario').trim().toLowerCase() === 'standard' ? 'standard' : 'scenario';
       importEntries = loaded.entries;
       importEntries.forEach((entry) => {
         if (entry) {
-          entry._importScenarioPath = filePath;
+          entry._importScenarioPath = importFilePath;
           entry._importScenarioPaths = loaded.importScenarioPaths;
           entry._importReferenceIndexMaps = loaded.referenceIndexMaps;
         }
@@ -38700,10 +39035,12 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
       importDiplomacySlots = loaded.diplomacySlots;
       renderImportPicker();
       if (importEntries.length === 0) {
-        setStatus('Selected scenario has no entries for this tab.', true);
+        setStatus(importSourceKind === 'standard'
+          ? 'Standard Game has no entries for this tab.'
+          : 'Selected scenario has no entries for this tab.', true);
       }
     } catch (err) {
-      setStatus(err && err.message ? err.message : 'Could not load import source scenario.', true);
+      setStatus(err && err.message ? err.message : 'Could not load import source.', true);
     } finally {
       importSourcePill.disabled = false;
     }
@@ -38713,7 +39050,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     if (importEntries.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'hint';
-      empty.textContent = 'Select a source scenario to load entries.';
+      empty.textContent = 'Select Standard Game or a source scenario to load entries.';
       importPickerHost.appendChild(empty);
       return;
     }
@@ -38725,7 +39062,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
       })),
       targetTabKey: tabKey,
       currentValue: selectedImportKey || '-1',
-      searchPlaceholder: `Search ${tab.title} in selected scenario...`,
+      searchPlaceholder: `Search ${tab.title} in selected source...`,
       noneLabel: 'Choose item to import...',
       onSelect: (value) => {
         selectedImportKey = String(value || '').toUpperCase();
@@ -38803,12 +39140,16 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   importSourcePill.addEventListener('change', async () => {
     const value = String(importSourcePill.value || '');
     if (!value) return;
+    if (value === '__standard__') {
+      await loadImportSource({ kind: 'standard' });
+      return;
+    }
     if (value === '__manual__') {
       const filePath = await window.c3xManager.pickFile({
         filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
       });
       if (!filePath) {
-        importSourcePill.value = importFilePath || '';
+        importSourcePill.value = importFilePath || (importSourceKind === 'standard' ? '__standard__' : '');
         return;
       }
       const existingOpt = Array.from(importSourcePill.options).find((opt) => String(opt.value || '') === filePath);
@@ -38822,10 +39163,10 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
         importSourcePill.insertBefore(manualOpt, importPillManual);
         importSourcePill.value = filePath;
       }
-      await loadImportSource(filePath);
+      await loadImportSource({ kind: 'scenario', scenarioPath: filePath });
       return;
     }
-    await loadImportSource(value);
+    await loadImportSource({ kind: 'scenario', scenarioPath: value });
   });
   updateModeVisibility();
   syncKeyFromName();
@@ -38849,6 +39190,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
         name,
         key,
         importFilePath,
+        importSourceKind,
         selectedImportKey
       });
       if (!name) {
@@ -38862,7 +39204,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
       keyInput.value = key;
       if (mode === 'import') {
         if (!importFilePath) {
-          setStatus('Select an import scenario first.', true);
+          setStatus('Select an import source first.', true);
           return;
         }
         const picked = importEntries.find((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === selectedImportKey);
@@ -38873,6 +39215,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
         appendDebugLog('ref-create:confirm:import-picked', {
           tabKey,
           importFilePath,
+          importSourceKind,
           selectedImportKey,
           pickedName: String(picked && picked.name || ''),
           pickedKey: String(picked && picked.civilopediaKey || ''),
@@ -39321,7 +39664,11 @@ function renderReferenceTab(tab, tabKey) {
             };
           }
         }
-        rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);
+        const willApplyResourceTerrainMembership = tabKey === 'resources'
+          && Array.isArray(newEntry && newEntry._importResourceTerrainMembership)
+          && newEntry._importResourceTerrainMembership.length > 0;
+        if (willApplyResourceTerrainMembership) rememberUndoSnapshot();
+        else rememberUndoSnapshotForKey(`REFERENCE_TAB:${tabKey}`);
         if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
           const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
           const sourceSlotIndex = textIndexField ? Number(textIndexField.value) : -1;
@@ -39349,11 +39696,16 @@ function renderReferenceTab(tab, tabKey) {
           sourceRef: String(result.importedEntry.civilopediaKey || '').toUpperCase(),
           importArtFrom: result.importFilePath
         });
+        let importedResourceTerrainMembershipCount = 0;
+        if (tabKey === 'resources') {
+          importedResourceTerrainMembershipCount = applyImportedResourceTerrainMembership(newEntry);
+        }
         _dbgLog('INF', 'BiqCRUD', `reference import: tabKey=${tabKey} source=${String(result.importedEntry.civilopediaKey || '').toUpperCase()} -> newRef=${key} importArtFrom=${_dbgRelPath(result.importFilePath)}`);
         appendDebugLog('reference-import:op-added', {
           tabKey,
           targetKey: key,
-          opCount: Array.isArray(tab && tab.recordOps) ? tab.recordOps.length : -1
+          opCount: Array.isArray(tab && tab.recordOps) ? tab.recordOps.length : -1,
+          importedResourceTerrainMembershipCount
         });
         tab.entries.unshift(newEntry);
         if (hadPendingUnitReorder) refreshPendingUnitReorderFromCurrentState();
@@ -60826,11 +61178,13 @@ async function handleLoadAuditAction(action) {
   if (String(action.type || '') !== 'copy-scenario-pediaicons-block') return;
   const civilopediaKey = String(action.civilopediaKey || '').trim();
   const targetKey = civilopediaKey.toUpperCase();
-  if (!targetKey || !state.bundle || !state.bundle.tabs || !state.bundle.tabs.improvements) {
-    setStatus('Could not find the Improvement entry for this PediaIcons warning.', true);
+  const tabKey = String(action.tabKey || 'improvements').trim();
+  const displayType = tabKey === 'technologies' ? 'Technology' : 'Improvement';
+  if (!targetKey || !state.bundle || !state.bundle.tabs || !state.bundle.tabs[tabKey]) {
+    setStatus(`Could not find the ${displayType} entry for this PediaIcons warning.`, true);
     return;
   }
-  const tab = state.bundle.tabs.improvements;
+  const tab = state.bundle.tabs[tabKey];
   const entries = Array.isArray(tab.entries) ? tab.entries : [];
   const entryIndex = entries.findIndex((entry) => String(
     entry && (
@@ -60842,8 +61196,13 @@ async function handleLoadAuditAction(action) {
     ) || ''
   ).trim().toUpperCase() === targetKey);
   const entry = entryIndex >= 0 ? entries[entryIndex] : null;
+  if (entry && tabKey === 'technologies' && (!Array.isArray(entry.iconPaths) || entry.iconPaths.length <= 0)) {
+    applyBlankTechIconPlaceholders(entry, civilopediaKey);
+  }
   if (!entry || !Array.isArray(entry.iconPaths) || entry.iconPaths.length <= 0) {
-    setStatus(`Could not stage #ICON_${civilopediaKey}; no loaded Building Art paths were found.`, true);
+    const expectedLabel = String(action.expectedLabel || action.label || '').trim().replace(/^Add\s+/i, '') || `#ICON_${civilopediaKey}`;
+    const artLabel = tabKey === 'technologies' ? 'Technology Icon' : 'Building Art';
+    setStatus(`Could not stage ${expectedLabel}; no loaded ${artLabel} paths were found.`, true);
     return;
   }
   rememberUndoSnapshot();
@@ -60852,16 +61211,17 @@ async function handleLoadAuditAction(action) {
     const targetPath = String(action.targetPath || '').trim();
     if (targetPath) entry.sourceMeta.iconPaths.writePath = targetPath;
   }
-  dismissLoadAuditSectionEntry('improvements', entryIndex, (auditEntry) => (
+  dismissLoadAuditSectionEntry(tabKey, entryIndex, (auditEntry) => (
     String(auditEntry && auditEntry.code || '') === 'scenario-pediaicons-entry-missing'
     && String(auditEntry && auditEntry.action && auditEntry.action.civilopediaKey || '').trim().toUpperCase() === targetKey
   ));
-  state.referenceSelection.improvements = entryIndex;
-  state.activeTab = 'improvements';
+  state.referenceSelection[tabKey] = entryIndex;
+  state.activeTab = tabKey;
   setDirty(true);
   renderTabs();
   renderActiveTab({ preserveTabScroll: true });
-  setStatus(`Staged #ICON_${civilopediaKey} for scenario PediaIcons.txt. Use Save to write it with the normal save workflow.`);
+  const expectedLabel = String(action.expectedLabel || action.label || '').trim().replace(/^Add\s+/i, '') || `#ICON_${civilopediaKey}`;
+  setStatus(`Staged ${expectedLabel} for scenario PediaIcons.txt. Use Save to write it with the normal save workflow.`);
 }
 
 function renderActiveTab(options = {}) {

@@ -4197,7 +4197,6 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
       error: 'Civilization III supports at most 32 civilizations total, including Barbarians. Delete a civilization before adding or importing another one.'
     };
   }
-
   raceSection.records.forEach((record, index) => {
     record.index = index;
     if (Object.prototype.hasOwnProperty.call(record || {}, 'uniqueCivCounter')) record.uniqueCivCounter = index;
@@ -4414,6 +4413,46 @@ function remapDeletedCivilizationAvailabilityMask(maskValue, remap) {
   return nextMask | 0;
 }
 
+function getOriginalRefIndex(originalRefs, recordRef) {
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return -1;
+  if (ref.startsWith('@INDEX:')) {
+    const idx = Number.parseInt(ref.slice(7), 10);
+    return Number.isInteger(idx) && idx >= 0 ? idx : -1;
+  }
+  return (Array.isArray(originalRefs) ? originalRefs : []).indexOf(ref);
+}
+
+function collectCopiedCivilizationAvailabilityPairs(edits, originalRaceRefs, finalRaceRefs) {
+  const pairs = [];
+  (Array.isArray(edits) ? edits : []).forEach((edit) => {
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    const op = String(edit && edit.op || '').trim().toLowerCase();
+    if (code !== 'RACE' || op !== 'copy') return;
+    const sourceRef = String(edit && (edit.sourceRef || edit.copyFromRef) || '').trim().toUpperCase();
+    const newRef = String(edit && edit.newRecordRef || '').trim().toUpperCase();
+    const sourceIndex = getOriginalRefIndex(originalRaceRefs, sourceRef);
+    const newIndex = (Array.isArray(finalRaceRefs) ? finalRaceRefs : []).indexOf(newRef);
+    if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= 32) return;
+    if (!Number.isInteger(newIndex) || newIndex < 0 || newIndex >= 32) return;
+    pairs.push({ sourceIndex, newIndex });
+  });
+  return pairs;
+}
+
+function addCopiedCivilizationAvailabilityBits(originalMaskValue, currentMaskValue, pairs) {
+  if (!Array.isArray(pairs) || pairs.length === 0) return currentMaskValue | 0;
+  const originalParsed = Number.parseInt(String(originalMaskValue), 10);
+  const originalMask = Number.isFinite(originalParsed) ? (originalParsed >>> 0) : 0;
+  const currentParsed = Number.parseInt(String(currentMaskValue), 10);
+  let nextMask = Number.isFinite(currentParsed) ? (currentParsed >>> 0) : 0;
+  pairs.forEach(({ sourceIndex, newIndex }) => {
+    if (((originalMask >>> sourceIndex) & 1) !== 1) return;
+    nextMask = (nextMask | ((1 << newIndex) >>> 0)) >>> 0;
+  });
+  return nextMask | 0;
+}
+
 function remapDeletedBitmask(maskValue, remap, maxBits = 32) {
   const parsedMask = Number.parseInt(String(maskValue), 10);
   const unsignedMask = Number.isFinite(parsedMask) ? (parsedMask >>> 0) : 0;
@@ -4475,7 +4514,11 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'reorder')
     .map((edit) => String(edit && edit.sectionCode || '').trim().toUpperCase())
     .filter(Boolean));
-  const touchedCodes = new Set([...deleteTouchedCodes, ...reorderTouchedCodes]);
+  const copyTouchedCodes = new Set(sourceEdits
+    .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'copy'
+      && String(edit && edit.sectionCode || '').trim().toUpperCase() === 'RACE')
+    .map(() => 'RACE'));
+  const touchedCodes = new Set([...deleteTouchedCodes, ...reorderTouchedCodes, ...copyTouchedCodes]);
   if (touchedCodes.size === 0) return { ok: true };
 
   const sections = ((parsed && parsed.sections) || []);
@@ -4537,6 +4580,15 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   if (prtoRemap && prtoReorderEdit) {
     log.debug('BiqReferenceNormalize', `PRTO reorder remap oldCount=${prtoRemap.oldCount} finalCount=${prtoRemap.finalCount} order=${summarizeIndexListForLog(prtoReorderEdit.order)} changedPrimaries=${summarizeRemapChangedPairsForLog(prtoRemap)} affectedReferenceFields=${summarizePrtoReferenceRemapTouchesForLog(parsed, prtoRemap)}`);
   }
+  const raceCopySection = getSectionByCode(parsed, 'RACE');
+  const finalRaceRefsForCopies = raceCopySection && Array.isArray(raceCopySection.records)
+    ? raceCopySection.records.map((record) => getRecordCivilopediaRef(record))
+    : [];
+  const copiedCivilizationAvailabilityPairs = collectCopiedCivilizationAvailabilityPairs(
+    sourceEdits,
+    (originalRefsBySection && originalRefsBySection.RACE) || [],
+    finalRaceRefsForCopies
+  );
   const markModified = (section) => {
     if (section) section._modified = true;
   };
@@ -4730,7 +4782,17 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const prtoSection = getSectionByCode(parsed, 'PRTO');
   if (prtoSection && Array.isArray(prtoSection.records)) {
     prtoSection.records.forEach((rec) => {
-      if (raceRemap) rec.availableTo = remapDeletedCivilizationAvailabilityMask(rec.availableTo, raceRemap);
+      if (raceRemap || copiedCivilizationAvailabilityPairs.length > 0) {
+        const originalAvailableTo = rec.availableTo;
+        if (raceRemap) rec.availableTo = remapDeletedCivilizationAvailabilityMask(rec.availableTo, raceRemap);
+        if (copiedCivilizationAvailabilityPairs.length > 0) {
+          rec.availableTo = addCopiedCivilizationAvailabilityBits(
+            originalAvailableTo,
+            rec.availableTo,
+            copiedCivilizationAvailabilityPairs
+          );
+        }
+      }
       if (goodRemap) {
         rec.requiredResource1 = remapDeletedSectionIndex(rec.requiredResource1, goodRemap, -1);
         rec.requiredResource2 = remapDeletedSectionIndex(rec.requiredResource2, goodRemap, -1);
@@ -4745,7 +4807,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (bldgRemap) rec.legalBuildingTelepads = remapDeletedSectionListRemovingDeleted(rec.legalBuildingTelepads, bldgRemap);
     });
-    if (raceRemap || goodRemap || techRemap || prtoRemap || bldgRemap) markModified(prtoSection);
+    if (raceRemap || copiedCivilizationAvailabilityPairs.length > 0 || goodRemap || techRemap || prtoRemap || bldgRemap) markModified(prtoSection);
   }
 
   const ruleSection = getSectionByCode(parsed, 'RULE');
@@ -5892,6 +5954,37 @@ function findOriginalDeleteRecordIndex(section, recordRef) {
   });
 }
 
+function makeOriginalRecordSnapshots(records) {
+  return (Array.isArray(records) ? records : []).map((record, position) => ({
+    record,
+    originalIndex: Number(record && record.index),
+    originalPosition: position,
+    civilopediaEntry: String(record && record.civilopediaEntry || '').trim().toUpperCase(),
+    newRecordRef: String(record && record.newRecordRef || '').trim().toUpperCase()
+  }));
+}
+
+function findOriginalRecordByRef(originalSnapshots, recordRef) {
+  if (!Array.isArray(originalSnapshots)) return null;
+  const explicitIndex = parseIndexRecordRef(recordRef);
+  if (Number.isFinite(explicitIndex) && explicitIndex >= 0) {
+    const match = originalSnapshots.find((snapshot) => Number(snapshot && snapshot.originalIndex) === explicitIndex)
+      || originalSnapshots.find((snapshot) => Number(snapshot && snapshot.originalPosition) === explicitIndex);
+    return match ? match.record : null;
+  }
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return null;
+  const match = originalSnapshots.find((snapshot) => snapshot && (snapshot.civilopediaEntry === ref || snapshot.newRecordRef === ref));
+  return match ? match.record : null;
+}
+
+function findRecordByStableRef(section, originalSnapshots, recordRef) {
+  if (!section || !Array.isArray(section.records)) return null;
+  const original = findOriginalRecordByRef(originalSnapshots, recordRef);
+  if (original && section.records.includes(original)) return original;
+  return findRecordByRef(section.records, recordRef);
+}
+
 function remapSetEditRecordRefsAfterDeletes(parsed, edits) {
   if (!parsed || !Array.isArray(edits) || edits.length === 0) return edits;
   const deletedByCode = new Map();
@@ -5983,6 +6076,12 @@ function applyEdits(buf, edits, options = {}) {
   const originalRaceRefs = originalRaceSection && Array.isArray(originalRaceSection.records)
     ? originalRaceSection.records.map((record) => getRecordCivilopediaRef(record))
     : [];
+  const originalRecordsBySection = new Map();
+  (Array.isArray(parsed.sections) ? parsed.sections : []).forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!code || !Array.isArray(section.records)) return;
+    originalRecordsBySection.set(code, makeOriginalRecordSnapshots(section.records));
+  });
   const effectiveEdits = remapSetEditRecordRefsAfterDeletes(parsed, edits);
   let sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
 
@@ -6103,7 +6202,7 @@ function applyEdits(buf, edits, options = {}) {
 
       let newRec;
       if (op === 'copy' && sourceRef) {
-        const src = findRecordByRef(section.records, sourceRef);
+        const src = findRecordByStableRef(section, originalRecordsBySection.get(code), sourceRef);
         if (src) {
           newRec = copyRecord(src);
           if (code === 'PRTO' && mergePrtoStrategyMapRowsForCopy(section.records, src, newRec)) {
@@ -6142,16 +6241,8 @@ function applyEdits(buf, edits, options = {}) {
     if (op === 'delete') {
       const ref = String(edit.recordRef || '').trim().toUpperCase();
       if (!section) { skipped++; continue; }
-      const idx = section.records.findIndex((r) => {
-        if (ref.startsWith('@INDEX:')) {
-          const n = Number.parseInt(ref.slice(7), 10);
-          return Number.isFinite(n) && r.index === n;
-        }
-        const ce = String(r && r.civilopediaEntry || '').trim().toUpperCase();
-        if (ce === ref) return true;
-        const newRef = String(r && r.newRecordRef || '').trim().toUpperCase();
-        return newRef === ref;
-      });
+      const deleteRecord = findRecordByStableRef(section, originalRecordsBySection.get(code), ref);
+      const idx = deleteRecord ? section.records.indexOf(deleteRecord) : -1;
       if (idx < 0) {
         skipped++;
         warnings.push(`delete: ${ref} not found in ${code}`);

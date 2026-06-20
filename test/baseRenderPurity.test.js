@@ -1065,6 +1065,29 @@ test('editable BIQ reference pickers lazily hydrate improvement thumbnails', () 
   );
 });
 
+test('reference pickers refresh labels from live target entries', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /const getOptionDisplayLabel = \(option, fallback = noneLabel\) => \{[\s\S]*?getReferenceEntryDisplayName\(targetTabKey, option\.entry\)[\s\S]*?option\.entry\.name/,
+    'Reference picker labels should resolve through the live target entry instead of only the option snapshot'
+  );
+
+  assert.match(
+    text,
+    /const refreshMenuRowsLabels = \(\) => \{[\s\S]*?row\.__referencePickerOption[\s\S]*?row\.dataset\.search = label\.toLowerCase\(\);[\s\S]*?text\.textContent = label;/,
+    'Reference picker menu rows should refresh labels and search text when reopened after a target rename'
+  );
+
+  assert.match(
+    text,
+    /activeReferencePickerCloser = closeMenu;[\s\S]*?renderButton\(selectedPickerValue\);[\s\S]*?buildMenuRows\(\);[\s\S]*?refreshMenuRowsLabels\(\);/,
+    'Opening a picker should repaint the selected button and option labels from live entry names'
+  );
+});
+
 test('BIQ reference picker search placeholders use display labels', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
@@ -1101,5 +1124,37 @@ test('Unit Available To panel exposes a visible Add All action', () => {
     text,
     /if \(referenceEditable && cfg\.kind === 'availableTo'\) \{[\s\S]*?addAllBtn\.textContent = 'Add All';[\s\S]*?field\.value = encodeAvailableToFromIndices\(allSelectedValues\);/,
     'Unit Available To should provide a visible Add All action that writes all civilization indexes into the bitmask'
+  );
+});
+
+test('Unit list panels render abilities and Available To as checkbox lists', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const stylesPath = path.join(__dirname, '..', 'src', 'styles.css');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+  const styles = fs.readFileSync(stylesPath, 'utf8');
+
+  assert.ok(
+    text.includes('function renderUnitAbilityCheckboxEditor(entry, { readOnly = false, onValuesChange = null } = {})')
+      && text.includes('UNIT_ABILITY_OPTION_KEYS.forEach((key) => {')
+      && text.includes("text.textContent = UNIT_RULE_FRIENDLY_LABELS[key] || toFriendlyKey(key);")
+      && text.includes("check.type = 'checkbox';"),
+    'Unit Abilities should list every known ability as a friendly checkbox row'
+  );
+  assert.ok(
+    text.includes('function renderUnitAvailableToCheckboxEditor(entry, options, { readOnly = false, onValuesChange = null } = {})')
+      && text.includes("thumb.className = 'entry-thumb unit-available-to-thumb';")
+      && text.includes("loadReferenceListThumbnail('civilizations', opt.entry, thumb);")
+      && text.includes("check.type = 'checkbox';"),
+    'Unit Available To should list civilization options with thumbnails and checkboxes'
+  );
+  assert.match(
+    text,
+    /footsoldier: 'Foot Unit'[\s\S]*?rangedattackanimations: 'Ranged Attack Animation'[\s\S]*?transportsonlyairunits: 'Transports Only Aircraft'/,
+    'Unit ability labels should use Quint-style names for non-obvious PRTO fields'
+  );
+  assert.match(
+    styles,
+    /\.unit-list-panel \.unit-checkbox-list[\s\S]*?overflow: auto;[\s\S]*?\.unit-list-panel \.unit-checkbox-row[\s\S]*?display: grid;/,
+    'Unit checkbox lists should scroll inside the existing Units bottom-list panels'
   );
 });

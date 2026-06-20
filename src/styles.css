@@ -7501,7 +7501,8 @@ details > summary:focus-visible {
 }
 
 .unit-list-panel .structured-list,
-.unit-list-panel .terrain-flag-editor {
+.unit-list-panel .terrain-flag-editor,
+.unit-list-panel .unit-checkbox-list {
   display: grid;
   gap: 6px;
   min-height: 0;
@@ -7540,13 +7541,17 @@ details > summary:focus-visible {
   line-height: 1.35;
 }
 
-.unit-list-panel .terrain-flag-editor {
+.unit-list-panel .terrain-flag-editor,
+.unit-list-panel .unit-checkbox-list {
   max-height: none;
   overflow: auto;
   padding-right: 2px;
 }
 
-.unit-list-panel .terrain-flag-row {
+.unit-list-panel .terrain-flag-row,
+.unit-list-panel .unit-checkbox-row {
+  display: grid;
+  align-items: center;
   grid-template-columns: 22px minmax(0, 1fr) auto !important;
   gap: 10px !important;
   font-size: 0.74rem;
@@ -7556,12 +7561,18 @@ details > summary:focus-visible {
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.unit-list-panel .terrain-flag-row:hover {
+.unit-list-panel .unit-ability-checkbox-row {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+}
+
+.unit-list-panel .terrain-flag-row:hover,
+.unit-list-panel .unit-checkbox-row:hover {
   background: rgba(238, 244, 255, 0.78);
   border-color: rgba(88, 122, 196, 0.2);
 }
 
-.unit-list-panel .terrain-flag-thumb {
+.unit-list-panel .terrain-flag-thumb,
+.unit-list-panel .unit-available-to-thumb {
   margin-right: 2px;
 }
 

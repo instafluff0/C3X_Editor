@@ -1,5 +1,16 @@
 * RELEASE 27.18
+- Added Scenario-mode tech PediaIcons coverage warnings and first-save tech icon block generation, including generated blank PCX placeholders when a Technology has no art.
+- Fixed Resource imports so terrain rows that allowed the source resource now allow the imported resource too, preserving source scenario possible-resource terrain membership.
+- Updated the Conquests unit-resolution baseline for the current Tides of Crimson scenario helper folders.
+- Kept copied reference rows dirty when a pending copy is renamed back to a deleted original key before save.
+- Added Standard Game as a Reference-tab Import source, so scenario BIQ entries can be imported from the global Conquests rules as well as other scenarios.
+- Changed the Units `Unit Abilities` and `Available To` panels to show full checkbox lists, with Quint-style ability labels and civilization thumbnails.
+- Fixed the Units `Unit Abilities` checkbox labels so compact BIQ keys display as spaced friendly names.
+- Fixed reference dropdown labels so copied/renamed Improvements and other reference entries show their current names without needing a full tab refresh.
+- Fixed BIQ civilization copy saves so units available to the source civilization also become available to the copied civilization.
+- Fixed BIQ civilization copy/delete saves so multiple same-save `@INDEX` operations keep targeting the original records instead of shifting later civ copies onto neighboring records.
 - Added an Improvements `Required By Units` C3X reverse editor for `building_prereqs_for_units`, placed under Generated Resources.
+- Fixed BIQ reference QA so Technologies with no era (`TECH.era = -1`) are treated as valid no-era techs instead of false missing-era warnings.
 - Fixed no-reload BIQ save reconciliation so deleting a reference record updates already-open downstream reference fields, preventing shifted resources such as Helium-3 from temporarily displaying as the next resource until Refresh.
 - Changed unit import so imported units start with no civilizations in Available To, and added a visible Add All action to the Unit Available To editor.
 - Added async QA warnings for known BIQ reference fields that point outside their target tables, and made reference pickers display unresolved current values as invalid indexes instead of `(none)`.

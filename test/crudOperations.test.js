@@ -565,7 +565,10 @@ function assertRawPrtoStrategyRows(bundle, unitKey, expectedMask, label = unitKe
 
 function extractFunctionSource(sourceText, name) {
   const needle = `function ${name}(`;
-  const start = sourceText.indexOf(needle);
+  const asyncNeedle = `async function ${name}(`;
+  const plainStart = sourceText.indexOf(needle);
+  const asyncStart = sourceText.indexOf(asyncNeedle);
+  const start = asyncStart >= 0 ? asyncStart : plainStart;
   if (start < 0) throw new Error(`Could not find function ${name}`);
   let paramDepth = 0;
   let signatureEnd = -1;
@@ -610,6 +613,9 @@ function loadRendererImportHelpers(targetBundle) {
     'encodeAvailableToFromIndices',
     'getBiqFieldByBaseKey',
     'makeBlankReferenceFieldValue',
+    'makeBlankPcxRgbaBase64',
+    'makePlaceholderTechIconStem',
+    'applyBlankTechIconPlaceholders',
     'getReferenceRecordRefForOps',
     'makeReferenceCopyRecordOp',
     'buildNewReferenceEntryFromTemplate',
@@ -701,6 +707,59 @@ function loadRendererImportHelpers(targetBundle) {
     + functionNames.map((name) => `${name}: ${name}`).join(', ')
     + ' };';
   vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-unit-import.vm' });
+  return sandbox.__helpers;
+}
+
+function loadRendererAuditActionHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = [
+    'makeBlankPcxRgbaBase64',
+    'makePlaceholderTechIconStem',
+    'applyBlankTechIconPlaceholders',
+    'handleLoadAuditAction'
+  ];
+  const sandbox = {
+    Buffer,
+    state: {
+      bundle: targetBundle,
+      referenceSelection: {},
+      activeTab: '',
+      dirty: false,
+      loadAudit: {
+        totalWarnings: 1,
+        tabs: {
+          technologies: {
+            sections: {
+              0: [{
+                code: 'scenario-pediaicons-entry-missing',
+                action: { civilopediaKey: 'TECH_CITYSTATE' }
+              }]
+            }
+          }
+        }
+      }
+    },
+    statusMessages: [],
+    undoSnapshots: 0,
+    rememberUndoSnapshot() { sandbox.undoSnapshots += 1; },
+    setStatus(text, isError = false) { sandbox.statusMessages.push({ text: String(text || ''), isError: !!isError }); },
+    setDirty(value) { sandbox.state.dirty = !!value; },
+    renderTabs() {},
+    renderActiveTab() {},
+    dismissLoadAuditSectionEntry(tabKey, sectionIndex, predicate) {
+      const sections = (((sandbox.state.loadAudit || {}).tabs || {})[tabKey] || {}).sections || {};
+      const key = String(sectionIndex);
+      sections[key] = (sections[key] || []).filter((entry) => !predicate(entry));
+    }
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ', state, statusMessages, getUndoSnapshots: () => undoSnapshots'
+    + ' };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-audit-action.vm' });
   return sandbox.__helpers;
 }
 
@@ -2458,6 +2517,40 @@ test('reference dirty cache rebuild removes stale identities after new entry key
   assert.equal(state.dirtyTabCounts.technologies, 1);
 });
 
+test('reference dirty cache keeps copied entry dirty after renaming back to deleted original key', () => {
+  const bundle = {
+    cleanTabs: {
+      civilizations: {
+        type: 'reference',
+        entries: [
+          { id: 'CITY_OF_SPARTA', civilopediaKey: 'RACE_CITY_OF_SPARTA', name: 'City of Sparta', biqIndex: 4 }
+        ]
+      }
+    },
+    tabs: {
+      civilizations: {
+        type: 'reference',
+        entries: [
+          { id: 'CITY_OF_SPARTA', civilopediaKey: 'RACE_CITY_OF_SPARTA', name: 'City of Sparta', biqIndex: null, isNew: true }
+        ],
+        recordOps: [
+          { op: 'copy', sourceRef: '@INDEX:4', newRecordRef: 'RACE_CITY_OF_SPARTA' },
+          { op: 'delete', recordRef: '@INDEX:4' }
+        ]
+      }
+    }
+  };
+  const { rebuildReferenceDirtyCacheForTab, state } = loadRendererReferenceDirtyHelpers(bundle);
+
+  assert.equal(rebuildReferenceDirtyCacheForTab('civilizations', bundle.tabs.civilizations), true);
+
+  assert.deepEqual(
+    Array.from(state.dirtyReferenceKeysByTab.civilizations).sort(),
+    ['id:CITY_OF_SPARTA']
+  );
+  assert.equal(state.dirtyTabCounts.civilizations, 2);
+});
+
 /**
  * Simulate exactly what the renderer does when the user clicks Import:
  *   - Deep-clones the source entry
@@ -2950,7 +3043,6 @@ test('Renderer blank reference templates clear inherited art thumbnails for all 
   const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers({ tabs: {} });
   const cases = [
     { tabKey: 'civilizations', key: 'RACE_BLANK_ART' },
-    { tabKey: 'technologies', key: 'TECH_BLANK_ART' },
     { tabKey: 'resources', key: 'GOOD_BLANK_ART' },
     { tabKey: 'improvements', key: 'BLDG_BLANK_ART' },
     { tabKey: 'governments', key: 'GOVT_BLANK_ART' },
@@ -3005,6 +3097,113 @@ test('Renderer blank reference templates clear inherited art thumbnails for all 
     assert.equal(blank._pendingImportedUnitIcon, undefined, `${tabKey} should not inherit unit atlas imports`);
     assert.equal(blank._pendingImportedBuildingCityIcon, undefined, `${tabKey} should not inherit building atlas imports`);
   }
+});
+
+test('Renderer blank technology templates keep source icon paths for first-save PediaIcons blocks', () => {
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers({ tabs: {} });
+  const blank = buildNewReferenceEntryFromTemplate({
+    tabKey: 'technologies',
+    sourceEntry: {
+      name: 'Source Tech',
+      civilopediaKey: 'TECH_SOURCE_ART',
+      thumbPath: 'Art\\tech chooser\\Icons\\SourceLarge.pcx',
+      iconPaths: [
+        'Art\\tech chooser\\Icons\\SourceLarge.pcx',
+        'Art\\tech chooser\\Icons\\SourceSmall.pcx'
+      ],
+      racePaths: ['Art\\Advisors\\Inherited.pcx'],
+      buildingIconKind: 'SINGLE',
+      buildingIconIndex: '9',
+      wonderSplashPath: 'Art\\Wonder Splash\\Inherited.pcx',
+      animationName: 'Inherited Unit',
+      biqFields: [makeTestBiqField('civilopediaentry', 'TECH_SOURCE_ART')]
+    },
+    civilopediaKey: 'TECH_CITYSTATE',
+    mode: 'blank',
+    displayName: 'CITY-STATE'
+  });
+
+  assert.deepEqual(blank.iconPaths, [
+    'Art\\tech chooser\\Icons\\SourceLarge.pcx',
+    'Art\\tech chooser\\Icons\\SourceSmall.pcx'
+  ]);
+  assert.equal(blank.thumbPath, 'Art\\tech chooser\\Icons\\SourceLarge.pcx');
+  assert.deepEqual(blank.originalIconPaths, []);
+  assert.equal(blank.racePaths.length, 0);
+  assert.equal(blank.animationName, '');
+  assert.equal(blank.buildingIconKind, '');
+  assert.equal(blank.wonderSplashPath, '');
+});
+
+test('Renderer blank technology templates create white placeholder PCXs when no source art exists', () => {
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers({ tabs: {} });
+  const blank = buildNewReferenceEntryFromTemplate({
+    tabKey: 'technologies',
+    sourceEntry: {
+      name: 'Source Tech',
+      civilopediaKey: 'TECH_SOURCE_ART',
+      iconPaths: [],
+      biqFields: [makeTestBiqField('civilopediaentry', 'TECH_SOURCE_ART')]
+    },
+    civilopediaKey: 'TECH_CITYSTATE',
+    mode: 'blank',
+    displayName: 'CITY-STATE'
+  });
+
+  assert.deepEqual(blank.iconPaths, [
+    'Art\\tech chooser\\Icons\\CITYSTATE_blank_large.pcx',
+    'Art\\tech chooser\\Icons\\CITYSTATE_blank_small.pcx'
+  ]);
+  assert.equal(blank.thumbPath, 'Art\\tech chooser\\Icons\\CITYSTATE_blank_large.pcx');
+  assert.equal(blank.pendingArtConversions['iconPaths:0'].width, 128);
+  assert.equal(blank.pendingArtConversions['iconPaths:0'].height, 128);
+  assert.equal(blank.pendingArtConversions['iconPaths:1'].width, 32);
+  assert.equal(blank.pendingArtConversions['iconPaths:1'].height, 32);
+  assert.ok(blank.pendingArtConversions['iconPaths:0'].rgbaBase64);
+  assert.ok(blank.pendingArtConversions['iconPaths:1'].rgbaBase64);
+});
+
+test('Renderer PediaIcons QA action stages blank tech placeholders when the target tech has no art', async () => {
+  const bundle = {
+    tabs: {
+      technologies: {
+        entries: [{
+          name: 'CITY-STATE',
+          civilopediaKey: 'TECH_CITYSTATE',
+          rawBiqCivilopediaKey: 'TECH_CITYSTATE',
+          iconPaths: [],
+          sourceMeta: {
+            iconPaths: {}
+          }
+        }]
+      }
+    }
+  };
+  const helpers = loadRendererAuditActionHelpers(bundle);
+
+  await helpers.handleLoadAuditAction({
+    type: 'copy-scenario-pediaicons-block',
+    tabKey: 'technologies',
+    civilopediaKey: 'TECH_CITYSTATE',
+    expectedLabel: '#TECH_CITYSTATE and #TECH_CITYSTATE_LARGE',
+    targetPath: '/tmp/PediaIcons.txt'
+  });
+
+  const entry = bundle.tabs.technologies.entries[0];
+  assert.equal(entry.forcePediaIconsBlockWrite, true);
+  assert.deepEqual(entry.iconPaths, [
+    'Art\\tech chooser\\Icons\\CITYSTATE_blank_large.pcx',
+    'Art\\tech chooser\\Icons\\CITYSTATE_blank_small.pcx'
+  ]);
+  assert.equal(entry.sourceMeta.iconPaths.writePath, '/tmp/PediaIcons.txt');
+  assert.equal(entry.pendingArtConversions['iconPaths:0'].width, 128);
+  assert.equal(entry.pendingArtConversions['iconPaths:1'].height, 32);
+  assert.equal(helpers.state.referenceSelection.technologies, 0);
+  assert.equal(helpers.state.activeTab, 'technologies');
+  assert.equal(helpers.state.dirty, true);
+  assert.equal(helpers.getUndoSnapshots(), 1);
+  assert.equal(helpers.statusMessages.at(-1).isError, false);
+  assert.match(helpers.statusMessages.at(-1).text, /Staged #TECH_CITYSTATE and #TECH_CITYSTATE_LARGE/);
 });
 
 test('Renderer blank reference templates use unset cross-reference defaults', () => {
@@ -4196,6 +4395,113 @@ test('Adding a civ does not rewrite existing unit Available To bitmasks', (t) =>
   assert.equal(fieldVal(afterUnit, 'availableto'), beforeMask);
 });
 
+test('Copying a civ adds the copied civ to matching unit Available To bitmasks', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Source BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const before = reload(c3xDir, biqPath);
+  const sourceBefore = (before.tabs.civilizations.entries || []).find((entry) =>
+    String(entry && entry.civilopediaKey || '').trim().toUpperCase() === 'RACE_ROMANS'
+      && Number.isInteger(Number(entry && entry.biqIndex))
+      && Number(entry.biqIndex) > 0
+      && Number(entry.biqIndex) < 31
+  );
+  const deleteBefore = (before.tabs.civilizations.entries || []).find((entry) =>
+    String(entry && entry.civilopediaKey || '').trim().toUpperCase() !== 'RACE_BARBARIANS'
+      && String(entry && entry.civilopediaKey || '').trim().toUpperCase() !== String(sourceBefore && sourceBefore.civilopediaKey || '').trim().toUpperCase()
+      && Number.isInteger(Number(entry && entry.biqIndex))
+  );
+  assert.ok(sourceBefore, 'expected Romans as source civilization to copy');
+  assert.ok(deleteBefore, 'expected a different civilization to delete before copy');
+
+  const freeSlotResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: {
+        recordOps: [{ op: 'delete', recordRef: `@INDEX:${Number(deleteBefore.biqIndex)}` }]
+      }
+    }
+  });
+  assert.equal(freeSlotResult.ok, true, String(freeSlotResult.error || 'free civ slot save failed'));
+
+  const afterFree = reload(c3xDir, biqPath);
+  const sourceCiv = getEntry(afterFree, 'civilizations', sourceBefore.civilopediaKey);
+  const unit = getEntry(afterFree, 'units', 'PRTO_WARRIOR') || afterFree.tabs.units.entries[0];
+  const otherCiv = (afterFree.tabs.civilizations.entries || []).find((entry) =>
+    String(entry && entry.civilopediaKey || '').trim().toUpperCase() !== 'RACE_BARBARIANS'
+      && String(entry && entry.civilopediaKey || '').trim().toUpperCase() !== String(sourceCiv && sourceCiv.civilopediaKey || '').trim().toUpperCase()
+      && Number.isInteger(Number(entry && entry.biqIndex))
+      && Number(entry.biqIndex) > 0
+      && Number(entry.biqIndex) < 32
+  );
+  const otherUnit = (afterFree.tabs.units.entries || []).find((entry) =>
+    String(entry && entry.civilopediaKey || '').trim().toUpperCase() !== String(unit && unit.civilopediaKey || '').trim().toUpperCase()
+      && findBiqField(entry, 'availableto')
+  );
+  assert.ok(sourceCiv, 'expected source civilization after freeing a slot');
+  assert.ok(otherCiv, 'expected a different civilization for no-drift coverage');
+  assert.ok(unit, 'expected a unit to edit');
+  assert.ok(otherUnit, 'expected a second unit for no-drift coverage');
+  const sourceIndex = Number(sourceCiv.biqIndex);
+  const otherIndex = Number(otherCiv.biqIndex);
+  const availableField = findBiqField(unit, 'availableto');
+  const otherAvailableField = findBiqField(otherUnit, 'availableto');
+  assert.ok(availableField, 'expected availableto field');
+  assert.ok(otherAvailableField, 'expected second availableto field');
+
+  availableField.value = encodeSigned32Bitmask([sourceIndex]);
+  otherAvailableField.value = encodeSigned32Bitmask([otherIndex]);
+  const setMaskResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: { entries: [unit, otherUnit] }
+    }
+  });
+  assert.equal(setMaskResult.ok, true, String(setMaskResult.error || 'set availability save failed'));
+
+  const copyKey = `RACE_COPY_AVAIL_${Date.now()}`.toUpperCase();
+  const copyResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: {
+        recordOps: [{
+          op: 'copy',
+          sourceRef: `@INDEX:${sourceIndex}`,
+          newRecordRef: copyKey
+        }]
+      }
+    }
+  });
+  assert.equal(copyResult.ok, true, String(copyResult.error || 'copy save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const copyIndex = getEntryIndex(after, 'civilizations', copyKey);
+  assert.ok(copyIndex >= 0, 'expected copied civilization to reload');
+  const reloadedUnit = getEntry(after, 'units', String(unit.civilopediaKey || ''));
+  assert.ok(reloadedUnit, 'expected reloaded unit');
+  assert.deepEqual(
+    decodeSigned32Bitmask(fieldVal(reloadedUnit, 'availableto')),
+    [sourceIndex, copyIndex].sort((a, b) => a - b)
+  );
+  const reloadedOtherUnit = getEntry(after, 'units', String(otherUnit.civilopediaKey || ''));
+  assert.ok(reloadedOtherUnit, 'expected second reloaded unit');
+  assert.deepEqual(
+    decodeSigned32Bitmask(fieldVal(reloadedOtherUnit, 'availableto')),
+    [otherIndex],
+    'unit availability without the source civ bit should not gain the copied civ'
+  );
+});
+
 // ---------------------------------------------------------------------------
 // ART COPY tests — verify files land in the target content root
 // ---------------------------------------------------------------------------
@@ -5128,5 +5434,54 @@ test('Delete existing civilizations reindexes GAME playable civs and LEAD civ re
     const civ = getRawRecordInt(record, 'civ', NaN);
     assert.ok(Number.isInteger(civ) && civ >= 0 && civ < raceCount,
       `LEAD record ${idx} civ index must remain within RACE bounds`);
+  });
+});
+
+test('Copy/delete multiple civilizations by BIQ index keeps copy sources stable across deletes', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath, bundle } = ctx;
+  const raceSection = getSection(bundle, 'RACE');
+  const raceRecords = raceSection && Array.isArray(raceSection.records) ? raceSection.records : [];
+  if (raceRecords.length <= 26) return t.skip('Base BIQ does not have enough civilization records for the index-shift regression');
+
+  const sourceIndices = [23, 24, 26];
+  const expectedByKey = new Map();
+  sourceIndices.forEach((idx) => {
+    const record = raceRecords[idx];
+    assert.ok(record, `expected source RACE index ${idx}`);
+    expectedByKey.set(`RACE_COPY_INDEX_${idx}`, {
+      civilizationName: String(getRawRecordField(record, 'civilizationname')?.value || ''),
+      leaderName: String(getRawRecordField(record, 'leadername')?.value || ''),
+      noun: String(getRawRecordField(record, 'noun')?.value || '')
+    });
+  });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: {
+        recordOps: sourceIndices.flatMap((idx) => ([
+          { op: 'copy', sourceRef: `@INDEX:${idx}`, newRecordRef: `RACE_COPY_INDEX_${idx}` },
+          { op: 'delete', recordRef: `@INDEX:${idx}` }
+        ]))
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'copy/delete save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  expectedByKey.forEach((expected, key) => {
+    const record = getRawRecordsByCivilopediaKey(after, 'RACE', key)[0];
+    assert.ok(record, `expected copied civilization ${key}`);
+    assert.equal(String(getRawRecordField(record, 'civilizationname')?.value || ''), expected.civilizationName,
+      `${key} should keep the intended original civilization name`);
+    assert.equal(String(getRawRecordField(record, 'leadername')?.value || ''), expected.leaderName,
+      `${key} should keep the intended original leader`);
+    assert.equal(String(getRawRecordField(record, 'noun')?.value || ''), expected.noun,
+      `${key} should keep the intended original noun`);
   });
 });

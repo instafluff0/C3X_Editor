@@ -1272,7 +1272,7 @@ const BIQ_REFERENCE_FIELD_RULES = {
     { key: 'prerequisitetechnology', target: 'technologies', allowed: [-1] }
   ],
   technologies: [
-    { key: 'era', target: 'eras', allowed: [] },
+    { key: 'era', target: 'eras', allowed: [-1] },
     { key: 'prerequisite1', target: 'technologies', allowed: [-1] },
     { key: 'prerequisite2', target: 'technologies', allowed: [-1] },
     { key: 'prerequisite3', target: 'technologies', allowed: [-1] },
@@ -1814,43 +1814,67 @@ function getEntryCivilopediaKey(entry) {
   ).trim();
 }
 
-function getExpectedImprovementPediaIconsLabel(civilopediaKey) {
+function getExpectedReferencePediaIconsKeys(tabKey, civilopediaKey) {
   const key = String(civilopediaKey || '').trim();
-  if (!key) return 'matching PediaIcons block';
-  return `#ICON_${key}`;
+  if (!key) return [];
+  if (tabKey === 'improvements' && /^BLDG_/i.test(key)) return [`ICON_${key}`];
+  if (tabKey === 'technologies' && /^TECH_/i.test(key)) return [key, `${key}_LARGE`];
+  return [];
+}
+
+function formatExpectedReferencePediaIconsLabel(keys) {
+  const normalized = (Array.isArray(keys) ? keys : [])
+    .map((key) => String(key || '').trim())
+    .filter(Boolean)
+    .map((key) => `#${key}`);
+  if (normalized.length <= 0) return 'matching PediaIcons block';
+  if (normalized.length === 1) return normalized[0];
+  return `${normalized.slice(0, -1).join(', ')} and ${normalized[normalized.length - 1]}`;
 }
 
 function auditScenarioTextCoverage(bundle, result) {
   const scenarioTextPaths = getScenarioTextAuditPaths(bundle);
   if (!scenarioTextPaths.pediaIcons) return;
 
-  const tabKey = 'improvements';
-  const tab = (((bundle || {}).tabs || {})[tabKey]) || null;
-  const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
-  entries.forEach((entry, index) => {
-    if (!isBiqBackedReferenceEntry(entry)) return;
-    const civilopediaKey = getEntryCivilopediaKey(entry);
-    if (!/^BLDG_/i.test(civilopediaKey)) return;
-    const sourceMeta = (entry && entry.sourceMeta) || {};
-    const iconReadPath = sourceMeta.iconPaths && sourceMeta.iconPaths.readPath;
-    if (readPathMatchesScenario(iconReadPath, scenarioTextPaths.pediaIcons)) return;
-    const label = getReferenceEntryDisplayName(tabKey, entry) || civilopediaKey;
-    addSectionIssue(
-      result,
-      tabKey,
-      index,
-      `${label}: Scenario PediaIcons.txt is missing ${getExpectedImprovementPediaIconsLabel(civilopediaKey)}; Civ3 can stop loading when this BIQ improvement is referenced.`,
-      'scenario-pediaicons-entry-missing',
-      {
-        action: {
-          type: 'copy-scenario-pediaicons-block',
-          label: `Add #ICON_${civilopediaKey}`,
-          civilopediaKey,
-          sourcePath: String(iconReadPath || '').trim(),
-          targetPath: scenarioTextPaths.pediaIcons
+  const scenarioText = readAuditTextFile(scenarioTextPaths.pediaIcons);
+  const scenarioDoc = parsePediaIconsDocumentWithOrder(scenarioText);
+  const scenarioKeys = collectPediaIconsKeys(scenarioDoc);
+
+  ['improvements', 'technologies'].forEach((tabKey) => {
+    const tab = (((bundle || {}).tabs || {})[tabKey]) || null;
+    const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+    entries.forEach((entry, index) => {
+      if (!isBiqBackedReferenceEntry(entry)) return;
+      const civilopediaKey = getEntryCivilopediaKey(entry);
+      const expectedKeys = getExpectedReferencePediaIconsKeys(tabKey, civilopediaKey);
+      if (expectedKeys.length <= 0) return;
+      const missingKeys = expectedKeys.filter((key) => !scenarioKeys.has(String(key || '').trim().toUpperCase()));
+      if (missingKeys.length <= 0) return;
+      const sourceMeta = (entry && entry.sourceMeta) || {};
+      const iconReadPath = sourceMeta.iconPaths && sourceMeta.iconPaths.readPath;
+      const expectedLabel = formatExpectedReferencePediaIconsLabel(missingKeys);
+      const label = getReferenceEntryDisplayName(tabKey, entry) || civilopediaKey;
+      const referenceLabel = tabKey === 'technologies' ? 'technology' : 'improvement';
+      addSectionIssue(
+        result,
+        tabKey,
+        index,
+        `${label}: Scenario PediaIcons.txt is missing ${expectedLabel}; Civ3 can stop loading when this BIQ ${referenceLabel} is referenced.`,
+        'scenario-pediaicons-entry-missing',
+        {
+          action: {
+            type: 'copy-scenario-pediaicons-block',
+            tabKey,
+            label: `Add ${formatExpectedReferencePediaIconsLabel(expectedKeys)}`,
+            expectedLabel: formatExpectedReferencePediaIconsLabel(expectedKeys),
+            expectedKeys,
+            civilopediaKey,
+            sourcePath: String(iconReadPath || '').trim(),
+            targetPath: scenarioTextPaths.pediaIcons
+          }
         }
-      }
-    );
+      );
+    });
   });
 }
 

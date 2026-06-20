@@ -401,6 +401,31 @@ test('collectPediaIconsReferenceEdits writes tech large-first model to small and
   ]);
 });
 
+test('collectPediaIconsReferenceEdits can force writing an unchanged tech icon block', () => {
+  const edits = collectPediaIconsReferenceEdits({
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_CITYSTATE',
+        iconPaths: [
+          'Art/tech chooser/Icons/Monarchy-large.pcx',
+          'Art/tech chooser/Icons/Monarchy-small.pcx'
+        ],
+        originalIconPaths: [
+          'Art/tech chooser/Icons/Monarchy-large.pcx',
+          'Art/tech chooser/Icons/Monarchy-small.pcx'
+        ],
+        forcePediaIconsBlockWrite: true
+      }],
+      recordOps: []
+    }
+  });
+
+  assert.deepEqual(edits, [
+    { blockKey: 'TECH_CITYSTATE', lines: ['Art/tech chooser/Icons/Monarchy-small.pcx'] },
+    { blockKey: 'TECH_CITYSTATE_LARGE', lines: ['Art/tech chooser/Icons/Monarchy-large.pcx'] }
+  ]);
+});
+
 test('collectPediaIconsReferenceEdits writes unit icon and animation blocks from explicit PRTO fields', () => {
   const edits = collectPediaIconsReferenceEdits({
     units: {

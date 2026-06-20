@@ -1331,6 +1331,78 @@ test('scenario save localizes uploaded tech icons into tech chooser folder', () 
   ]);
 });
 
+test('scenario save writes generated blank tech placeholder PCXs into tech chooser folder', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const whiteRgbaBase64 = (width, height) => Buffer.alloc(width * height * 4, 255).toString('base64');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_CITYSTATE',
+        iconPaths: [
+          'Art/tech chooser/Icons/CITYSTATE_blank_large.pcx',
+          'Art/tech chooser/Icons/CITYSTATE_blank_small.pcx'
+        ],
+        originalIconPaths: [],
+        pendingArtConversions: {
+          'iconPaths:0': {
+            sourcePath: 'Art/tech chooser/Icons/CITYSTATE_blank_large.pcx',
+            width: 128,
+            height: 128,
+            rgbaBase64: whiteRgbaBase64(128, 128)
+          },
+          'iconPaths:1': {
+            sourcePath: 'Art/tech chooser/Icons/CITYSTATE_blank_small.pcx',
+            width: 32,
+            height: 32,
+            rgbaBase64: whiteRgbaBase64(32, 32)
+          }
+        },
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const largePath = path.join(scenario, 'Art', 'tech chooser', 'Icons', 'CITYSTATE_blank_large.pcx');
+  const smallPath = path.join(scenario, 'Art', 'tech chooser', 'Icons', 'CITYSTATE_blank_small.pcx');
+  const largeDecoded = decodePcx(largePath, { returnIndexed: true, transparentIndexes: [] });
+  const smallDecoded = decodePcx(smallPath, { returnIndexed: true, transparentIndexes: [] });
+  assert.equal(largeDecoded.width, 128);
+  assert.equal(largeDecoded.height, 128);
+  assert.equal(smallDecoded.width, 32);
+  assert.equal(smallDecoded.height, 32);
+  assert.deepEqual(Array.from(largeDecoded.rgba.slice(0, 3)), [255, 255, 255]);
+  assert.deepEqual(Array.from(smallDecoded.rgba.slice(0, 3)), [255, 255, 255]);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#TECH_CITYSTATE\r?\nArt\\tech chooser\\Icons\\CITYSTATE_blank_small\.pcx/);
+  assert.match(saved, /#TECH_CITYSTATE_LARGE\r?\nArt\\tech chooser\\Icons\\CITYSTATE_blank_large\.pcx/);
+});
+
 test('scenario save resizes rectangular Civilopedia icons by cover-cropping instead of padding', () => {
   const root = mkTmpDir();
   const scenario = path.join(root, 'MyScenario');

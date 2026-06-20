@@ -258,6 +258,41 @@ test('auditLoadedBundle accepts acyclic technology prerequisite chains', () => {
   assert.equal(result.tabs.technologies, undefined);
 });
 
+test('auditLoadedBundle accepts no-era technology sentinel but reports missing era indexes', () => {
+  const noEraTech = makeTechEntry('City-State', 0, ['None']);
+  noEraTech.biqFields.push({ key: 'era', baseKey: 'era', label: 'Era', value: '-1' });
+  const badEraTech = makeTechEntry('Bad Future', 1, ['None']);
+  badEraTech.biqFields.push({ key: 'era', baseKey: 'era', label: 'Era', value: '7' });
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    biq: {
+      sections: [
+        makeBiqSection('ERAS', [
+          { name: 'Ancient Times' },
+          { name: 'Middle Ages' },
+          { name: 'Industrial Ages' },
+          { name: 'Modern Times' }
+        ])
+      ]
+    },
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [noEraTech, badEraTech]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.technologies.sections['0'], undefined);
+  const issues = result.tabs.technologies.sections['1'] || [];
+  assert.equal(issues[0].code, 'biq-reference-out-of-range');
+  assert.equal(issues[0].fieldKey, 'era');
+  assert.equal(issues[0].target, 'eras');
+  assert.equal(issues[0].value, 7);
+  assert.match(issues[0].message, /Bad Future Era points to missing era index 7/);
+});
+
 test('auditLoadedBundle reports out-of-range technology prerequisite fields by fixed slot', () => {
   const baseTabs = makeBundle('').tabs;
   const bundle = makeBundle('', {
@@ -767,20 +802,38 @@ test('auditLoadedBundle reports BIQ improvements missing from scenario PediaIcon
   assert.match(result.tabs.improvements.sections['0'][0].message, /Barracks: Scenario PediaIcons\.txt is missing #ICON_BLDG_Barracks/);
   assert.deepEqual(result.tabs.improvements.sections['0'][0].action, {
     type: 'copy-scenario-pediaicons-block',
+    tabKey: 'improvements',
     label: 'Add #ICON_BLDG_Barracks',
+    expectedLabel: '#ICON_BLDG_Barracks',
+    expectedKeys: ['ICON_BLDG_Barracks'],
     civilopediaKey: 'BLDG_Barracks',
     sourcePath: path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt'),
     targetPath: scenarioPediaIcons
   });
 });
 
-test('auditLoadedBundle ignores missing scenario Civilopedia entries and non-improvement PediaIcons fallbacks', () => {
+test('auditLoadedBundle warns when scenario PediaIcons is missing BIQ technology blocks', () => {
   const civ3Root = mkTmpDir();
   const scenarioRoot = mkTmpDir();
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  writeSafePediaIcons(scenarioPediaIcons);
+  writeFile(scenarioPediaIcons, [
+    '#ICON_BLDG_Barracks',
+    'art\\civilopedia\\icons\\buildings\\barrackslarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\barrackssmall.pcx',
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'));
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
@@ -844,6 +897,68 @@ test('auditLoadedBundle ignores missing scenario Civilopedia entries and non-imp
   });
 
   const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  assert.match(result.tabs.technologies.sections['0'][0].message, /Mysticism: Scenario PediaIcons\.txt is missing #TECH_Mysticism and #TECH_Mysticism_LARGE/);
+  assert.deepEqual(result.tabs.technologies.sections['0'][0].action, {
+    type: 'copy-scenario-pediaicons-block',
+    tabKey: 'technologies',
+    label: 'Add #TECH_Mysticism and #TECH_Mysticism_LARGE',
+    expectedLabel: '#TECH_Mysticism and #TECH_Mysticism_LARGE',
+    expectedKeys: ['TECH_Mysticism', 'TECH_Mysticism_LARGE'],
+    civilopediaKey: 'TECH_Mysticism',
+    sourcePath: path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt'),
+    targetPath: scenarioPediaIcons
+  });
+});
+
+test('auditLoadedBundle ignores BIQ technologies with blank Civilopedia keys for PediaIcons coverage', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  touch(scenarioCivilopedia);
+  writeSafePediaIcons(scenarioPediaIcons);
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      technologies: {
+        sourceDetails: {
+          civilopediaScenario: scenarioCivilopedia,
+          pediaIconsScenario: scenarioPediaIcons
+        },
+        entries: [
+          {
+            name: 'BLOCKER_TECH',
+            civilopediaKey: '',
+            displayCivilopediaKey: '',
+            rawBiqCivilopediaKey: '',
+            biqIndex: 84,
+            iconPaths: [],
+            sourceMeta: {
+              iconPaths: { readPath: '' }
+            }
+          }
+        ]
+      },
+      improvements: { entries: [] },
+      civilizations: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
   assert.equal(result.totalWarnings, 0);
 });
 
@@ -853,7 +968,22 @@ test('auditLoadedBundle accepts BIQ improvements covered by scenario PediaIcons 
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  writeSafePediaIcons(scenarioPediaIcons);
+  writeFile(scenarioPediaIcons, [
+    '#ICON_BLDG_Barracks',
+    'art\\civilopedia\\icons\\buildings\\barrackslarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\barrackssmall.pcx',
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'));
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
