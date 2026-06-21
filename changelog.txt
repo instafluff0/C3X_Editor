@@ -1,3 +1,6 @@
+* RELEASE 27.19
+- Added subtle primary/secondary civilization color chips to the Civs list thumbnails.
+
 * RELEASE 27.18
 - Fixed blank Technology placeholder staging so generated PCX conversion payloads survive template cleanup, and updated the Tides catalog parity baseline for the installed 241-improvement fixture.
 - Added Scenario-mode tech PediaIcons coverage warnings and first-save tech icon block generation, including generated blank PCX placeholders when a Technology has no art.

@@ -16527,6 +16527,7 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
             field.value = String(value);
             setDirty(true);
             notifyFieldValueChange();
+            refreshCivilizationListColorChip(entry, selectedBaseIndex);
             refreshMapAfterOwnerSupportChange(tabKey, baseKey);
           }
         });
@@ -27247,6 +27248,52 @@ function getBiqFieldByBaseKey(entry, baseKey) {
   const target = String(baseKey || '').toLowerCase();
   if (!entry || !Array.isArray(entry.biqFields) || !target) return null;
   return entry.biqFields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === target) || null;
+}
+
+function parseCivilizationColorSlot(entry, baseKey) {
+  const field = getBiqFieldByBaseKey(entry, baseKey);
+  const parsed = parseIntFromDisplayValue(field && field.value);
+  const rawParsed = parsed == null ? Number.parseInt(String(field && field.value || '').trim(), 10) : parsed;
+  if (!Number.isFinite(rawParsed)) return null;
+  return Math.max(0, Math.min(31, rawParsed));
+}
+
+function createCivilizationListColorChip(entry) {
+  const defaultSlot = parseCivilizationColorSlot(entry, 'defaultcolor');
+  const uniqueSlot = parseCivilizationColorSlot(entry, 'uniquecolor');
+  if (defaultSlot == null && uniqueSlot == null) return null;
+  const primarySlot = defaultSlot == null ? uniqueSlot : defaultSlot;
+  const secondarySlot = uniqueSlot == null ? primarySlot : uniqueSlot;
+  const chip = document.createElement('span');
+  chip.className = 'civilization-list-color-chip';
+  chip.style.setProperty('--civ-primary-color', getCivSlotUiColor(primarySlot, (css) => {
+    if (chip.isConnected) chip.style.setProperty('--civ-primary-color', css);
+  }));
+  chip.style.setProperty('--civ-secondary-color', getCivSlotUiColor(secondarySlot, (css) => {
+    if (chip.isConnected) chip.style.setProperty('--civ-secondary-color', css);
+  }));
+  if (primarySlot !== secondarySlot) chip.classList.add('split');
+  chip.title = primarySlot === secondarySlot
+    ? `Default Color ${primarySlot}`
+    : `Default Color ${primarySlot} / Unique Color ${secondarySlot}`;
+  return chip;
+}
+
+function refreshCivilizationListColorChip(entry, baseIndex) {
+  const listPane = el && el.tabContent ? el.tabContent.querySelector('.entry-list-pane') : null;
+  if (!listPane || !entry) return;
+  const entryIdentity = getReferenceEntryIdentity('civilizations', entry, baseIndex);
+  const itemBtn = Array.from(listPane.querySelectorAll('.entry-list-item[data-entry-id]'))
+    .find((node) => node.getAttribute('data-entry-id') === entryIdentity);
+  if (!itemBtn) return;
+  Array.from(itemBtn.querySelectorAll('.civilization-list-color-chip')).forEach((node) => node.remove());
+  const colorChip = createCivilizationListColorChip(entry);
+  if (colorChip) {
+    itemBtn.appendChild(colorChip);
+    itemBtn.title = colorChip.title;
+  } else {
+    itemBtn.removeAttribute('title');
+  }
 }
 
 function ensureBiqFieldByBaseKey(entry, baseKey, label = '', initialValue = '') {
@@ -40588,6 +40635,7 @@ function renderReferenceTab(tab, tabKey) {
     const entryIdentity = getReferenceEntryIdentity(tabKey, entry, baseIndex);
     itemBtn.setAttribute('data-entry-id', entryIdentity);
     itemBtn.classList.toggle('active', baseIndex === activeBaseIndex);
+    if (tabKey === 'civilizations') itemBtn.classList.add('entry-list-item-civilization');
     const showListThumb = tabKey !== 'gameConcepts' && !isUnitEraVariantEntry(entry);
     if (!showListThumb) itemBtn.classList.add('no-thumb');
     const thumb = showListThumb ? document.createElement('span') : null;
@@ -40596,6 +40644,13 @@ function renderReferenceTab(tab, tabKey) {
     title.textContent = entry.name;
     if (thumb) itemBtn.appendChild(thumb);
     itemBtn.appendChild(title);
+    if (tabKey === 'civilizations') {
+      const colorChip = createCivilizationListColorChip(entry);
+      if (colorChip) {
+        itemBtn.appendChild(colorChip);
+        itemBtn.title = colorChip.title;
+      }
+    }
     upsertUnitBiqIndexBadge(itemBtn, entry, unitBiqIndexBadgeRowsByIdentity.get(entryIdentity) || null);
     if (isReferenceEntryDirty(tabKey, entry)) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
