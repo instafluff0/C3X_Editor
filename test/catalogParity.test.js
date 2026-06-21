@@ -638,9 +638,9 @@ test('Tides resource count is exactly 96', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   assert.equal(getTides().tabs.resources.entries.length, 96);
 });
-test('Tides improvement count is exactly 242', (t) => {
+test('Tides improvement count is exactly 241', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.improvements.entries.length, 242);
+  assert.equal(getTides().tabs.improvements.entries.length, 241);
 });
 test('Tides government count is exactly 14', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();

@@ -637,6 +637,7 @@ function loadRendererImportHelpers(targetBundle) {
     'normalizeImportedReferenceFields'
   ];
   const sandbox = {
+    Buffer,
     state: { bundle: targetBundle },
     REFERENCE_PREFIX_BY_TAB: {
       civilizations: 'RACE_',
@@ -3123,12 +3124,12 @@ test('Renderer blank technology templates keep source icon paths for first-save 
     displayName: 'CITY-STATE'
   });
 
-  assert.deepEqual(blank.iconPaths, [
+  assert.deepEqual(Array.from(blank.iconPaths || []), [
     'Art\\tech chooser\\Icons\\SourceLarge.pcx',
     'Art\\tech chooser\\Icons\\SourceSmall.pcx'
   ]);
   assert.equal(blank.thumbPath, 'Art\\tech chooser\\Icons\\SourceLarge.pcx');
-  assert.deepEqual(blank.originalIconPaths, []);
+  assert.deepEqual(Array.from(blank.originalIconPaths || []), []);
   assert.equal(blank.racePaths.length, 0);
   assert.equal(blank.animationName, '');
   assert.equal(blank.buildingIconKind, '');
@@ -3150,7 +3151,7 @@ test('Renderer blank technology templates create white placeholder PCXs when no 
     displayName: 'CITY-STATE'
   });
 
-  assert.deepEqual(blank.iconPaths, [
+  assert.deepEqual(Array.from(blank.iconPaths || []), [
     'Art\\tech chooser\\Icons\\CITYSTATE_blank_large.pcx',
     'Art\\tech chooser\\Icons\\CITYSTATE_blank_small.pcx'
   ]);
@@ -3191,7 +3192,7 @@ test('Renderer PediaIcons QA action stages blank tech placeholders when the targ
 
   const entry = bundle.tabs.technologies.entries[0];
   assert.equal(entry.forcePediaIconsBlockWrite, true);
-  assert.deepEqual(entry.iconPaths, [
+  assert.deepEqual(Array.from(entry.iconPaths || []), [
     'Art\\tech chooser\\Icons\\CITYSTATE_blank_large.pcx',
     'Art\\tech chooser\\Icons\\CITYSTATE_blank_small.pcx'
   ]);

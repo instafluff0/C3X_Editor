@@ -37899,6 +37899,13 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   if (mode === 'blank') {
     entry.civilopediaSection1 = '';
     entry.civilopediaSection2 = '';
+    delete entry.pendingArtSources;
+    delete entry.pendingArtConversions;
+    delete entry._importScenarioPath;
+    delete entry._importScenarioPaths;
+    delete entry._pendingImportedResourceIcon;
+    delete entry._pendingImportedUnitIcon;
+    delete entry._pendingImportedBuildingCityIcon;
     entry.iconPaths = [];
     entry.thumbPath = '';
     if (sourceTechIconPaths.length > 0) {
@@ -37912,13 +37919,6 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     entry.buildingIconIndex = '';
     entry.wonderSplashPath = '';
     entry.animationName = '';
-    delete entry.pendingArtSources;
-    delete entry.pendingArtConversions;
-    delete entry._importScenarioPath;
-    delete entry._importScenarioPaths;
-    delete entry._pendingImportedResourceIcon;
-    delete entry._pendingImportedUnitIcon;
-    delete entry._pendingImportedBuildingCityIcon;
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
       value: makeBlankReferenceFieldValue(field, tabKey),
