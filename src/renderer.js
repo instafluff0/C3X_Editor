@@ -58061,15 +58061,21 @@ function getTokenColor(token, fieldKey = '') {
 }
 
 async function getDistrictButtonSheetPreview() {
+  const scenarioPath = getActiveScenarioPreviewPath();
+  const scenarioPaths = getScenarioPreviewPaths();
   const cacheKey = JSON.stringify({
     kind: 'district-button-sheet',
-    c3xPath: state.settings && state.settings.c3xPath
+    c3xPath: state.settings && state.settings.c3xPath,
+    scenarioPath,
+    scenarioPaths: scenarioPaths.join('|')
   });
   const cached = state.previewCache.get(cacheKey);
   if (cached) return cached;
   const res = await window.c3xManager.getPreview({
     kind: 'districtButtonSheet',
-    c3xPath: state.settings && state.settings.c3xPath
+    c3xPath: state.settings && state.settings.c3xPath,
+    scenarioPath,
+    scenarioPaths
   });
   if (res && res.ok) {
     setPreviewCache(cacheKey, res);
@@ -58266,9 +58272,13 @@ function renderButtonTileCompoundRow(section) {
   const refreshCanvas = () => {
     const r = Math.max(0, Number.parseInt(rowInput.value || '0', 10) || 0);
     const c = Math.max(0, Number.parseInt(colInput.value || '0', 10) || 0);
+    const scenarioPath = getActiveScenarioPreviewPath();
+    const scenarioPaths = getScenarioPreviewPaths();
     window.c3xManager.getPreview({
       kind: 'districtButtonSheet',
       c3xPath: state.settings && state.settings.c3xPath,
+      scenarioPath,
+      scenarioPaths,
       crop: { row: r, col: c, w: 32, h: 32 }
     }).then((res) => {
       if (!res || !res.ok || !canvas.isConnected) return;

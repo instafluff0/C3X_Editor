@@ -1,5 +1,6 @@
 * RELEASE 27.19
 - Added subtle primary/secondary civilization color chips to the Civs list thumbnails.
+- Fixed Districts button tile previews to prefer scenario-local `Art\Districts\WorkerDistrictButtonsNorm.pcx` before falling back to the standard C3X sheet.
 
 * RELEASE 27.18
 - Fixed blank Technology placeholder staging so generated PCX conversion payloads survive template cleanup, and updated the Tides catalog parity baseline for the installed 241-improvement fixture.
