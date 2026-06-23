@@ -6395,6 +6395,11 @@ function quoteSectionToken(value) {
   return `"${escaped}"`;
 }
 
+function unquoteSectionToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  return raw.replace(/^"(.*)"$/, '$1').trim();
+}
+
 function tokenizeSectionListPreservingQuotes(text) {
   const input = String(text == null ? '' : text);
   const items = [];
@@ -6418,6 +6423,16 @@ function tokenizeSectionListPreservingQuotes(text) {
   const tail = cur.trim();
   if (tail) items.push(tail);
   return items;
+}
+
+function normalizeNaturalWonderAnimationValueForWrite(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  if (!raw.includes('"')) return raw;
+  return tokenizeSectionListPreservingQuotes(raw)
+    .map((token) => unquoteSectionToken(token))
+    .filter(Boolean)
+    .join(', ');
 }
 
 function findUnquotedColon(value) {
@@ -6583,7 +6598,7 @@ const SECTION_QUOTED_VALUE_KEYS_BY_KIND = {
   wonders: new Set([
     'name', 'buildable_by_civs', 'buildable_by_civ_traits', 'buildable_by_civ_govs', 'buildable_by_civ_cultures', 'img_path'
   ]),
-  naturalWonders: new Set(['name', 'img_path', 'animation'])
+  naturalWonders: new Set(['name', 'img_path'])
 };
 
 function normalizeSectionFieldValueForWrite(kind, key, value) {
@@ -6591,6 +6606,9 @@ function normalizeSectionFieldValueForWrite(kind, key, value) {
   const rawKey = String(key || '').trim();
   const keyLower = rawKey.toLowerCase();
   const rawValue = String(value == null ? '' : value).trim();
+  if (kindKey === 'naturalWonders' && keyLower === 'animation') {
+    return normalizeNaturalWonderAnimationValueForWrite(rawValue);
+  }
   const quotedKeys = SECTION_QUOTED_VALUE_KEYS_BY_KIND[kindKey];
   if (!quotedKeys || !quotedKeys.has(rawKey) || !rawValue) return rawValue;
   const normalizeArtPath = isSectionArtImagePathField(kindKey, rawKey);

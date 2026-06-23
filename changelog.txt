@@ -1,4 +1,5 @@
 * RELEASE 27.19
+- Fixed Natural Wonders animation saves so semicolon specs with comma-delimited seasons or offsets are not split into quoted fragments that C3X rejects.
 - Added Civs tab color-picker usage hover details, Alternate color terminology, an outside-corner unused color marker, and reorganized the Colors/Diplomacy card into Colors and Diplomacy subsections.
 - Added a Civs tab Assign Unique Colors action that gives each civilization a distinct color slot while preserving the first civilization already using each slot.
 - Fixed Assign Unique Colors dirty tracking so every changed civilization gets a row badge and the Civs tab count reflects all changed rows.
