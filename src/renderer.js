@@ -2995,6 +2995,8 @@ function restoreCivColorPaletteState(snapshot) {
   state.civColorPaletteAdjustmentTool = '';
   state.civColorPaletteAdjustmentAmount = 0;
   state.civColorPaletteTintTargetRgb = null;
+  state.civColorPaletteMainDraftSlot = -1;
+  state.civColorPaletteMainDraftRgb = null;
   applyCivColorPaletteSlotsToUiCaches();
   refreshCivColorPaletteDirtyState();
   return true;
@@ -31511,6 +31513,7 @@ function getCivColorPaletteCityUiIndices() {
 function getCivColorPaletteOtherUsefulIndices() {
   return Array.from(new Set([
     ...getCivColorPaletteAdditionalLinkedIndices(),
+    ...getCivColorPaletteRhyeIndices(),
     ...getCivColorPaletteCityUiIndices()
   ])).sort((a, b) => a - b);
 }
@@ -31546,7 +31549,6 @@ function getCivColorPaletteAllOtherIndices() {
 function getCivColorPaletteFilterFacetDefinitions() {
   return [
     { key: 'main', label: 'Main shades', getIndices: getCivColorPaletteMainRampIndices },
-    { key: 'rhye', label: "Rhye's", getIndices: getCivColorPaletteRhyeIndices },
     { key: 'useful', label: 'Other useful colors', getIndices: getCivColorPaletteOtherUsefulIndices },
     { key: 'gray', label: 'Gray', getIndices: getCivColorPaletteGrayIndices },
     { key: 'protected', label: 'Protected', getIndices: getCivColorPaletteProtectedIndices },
@@ -31630,9 +31632,13 @@ function clampCivColorPaletteIndex(value, filter = state.civColorPaletteFilter) 
 function getCivColorPaletteRoleMeta(index) {
   const idx = Number(index);
   if (!Number.isFinite(idx) || idx < 0 || idx > 69) return { label: `${idx}: Color`, description: '' };
+  const grayRows = new Set([17, 19, 21, 23, 25, 27, 29, 31]);
+  const protectedRows = new Set([33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63]);
   if (idx === 6) return { label: '6: Color of starting location/civ color in editor', description: '' };
   if (idx === 7) return { label: '7: Color of pixel in PCX file', description: '' };
   if (idx === 9) return { label: '9: Color of circle around leaderhead on Diplomacy screen', description: '' };
+  if (grayRows.has(idx)) return { label: `${idx}: Shade of gray - changing not recommended`, description: '' };
+  if (protectedRows.has(idx)) return { label: `${idx}: Should remain the same for all colors - do not change`, description: '' };
   if (idx === 64) return { label: '64: Inner pixels of city borders (in-game)', description: '' };
   if (idx === 65) return { label: '65: Outer pixel of city borders (in-game)', description: '' };
   if (idx === 66) return { label: '66: City for unit discs, histographs, and mini-map', description: '' };
@@ -31933,21 +31939,6 @@ function applyCivColorPaletteMainColor(slot, rgb, options = {}) {
   return true;
 }
 
-function restoreCivColorPaletteSlotFromClean(slot) {
-  const targetSlot = clampCivColorPaletteSlot(slot);
-  const cleanEntry = getCivColorPaletteCleanSlotEntry(targetSlot);
-  if (!cleanEntry || !Array.isArray(cleanEntry.palette)) return false;
-  setCivColorPaletteSlotPalette(targetSlot, cleanEntry.palette);
-  return true;
-}
-
-function restoreCivColorPaletteColorFromClean(slot, index) {
-  const cleanEntry = getCivColorPaletteCleanSlotEntry(slot);
-  if (!cleanEntry) return false;
-  setCivColorPaletteColor(slot, index, getCivColorPaletteColor(cleanEntry, index));
-  return true;
-}
-
 function ensureCivColorPaletteSelectedIndex() {
   state.civColorPaletteSelectedIndex = clampCivColorPaletteIndex(
     state.civColorPaletteSelectedIndex,
@@ -32190,9 +32181,35 @@ function renderCivColorPaletteRoleSection(container, {
   container.appendChild(section);
 }
 
-function renderCivColorPaletteModal() {
+function captureCivColorPaletteModalScrollState() {
+  const body = civColorPaletteModal.body;
+  if (!body || typeof body.querySelector !== 'function') return null;
+  const slotGrid = body.querySelector('.civ-color-palette-slot-grid');
+  const tableWrap = body.querySelector('.civ-color-palette-table-wrap');
+  return {
+    slotGridTop: slotGrid ? slotGrid.scrollTop || 0 : 0,
+    tableTop: tableWrap ? tableWrap.scrollTop || 0 : 0,
+    tableLeft: tableWrap ? tableWrap.scrollLeft || 0 : 0
+  };
+}
+
+function restoreCivColorPaletteModalScrollState(scrollState) {
+  if (!scrollState || !civColorPaletteModal.body) return;
+  const slotGrid = civColorPaletteModal.body.querySelector('.civ-color-palette-slot-grid');
+  const tableWrap = civColorPaletteModal.body.querySelector('.civ-color-palette-table-wrap');
+  if (slotGrid) slotGrid.scrollTop = Math.max(0, Number(scrollState.slotGridTop) || 0);
+  if (tableWrap) {
+    tableWrap.scrollTop = Math.max(0, Number(scrollState.tableTop) || 0);
+    tableWrap.scrollLeft = Math.max(0, Number(scrollState.tableLeft) || 0);
+  }
+}
+
+function renderCivColorPaletteModal(options = {}) {
   const overlay = ensureCivColorPaletteModalNode();
   if (!civColorPaletteModal.body) return overlay;
+  const scrollState = options && options.preserveScroll === false
+    ? null
+    : captureCivColorPaletteModalScrollState();
   const config = getCurrentCivColorPaletteModalConfig();
   if (civColorPaletteModal.title) {
     civColorPaletteModal.title.textContent = 'Custom Civ Colors';
@@ -32344,11 +32361,13 @@ function renderCivColorPaletteModal() {
 
   const mainControls = document.createElement('div');
   mainControls.className = 'civ-color-palette-main-controls';
-  const mainSeedLabel = document.createElement('strong');
-  mainSeedLabel.textContent = 'Main Color';
-  mainControls.appendChild(mainSeedLabel);
+  const mainSeedLabel = document.createElement('label');
+  mainSeedLabel.className = 'civ-color-palette-main-label';
+  mainSeedLabel.textContent = 'Set Main Color';
   const mainSeedInput = document.createElement('input');
   mainSeedInput.type = 'color';
+  mainSeedInput.id = `civ-color-palette-main-color-${selectedSlot}`;
+  mainSeedLabel.htmlFor = mainSeedInput.id;
   mainSeedInput.value = rgbToHex(mainDraftRgb);
   mainSeedInput.disabled = !canEditColors;
   let mainSeedInputChangedDuringDrag = false;
@@ -32377,7 +32396,8 @@ function renderCivColorPaletteModal() {
     mainSeedInputChangedDuringDrag = false;
     mainSeedInputUndoCaptured = false;
   });
-  mainControls.appendChild(mainSeedInput);
+  mainSeedLabel.appendChild(mainSeedInput);
+  mainControls.appendChild(mainSeedLabel);
   const mainSeedHex = document.createElement('input');
   mainSeedHex.type = 'text';
   mainSeedHex.className = 'civ-color-palette-hex-input';
@@ -32395,16 +32415,6 @@ function renderCivColorPaletteModal() {
   mainSeedHex.addEventListener('change', commitMainSeedHex);
   mainSeedHex.addEventListener('blur', commitMainSeedHex);
   mainControls.appendChild(mainSeedHex);
-  const restoreSlotBtn = document.createElement('button');
-  restoreSlotBtn.type = 'button';
-  restoreSlotBtn.className = 'ghost';
-  restoreSlotBtn.textContent = 'Restore Color Set';
-  restoreSlotBtn.disabled = !canEditColors || !isCivColorPaletteSlotDirty(selectedSlot);
-  restoreSlotBtn.addEventListener('click', () => {
-    rememberUndoSnapshotForKey('CIV_COLOR_PALETTES');
-    if (restoreCivColorPaletteSlotFromClean(selectedSlot)) renderCivColorPaletteModal();
-  });
-  mainControls.appendChild(restoreSlotBtn);
   editorHead.appendChild(mainControls);
   editor.appendChild(editorHead);
 
@@ -32829,6 +32839,7 @@ function renderCivColorPaletteModal() {
   chrome.appendChild(editor);
   panel.appendChild(chrome);
   civColorPaletteModal.body.appendChild(panel);
+  restoreCivColorPaletteModalScrollState(scrollState);
   refreshCivColorPaletteModalActionButtons();
   return overlay;
 }

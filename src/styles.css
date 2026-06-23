@@ -9250,13 +9250,39 @@ details > summary:focus-visible {
 
 .civ-color-palette-main-controls {
   display: grid;
-  grid-template-columns: auto 40px 118px auto;
+  grid-template-columns: auto 118px;
   gap: 8px;
   align-items: center;
 }
 
-.civ-color-palette-main-controls > strong {
+.civ-color-palette-main-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 6px 10px 6px 14px;
+  border: 1px solid rgba(36, 25, 64, 0.2);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--ink);
   font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(18, 15, 36, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.civ-color-palette-main-label:hover,
+.civ-color-palette-main-label:has(input[type="color"]:focus-visible) {
+  border-color: rgba(77, 111, 214, 0.48);
+  box-shadow: 0 0 0 2px rgba(77, 111, 214, 0.12), 0 4px 10px rgba(24, 20, 50, 0.08);
+}
+
+.civ-color-palette-main-label:has(input[type="color"]:disabled) {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.72;
+  box-shadow: none;
 }
 
 .civ-color-palette-main-controls input[type="color"],
@@ -9266,6 +9292,19 @@ details > summary:focus-visible {
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.civ-color-palette-main-controls input[type="color"] {
+  border: 1px solid rgba(73, 69, 98, 0.34);
+  border-radius: 5px;
+  box-shadow: 0 1px 0 rgba(18, 15, 36, 0.06);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.civ-color-palette-main-controls input[type="color"]:not(:disabled):hover,
+.civ-color-palette-main-controls input[type="color"]:not(:disabled):focus-visible {
+  border-color: rgba(77, 111, 214, 0.62);
+  box-shadow: 0 0 0 2px rgba(77, 111, 214, 0.12), 0 1px 0 rgba(18, 15, 36, 0.06);
 }
 
 .civ-color-palette-hex-input,
@@ -9279,10 +9318,14 @@ details > summary:focus-visible {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 8px;
+  gap: 6px;
   padding: 6px 10px;
   border-bottom: 1px solid rgba(73, 69, 98, 0.12);
   background: #fff;
+}
+
+.civ-color-palette-filterbar .files-filter-toggle {
+  gap: 3px;
 }
 
 .civ-color-palette-filterbar .files-filter-toggle input[type='checkbox'] {
@@ -9290,12 +9333,17 @@ details > summary:focus-visible {
   height: 15px;
 }
 
+.civ-color-palette-filterbar .files-filter-toggle input[type='checkbox'] + span {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
 .civ-color-palette-batch-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   margin-left: auto;
-  padding-left: 8px;
+  padding-left: 6px;
   border-left: 1px solid rgba(73, 69, 98, 0.12);
 }
 
@@ -9512,6 +9560,11 @@ details > summary:focus-visible {
   letter-spacing: 0;
 }
 
+.civ-color-palette-table-head .civ-color-palette-table-cell:not(:first-child) {
+  justify-content: center;
+  text-align: center;
+}
+
 .civ-color-palette-table-label {
   display: flex;
   align-items: center;
@@ -9578,7 +9631,7 @@ details > summary:focus-visible {
   }
 
   .civ-color-palette-main-controls {
-    grid-template-columns: auto 40px minmax(110px, 1fr);
+    grid-template-columns: auto minmax(110px, 1fr);
   }
 
   .civ-color-palette-main-controls .ghost {

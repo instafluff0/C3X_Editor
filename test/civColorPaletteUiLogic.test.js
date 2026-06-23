@@ -60,6 +60,8 @@ function loadPaletteUiHelpers() {
     'normalizeCivColorPaletteFilterFacets',
     'getCivColorPaletteVisibleIndicesForFilter',
     'getCivColorPaletteAutoGenerateIndices',
+    'getCivColorPaletteRoleMeta',
+    'getCivColorPaletteDisplayLabel',
     'getCivColorPaletteColorFromPalette',
     'clampCivColorPaletteByte',
     'normalizeCivColorPaletteRgb',
@@ -120,8 +122,8 @@ test('generateCivColorPaletteFromMainColor retints linked shades but leaves stab
 test('renderer no longer exposes the old Core / City / All 70 filter labels', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
-  assert.ok(sourceText.includes('Main Color'));
-  assert.ok(sourceText.includes("Rhye's"));
+  assert.ok(sourceText.includes('Set Main Color'));
+  assert.ok(sourceText.includes('mainSeedLabel.appendChild(mainSeedInput)'));
   assert.ok(sourceText.includes('Other useful colors'));
   assert.ok(sourceText.includes('All others'));
   assert.ok(sourceText.includes('Hue'));
@@ -134,13 +136,46 @@ test('renderer no longer exposes the old Core / City / All 70 filter labels', ()
   assert.ok(!sourceText.includes('Generate Palette'));
   assert.ok(!sourceText.includes("label: 'Core'"));
   assert.ok(!sourceText.includes("label: 'All 70'"));
+  assert.ok(!sourceText.includes('label: "Rhye'));
+  assert.ok(!sourceText.includes("label: 'Rhye"));
 });
 
-test("Rhye's facet matches Quint's Rhye color index set", () => {
+test("Other useful colors includes Quint's Rhye color index set", () => {
   const helpers = loadPaletteUiHelpers();
   const expected = [10, 11, 12, 13, 14, 15, 20, 24, 26, 30, 32, 38, 44, 48, 50, 56, 60, 62];
   assert.deepEqual(Array.from(helpers.getCivColorPaletteRhyeIndices()), expected);
-  assert.deepEqual(Array.from(helpers.getCivColorPaletteVisibleIndicesForFilter('rhye')), expected);
+  expected.forEach((index) => {
+    assert.ok(Array.from(helpers.getCivColorPaletteOtherUsefulIndices()).includes(index), `Other useful colors includes ${index}`);
+  });
+});
+
+test('civ color palette role labels match Quint guidance', () => {
+  const helpers = loadPaletteUiHelpers();
+  const expectedLabels = new Map([
+    [6, '6: Color of starting location/civ color in editor'],
+    [7, '7: Color of pixel in PCX file'],
+    [9, '9: Color of circle around leaderhead on Diplomacy screen'],
+    [64, '64: Inner pixels of city borders (in-game)'],
+    [65, '65: Outer pixel of city borders (in-game)'],
+    [66, '66: City for unit discs, histographs, and mini-map'],
+    [67, '67: Color - unknown'],
+    [68, '68: City color'],
+    [69, '69: Civ name in histograph']
+  ]);
+  [17, 19, 21, 23, 25, 27, 29, 31].forEach((index) => {
+    expectedLabels.set(index, `${index}: Shade of gray - changing not recommended`);
+  });
+  [33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63].forEach((index) => {
+    expectedLabels.set(index, `${index}: Should remain the same for all colors - do not change`);
+  });
+
+  expectedLabels.forEach((label, index) => {
+    assert.equal(helpers.getCivColorPaletteDisplayLabel(index), label);
+    assert.equal(helpers.getCivColorPaletteRoleMeta(index).description, '');
+  });
+  assert.equal(helpers.getCivColorPaletteDisplayLabel(0), '0: Color');
+  assert.equal(helpers.getCivColorPaletteDisplayLabel(32), '32: Color');
+  assert.equal(helpers.getCivColorPaletteDisplayLabel(34), '34: Color');
 });
 
 test('civ color palette filters combine compact facets', () => {
@@ -162,6 +197,7 @@ test('civ color palette filters combine compact facets', () => {
     Array.from(helpers.getCivColorPaletteVisibleIndicesForFilter(['useful'])),
     Array.from(new Set([
       ...helpers.getCivColorPaletteAdditionalLinkedIndices(),
+      ...helpers.getCivColorPaletteRhyeIndices(),
       ...helpers.getCivColorPaletteCityUiIndices()
     ])).sort((a, b) => a - b)
   );
