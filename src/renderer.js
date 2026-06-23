@@ -31766,34 +31766,31 @@ function hsvToRgb(hsv) {
 
 function generateCivColorPaletteFromMainColor(palette, targetMainRgb, options = {}) {
   const source = Array.isArray(palette) ? palette.slice() : [];
+  const template = Array.isArray(options.templatePalette) && options.templatePalette.length >= source.length
+    ? options.templatePalette
+    : source;
   const autoIndices = Array.isArray(options.autoIndices) && options.autoIndices.length
     ? options.autoIndices
     : getCivColorPaletteAutoGenerateIndices();
   const mainIndex = Number.isFinite(Number(options.mainIndex)) ? Number(options.mainIndex) : 7;
-  const currentMain = getCivColorPaletteColorFromPalette(source, mainIndex);
   const nextMain = normalizeCivColorPaletteRgb(targetMainRgb);
-  const currentHsv = rgbToHsv(currentMain);
-  const nextHsv = rgbToHsv(nextMain);
-  const rawHueShift = nextHsv.h - currentHsv.h;
-  const hueShift = rawHueShift > 180 ? rawHueShift - 360 : (rawHueShift < -180 ? rawHueShift + 360 : rawHueShift);
-  const satDelta = nextHsv.s - currentHsv.s;
-  const valDelta = nextHsv.v - currentHsv.v;
+  const templateMainHsv = rgbToHsv(getCivColorPaletteColorFromPalette(template, mainIndex));
+  const nextMainHsv = rgbToHsv(nextMain);
   autoIndices.forEach((index) => {
     const idx = Number(index);
     const base = idx * 3;
     if (!Number.isInteger(idx) || idx < 0 || base + 2 >= source.length) return;
-    if (idx === mainIndex) {
-      source[base] = nextMain.r;
-      source[base + 1] = nextMain.g;
-      source[base + 2] = nextMain.b;
-      return;
+    let adjusted = nextMain;
+    if (idx !== mainIndex) {
+      const templateHsv = rgbToHsv(getCivColorPaletteColorFromPalette(template, idx));
+      const rawHueDelta = templateHsv.h - templateMainHsv.h;
+      const hueDelta = rawHueDelta > 180 ? rawHueDelta - 360 : (rawHueDelta < -180 ? rawHueDelta + 360 : rawHueDelta);
+      adjusted = hsvToRgb({
+        h: wrapCivColorPaletteHue(nextMainHsv.h + hueDelta),
+        s: clampCivColorPaletteUnit(nextMainHsv.s + (templateHsv.s - templateMainHsv.s)),
+        v: clampCivColorPaletteUnit(nextMainHsv.v + (templateHsv.v - templateMainHsv.v))
+      });
     }
-    const hsv = rgbToHsv(getCivColorPaletteColorFromPalette(source, idx));
-    const adjusted = hsvToRgb({
-      h: wrapCivColorPaletteHue(hsv.h + hueShift),
-      s: clampCivColorPaletteUnit(hsv.s + satDelta),
-      v: clampCivColorPaletteUnit(hsv.v + valDelta)
-    });
     source[base] = adjusted.r;
     source[base + 1] = adjusted.g;
     source[base + 2] = adjusted.b;
@@ -31876,6 +31873,12 @@ function setCivColorPaletteSlotPalette(slot, paletteBytes) {
   refreshCivColorPaletteDirtyState();
 }
 
+function getCivColorPaletteGenerationTemplate(slotEntry) {
+  const template = Array.isArray(slotEntry && slotEntry.templatePalette) ? slotEntry.templatePalette : [];
+  if (template.length >= 70 * 3) return template;
+  return Array.isArray(slotEntry && slotEntry.palette) ? slotEntry.palette : [];
+}
+
 function setCivColorPaletteColor(slot, index, rgb) {
   const slotIndex = clampCivColorPaletteSlot(slot);
   const colorIndex = Number(index);
@@ -31930,9 +31933,10 @@ function applyCivColorPaletteMainColor(slot, rgb, options = {}) {
   const nextRgb = normalizeCivColorPaletteRgb(rgb);
   const entry = getCivColorPaletteSlotEntry(slotIndex);
   if (!entry || !Array.isArray(entry.palette)) return false;
-  if (rgbToHex(getCivColorPaletteColor(entry, 7)) === rgbToHex(nextRgb)) return false;
+  const templatePalette = getCivColorPaletteGenerationTemplate(entry);
+  const nextPalette = generateCivColorPaletteFromMainColor(entry.palette, nextRgb, { templatePalette });
+  if (JSON.stringify(Array.isArray(entry.palette) ? entry.palette : []) === JSON.stringify(nextPalette)) return false;
   if (!options.skipUndo) rememberUndoSnapshotForKey('CIV_COLOR_PALETTES');
-  const nextPalette = generateCivColorPaletteFromMainColor(entry.palette, nextRgb);
   setCivColorPaletteMainDraft(slotIndex, nextRgb);
   setCivColorPaletteSlotPalette(slotIndex, nextPalette);
   state.civColorPaletteSelectedIndex = 7;
@@ -31987,6 +31991,7 @@ async function loadCivColorPaletteSlotsIntoState({ initialSlot = null, preserveS
     }
     const slots = (Array.isArray(res.slots) ? res.slots : []).map((entry) => {
       const paletteBytes = entry && entry.paletteBase64 ? decodeBase64ToUint8(entry.paletteBase64) : new Uint8Array(256 * 3);
+      const templatePaletteBytes = entry && entry.templatePaletteBase64 ? decodeBase64ToUint8(entry.templatePaletteBase64) : paletteBytes;
       return {
         slot: clampCivColorPaletteSlot(entry && entry.slot),
         fileName: String(entry && entry.fileName || ''),
@@ -31994,6 +31999,8 @@ async function loadCivColorPaletteSlotsIntoState({ initialSlot = null, preserveS
         sourcePath: String(entry && entry.sourcePath || ''),
         sourceKind: String(entry && entry.sourceKind || ''),
         palette: Array.from(paletteBytes),
+        templateSourcePath: String(entry && entry.templateSourcePath || ''),
+        templatePalette: Array.from(templatePaletteBytes),
         representativeColor: entry && entry.representativeColor ? entry.representativeColor : getCivColorPaletteColor({ palette: Array.from(paletteBytes) }, 7),
         targetPath: String(entry && entry.targetPath || ''),
         targetExists: !!(entry && entry.targetExists),
@@ -32724,8 +32731,12 @@ function renderCivColorPaletteModal(options = {}) {
     const next = normalizeCivColorPaletteRgb(rgb);
     const current = getCivColorPaletteColor(getCivColorPaletteSlotEntry(selectedSlot), index);
     if (rgbToHex(next) === rgbToHex(current)) return;
-    rememberUndoSnapshotForKey('CIV_COLOR_PALETTES');
-    setCivColorPaletteColor(selectedSlot, index, next);
+    if (Number(index) === 7) {
+      applyCivColorPaletteMainColor(selectedSlot, next, { skipUndo: !!options.skipUndo });
+    } else {
+      if (!options.skipUndo) rememberUndoSnapshotForKey('CIV_COLOR_PALETTES');
+      setCivColorPaletteColor(selectedSlot, index, next);
+    }
     state.civColorPaletteSelectedIndex = index;
     if (!options.deferRender) renderCivColorPaletteModal();
   };

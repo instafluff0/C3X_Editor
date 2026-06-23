@@ -2,6 +2,7 @@
 - Added Civs tab color-picker usage hover details, Alternate color terminology, an outside-corner unused color marker, and reorganized the Colors/Diplomacy card into Colors and Diplomacy subsections.
 - Added a Civs tab Assign Unique Colors action that gives each civilization a distinct color slot while preserving the first civilization already using each slot.
 - Fixed Assign Unique Colors dirty tracking so every changed civilization gets a row badge and the Civs tab count reflects all changed rows.
+- Fixed Custom Civ Colors table edits so changing row 7 by hex, RGB, or color picker uses the same linked-shade generation as Set Main Color, rebuilt from the stock Civ3 palette profile.
 - Added a scenario-only Custom Civ Colors modal on the Civs tab, editing `ntp00`-`ntp31` palette files with a vertical palette editor, main-color generation for linked shades, per-color RGB/hex controls, scenario-local setup for shared BIQs, and save/undo support.
 - Added compact batch Hue, Saturation, Balance, and Tint adjustments with live table and ramp previews for the active palette row filter.
 - Changed the Custom Civ Colors row filter into compact combinable facets, including Main shades, Other useful colors, Gray, Protected, and All others.

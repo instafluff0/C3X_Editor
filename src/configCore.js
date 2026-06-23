@@ -2273,8 +2273,10 @@ function inspectScenarioCivColorPalettes(payload = {}) {
     if (!resolvedPath) {
       return { ok: false, error: `Could not find ${getCivColorPaletteFileName(slot)} in the scenario or base game content.` };
     }
+    const templatePath = resolveConquestsAssetPath(civ3Path, assetPath, '', []);
     const targetPath = targetRoot ? path.join(targetRoot, assetPath) : '';
     const palette = readPcxPaletteBytes(resolvedPath);
+    const templatePalette = templatePath ? readPcxPaletteBytes(templatePath) : palette;
     const scenarioLocal = isPathWithinAnyRoot(resolvedPath, writableRoots);
     slots.push({
       slot,
@@ -2283,6 +2285,8 @@ function inspectScenarioCivColorPalettes(payload = {}) {
       sourcePath: resolvedPath,
       sourceKind: scenarioLocal ? 'scenario' : 'base',
       paletteBase64: Buffer.from(palette).toString('base64'),
+      templateSourcePath: templatePath || resolvedPath,
+      templatePaletteBase64: Buffer.from(templatePalette).toString('base64'),
       representativeColor: getCivColorPaletteRepresentativeColor(palette),
       targetPath,
       targetExists: !!(targetPath && fs.existsSync(targetPath)),

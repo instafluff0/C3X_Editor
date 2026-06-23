@@ -79,6 +79,8 @@ test('inspectScenarioCivColorPalettes resolves base palettes and scenario-local 
   const slot0 = result.slots[0];
   assert.equal(slot0.sourceKind, 'base');
   assert.equal(slot0.sourcePath, path.join(basePaletteDir, 'ntp00.pcx'));
+  assert.equal(slot0.templateSourcePath, path.join(basePaletteDir, 'ntp00.pcx'));
+  assert.ok(slot0.templatePaletteBase64, 'expected stock template palette bytes');
   assert.equal(slot0.targetPath, path.join(scenarioDir, 'Art', 'Units', 'Palettes', 'ntp00.pcx'));
   assert.deepEqual(slot0.representativeColor, {
     r: 40,
@@ -89,6 +91,8 @@ test('inspectScenarioCivColorPalettes resolves base palettes and scenario-local 
   const slot1 = result.slots[1];
   assert.equal(slot1.sourceKind, 'scenario');
   assert.equal(slot1.sourcePath, scenarioPalettePath);
+  assert.equal(slot1.templateSourcePath, path.join(basePaletteDir, 'ntp01.pcx'));
+  assert.notEqual(slot1.templatePaletteBase64, slot1.paletteBase64);
   assert.equal(slot1.targetExists, true);
 });
 

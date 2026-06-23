@@ -119,6 +119,47 @@ test('generateCivColorPaletteFromMainColor retints linked shades but leaves stab
   );
 });
 
+test('generateCivColorPaletteFromMainColor repairs flattened rows from a stock template profile', () => {
+  const helpers = loadPaletteUiHelpers();
+  const flattened = new Array(70 * 3).fill(0);
+  const template = new Array(70 * 3).fill(0);
+  for (let index = 0; index < 70; index += 1) {
+    const base = index * 3;
+    flattened[base] = 227;
+    flattened[base + 1] = 10;
+    flattened[base + 2] = 10;
+    template[base] = 180;
+    template[base + 1] = 20;
+    template[base + 2] = 20;
+  }
+  for (let index = 0; index <= 15; index += 1) {
+    const base = index * 3;
+    template[base] = Math.max(70, 255 - index * 10);
+    template[base + 1] = Math.max(0, 130 - index * 8);
+    template[base + 2] = Math.max(0, 120 - index * 8);
+  }
+  template[7 * 3] = 185;
+  template[7 * 3 + 1] = 35;
+  template[7 * 3 + 2] = 35;
+  template[17 * 3] = 120;
+  template[17 * 3 + 1] = 120;
+  template[17 * 3 + 2] = 120;
+
+  const next = helpers.generateCivColorPaletteFromMainColor(flattened, { r: 227, g: 10, b: 10 }, { templatePalette: template });
+
+  assert.equal(JSON.stringify(helpers.getCivColorPaletteColorFromPalette(next, 7)), JSON.stringify({ r: 227, g: 10, b: 10 }));
+  assert.notEqual(JSON.stringify(helpers.getCivColorPaletteColorFromPalette(next, 0)), JSON.stringify({ r: 227, g: 10, b: 10 }));
+  assert.notEqual(JSON.stringify(helpers.getCivColorPaletteColorFromPalette(next, 15)), JSON.stringify({ r: 227, g: 10, b: 10 }));
+  assert.notDeepEqual(
+    JSON.stringify(helpers.getCivColorPaletteColorFromPalette(next, 0)),
+    JSON.stringify(helpers.getCivColorPaletteColorFromPalette(next, 15))
+  );
+  assert.equal(
+    JSON.stringify(helpers.getCivColorPaletteColorFromPalette(next, 17)),
+    JSON.stringify(helpers.getCivColorPaletteColorFromPalette(flattened, 17))
+  );
+});
+
 test('renderer no longer exposes the old Core / City / All 70 filter labels', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const sourceText = fs.readFileSync(rendererPath, 'utf8');
@@ -138,6 +179,16 @@ test('renderer no longer exposes the old Core / City / All 70 filter labels', ()
   assert.ok(!sourceText.includes("label: 'All 70'"));
   assert.ok(!sourceText.includes('label: "Rhye'));
   assert.ok(!sourceText.includes("label: 'Rhye"));
+});
+
+test('palette table edits to row 7 use the main-color generator', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  assert.match(
+    sourceText,
+    /const setRowColor = \(index, rgb, options = \{\}\) => \{[\s\S]*?if \(Number\(index\) === 7\) \{[\s\S]*?applyCivColorPaletteMainColor\(selectedSlot, next, \{ skipUndo: !!options\.skipUndo \}\);[\s\S]*?\} else \{[\s\S]*?setCivColorPaletteColor\(selectedSlot, index, next\);/,
+    'editing table row 7 by color picker, hex, or RGB must recompute linked main-color rows'
+  );
 });
 
 test("Other useful colors includes Quint's Rhye color index set", () => {
