@@ -20746,6 +20746,16 @@ const RESOURCE_REQUIRED_BY_GROUPS = [
 
 const RESOURCE_GENERATED_BY_GROUPS = [
   {
+    key: 'generatedByTerrain',
+    title: 'Terrain',
+    tabKey: 'terrain',
+    sectionTabKey: 'terrain',
+    sectionCode: 'TERR',
+    fieldKey: 'possibleResourcesMask',
+    kind: 'terrainPossibleResource',
+    dirtyTabKey: 'terrain'
+  },
+  {
     key: 'generatedByImprovements',
     title: 'Improvements',
     tabKey: 'improvements',
@@ -20807,6 +20817,14 @@ function isResourceUsageBiqStructureGroup(spec) {
   return !!(spec && spec.kind === 'biqStructureSection');
 }
 
+function isResourceUsageTerrainPossibleGroup(spec) {
+  return !!(spec && spec.kind === 'terrainPossibleResource');
+}
+
+function isResourceUsageBiqRecordGroup(spec) {
+  return isResourceUsageBiqStructureGroup(spec) || isResourceUsageTerrainPossibleGroup(spec);
+}
+
 function isResourceUsageSectionGroup(spec) {
   return !!(spec && (spec.kind === 'sectionList' || spec.kind === 'sectionSingle' || spec.kind === 'sectionGenerated'));
 }
@@ -20815,8 +20833,16 @@ function getResourceUsageDirtyTabKey(spec) {
   return String((spec && (spec.dirtyTabKey || spec.sectionTabKey || spec.tabKey)) || '').trim();
 }
 
+function getResourceUsageBiqRecordsForSpec(spec) {
+  if (!isResourceUsageBiqRecordGroup(spec)) return [];
+  const tabKey = getResourceUsageDirtyTabKey(spec);
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  const section = getBiqSectionFromTab(tab, spec.sectionCode);
+  return section && Array.isArray(section.records) ? section.records : [];
+}
+
 function getResourceUsageEntriesForSpec(spec) {
-  if (isResourceUsageBiqStructureGroup(spec)) return getBiqStructureRecordsForUnlockGroup(spec);
+  if (isResourceUsageBiqRecordGroup(spec)) return getResourceUsageBiqRecordsForSpec(spec);
   if (isResourceUsageSectionGroup(spec)) return getDistrictSectionsForUnlockGroup({ ...spec, kind: 'section' });
   if (spec && spec.kind === 'c3xBuildingResource') return getReferenceEntriesForUnlockGroup(spec);
   return getReferenceEntriesForUnlockGroup(spec);
@@ -20828,7 +20854,7 @@ function getResourceUsageItemCount(spec) {
 }
 
 function getResourceUsageEntryIndexForSpec(spec, entry, fallbackIndex) {
-  if (isResourceUsageBiqStructureGroup(spec)) {
+  if (isResourceUsageBiqRecordGroup(spec)) {
     const idx = Number(entry && entry.index);
     if (Number.isFinite(idx) && idx >= 0) return idx;
     const fallback = Number(fallbackIndex);
@@ -20842,8 +20868,8 @@ function getResourceUsageEntryIndexForSpec(spec, entry, fallbackIndex) {
 }
 
 function getResourceUsageOptions(spec, resourceIndex = null, resourceEntry = null) {
-  if (isResourceUsageBiqStructureGroup(spec)) {
-    const raw = getBiqStructureRecordsForUnlockGroup(spec).map((record, fallbackIdx) => {
+  if (isResourceUsageBiqRecordGroup(spec)) {
+    const raw = getResourceUsageBiqRecordsForSpec(spec).map((record, fallbackIdx) => {
       const idx = getResourceUsageEntryIndexForSpec(spec, record, fallbackIdx);
       if (idx == null) return null;
       const label = getDisplayBiqRecordName(spec.sectionCode, record, fallbackIdx) || `${spec.sectionCode} ${idx + 1}`;
@@ -20944,6 +20970,34 @@ function resourceUsageEntryHasOpenResourceSlot(entry, spec) {
     const raw = String(field.value == null ? '' : field.value).trim();
     return !raw || /^none$/i.test(raw) || resolved === -1;
   });
+}
+
+function terrainRecordHasPossibleResource(record, resourceIndex) {
+  const idx = Number(resourceIndex);
+  if (!record || !Number.isFinite(idx) || idx < 0) return false;
+  const mask = getTerrainResourceMask(record);
+  return mask[idx] === 1;
+}
+
+function setTerrainRecordPossibleResource(record, resourceIndex, shouldAllow) {
+  const idx = Number(resourceIndex);
+  if (!record || !Number.isFinite(idx) || idx < 0) return false;
+  const mask = getTerrainResourceMask(record).slice();
+  while (mask.length <= idx) mask.push(0);
+  const nextValue = shouldAllow ? 1 : 0;
+  if (mask[idx] === nextValue) return false;
+  mask[idx] = nextValue;
+  const maskField = ensureTerrainResourceMaskField(record);
+  if (!maskField) return false;
+  maskField.value = mask.join(',');
+  const countField = getBiqRecordFieldByBaseKey(record, 'numPossibleResources');
+  if (countField) {
+    const currentCount = parseIntFromDisplayValue(countField.value);
+    if (!Number.isFinite(currentCount) || currentCount < mask.length) {
+      countField.value = String(mask.length);
+    }
+  }
+  return true;
 }
 
 function canResourceUsageEntryAcceptResource(entry, spec, resourceIndex) {
@@ -21095,6 +21149,14 @@ function getResourceUsageSelectedEntries(spec, resourceIndex, resourceEntry = nu
       return { entry, entryIndex };
     }).filter(Boolean);
   }
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return [];
+    return getResourceUsageEntriesForSpec(spec).map((entry, fallbackIdx) => {
+      const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+      if (entryIndex == null || !terrainRecordHasPossibleResource(entry, resourceIndex)) return null;
+      return { entry, entryIndex };
+    }).filter(Boolean);
+  }
   if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return [];
   return getResourceUsageEntriesForSpec(spec).map((entry, fallbackIdx) => {
     const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
@@ -21174,6 +21236,23 @@ function setResourceUsageMembership(spec, resourceIndex, selectedEntryIndices, r
     if (didChange) state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
     return;
   }
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return;
+    const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+      .map((value) => Number.parseInt(String(value), 10))
+      .filter((value) => Number.isFinite(value) && value >= 0));
+    let didChange = false;
+    getResourceUsageEntriesForSpec(spec).forEach((entry, fallbackIdx) => {
+      const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+      if (entryIndex == null) return;
+      didChange = setTerrainRecordPossibleResource(entry, resourceIndex, selected.has(entryIndex)) || didChange;
+    });
+    if (!didChange) return;
+    setDirty(true);
+    recomputeDirtyCountForTab(getResourceUsageDirtyTabKey(spec));
+    state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    return;
+  }
   if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return;
   const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
     .map((value) => Number.parseInt(String(value), 10))
@@ -21201,7 +21280,7 @@ function setResourceUsageMembership(spec, resourceIndex, selectedEntryIndices, r
   });
   if (!didChange) return;
   setDirty(true);
-  if (isResourceUsageBiqStructureGroup(spec)) {
+  if (isResourceUsageBiqRecordGroup(spec)) {
     recomputeDirtyCountForTab(getResourceUsageDirtyTabKey(spec));
   } else {
     rebuildReferenceDirtyCacheForTab(spec.tabKey);
@@ -21225,7 +21304,7 @@ function rememberResourceUsageUndoSnapshot(spec) {
     rememberUndoSnapshotForKey(`SECTION_TAB:${String(spec.tabKey || '').trim()}`);
     return;
   }
-  if (isResourceUsageBiqStructureGroup(spec)) {
+  if (isResourceUsageBiqRecordGroup(spec)) {
     const dirtyTabKey = getResourceUsageDirtyTabKey(spec);
     rememberUndoSnapshotForKey(dirtyTabKey ? `SECTION_TAB:${dirtyTabKey}` : '');
     return;
@@ -21236,12 +21315,22 @@ function rememberResourceUsageUndoSnapshot(spec) {
 function isResourceUsageSpecEditable(spec, referenceEditable) {
   if (spec && spec.kind === 'c3xBuildingResource') return canEditC3XBaseRows(getC3XBaseRow(spec.baseKey));
   if (isResourceUsageSectionGroup(spec)) return canEditC3XConfigTab(spec.tabKey);
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[getResourceUsageDirtyTabKey(spec)];
+    return !!(tab && !tab.readOnly);
+  }
   return !!referenceEditable;
 }
 
 function getResourceUsageAddOptions(spec, resourceIndex, resourceEntry, selectedIndices, allOptions) {
   const selected = new Set((Array.isArray(selectedIndices) ? selectedIndices : []).map((idx) => Number(idx)));
   const source = Array.isArray(allOptions) ? allOptions : getResourceUsageOptions(spec, resourceIndex, resourceEntry);
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    return source.filter((opt) => {
+      const idx = Number.parseInt(String(opt && opt.value), 10);
+      return Number.isFinite(idx) && !selected.has(idx);
+    });
+  }
   if (spec && !isResourceUsageSectionGroup(spec) && spec.kind !== 'c3xBuildingResource') {
     return source.filter((opt) => {
       const idx = Number.parseInt(String(opt && opt.value), 10);
@@ -21256,7 +21345,41 @@ function getResourceUsageAddOptions(spec, resourceIndex, resourceEntry, selected
 }
 
 function navigateToResourceUsageBiqStructureTarget(spec, target) {
-  return navigateToTechnologyUnlockBiqStructureTarget(spec, target);
+  if (!isResourceUsageBiqRecordGroup(spec) || !target) return false;
+  const tabKey = getResourceUsageDirtyTabKey(spec);
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.sections)) return false;
+  const sectionIndex = tab.sections.findIndex((section) => String(section && section.code || '').trim().toUpperCase() === String(spec.sectionCode || '').trim().toUpperCase());
+  if (sectionIndex < 0) return false;
+  const section = tab.sections[sectionIndex];
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  const targetRecord = target.record || null;
+  const targetIndex = Number(targetRecord && targetRecord.index);
+  const recordIndex = records.findIndex((record) => {
+    if (record === targetRecord) return true;
+    const recordIndexValue = Number(record && record.index);
+    return Number.isFinite(targetIndex) && Number.isFinite(recordIndexValue) && recordIndexValue === targetIndex;
+  });
+  if (recordIndex < 0) return false;
+  navigateWithHistory(() => {
+    state.activeTab = tabKey;
+    state.biqSectionSelectionByTab[tabKey] = sectionIndex;
+    state.biqRecordSelection[section.id] = recordIndex;
+  }, { preserveTabScroll: false });
+  return true;
+}
+
+function renderResourceUsageBiqRecordThumb(spec, holder, option) {
+  if (!holder || !option) return false;
+  const record = option.entry || (option.jumpTarget && option.jumpTarget.record) || null;
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    const terrainTab = state.bundle && state.bundle.tabs && state.bundle.tabs.terrain;
+    const thumbEntry = getTerrainCivilopediaEntryForRecord(terrainTab, 'TERR', record);
+    if (!thumbEntry) return false;
+    loadReferenceListThumbnail('terrainPedia', thumbEntry, holder);
+    return true;
+  }
+  return renderTechnologyUnlockBiqStructureThumb(spec, holder, option);
 }
 
 function refreshResourceUsageBoardsInPlace(anchor, resourceEntry, referenceEditable) {
@@ -21298,28 +21421,28 @@ function renderResourceUsagePicker({
     : sourceOptions;
   if (mode === 'add' && options.length === 0) return null;
   const isSectionGroup = isResourceUsageSectionGroup(spec);
-  const isBiqStructureGroup = isResourceUsageBiqStructureGroup(spec);
+  const isBiqRecordGroup = isResourceUsageBiqRecordGroup(spec);
   const picker = createReferencePicker({
     options,
-    targetTabKey: isSectionGroup || isBiqStructureGroup ? '' : spec.tabKey,
+    targetTabKey: isSectionGroup || isBiqRecordGroup ? '' : spec.tabKey,
     currentValue: mode === 'add' ? '-1' : String(currentValue),
     searchPlaceholder: mode === 'add' ? `Add ${spec.title.toLowerCase()}...` : `Search ${spec.title.toLowerCase()}...`,
     noneLabel: mode === 'add' ? 'Add...' : '(none)',
     includeNone: true,
     resetAfterSelect: mode === 'add',
     showOptionThumbs: true,
-    resolveJumpTarget: (isSectionGroup || isBiqStructureGroup) ? ((option) => option && option.jumpTarget) : null,
-    onJump: (isSectionGroup || isBiqStructureGroup) ? ((target) => {
+    resolveJumpTarget: (isSectionGroup || isBiqRecordGroup) ? ((option) => option && option.jumpTarget) : null,
+    onJump: (isSectionGroup || isBiqRecordGroup) ? ((target) => {
       if (isSectionGroup && target && Number.isFinite(Number(target.districtIndex))) navigateToDistrict(Number(target.districtIndex));
-      if (isBiqStructureGroup) navigateToResourceUsageBiqStructureTarget(spec, target);
+      if (isBiqRecordGroup) navigateToResourceUsageBiqStructureTarget(spec, target);
     }) : null,
     renderOptionThumb: isSectionGroup ? (({ holder, option }) => {
       const section = option && option.section;
       if (!holder || !section) return false;
       loadDistrictRepresentativePreview(section, holder, 28);
       return true;
-    }) : (isBiqStructureGroup ? (({ holder, option }) => (
-      renderTechnologyUnlockBiqStructureThumb(spec, holder, option)
+    }) : (isBiqRecordGroup ? (({ holder, option }) => (
+      renderResourceUsageBiqRecordThumb(spec, holder, option)
     )) : null),
     readOnly: !referenceEditable,
     onSelect: referenceEditable ? (value) => {
@@ -23657,7 +23780,7 @@ function createRelationshipPickerTooltip({ spec, option = null, mode = 'selected
       getRelationshipSpecFieldLabel(spec),
       `Reverse ${relationLabel.toLowerCase()} view. Editing here updates the target C3X section, not the selected record itself.`
     ));
-  } else if (isTechnologyUnlockBiqStructureGroup(spec) || isResourceUsageBiqStructureGroup(spec)) {
+  } else if (isTechnologyUnlockBiqStructureGroup(spec) || isResourceUsageBiqRecordGroup(spec)) {
     const sourceTab = state.bundle && state.bundle.tabs
       ? state.bundle.tabs[getTechnologyUnlockDirtyTabKey(spec) || getResourceUsageDirtyTabKey(spec)]
       : null;
