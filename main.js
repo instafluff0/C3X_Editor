@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = requir
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer } = require('./src/configCore');
+const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const log = require('./src/log');
 
@@ -1649,6 +1649,16 @@ ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {
 ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
   applyLogContextFromPayload(payload || {});
   return previewFileDiff(payload || {});
+});
+
+ipcMain.handle('manager:inspect-civ-color-palettes', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    return inspectScenarioCivColorPalettes(payload || {});
+  } catch (err) {
+    log.error('inspectCivColorPalettes', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not inspect civ color palettes.' };
+  }
 });
 
 ipcMain.handle('manager:get-preview', async (_event, payload) => {

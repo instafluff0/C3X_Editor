@@ -182,5 +182,6 @@ contextBridge.exposeInMainWorld('c3xManager', {
   updateScenarioOptionMenuState: (payload) => ipcRenderer.invoke('manager:update-scenario-option-menu-state', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload),
   previewSavePlan: (payload) => ipcRenderer.invoke('manager:preview-save-plan', payload),
-  previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload)
+  previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload),
+  inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload)
 });

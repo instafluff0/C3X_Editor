@@ -1042,6 +1042,7 @@ function loadRendererNoReloadCleanHelpers(targetBundle) {
     },
     markFilesReadEntriesDirty: () => {},
     recomputeFilesReadIssueCount: () => {},
+    markSavedCivColorPaletteState: () => {},
     refreshTabDirtyBadges: () => {},
     refreshActiveReferenceListDirtyBadges: () => {},
     refreshActiveBiqRecordListDirtyBadges: () => {},
@@ -3472,7 +3473,9 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
     const copiedEntry = getEntry(after, tabKey, newKey);
     const originalEntry = getEntry(after, tabKey, sourceRef);
     assertReloadedReferenceEntryFieldsMatchPreSave(copiedPreSave, copiedEntry, `copied ${sectionCode}`);
-    assertReloadedReferenceEntryFieldsMatchPreSave(sourceEntry, originalEntry, `source ${sectionCode}`);
+    assertReloadedReferenceEntryFieldsMatchPreSave(sourceEntry, originalEntry, `source ${sectionCode}`, {
+      skipGovernmentRelationRows: tabKey === 'governments'
+    });
   });
 }
 

@@ -46,6 +46,9 @@ const SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS = [
 const SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH = 'Art/Advisors/techboxes.pcx';
 const SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH = 'c3x_editor_tech_tree_arrows.json';
 const SCIENCE_ADVISOR_ARROW_METADATA_FORMAT = 'c3x-editor-tech-tree-arrows';
+const CIV_COLOR_PALETTE_RELATIVE_DIR = path.join('Art', 'Units', 'Palettes');
+const CIV_COLOR_PALETTE_COUNT = 32;
+const CIV_COLOR_PALETTE_EDITABLE_COLOR_COUNT = 70;
 const SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES = [
   { w: 84, h: 54 },
   { w: 140, h: 54 },
@@ -2203,6 +2206,155 @@ function deriveScenarioPathContext({
     autoCreatedSearchRoot,
     autoCreatedSearchValue
   };
+}
+
+function getCivColorPaletteFileName(slot) {
+  const idx = Math.max(0, Math.min(CIV_COLOR_PALETTE_COUNT - 1, Number(slot) || 0));
+  return `ntp${String(idx).padStart(2, '0')}.pcx`;
+}
+
+function getCivColorPaletteAssetPath(slot) {
+  return path.join(CIV_COLOR_PALETTE_RELATIVE_DIR, getCivColorPaletteFileName(slot));
+}
+
+function readPcxPaletteBytes(filePath) {
+  const source = String(filePath || '').trim();
+  if (!source) throw new Error('Missing PCX path.');
+  const buffer = fs.readFileSync(source);
+  if (buffer.length < 769 || buffer[buffer.length - 769] !== 12) {
+    throw new Error(`Missing 256-color PCX palette: ${source}`);
+  }
+  return buffer.slice(buffer.length - 768);
+}
+
+function getCivColorPaletteRepresentativeColor(paletteBytes) {
+  const palette = Buffer.isBuffer(paletteBytes) || paletteBytes instanceof Uint8Array
+    ? paletteBytes
+    : null;
+  if (!palette || palette.length < 24) return { r: 0, g: 0, b: 0 };
+  const base = 7 * 3;
+  return {
+    r: Number(palette[base]) || 0,
+    g: Number(palette[base + 1]) || 0,
+    b: Number(palette[base + 2]) || 0
+  };
+}
+
+function inspectScenarioCivColorPalettes(payload = {}) {
+  const civ3Path = String(payload.civ3Path || '').trim();
+  const scenarioPath = String(payload.scenarioPath || '').trim();
+  const scenarioSettingsTab = payload.scenarioSettingsTab || null;
+  if (!civ3Path) return { ok: false, error: 'Civilization III path is required.' };
+  if (!scenarioPath || !isBiqPath(scenarioPath)) return { ok: false, error: 'Load a scenario BIQ before editing custom civ palettes.' };
+
+  const scenarioContext = deriveScenarioPathContext({
+    scenarioPath,
+    civ3Path,
+    biqTab: scenarioSettingsTab,
+    searchFolderOverride: getPendingScenarioSearchFolderOverride({ scenarioSettings: scenarioSettingsTab }),
+    includeMissingSearchRoots: true,
+    ensureLocalSearchRoot: false
+  });
+  const scenarioRoot = scenarioContext.contentWriteRoot || '';
+  const bootstrapRoot = (!scenarioRoot && scenarioContext.autoCreatedSearchRoot)
+    ? scenarioContext.autoCreatedSearchRoot
+    : ((!scenarioRoot && isSharedScenariosRootDir(scenarioContext.biqRoot, civ3Path))
+      ? allocateScenarioSearchFolderPath({ scenarioPath, civ3Path })
+      : '');
+  const bootstrapValue = bootstrapRoot ? toScenarioSearchFolderValue(bootstrapRoot, scenarioPath) : '';
+  const targetRoot = scenarioRoot || bootstrapRoot || scenarioContext.biqRoot || '';
+  const writableRoots = dedupePathList([scenarioContext.biqRoot, ...scenarioContext.searchRoots, bootstrapRoot]);
+  const scenarioPreviewRoots = dedupePathList([...scenarioContext.searchRoots, scenarioContext.biqRoot]);
+  const slots = [];
+
+  for (let slot = 0; slot < CIV_COLOR_PALETTE_COUNT; slot += 1) {
+    const assetPath = getCivColorPaletteAssetPath(slot);
+    const resolvedPath = resolveConquestsAssetPath(civ3Path, assetPath, scenarioContext.biqRoot, scenarioPreviewRoots);
+    if (!resolvedPath) {
+      return { ok: false, error: `Could not find ${getCivColorPaletteFileName(slot)} in the scenario or base game content.` };
+    }
+    const targetPath = targetRoot ? path.join(targetRoot, assetPath) : '';
+    const palette = readPcxPaletteBytes(resolvedPath);
+    const scenarioLocal = isPathWithinAnyRoot(resolvedPath, writableRoots);
+    slots.push({
+      slot,
+      fileName: getCivColorPaletteFileName(slot),
+      assetPath,
+      sourcePath: resolvedPath,
+      sourceKind: scenarioLocal ? 'scenario' : 'base',
+      paletteBase64: Buffer.from(palette).toString('base64'),
+      representativeColor: getCivColorPaletteRepresentativeColor(palette),
+      targetPath,
+      targetExists: !!(targetPath && fs.existsSync(targetPath)),
+      targetScenarioLocal: !!(targetPath && isPathWithinAnyRoot(targetPath, writableRoots))
+    });
+  }
+
+  return {
+    ok: true,
+    scenarioRoot,
+    targetRoot,
+    writableRoots,
+    needsSearchFolderSetup: !scenarioRoot && !!bootstrapRoot,
+    searchFolderSetupRoot: bootstrapRoot,
+    searchFolderSetupValue: bootstrapValue,
+    slots
+  };
+}
+
+function prepareScenarioCivColorPaletteWrites(payload = {}) {
+  const root = payload && payload.civColorPalettes && typeof payload.civColorPalettes === 'object'
+    ? payload.civColorPalettes
+    : null;
+  const slots = Array.isArray(root && root.slots) ? root.slots : [];
+  const writes = [];
+  const saveReport = [];
+
+  for (const slotEntry of slots) {
+    const slot = Number(slotEntry && slotEntry.slot);
+    const targetPath = String(slotEntry && slotEntry.targetPath || '').trim();
+    const sourcePath = String(slotEntry && slotEntry.sourcePath || '').trim();
+    const paletteBase64 = String(slotEntry && slotEntry.paletteBase64 || '').trim();
+    if (!Number.isInteger(slot) || slot < 0 || slot >= CIV_COLOR_PALETTE_COUNT) {
+      return { ok: false, error: `Invalid civ color palette slot: ${slot}` };
+    }
+    if (!targetPath) {
+      return { ok: false, error: `Missing target path for ${getCivColorPaletteFileName(slot)}.` };
+    }
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      return { ok: false, error: `Could not read source palette file for ${getCivColorPaletteFileName(slot)}.` };
+    }
+    if (!paletteBase64) {
+      return { ok: false, error: `Missing palette data for ${getCivColorPaletteFileName(slot)}.` };
+    }
+    const paletteBytes = Buffer.from(paletteBase64, 'base64');
+    if (paletteBytes.length !== 768) {
+      return { ok: false, error: `Palette data for ${getCivColorPaletteFileName(slot)} must be exactly 768 bytes.` };
+    }
+    const decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [] });
+    if (!decoded || !decoded.indices || !decoded.palette || decoded.palette.length < 768) {
+      return { ok: false, error: `${getCivColorPaletteFileName(slot)} is not a supported indexed PCX palette file.` };
+    }
+    const nextPalette = Buffer.from(decoded.palette);
+    paletteBytes.copy(nextPalette, 0, 0, Math.min(nextPalette.length, paletteBytes.length));
+    const data = encodePcx(decoded.indices, nextPalette, decoded.width, decoded.height);
+    if (bufferMatchesExistingFile(targetPath, data)) continue;
+    writes.push({
+      kind: 'civPalette',
+      path: targetPath,
+      sourcePath,
+      data,
+      slot
+    });
+    saveReport.push({
+      kind: 'civPalette',
+      path: targetPath,
+      slot,
+      detail: `Saved ${getCivColorPaletteFileName(slot)}`
+    });
+  }
+
+  return { ok: true, writes, saveReport };
 }
 
 function sanitizeScenarioStem(rawName) {
@@ -10169,6 +10321,24 @@ function buildSavePlan(payload) {
         });
       }
     }
+
+    if (payload.civColorPalettes && typeof payload.civColorPalettes === 'object') {
+      const civPaletteWrites = prepareScenarioCivColorPaletteWrites(payload);
+      if (!civPaletteWrites.ok) {
+        return { ok: false, error: civPaletteWrites.error || 'Failed to save custom civ color palettes.' };
+      }
+      for (const write of civPaletteWrites.writes || []) {
+        const protectErr = failIfProtected(write.path, 'civ color palette target');
+        if (protectErr) return { ok: false, error: protectErr };
+        if (isProtectedBaseCiv3Path(civ3Path, write.path)) {
+          return { ok: false, error: `Refusing to modify base Civilization III file (civ color palette target): ${write.path}` };
+        }
+        plannedWrites.push(write);
+      }
+      for (const report of civPaletteWrites.saveReport || []) {
+        saveReport.push(report);
+      }
+    }
   }
 
   log.info('buildSavePlan', `Plan complete: ${plannedWrites.length} write(s) — [${plannedWrites.map((w) => `${w.kind}:${log.rel(w.path)}`).join(', ')}]`);
@@ -10816,10 +10986,173 @@ function normalizeReferenceListFieldValueForSave(field, targetTabKey, indexMaps)
   return true;
 }
 
+function prettifyGovernmentPlanningKey(key, fallbackIndex = 0) {
+  const raw = String(key || '').trim().toUpperCase();
+  const cleaned = raw.replace(/^GOVT_/, '').replace(/_/g, ' ').trim();
+  if (!cleaned) return `Government ${fallbackIndex + 1}`;
+  return cleaned.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildPlannedGovernmentNames({ tabs, biqTab, indexMaps }) {
+  const planned = indexMaps && indexMaps.governments && Array.isArray(indexMaps.governments.records)
+    ? indexMaps.governments.records
+    : [];
+  if (planned.length === 0) return [];
+
+  const namesByKey = new Map();
+  const namesByOriginalIndex = new Map();
+  const governmentEntries = tabs && tabs.governments && Array.isArray(tabs.governments.entries)
+    ? tabs.governments.entries
+    : [];
+  governmentEntries.forEach((entry) => {
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    const name = cleanDisplayText(entry && entry.name);
+    const originalIndex = parseAssignedBiqIndex(entry && entry.biqIndex);
+    if (key && name) namesByKey.set(key, name);
+    if (Number.isFinite(originalIndex) && originalIndex >= 0 && name) namesByOriginalIndex.set(originalIndex, name);
+  });
+
+  const originalRecords = getReferencePlanningRecordsForSection(biqTab, 'GOVT');
+  originalRecords.forEach((record, fallbackIdx) => {
+    const key = String(getBiqRecordPlanningRef(record) || '').trim().toUpperCase();
+    const name = cleanDisplayText(getBiqRecordDisplayName(record, key || `Government ${fallbackIdx + 1}`));
+    const originalIndex = parseAssignedBiqIndex(record && record.index);
+    if (key && name && !namesByKey.has(key)) namesByKey.set(key, name);
+    if (Number.isFinite(originalIndex) && originalIndex >= 0 && name && !namesByOriginalIndex.has(originalIndex)) {
+      namesByOriginalIndex.set(originalIndex, name);
+    }
+  });
+
+  return planned.map((record, fallbackIdx) => {
+    const key = String(record && (record.newRecordRef || record.key) || '').trim().toUpperCase();
+    const originalIndex = parseAssignedBiqIndex(record && record.originalIndex);
+    return namesByKey.get(key)
+      || (Number.isFinite(originalIndex) && originalIndex >= 0 ? namesByOriginalIndex.get(originalIndex) : '')
+      || prettifyGovernmentPlanningKey(key, fallbackIdx);
+  });
+}
+
+function normalizeGovernmentEntriesForSave({ tabs, biqTab, indexMaps }) {
+  const governmentTab = tabs && tabs.governments;
+  const entries = governmentTab && Array.isArray(governmentTab.entries) ? governmentTab.entries : [];
+  if (entries.length === 0) return 0;
+  const governmentNames = buildPlannedGovernmentNames({ tabs, biqTab, indexMaps });
+  const relationCount = governmentNames.length;
+  if (relationCount <= 0) return 0;
+  let changed = 0;
+
+  entries.forEach((entry) => {
+    if (!entry || !Array.isArray(entry.biqFields)) return;
+    const relationRows = new Map();
+    const preservedFields = [];
+    let currentRowIndex = -1;
+    let skippingRelationTail = false;
+
+    entry.biqFields.forEach((field) => {
+      const baseKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+      const relationHeaderMatch = baseKey.match(/^performance_of_this_government_versus_government_(\d+)$/);
+      if (relationHeaderMatch) {
+        currentRowIndex = Number.parseInt(relationHeaderMatch[1], 10);
+        if (!relationRows.has(currentRowIndex)) {
+          relationRows.set(currentRowIndex, {
+            canBribe: '0',
+            canBribeOriginal: '0',
+            resistanceMod: '0',
+            resistanceModOriginal: '0',
+            briberyMod: '0',
+            briberyModOriginal: '0'
+          });
+        }
+        skippingRelationTail = true;
+        return;
+      }
+      if (skippingRelationTail && (baseKey === 'canbribe' || baseKey === 'resistancemodifier' || baseKey === 'briberymodifier')) {
+        const row = relationRows.get(currentRowIndex) || {
+          canBribe: '0',
+          canBribeOriginal: '0',
+          resistanceMod: '0',
+          resistanceModOriginal: '0',
+          briberyMod: '0',
+          briberyModOriginal: '0'
+        };
+        if (baseKey === 'canbribe') {
+          row.canBribe = String(field && field.value != null ? field.value : '0');
+          row.canBribeOriginal = String(field && field.originalValue != null ? field.originalValue : row.canBribe);
+        }
+        if (baseKey === 'resistancemodifier') {
+          row.resistanceMod = String(field && field.value != null ? field.value : '0');
+          row.resistanceModOriginal = String(field && field.originalValue != null ? field.originalValue : row.resistanceMod);
+        }
+        if (baseKey === 'briberymodifier') {
+          row.briberyMod = String(field && field.value != null ? field.value : '0');
+          row.briberyModOriginal = String(field && field.originalValue != null ? field.originalValue : row.briberyMod);
+        }
+        relationRows.set(currentRowIndex, row);
+        return;
+      }
+      skippingRelationTail = false;
+      preservedFields.push(field);
+    });
+
+    const nextFields = preservedFields.slice();
+    for (let idx = 0; idx < relationCount; idx += 1) {
+      const governmentName = String(governmentNames[idx] || `Government ${idx + 1}`).trim();
+      const row = relationRows.get(idx) || {
+        canBribe: '0',
+        canBribeOriginal: '0',
+        resistanceMod: '0',
+        resistanceModOriginal: '0',
+        briberyMod: '0',
+        briberyModOriginal: '0'
+      };
+      nextFields.push({
+        key: `performance_of_this_government_versus_government_${idx}`,
+        baseKey: `performance_of_this_government_versus_government_${idx}`,
+        label: `Performance Vs ${governmentName}`,
+        value: governmentName,
+        originalValue: governmentName,
+        editable: false
+      });
+      nextFields.push({
+        key: 'canbribe',
+        baseKey: 'canbribe',
+        label: 'Can Bribe',
+        value: String(row.canBribe),
+        originalValue: String(row.canBribeOriginal),
+        editable: true
+      });
+      nextFields.push({
+        key: 'resistancemodifier',
+        baseKey: 'resistancemodifier',
+        label: 'Resistance Modifier',
+        value: String(row.resistanceMod),
+        originalValue: String(row.resistanceModOriginal),
+        editable: true
+      });
+      nextFields.push({
+        key: 'briberymodifier',
+        baseKey: 'briberymodifier',
+        label: 'Propaganda',
+        value: String(row.briberyMod),
+        originalValue: String(row.briberyModOriginal),
+        editable: true
+      });
+    }
+    if (JSON.stringify(nextFields) !== JSON.stringify(entry.biqFields)) {
+      entry.biqFields = nextFields;
+      changed += 1;
+    }
+  });
+
+  return changed;
+}
+
 function normalizePendingReferenceTargetsForSave({ tabs, indexTabs, biqTab }) {
   const sourceTabs = tabs || {};
   const indexMaps = buildPlannedReferenceIndexMaps(indexTabs || sourceTabs, biqTab);
   let changed = 0;
+
+  changed += normalizeGovernmentEntriesForSave({ tabs: sourceTabs, biqTab, indexMaps });
 
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = sourceTabs[spec.key];
@@ -13161,6 +13494,7 @@ module.exports = {
   buildEffectiveReferenceTabs,
   resolveScenarioDir,
   resolveBiqPath,
+  inspectScenarioCivColorPalettes,
   createScenario,
   deleteScenario,
   loadMapImport,
