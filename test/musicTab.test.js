@@ -215,3 +215,101 @@ test('custom scenario music saves playlist and copied MP3s under scenario Sounds
   assert.equal(fs.readFileSync(path.join(scenarioRoot, 'Sounds', 'Build', 'theme_2.mp3'), 'utf8'), 'new music bytes');
   assert.equal(fs.readFileSync(path.join(scenarioRoot, 'Text', 'music.txt'), 'latin1'), 'theme_2.mp3\r\n');
 });
+
+test('pre-resolved custom music import names are preserved on save', () => {
+  const c3xRoot = mkTmpDir();
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const importRoot = mkTmpDir();
+  const sourceMp3 = path.join(importRoot, 'theme.mp3');
+  writeFile(sourceMp3, 'new music bytes');
+  writeFile(path.join(scenarioRoot, 'Sounds', 'Build', 'theme.mp3'), 'existing music bytes');
+
+  const tabs = {
+    music: {
+      type: 'music',
+      title: 'Music',
+      layout: 'playlist',
+      targetPath: path.join(scenarioRoot, 'Text', 'music.txt'),
+      buildTargetPath: path.join(scenarioRoot, 'Sounds', 'Build'),
+      assignments: {
+        playlist: {
+          all: [{
+            relativePath: 'theme_2.mp3',
+            displayPath: 'theme_2.mp3',
+            pendingSourcePath: sourceMp3
+          }]
+        }
+      },
+      sourceDetails: {}
+    }
+  };
+
+  const saved = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioRoot,
+    dirtyTabs: ['music'],
+    tabs
+  });
+  assert.equal(saved.ok, true, saved.error || 'save failed');
+  assert.equal(fs.readFileSync(path.join(scenarioRoot, 'Sounds', 'Build', 'theme.mp3'), 'utf8'), 'existing music bytes');
+  assert.equal(fs.readFileSync(path.join(scenarioRoot, 'Sounds', 'Build', 'theme_2.mp3'), 'utf8'), 'new music bytes');
+  assert.equal(fs.readFileSync(path.join(scenarioRoot, 'Text', 'music.txt'), 'latin1'), 'theme_2.mp3\r\n');
+});
+
+test('custom music already in scenario Sounds/Build is referenced without duplicate copying', () => {
+  const c3xRoot = mkTmpDir();
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const localMp3 = path.join(scenarioRoot, 'Sounds', 'Build', 'local.mp3');
+  writeFile(localMp3, 'local music bytes');
+
+  const tabs = {
+    music: {
+      type: 'music',
+      title: 'Music',
+      layout: 'playlist',
+      targetPath: path.join(scenarioRoot, 'Text', 'music.txt'),
+      buildTargetPath: path.join(scenarioRoot, 'Sounds', 'Build'),
+      assignments: {
+        playlist: {
+          all: [{
+            relativePath: 'local.mp3',
+            displayPath: 'local.mp3',
+            pendingSourcePath: localMp3
+          }]
+        }
+      },
+      sourceDetails: {}
+    }
+  };
+
+  const preview = previewSavePlan({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioRoot,
+    dirtyTabs: ['music'],
+    tabs
+  });
+  assert.equal(preview.ok, true, preview.error || 'preview failed');
+  assert.deepEqual(
+    preview.writes.map((entry) => ({ kind: entry.kind, path: path.relative(scenarioRoot, entry.path) })),
+    [{ kind: 'music', path: path.join('Text', 'music.txt') }]
+  );
+
+  const saved = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioRoot,
+    dirtyTabs: ['music'],
+    tabs
+  });
+  assert.equal(saved.ok, true, saved.error || 'save failed');
+  assert.equal(fs.readFileSync(localMp3, 'utf8'), 'local music bytes');
+  assert.equal(fs.existsSync(path.join(scenarioRoot, 'Sounds', 'Build', 'local_2.mp3')), false);
+  assert.equal(fs.readFileSync(path.join(scenarioRoot, 'Text', 'music.txt'), 'latin1'), 'local.mp3\r\n');
+});

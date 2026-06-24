@@ -6979,16 +6979,23 @@ function prepareMusicTabWrites({ tab, targetRoot, textFileEncoding }) {
       if (!fs.existsSync(pendingSourcePath)) {
         return { ok: false, error: `Could not read imported music file: ${pendingSourcePath}` };
       }
-      const target = makeCollisionSafeMusicTarget(buildRoot, relativePath || path.basename(pendingSourcePath), existingTargets);
-      relativePath = target.relativePath;
-      writes.push({
-        kind: 'musicAudio',
-        path: target.targetPath,
-        sourcePath: pendingSourcePath,
-        relativePath,
-        data: fs.readFileSync(pendingSourcePath)
-      });
-      saveReport.push({ kind: 'musicAudio', path: target.targetPath, sourcePath: pendingSourcePath, relativePath });
+      const preferredRelativePath = relativePath || normalizeMusicRelativePath(path.basename(pendingSourcePath));
+      const preferredTargetPath = path.join(buildRoot, preferredRelativePath);
+      if (normalizePathForCompare(preferredTargetPath) === normalizePathForCompare(pendingSourcePath)) {
+        relativePath = preferredRelativePath;
+        existingTargets.add(normalizePathForCompare(preferredTargetPath));
+      } else {
+        const target = makeCollisionSafeMusicTarget(buildRoot, preferredRelativePath, existingTargets);
+        relativePath = target.relativePath;
+        writes.push({
+          kind: 'musicAudio',
+          path: target.targetPath,
+          sourcePath: pendingSourcePath,
+          relativePath,
+          data: fs.readFileSync(pendingSourcePath)
+        });
+        saveReport.push({ kind: 'musicAudio', path: target.targetPath, sourcePath: pendingSourcePath, relativePath });
+      }
     }
     if (relativePath) serializedLines.push(toMusicWindowsPath(relativePath));
   }

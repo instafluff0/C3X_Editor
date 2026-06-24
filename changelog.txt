@@ -1,5 +1,6 @@
 * RELEASE 27.18
 - Added Civ3 music editing with a stock era/culture matrix, scenario playlist editing, MP3 drag/drop import, playback, Undo support, and scenario-local `Text/music.txt` plus `Sounds/Build` save planning.
+- Fixed scenario music imports so duplicate dropped MP3 names are assigned collision-safe target names immediately and scenario-local MP3s are referenced without duplicate copying.
 - Fixed blank Technology placeholder staging so generated PCX conversion payloads survive template cleanup, and updated the Tides catalog parity baseline for the installed 241-improvement fixture.
 - Added Scenario-mode tech PediaIcons coverage warnings and first-save tech icon block generation, including generated blank PCX placeholders when a Technology has no art.
 - Fixed Resource imports so terrain rows that allowed the source resource now allow the imported resource too, preserving source scenario possible-resource terrain membership.

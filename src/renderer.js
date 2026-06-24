@@ -1545,7 +1545,7 @@ function collectPendingWritePathsFromDirtyTabs() {
     playlist.forEach((track) => {
       const sourcePath = String(track && track.pendingSourcePath || '').trim();
       if (!sourcePath || !buildRoot) return;
-      addPath(joinLocalPath(buildRoot, getPathBaseName(String(track.relativePath || sourcePath))));
+      addPath(joinLocalPath(buildRoot, String(track.relativePath || getPathBaseName(sourcePath))));
     });
   }
   if (getTabDirtyCount('map') > 0 && hasScenarioDistrictsEdit(tabs.map)) {
@@ -60614,18 +60614,89 @@ function makeMusicPlayButton(track) {
   return btn;
 }
 
-function makeMusicTrackFromPath(filePath) {
+function sanitizeMusicImportFileName(fileName) {
+  const raw = getPathBaseName(fileName) || 'music.mp3';
+  const dot = raw.lastIndexOf('.');
+  const stemRaw = dot > 0 ? raw.slice(0, dot) : raw;
+  const extRaw = dot > 0 ? raw.slice(dot) : '.mp3';
+  const stem = stemRaw.replace(/[<>:"|?*\x00-\x1f]/g, '_').trim() || 'music';
+  const ext = /\.mp3$/i.test(extRaw) ? extRaw : '.mp3';
+  return `${stem}${ext}`;
+}
+
+function splitMusicFileName(fileName) {
+  const safe = sanitizeMusicImportFileName(fileName);
+  const dot = safe.lastIndexOf('.');
+  return {
+    stem: dot > 0 ? safe.slice(0, dot) : safe,
+    ext: dot > 0 ? safe.slice(dot) : '.mp3'
+  };
+}
+
+function getMusicRelativePathInsideBuildRoot(filePath, buildRoot) {
+  const source = toSlashPath(filePath).trim();
+  const root = toSlashPath(buildRoot).trim().replace(/\/+$/, '');
+  if (!source || !root) return '';
+  if (source.toLowerCase() === root.toLowerCase()) return '';
+  if (!source.toLowerCase().startsWith(`${root.toLowerCase()}/`)) return '';
+  return normalizeRelativePath(source.slice(root.length + 1));
+}
+
+async function musicTargetExists(targetPath) {
+  const p = String(targetPath || '').trim();
+  if (!p || !window.c3xManager || typeof window.c3xManager.pathExists !== 'function') return false;
+  try {
+    return !!await window.c3xManager.pathExists(p);
+  } catch (_err) {
+    return false;
+  }
+}
+
+async function resolveMusicImportRelativePath(tab, filePath, reservedNames) {
+  const buildRoot = String(tab && tab.buildTargetPath || '').trim();
+  const existingRel = getMusicRelativePathInsideBuildRoot(filePath, buildRoot);
+  if (existingRel) return existingRel;
+  const parts = splitMusicFileName(filePath);
+  const reserved = reservedNames || new Set();
+  for (let idx = 1; idx < 10000; idx += 1) {
+    const name = idx === 1 ? `${parts.stem}${parts.ext}` : `${parts.stem}_${idx}${parts.ext}`;
+    const key = name.toLowerCase();
+    if (reserved.has(key)) continue;
+    const targetPath = buildRoot ? joinLocalPath(buildRoot, name) : '';
+    if (targetPath && await musicTargetExists(targetPath)) continue;
+    reserved.add(key);
+    return name;
+  }
+  const fallback = `${parts.stem}_${Date.now()}${parts.ext}`;
+  reserved.add(fallback.toLowerCase());
+  return fallback;
+}
+
+function collectReservedMusicImportNames(tab) {
+  const reserved = new Set();
+  const tracks = ((((tab && tab.assignments || {}).playlist || {}).all) || []);
+  tracks.forEach((track) => {
+    const rel = normalizeRelativePath(track && track.relativePath || '');
+    if (rel) reserved.add(rel.toLowerCase());
+  });
+  return reserved;
+}
+
+function makeMusicTrackFromPath(filePath, relativePath = '') {
   const p = String(filePath || '').trim();
-  const title = getPathBaseName(p) || 'music.mp3';
+  const rel = normalizeRelativePath(relativePath || getPathBaseName(p) || 'music.mp3');
+  const title = getPathBaseName(rel) || getPathBaseName(p) || 'music.mp3';
+  const buildRoot = String((state.bundle && state.bundle.tabs && state.bundle.tabs.music && state.bundle.tabs.music.buildTargetPath) || '').trim();
+  const alreadyInBuild = !!getMusicRelativePathInsideBuildRoot(p, buildRoot);
   return {
     id: `pending:${Date.now()}:${Math.random().toString(16).slice(2)}`,
-    relativePath: title,
-    displayPath: title,
+    relativePath: rel,
+    displayPath: rel,
     title,
-    fileName: title,
+    fileName: getPathBaseName(p) || title,
     sourcePath: p,
     playablePath: p,
-    pendingSourcePath: p,
+    pendingSourcePath: alreadyInBuild ? '' : p,
     explicit: true,
     missing: false
   };
@@ -60670,9 +60741,11 @@ async function addMusicFilesToPlaylist(tab, files) {
   rememberUndoSnapshotForKey('SECTION_TAB:music');
   ensureMusicPlaylistMode(tab);
   const assignments = getMusicAssignments(tab);
-  paths.forEach((filePath) => {
-    assignments.playlist.all.push(makeMusicTrackFromPath(filePath));
-  });
+  const reserved = collectReservedMusicImportNames(tab);
+  for (const filePath of paths) {
+    const relativePath = await resolveMusicImportRelativePath(tab, filePath, reserved);
+    assignments.playlist.all.push(makeMusicTrackFromPath(filePath, relativePath));
+  }
   markMusicDirty();
   renderActiveTab({ preserveTabScroll: true });
 }
@@ -60686,7 +60759,9 @@ async function pickMusicFilesForPlaylist(tab) {
   if (!filePath) return;
   rememberUndoSnapshotForKey('SECTION_TAB:music');
   ensureMusicPlaylistMode(tab);
-  getMusicAssignments(tab).playlist.all.push(makeMusicTrackFromPath(filePath));
+  const reserved = collectReservedMusicImportNames(tab);
+  const relativePath = await resolveMusicImportRelativePath(tab, filePath, reserved);
+  getMusicAssignments(tab).playlist.all.push(makeMusicTrackFromPath(filePath, relativePath));
   markMusicDirty();
   renderActiveTab({ preserveTabScroll: true });
 }
@@ -61046,7 +61121,9 @@ function renderMusicPlaylistEditor(tab) {
   add.addEventListener('click', () => { void pickMusicFilesForPlaylist(tab); });
   head.appendChild(add);
   card.appendChild(head);
-  card.appendChild(renderMusicDropZone(tab));
+  if (list.length > 0) {
+    card.appendChild(renderMusicDropZone(tab));
+  }
   const playlist = document.createElement('div');
   playlist.className = 'music-playlist';
   playlist.addEventListener('dragover', (ev) => {
