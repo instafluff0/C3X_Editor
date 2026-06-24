@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   openFilePath: (filePath) => ipcRenderer.invoke('manager:open-file-path', filePath),
   openLogFolder: () => ipcRenderer.invoke('manager:open-log-folder'),
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
+  inspectAudioFile: (filePath) => ipcRenderer.invoke('manager:inspect-audio-file', filePath),
   getPathAccess: (paths) => ipcRenderer.invoke('manager:get-path-access', paths),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
   createScenario: (payload) => ipcRenderer.invoke('manager:create-scenario', payload),

@@ -68,6 +68,7 @@ test('dirty counts cover every editable tab family through the shared recompute 
     'improvements',
     'governments',
     'units',
+    'music',
     'gameConcepts',
     'terrainPedia',
     'workerActions',

@@ -333,6 +333,7 @@ const state = {
     typeText: true,
     typeBiq: true,
     typeArtPcx: true,
+    typeMusic: true,
     statusNew: false,
     statusChanged: false,
     statusUnchanged: false,
@@ -694,6 +695,7 @@ const el = {
   filesFilterTypeText: document.getElementById('files-filter-type-text'),
   filesFilterTypeBiq: document.getElementById('files-filter-type-biq'),
   filesFilterTypeArtPcx: document.getElementById('files-filter-type-art-pcx'),
+  filesFilterTypeMusic: document.getElementById('files-filter-type-music'),
   filesFilterStatusNew: document.getElementById('files-filter-status-new'),
   filesFilterStatusChanged: document.getElementById('files-filter-status-changed'),
   filesFilterStatusUnchanged: document.getElementById('files-filter-status-unchanged'),
@@ -777,6 +779,7 @@ const TAB_ICONS = {
   resources: 'icon-resource',
   improvements: 'icon-improv',
   governments: 'icon-gov',
+  music: 'icon-music',
   gameConcepts: 'icon-c3x-concepts',
   map: 'icon-map',
   scenarioSettings: 'icon-scenario-settings',
@@ -793,7 +796,7 @@ const TAB_ICONS = {
   animations: 'icon-anim'
 };
 const TAB_GROUPS = [
-  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'map', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'terrainPedia', 'workerActions'] },
+  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'music', 'gameConcepts', 'map', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'terrainPedia', 'workerActions'] },
   { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
 ];
 // Minimum C3X release required for each tab key. Tabs not listed here are always shown.
@@ -981,6 +984,7 @@ const EDITABLE_TAB_KEYS = [
   'improvements',
   'governments',
   'units',
+  'music',
   'gameConcepts',
   'terrainPedia',
   'workerActions',
@@ -1556,6 +1560,22 @@ function collectPendingWritePathsFromDirtyTabs() {
     const tab = tabs[tabKey];
     addPath(tab && tab.targetPath);
   });
+  if (getTabDirtyCount('music') > 0) {
+    const musicTab = tabs.music;
+    addPath(musicTab && musicTab.targetPath);
+    const buildRoot = String(musicTab && musicTab.buildRoots && (musicTab.buildRoots.scenario || musicTab.buildRoots.standard) || '').trim();
+    const assignments = musicTab && musicTab.assignments && typeof musicTab.assignments === 'object' ? musicTab.assignments : {};
+    Object.values(assignments).forEach((eraCells) => {
+      if (!eraCells || typeof eraCells !== 'object') return;
+      Object.values(eraCells).forEach((tracks) => {
+        (Array.isArray(tracks) ? tracks : []).forEach((track) => {
+          const sourcePath = String(track && track.pendingSourcePath || '').trim();
+          const rel = normalizeRelativePath(track && track.relativePath);
+          if (sourcePath && buildRoot && rel) addPath(joinLocalPath(buildRoot, rel));
+        });
+      });
+    });
+  }
   if (getTabDirtyCount('map') > 0 && hasScenarioDistrictsEdit(tabs.map)) {
     const meta = tabs.map && tabs.map.scenarioDistricts;
     addPath(meta && meta.targetPath);
@@ -2045,6 +2065,7 @@ function getDefaultFilesReadFiltersForMode(mode) {
     typeText: true,
     typeBiq: true,
     typeArtPcx: true,
+    typeMusic: true,
     statusNew: false,
     statusChanged: false,
     statusUnchanged: false,
@@ -2111,6 +2132,7 @@ function syncFilesReadFilterInputs() {
   if (el.filesFilterTypeText) el.filesFilterTypeText.checked = !!state.filesReadFilters.typeText;
   if (el.filesFilterTypeBiq) el.filesFilterTypeBiq.checked = !!state.filesReadFilters.typeBiq;
   if (el.filesFilterTypeArtPcx) el.filesFilterTypeArtPcx.checked = !!state.filesReadFilters.typeArtPcx;
+  if (el.filesFilterTypeMusic) el.filesFilterTypeMusic.checked = !!state.filesReadFilters.typeMusic;
   if (el.filesFilterStatusNew) el.filesFilterStatusNew.checked = !!state.filesReadFilters.statusNew;
   if (el.filesFilterStatusChanged) el.filesFilterStatusChanged.checked = !!state.filesReadFilters.statusChanged;
   if (el.filesFilterStatusUnchanged) el.filesFilterStatusUnchanged.checked = !!state.filesReadFilters.statusUnchanged;
@@ -2124,6 +2146,7 @@ function getFilesEntryFileType(entry, classification) {
   if (/\.txt$/i.test(pathValue)) return 'text';
   if (/\.ini$/i.test(pathValue)) return 'configIni';
   if (/\.pcx$/i.test(pathValue)) return 'artPcx';
+  if (/\.(mp3|wav|amb)$/i.test(pathValue)) return 'music';
   return 'other';
 }
 
@@ -2159,6 +2182,7 @@ function shouldIncludeFilesEntryByFilter(entry) {
   if (f.typeText) selectedTypes.push('text');
   if (f.typeBiq) selectedTypes.push('biq');
   if (f.typeArtPcx) selectedTypes.push('artPcx');
+  if (f.typeMusic) selectedTypes.push('music');
   if (selectedTypes.length > 0 && !selectedTypes.includes(fileType)) return false;
 
   const selectedStatuses = [];
@@ -5439,6 +5463,15 @@ function applyDirtyBadgeToTabButton(button, key, tab) {
       appendWarningCountBadge(
         button,
         `Units has ${warningCount} warning${warningCount === 1 ? '' : 's'}`,
+        warningCount
+      );
+    }
+  } else if (shouldRunQualityChecks() && key === 'music') {
+    const warningCount = getLoadAuditBadgeCount('music');
+    if (warningCount > 0) {
+      appendWarningCountBadge(
+        button,
+        `Music has ${warningCount} warning${warningCount === 1 ? '' : 's'}`,
         warningCount
       );
     }
@@ -11900,6 +11933,318 @@ function toFileUrlFromPath(filePath) {
   return encodeURI(`file://${p.startsWith('/') ? '' : '/'}${p}`);
 }
 
+const audioPreviewState = {
+  audio: null,
+  url: '',
+  path: '',
+  statusLabel: '',
+  isPlaying: false,
+  token: 0,
+  activeButton: null,
+  setButtonState: null,
+  raf: 0
+};
+
+const audioWaveformCache = new Map();
+
+function getAudioPreviewPathKey(filePath) {
+  return toSlashPath(filePath).trim();
+}
+
+function getAudioPreviewDebugSnapshot(extra = {}) {
+  const audio = audioPreviewState.audio;
+  return {
+    token: audioPreviewState.token,
+    path: compactPathFromCiv3Root(audioPreviewState.path) || audioPreviewState.path,
+    url: audioPreviewState.url,
+    isPlaying: !!audioPreviewState.isPlaying,
+    audioPaused: audio ? !!audio.paused : null,
+    audioEnded: audio ? !!audio.ended : null,
+    currentTime: audio && Number.isFinite(Number(audio.currentTime)) ? Number(audio.currentTime).toFixed(2) : null,
+    readyState: audio ? audio.readyState : null,
+    networkState: audio ? audio.networkState : null,
+    ...extra
+  };
+}
+
+function logAudioPreview(message, data = {}) {
+  appendDebugLog(`music-audio:${message}`, getAudioPreviewDebugSnapshot(data), {
+    external: true,
+    category: 'music-audio'
+  });
+}
+
+function eventIsFromInteractiveControl(ev) {
+  const target = ev && ev.target;
+  return !!(target && typeof target.closest === 'function' && target.closest('button, input, select, textarea, a, canvas'));
+}
+
+function handleMusicPlayPointer(ev, playablePath, statusLabel, options = {}) {
+  if (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+  logAudioPreview('pointer-play-control', {
+    clickSource: options.clickSource || 'unknown',
+    eventType: ev && ev.type,
+    button: ev && Number.isFinite(Number(ev.button)) ? Number(ev.button) : null,
+    targetClass: ev && ev.target && ev.target.className ? String(ev.target.className) : '',
+    requestedPath: compactPathFromCiv3Root(playablePath) || playablePath
+  });
+  void playLocalAudioPreviewPath(playablePath, {
+    statusLabel,
+    clickSource: options.clickSource || 'unknown',
+    sourceButton: options.sourceButton || null,
+    setButtonState: options.setButtonState || null
+  });
+}
+
+function getAudioPreviewIsPlaying() {
+  return !!(audioPreviewState.isPlaying && audioPreviewState.path);
+}
+
+function isAudioPreviewPlayingPath(filePath) {
+  return getAudioPreviewIsPlaying() && getAudioPreviewPathKey(filePath) === audioPreviewState.path;
+}
+
+function getAudioPreviewDuration() {
+  const audio = audioPreviewState.audio;
+  const duration = audio ? Number(audio.duration) : 0;
+  return Number.isFinite(duration) && duration > 0 ? duration : 0;
+}
+
+function getAudioPreviewCurrentTime() {
+  const audio = audioPreviewState.audio;
+  const current = audio ? Number(audio.currentTime) : 0;
+  return Number.isFinite(current) && current > 0 ? current : 0;
+}
+
+function refreshMusicPlaybackButtons() {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  document.querySelectorAll('.music-play-btn[data-audio-path]').forEach((button) => {
+    const pathKey = getAudioPreviewPathKey(button.dataset.audioPath || '');
+    setMusicPreviewButtonState(button, !!pathKey && isAudioPreviewPlayingPath(pathKey));
+  });
+}
+
+function notifyAudioPreviewStateChanged() {
+  refreshMusicPlaybackButtons();
+  updateMusicNowPlayingPanel();
+}
+
+function stopAudioPreviewTicker() {
+  if (!audioPreviewState.raf) return;
+  try {
+    cancelAnimationFrame(audioPreviewState.raf);
+  } catch (_err) {}
+  audioPreviewState.raf = 0;
+}
+
+function startAudioPreviewTicker() {
+  stopAudioPreviewTicker();
+  if (typeof requestAnimationFrame !== 'function') return;
+  const tick = () => {
+    audioPreviewState.raf = 0;
+    notifyAudioPreviewStateChanged();
+    if (getAudioPreviewIsPlaying()) audioPreviewState.raf = requestAnimationFrame(tick);
+  };
+  audioPreviewState.raf = requestAnimationFrame(tick);
+}
+
+function clearAudioPreviewButton() {
+  if (audioPreviewState.activeButton && typeof audioPreviewState.setButtonState === 'function') {
+    audioPreviewState.setButtonState(audioPreviewState.activeButton, false);
+  }
+  audioPreviewState.activeButton = null;
+  audioPreviewState.setButtonState = null;
+  notifyAudioPreviewStateChanged();
+}
+
+function detachAudioPreviewHandlers(audio) {
+  if (!audio) return;
+  audio.onended = null;
+  audio.onpause = null;
+  audio.onplay = null;
+  audio.ontimeupdate = null;
+  audio.onloadedmetadata = null;
+}
+
+function pauseAudioPreview(statusLabel = '') {
+  audioPreviewState.token += 1;
+  logAudioPreview('pause-command', { statusLabel });
+  const audio = audioPreviewState.audio;
+  audioPreviewState.isPlaying = false;
+  if (audio) {
+    try {
+      audio.pause();
+    } catch (_err) {}
+  }
+  clearAudioPreviewButton();
+  stopAudioPreviewTicker();
+  notifyAudioPreviewStateChanged();
+  if (statusLabel) setStatus(`Paused ${statusLabel}.`);
+}
+
+function stopAudioPreview(resetTime = false) {
+  audioPreviewState.token += 1;
+  logAudioPreview('stop-command', { resetTime });
+  clearAudioPreviewButton();
+  stopAudioPreviewTicker();
+  if (!audioPreviewState.audio) return;
+  try {
+    detachAudioPreviewHandlers(audioPreviewState.audio);
+    audioPreviewState.isPlaying = false;
+    audioPreviewState.audio.pause();
+    if (resetTime) audioPreviewState.audio.currentTime = 0;
+  } catch (_err) {}
+}
+
+function resetAudioPreviewForBundleChange() {
+  stopAudioPreview(true);
+  audioPreviewState.audio = null;
+  audioPreviewState.url = '';
+  audioPreviewState.path = '';
+  audioPreviewState.statusLabel = '';
+  audioPreviewState.isPlaying = false;
+  audioPreviewState.activeButton = null;
+  audioPreviewState.setButtonState = null;
+  notifyAudioPreviewStateChanged();
+}
+
+async function playLocalAudioPreviewPath(playablePath, options = {}) {
+  const statusLabel = String(options && options.statusLabel || 'audio preview');
+  const sourceButton = options && options.sourceButton ? options.sourceButton : null;
+  const setButtonState = typeof (options && options.setButtonState) === 'function' ? options.setButtonState : null;
+  const normalizedPath = getAudioPreviewPathKey(playablePath);
+  const clickSource = String(options && options.clickSource || '').trim() || (sourceButton && sourceButton.classList && sourceButton.classList.contains('music-now-play') ? 'music-now' : 'row');
+  logAudioPreview('click', {
+    clickSource,
+    statusLabel,
+    requestedPath: compactPathFromCiv3Root(normalizedPath) || normalizedPath
+  });
+  if (!normalizedPath) {
+    if (sourceButton) clearAudioPreviewButton();
+    logAudioPreview('reject-empty-path', { clickSource, statusLabel });
+    setStatus(`No playable file resolved for ${statusLabel}.`, true);
+    return false;
+  }
+  const isSamePath = audioPreviewState.path === normalizedPath;
+  if (isSamePath && getAudioPreviewIsPlaying()) {
+    logAudioPreview('click-routes-to-pause', { clickSource, statusLabel });
+    pauseAudioPreview(statusLabel);
+    return true;
+  }
+  const token = ++audioPreviewState.token;
+  logAudioPreview('play-command', {
+    clickSource,
+    token,
+    samePath: isSamePath,
+    statusLabel,
+    requestedPath: compactPathFromCiv3Root(normalizedPath) || normalizedPath
+  });
+  const url = toFileUrlFromPath(normalizedPath);
+  if (!url) {
+    if (sourceButton) clearAudioPreviewButton();
+    logAudioPreview('reject-no-url', { clickSource, token, statusLabel });
+    setStatus(`Unable to open ${statusLabel}.`, true);
+    return false;
+  }
+  if (!isSamePath && audioPreviewState.audio) {
+    logAudioPreview('detach-previous-audio', { clickSource, token });
+    const previousAudio = audioPreviewState.audio;
+    detachAudioPreviewHandlers(previousAudio);
+    try {
+      previousAudio.pause();
+      previousAudio.currentTime = 0;
+    } catch (_err) {}
+  }
+  audioPreviewState.path = normalizedPath;
+  audioPreviewState.statusLabel = statusLabel;
+  audioPreviewState.isPlaying = true;
+  if (sourceButton && setButtonState) {
+    audioPreviewState.activeButton = sourceButton;
+    audioPreviewState.setButtonState = setButtonState;
+    setButtonState(sourceButton, true);
+  }
+  startAudioPreviewTicker();
+  notifyAudioPreviewStateChanged();
+  try {
+    if (!audioPreviewState.audio || audioPreviewState.url !== url) {
+      logAudioPreview('create-audio', { clickSource, token, url });
+      audioPreviewState.audio = new Audio(url);
+      audioPreviewState.audio.preload = 'auto';
+      audioPreviewState.url = url;
+    }
+    const playAudio = audioPreviewState.audio;
+    const playPath = normalizedPath;
+    playAudio.onended = () => {
+      if (audioPreviewState.token !== token || audioPreviewState.audio !== playAudio || audioPreviewState.path !== playPath) {
+        logAudioPreview('ignore-ended-stale', { eventToken: token, eventPath: compactPathFromCiv3Root(playPath) || playPath });
+        return;
+      }
+      logAudioPreview('ended', { eventToken: token });
+      audioPreviewState.isPlaying = false;
+      clearAudioPreviewButton();
+      stopAudioPreviewTicker();
+      notifyAudioPreviewStateChanged();
+    };
+    playAudio.onpause = () => {
+      if (audioPreviewState.token !== token || audioPreviewState.audio !== playAudio || audioPreviewState.path !== playPath || playAudio.ended) {
+        logAudioPreview('ignore-pause-stale', { eventToken: token, eventPath: compactPathFromCiv3Root(playPath) || playPath, eventEnded: !!playAudio.ended });
+        return;
+      }
+      logAudioPreview('native-pause', { eventToken: token });
+      audioPreviewState.isPlaying = false;
+      clearAudioPreviewButton();
+      stopAudioPreviewTicker();
+      notifyAudioPreviewStateChanged();
+    };
+    playAudio.onplay = () => {
+      if (audioPreviewState.token !== token || audioPreviewState.audio !== playAudio || audioPreviewState.path !== playPath) {
+        logAudioPreview('ignore-play-stale', { eventToken: token, eventPath: compactPathFromCiv3Root(playPath) || playPath });
+        return;
+      }
+      logAudioPreview('native-play', { eventToken: token });
+      audioPreviewState.isPlaying = true;
+      startAudioPreviewTicker();
+      notifyAudioPreviewStateChanged();
+    };
+    playAudio.ontimeupdate = () => {
+      if (audioPreviewState.token === token && audioPreviewState.audio === playAudio && audioPreviewState.path === playPath) notifyAudioPreviewStateChanged();
+    };
+    playAudio.onloadedmetadata = () => {
+      if (audioPreviewState.token === token && audioPreviewState.audio === playAudio && audioPreviewState.path === playPath) notifyAudioPreviewStateChanged();
+    };
+    if (!isSamePath || playAudio.ended) playAudio.currentTime = 0;
+    logAudioPreview('call-play', { clickSource, token, samePath: isSamePath });
+    const promise = playAudio.play();
+    if (promise && typeof promise.catch === 'function') {
+      await promise.catch(() => {
+        throw new Error('Playback failed.');
+      });
+    }
+    if (audioPreviewState.token !== token || audioPreviewState.audio !== playAudio || audioPreviewState.path !== playPath) {
+      logAudioPreview('play-resolved-stale', { eventToken: token, eventPath: compactPathFromCiv3Root(playPath) || playPath });
+      return true;
+    }
+    audioPreviewState.isPlaying = true;
+    startAudioPreviewTicker();
+    notifyAudioPreviewStateChanged();
+    logAudioPreview('play-resolved-active', { clickSource, token });
+    if (audioPreviewState.token === token) setStatus(`Playing ${statusLabel}.`);
+    return true;
+  } catch (_err) {
+    if (audioPreviewState.token !== token || audioPreviewState.path !== normalizedPath) return false;
+    audioPreviewState.isPlaying = false;
+    clearAudioPreviewButton();
+    stopAudioPreviewTicker();
+    notifyAudioPreviewStateChanged();
+    logAudioPreview('play-failed', { clickSource, token, statusLabel });
+    setStatus(`Could not play ${statusLabel}.`, true);
+    return false;
+  }
+}
+
 async function resolvePlayableUnitSoundPath(soundPath) {
   const raw = toSlashPath(soundPath).trim();
   if (!raw) return '';
@@ -12505,10 +12850,6 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
   let activeTimingSeconds = null;
   let activeSoundPath = '';
   let activePlayableSoundPath = '';
-  let previewSoundAudio = null;
-  let previewSoundUrl = '';
-  let previewSoundPlayToken = 0;
-  let activeSoundPreviewButton = null;
   const entryUndoKey = buildReferenceEntryUndoKey('units', entry);
 
   const cloneTypeRows = (rows) => cloneUnitTypeRows(rows);
@@ -12592,74 +12933,14 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
       : '<span class="btn-icon">▶</span>Preview';
   };
 
-  const clearActiveSoundPreviewButton = () => {
-    if (!activeSoundPreviewButton) return;
-    setPreviewButtonPlayingState(activeSoundPreviewButton, false);
-    activeSoundPreviewButton = null;
-  };
-
-  const stopPreviewSound = (resetTime = false) => {
-    clearActiveSoundPreviewButton();
-    if (!previewSoundAudio) return;
-    try {
-      previewSoundAudio.pause();
-      if (resetTime) previewSoundAudio.currentTime = 0;
-    } catch (_err) {}
-  };
-
   const playResolvedSoundPath = async (playablePath, options = {}) => {
     const statusLabel = String(options && options.statusLabel || 'sound preview');
     const sourceButton = options && options.sourceButton ? options.sourceButton : null;
-    const normalizedPath = toSlashPath(playablePath).trim();
-    if (!normalizedPath) {
-      if (sourceButton) clearActiveSoundPreviewButton();
-      setStatus(`No playable file resolved for ${statusLabel}.`, true);
-      return false;
-    }
-    if (!window.c3xManager || typeof window.c3xManager.pathExists !== 'function' || !await window.c3xManager.pathExists(normalizedPath)) {
-      if (sourceButton) clearActiveSoundPreviewButton();
-      setStatus(`Sound file not found for ${statusLabel}.`, true);
-      return false;
-    }
-    const url = toFileUrlFromPath(normalizedPath);
-    if (!url) {
-      if (sourceButton) clearActiveSoundPreviewButton();
-      setStatus(`Unable to open ${statusLabel}.`, true);
-      return false;
-    }
-    const token = ++previewSoundPlayToken;
-    try {
-      stopPreviewSound(true);
-      if (sourceButton) {
-        activeSoundPreviewButton = sourceButton;
-        setPreviewButtonPlayingState(sourceButton, true);
-      }
-      if (!previewSoundAudio || previewSoundUrl !== url) {
-        previewSoundAudio = new Audio(url);
-        previewSoundAudio.preload = 'auto';
-        previewSoundUrl = url;
-      }
-      previewSoundAudio.onended = () => {
-        clearActiveSoundPreviewButton();
-      };
-      previewSoundAudio.onpause = () => {
-        if (previewSoundAudio && previewSoundAudio.ended) return;
-        clearActiveSoundPreviewButton();
-      };
-      previewSoundAudio.currentTime = 0;
-      const promise = previewSoundAudio.play();
-      if (promise && typeof promise.catch === 'function') {
-        await promise.catch(() => {
-          throw new Error('Playback failed.');
-        });
-      }
-      if (previewSoundPlayToken === token) setStatus(`Playing ${statusLabel}.`);
-      return true;
-    } catch (_err) {
-      clearActiveSoundPreviewButton();
-      setStatus(`Could not play ${statusLabel}.`, true);
-      return false;
-    }
+    return playLocalAudioPreviewPath(playablePath, {
+      statusLabel,
+      sourceButton,
+      setButtonState: setPreviewButtonPlayingState
+    });
   };
 
   const playPreviewSound = () => {
@@ -62419,6 +62700,608 @@ function deleteSelectedSection(tab, tabKey) {
   renderActiveTab();
 }
 
+function getMusicCellTracks(tab, eraKey, cultureKey) {
+  const era = ((tab && tab.assignments) || {})[eraKey] || {};
+  if (!Array.isArray(era[cultureKey])) era[cultureKey] = [];
+  return era[cultureKey];
+}
+
+function getMusicTrackTitle(track) {
+  const value = String((track && (track.displayPath || track.relativePath || track.absolutePath || track.pendingSourcePath)) || '').trim();
+  return getPathBaseName(value) || value || '(no track)';
+}
+
+function formatMusicMeta(metadata) {
+  if (!metadata || metadata.ok === false) return '';
+  const parts = [];
+  const duration = Number(metadata.durationSeconds);
+  if (Number.isFinite(duration) && duration > 0) {
+    const mins = Math.floor(duration / 60);
+    const secs = Math.max(0, Math.round(duration - (mins * 60)));
+    parts.push(`${mins}:${String(secs).padStart(2, '0')}`);
+  }
+  const bitrate = Number(metadata.bitrate);
+  if (Number.isFinite(bitrate) && bitrate > 0) parts.push(`${Math.round(bitrate / 1000)} kbps`);
+  const sampleRate = Number(metadata.sampleRate);
+  if (Number.isFinite(sampleRate) && sampleRate > 0) parts.push(`${(sampleRate / 1000).toFixed(sampleRate % 1000 ? 1 : 0)} kHz`);
+  const channels = Number(metadata.channels);
+  if (Number.isFinite(channels) && channels > 0) parts.push(channels === 1 ? 'mono' : 'stereo');
+  return parts.join(' | ');
+}
+
+function getMusicCompatibilityLabel(track) {
+  if (track && track.missing) return 'Missing';
+  const isPending = !!(track && track.pendingSourcePath);
+  const metadata = track && track.metadata;
+  if (!metadata || metadata.ok === false) return isPending ? 'Check' : '';
+  const sampleRate = Number(metadata.sampleRate);
+  const channels = Number(metadata.channels);
+  const bitrate = Number(metadata.bitrate);
+  if ((Number.isFinite(sampleRate) && sampleRate !== 44100)
+    || (Number.isFinite(channels) && channels !== 2)
+    || (Number.isFinite(bitrate) && bitrate < 128000)) {
+    return isPending ? 'Check' : '';
+  }
+  return isPending ? 'Staged' : '';
+}
+
+function getMusicBuildRoot(tab) {
+  return String(tab && tab.buildRoots && (tab.buildRoots.scenario || tab.buildRoots.standard) || '').trim();
+}
+
+function getMusicDisplayEras(tab) {
+  return (Array.isArray(tab && tab.eras) ? tab.eras : []).map((era, index) => ({
+    ...era,
+    index,
+    label: getBiqEraLabelByIndex(index)
+  }));
+}
+
+function getMusicPlaylistTracks(tab) {
+  return getMusicCellTracks(tab, 'playlist', 'all');
+}
+
+function getMusicRenderEras(tab) {
+  const rows = getMusicDisplayEras(tab);
+  if (getMusicPlaylistTracks(tab).length > 0) {
+    rows.push({
+      key: 'playlist',
+      label: 'Playlist',
+      shared: true,
+      synthetic: true
+    });
+  }
+  return rows;
+}
+
+function countMusicTracks(tab) {
+  let count = 0;
+  getMusicRenderEras(tab).forEach((era) => {
+    const cultures = era && era.shared
+      ? [{ key: 'all' }]
+      : (Array.isArray(tab && tab.cultures) ? tab.cultures : []);
+    cultures.forEach((culture) => {
+      count += getMusicCellTracks(tab, era.key, culture.key).length;
+    });
+  });
+  return count;
+}
+
+function makeMusicTrackFromFile(tab, filePath) {
+  return (async () => {
+    const absolute = toSlashPath(filePath).trim();
+    if (!/\.mp3$/i.test(absolute)) throw new Error('Choose an MP3 file for Civ3 music.');
+    const buildRoot = toSlashPath(getMusicBuildRoot(tab)).replace(/\/+$/, '');
+    let relativePath = getPathBaseName(absolute);
+    let pendingSourcePath = absolute;
+    if (buildRoot && pathIsSameOrChild(absolute, buildRoot)) {
+      relativePath = normalizeRelativePath(absolute.slice(buildRoot.length + 1));
+      pendingSourcePath = '';
+    }
+    let metadata = null;
+    if (window.c3xManager && typeof window.c3xManager.inspectAudioFile === 'function') {
+      metadata = await window.c3xManager.inspectAudioFile(absolute).catch(() => null);
+    }
+    return {
+      id: `music-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      relativePath: normalizeRelativePath(relativePath),
+      displayPath: normalizeRelativePath(relativePath).replace(/\//g, '\\'),
+      absolutePath: absolute,
+      pendingSourcePath,
+      metadata,
+      missing: false
+    };
+  })();
+}
+
+async function stageMusicFileForCell(tab, eraKey, cultureKey, filePath, options = {}) {
+  if (!tab || !eraKey || !cultureKey) return;
+  try {
+    const track = await makeMusicTrackFromFile(tab, filePath);
+    rememberUndoSnapshotForKey('SECTION_TAB:music');
+    const tracks = getMusicCellTracks(tab, eraKey, cultureKey);
+    const replaceIndex = Number(options && options.replaceIndex);
+    if (Number.isInteger(replaceIndex) && replaceIndex >= 0 && replaceIndex < tracks.length) {
+      tracks.splice(replaceIndex, 1, track);
+    } else if (options && options.replace) {
+      tracks.splice(0, tracks.length, track);
+    } else {
+      tracks.push(track);
+    }
+    setDirty(true);
+    markFilesReadEntriesDirty();
+    renderActiveTab({ preserveTabScroll: true });
+    if (shouldRunQualityChecks()) void runBundleAudit(buildAuditPayloadFromState());
+  } catch (err) {
+    setStatus(err && err.message ? err.message : 'Could not stage music file.', true);
+  }
+}
+
+async function pickMusicFileForCell(tab, eraKey, cultureKey, options = {}) {
+  if (!window.c3xManager || typeof window.c3xManager.pickFile !== 'function') return;
+  const filePath = await window.c3xManager.pickFile({
+    filters: [{ name: 'MP3 Music', extensions: ['mp3'] }, { name: 'All Files', extensions: ['*'] }],
+    defaultPath: getMusicBuildRoot(tab) || undefined
+  });
+  if (!filePath) return;
+  await stageMusicFileForCell(tab, eraKey, cultureKey, filePath, options);
+}
+
+const musicDragState = {
+  current: null
+};
+
+function getMusicDragPayload() {
+  const payload = musicDragState.current;
+  if (!payload || !payload.tab || !payload.eraKey || !payload.cultureKey) return null;
+  if (!Number.isInteger(Number(payload.trackIndex)) || Number(payload.trackIndex) < 0) return null;
+  return payload;
+}
+
+function moveMusicTrack(tab, fromEraKey, fromCultureKey, fromIndex, toEraKey, toCultureKey, insertIndex) {
+  if (!tab || !fromEraKey || !fromCultureKey || !toEraKey || !toCultureKey) return false;
+  const sourceTracks = getMusicCellTracks(tab, fromEraKey, fromCultureKey);
+  const targetTracks = getMusicCellTracks(tab, toEraKey, toCultureKey);
+  const sourceIndex = Number(fromIndex);
+  if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= sourceTracks.length) return false;
+  let targetIndex = Number(insertIndex);
+  if (!Number.isInteger(targetIndex)) targetIndex = targetTracks.length;
+  targetIndex = Math.max(0, Math.min(targetTracks.length, targetIndex));
+  if (sourceTracks === targetTracks && (targetIndex === sourceIndex || targetIndex === sourceIndex + 1)) return false;
+  rememberUndoSnapshotForKey('SECTION_TAB:music');
+  const [track] = sourceTracks.splice(sourceIndex, 1);
+  if (!track) return false;
+  if (sourceTracks === targetTracks && targetIndex > sourceIndex) targetIndex -= 1;
+  targetTracks.splice(Math.max(0, Math.min(targetTracks.length, targetIndex)), 0, track);
+  setDirty(true);
+  markFilesReadEntriesDirty();
+  renderActiveTab({ preserveTabScroll: true });
+  return true;
+}
+
+function dropMusicTrack(tab, eraKey, cultureKey, insertIndex) {
+  const payload = getMusicDragPayload();
+  if (!payload) return false;
+  const moved = moveMusicTrack(tab, payload.eraKey, payload.cultureKey, payload.trackIndex, eraKey, cultureKey, insertIndex);
+  musicDragState.current = null;
+  return moved;
+}
+
+function attachMusicDropHandlers(node, onFile, onTrackDrop) {
+  node.addEventListener('dragover', (ev) => {
+    if (!getMusicDragPayload() && !(ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length)) return;
+    ev.preventDefault();
+    node.classList.add('drag-over');
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = getMusicDragPayload() ? 'move' : 'copy';
+  });
+  node.addEventListener('dragleave', () => {
+    node.classList.remove('drag-over');
+  });
+  node.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    node.classList.remove('drag-over');
+    if (getMusicDragPayload()) {
+      if (typeof onTrackDrop === 'function') onTrackDrop();
+      return;
+    }
+    const droppedPath = getDroppedFilePath(ev);
+    if (!droppedPath) {
+      setStatus('Could not read the dropped file path.', true);
+      return;
+    }
+    if (typeof onFile === 'function') void onFile(droppedPath);
+  });
+}
+
+function setMusicPreviewButtonState(button, isPlaying) {
+  if (!button) return;
+  button.classList.toggle('playing', !!isPlaying);
+  button.innerHTML = '<span class="music-play-symbol" aria-hidden="true"></span>';
+  button.title = isPlaying ? 'Playing' : 'Play';
+  button.setAttribute('aria-label', button.title);
+}
+
+function getAudioPreviewDisplayTitle() {
+  const label = String(audioPreviewState.statusLabel || '').trim();
+  if (label) return label;
+  return getPathBaseName(audioPreviewState.path) || 'No song selected';
+}
+
+function formatAudioPreviewTime(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds - (mins * 60));
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function drawMusicWaveform(canvas, peaks, progress) {
+  if (!canvas || typeof canvas.getContext !== 'function') return;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width || canvas.clientWidth || 1));
+  const height = Math.max(1, Math.floor(rect.height || canvas.clientHeight || 1));
+  const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const targetWidth = Math.floor(width * ratio);
+  const targetHeight = Math.floor(height * ratio);
+  if (canvas.width !== targetWidth) canvas.width = targetWidth;
+  if (canvas.height !== targetHeight) canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#f7f9ff';
+  ctx.fillRect(0, 0, width, height);
+  const values = Array.isArray(peaks) && peaks.length ? peaks : [];
+  const count = values.length || 96;
+  const gap = 1;
+  const barWidth = Math.max(1, Math.floor((width - ((count - 1) * gap)) / count));
+  const center = height / 2;
+  const playedUntil = Math.max(0, Math.min(1, Number(progress) || 0)) * width;
+  for (let index = 0; index < count; index += 1) {
+    const x = index * (barWidth + gap);
+    const amp = values.length ? values[index] : 0.14;
+    const barHeight = Math.max(2, amp * (height - 10));
+    ctx.fillStyle = (x + (barWidth / 2)) <= playedUntil ? '#2f8574' : '#b9c4d9';
+    ctx.fillRect(x, center - (barHeight / 2), barWidth, barHeight);
+  }
+  ctx.fillStyle = 'rgba(47, 133, 116, 0.18)';
+  ctx.fillRect(0, 0, playedUntil, height);
+  ctx.fillStyle = '#245b53';
+  ctx.fillRect(Math.max(0, Math.min(width - 1, playedUntil)), 0, 2, height);
+}
+
+async function loadMusicWaveformPeaks(filePath) {
+  const pathKey = getAudioPreviewPathKey(filePath);
+  if (!pathKey) return [];
+  const cached = audioWaveformCache.get(pathKey);
+  if (Array.isArray(cached)) return cached;
+  if (cached && typeof cached.then === 'function') return cached;
+  const promise = (async () => {
+    try {
+      const response = await fetch(toFileUrlFromPath(pathKey));
+      if (!response || !response.ok) return [];
+      const buffer = await response.arrayBuffer();
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return [];
+      const ctx = new AudioContextClass();
+      const decoded = await ctx.decodeAudioData(buffer.slice(0));
+      if (typeof ctx.close === 'function') void ctx.close();
+      const channelCount = Math.max(1, decoded.numberOfChannels || 1);
+      const sampleCount = Math.min(180, Math.max(72, Math.floor((decoded.duration || 90) * 2)));
+      const blockSize = Math.max(1, Math.floor(decoded.length / sampleCount));
+      const peaks = [];
+      for (let index = 0; index < sampleCount; index += 1) {
+        const start = index * blockSize;
+        const end = Math.min(decoded.length, start + blockSize);
+        let max = 0;
+        for (let channel = 0; channel < channelCount; channel += 1) {
+          const data = decoded.getChannelData(channel);
+          for (let offset = start; offset < end; offset += 32) {
+            const value = Math.abs(data[offset] || 0);
+            if (value > max) max = value;
+          }
+        }
+        peaks.push(Math.max(0.04, Math.min(1, max)));
+      }
+      audioWaveformCache.set(pathKey, peaks);
+      return peaks;
+    } catch (_err) {
+      audioWaveformCache.set(pathKey, []);
+      return [];
+    }
+  })();
+  audioWaveformCache.set(pathKey, promise);
+  return promise;
+}
+
+function updateMusicNowPlayingPanel() {
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return;
+  const panel = document.querySelector('.music-now-playing');
+  if (!panel) return;
+  const pathKey = audioPreviewState.path;
+  const title = panel.querySelector('.music-now-title');
+  const meta = panel.querySelector('.music-now-meta');
+  const playBtn = panel.querySelector('.music-now-play');
+  const canvas = panel.querySelector('.music-waveform-canvas');
+  const duration = getAudioPreviewDuration();
+  const current = Math.min(duration || Number.MAX_SAFE_INTEGER, getAudioPreviewCurrentTime());
+  const isPlaying = getAudioPreviewIsPlaying();
+  panel.classList.toggle('has-song', !!pathKey);
+  if (title) title.textContent = pathKey ? getAudioPreviewDisplayTitle() : 'No song selected';
+  if (meta) {
+    const currentText = formatAudioPreviewTime(current);
+    const durationText = duration ? formatAudioPreviewTime(duration) : '--:--';
+    meta.textContent = pathKey ? `${currentText} / ${durationText}` : 'Choose a song from the table';
+  }
+  if (playBtn) {
+    playBtn.disabled = !pathKey;
+    setMusicPreviewButtonState(playBtn, isPlaying);
+  }
+  const progress = duration ? current / duration : 0;
+  const cacheValue = pathKey ? audioWaveformCache.get(pathKey) : null;
+  drawMusicWaveform(canvas, Array.isArray(cacheValue) ? cacheValue : [], progress);
+  if (pathKey && !cacheValue) {
+    void loadMusicWaveformPeaks(pathKey).then(() => {
+      if (audioPreviewState.path === pathKey) updateMusicNowPlayingPanel();
+    });
+  }
+}
+
+function renderMusicNowPlayingPanel() {
+  const panel = document.createElement('div');
+  panel.className = 'music-now-playing';
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'ghost music-play-btn music-now-play';
+  setMusicPreviewButtonState(playBtn, false);
+  playBtn.addEventListener('pointerdown', (ev) => {
+    if (!audioPreviewState.path) return;
+    handleMusicPlayPointer(ev, audioPreviewState.path, getAudioPreviewDisplayTitle(), { clickSource: 'music-now' });
+  }, { capture: true });
+  playBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+  panel.appendChild(playBtn);
+
+  const info = document.createElement('div');
+  info.className = 'music-now-info';
+  const title = document.createElement('div');
+  title.className = 'music-now-title';
+  title.textContent = 'No song selected';
+  info.appendChild(title);
+  const meta = document.createElement('div');
+  meta.className = 'music-now-meta';
+  meta.textContent = 'Choose a song from the table';
+  info.appendChild(meta);
+  panel.appendChild(info);
+
+  const waveform = document.createElement('canvas');
+  waveform.className = 'music-waveform-canvas';
+  waveform.setAttribute('aria-label', 'Song waveform and seek bar');
+  waveform.addEventListener('click', (ev) => {
+    const audio = audioPreviewState.audio;
+    const duration = getAudioPreviewDuration();
+    if (!audio || !duration) return;
+    const rect = waveform.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width || 1, ev.clientX - rect.left));
+    audio.currentTime = (x / Math.max(1, rect.width)) * duration;
+    notifyAudioPreviewStateChanged();
+  });
+  panel.appendChild(waveform);
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => updateMusicNowPlayingPanel());
+  } else {
+    updateMusicNowPlayingPanel();
+  }
+  return panel;
+}
+
+function renderMusicTrackRow(tab, eraKey, cultureKey, track, trackIndex) {
+  const row = document.createElement('div');
+  row.className = 'music-track-row';
+  row.draggable = true;
+  row.title = 'Drag to reorder or move this song';
+  row.addEventListener('dragstart', (ev) => {
+    if (eventIsFromInteractiveControl(ev)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    musicDragState.current = { tab, eraKey, cultureKey, trackIndex };
+    row.classList.add('dragging');
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData('text/plain', JSON.stringify({ type: 'c3x-music-track', eraKey, cultureKey, trackIndex }));
+    }
+  });
+  row.addEventListener('dragend', () => {
+    musicDragState.current = null;
+    row.classList.remove('dragging');
+  });
+  row.addEventListener('dragover', (ev) => {
+    if (!getMusicDragPayload()) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    row.classList.add('drag-over');
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+  });
+  row.addEventListener('dragleave', () => {
+    row.classList.remove('drag-over');
+  });
+  row.addEventListener('drop', (ev) => {
+    if (!getMusicDragPayload()) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    row.classList.remove('drag-over');
+    const rect = row.getBoundingClientRect();
+    const insertAfter = rect && Number.isFinite(rect.top) ? ev.clientY > rect.top + (rect.height / 2) : false;
+    dropMusicTrack(tab, eraKey, cultureKey, trackIndex + (insertAfter ? 1 : 0));
+  });
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'ghost music-play-btn';
+  playBtn.draggable = false;
+  const playable = String(track && (track.absolutePath || track.pendingSourcePath) || '').trim();
+  playBtn.dataset.audioPath = getAudioPreviewPathKey(playable);
+  setMusicPreviewButtonState(playBtn, isAudioPreviewPlayingPath(playable));
+  playBtn.disabled = !playable;
+  playBtn.addEventListener('pointerdown', (ev) => {
+    if (!playable) {
+      setStatus('This music file is not resolved on disk.', true);
+      return;
+    }
+    handleMusicPlayPointer(ev, playable, getMusicTrackTitle(track), {
+      clickSource: 'music-row',
+      sourceButton: playBtn,
+      setButtonState: setMusicPreviewButtonState
+    });
+  }, { capture: true });
+  playBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+  row.appendChild(playBtn);
+
+  const main = document.createElement('div');
+  main.className = 'music-track-main';
+  const title = document.createElement('div');
+  title.className = 'music-track-title';
+  title.textContent = getMusicTrackTitle(track);
+  main.appendChild(title);
+  const meta = document.createElement('div');
+  meta.className = 'music-track-meta';
+  meta.textContent = formatMusicMeta(track && track.metadata) || String(track && track.displayPath || track && track.relativePath || '');
+  main.appendChild(meta);
+  row.appendChild(main);
+
+  const badgeText = getMusicCompatibilityLabel(track);
+  if (badgeText) {
+    const badge = document.createElement('span');
+    badge.className = `music-status-badge ${badgeText === 'OK' ? 'ok' : badgeText === 'Staged' ? 'staged' : 'warn'}`;
+    badge.textContent = badgeText;
+    row.appendChild(badge);
+  }
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'ghost music-remove-btn';
+  removeBtn.draggable = false;
+  removeBtn.textContent = 'x';
+  removeBtn.title = 'Remove this song from the playlist';
+  removeBtn.setAttribute('aria-label', 'Remove song from playlist');
+  removeBtn.addEventListener('click', () => {
+    rememberUndoSnapshotForKey('SECTION_TAB:music');
+    const tracks = getMusicCellTracks(tab, eraKey, cultureKey);
+    tracks.splice(trackIndex, 1);
+    setDirty(true);
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  row.appendChild(removeBtn);
+  return row;
+}
+
+function renderMusicCell(tab, era, culture) {
+  const cell = document.createElement('div');
+  cell.className = 'music-cell';
+  const eraKey = era.key;
+  const cultureKey = culture.key;
+  const tracks = getMusicCellTracks(tab, eraKey, cultureKey);
+  const generatedFromLibrary = !!(tab && tab.sourceDetails && tab.sourceDetails.generatedFromLibrary);
+  const list = document.createElement('div');
+  list.className = 'music-track-list';
+  if (tracks.length === 0) {
+    if (!generatedFromLibrary) {
+      const empty = document.createElement('div');
+      empty.className = 'music-empty-cell unassigned';
+      empty.textContent = 'No assigned song';
+      empty.title = 'This playlist has no explicit song assigned here.';
+      list.appendChild(empty);
+    }
+  } else {
+    tracks.forEach((track, index) => {
+      list.appendChild(renderMusicTrackRow(tab, eraKey, cultureKey, track, index));
+    });
+  }
+  cell.appendChild(list);
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'ghost music-add-btn';
+  addBtn.textContent = tracks.length > 0 ? 'Add' : 'Add MP3';
+  addBtn.title = era && era.synthetic ? 'Add an MP3 to the playlist' : `Add an MP3 for ${era.label}, ${culture.label}`;
+  addBtn.addEventListener('click', () => {
+    void pickMusicFileForCell(tab, eraKey, cultureKey);
+  });
+  cell.appendChild(addBtn);
+  attachMusicDropHandlers(
+    cell,
+    (filePath) => stageMusicFileForCell(tab, eraKey, cultureKey, filePath),
+    () => dropMusicTrack(tab, eraKey, cultureKey, getMusicCellTracks(tab, eraKey, cultureKey).length)
+  );
+  return cell;
+}
+
+function renderMusicTab(tab) {
+  const wrap = document.createElement('div');
+  wrap.className = 'music-tab';
+  const auditBox = shouldRunQualityChecks() ? createWarningBox(getLoadAuditAllMessages('music'), 'Quality Checks', { collapsible: true }) : null;
+  if (auditBox) wrap.appendChild(auditBox);
+
+  const trackCount = countMusicTracks(tab);
+  const countRow = document.createElement('div');
+  countRow.className = 'music-count-row';
+  const countText = document.createElement('span');
+  countText.className = 'reference-count-text music-count-text';
+  countText.textContent = `${trackCount} song${trackCount === 1 ? '' : 's'}`;
+  countRow.appendChild(countText);
+  wrap.appendChild(countRow);
+  wrap.appendChild(renderMusicNowPlayingPanel());
+
+  const card = document.createElement('div');
+  card.className = 'rule-group-card music-playlist-card';
+  const title = document.createElement('div');
+  title.className = 'rule-group-title';
+  title.textContent = 'Current Music';
+  card.appendChild(title);
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'music-table-wrap';
+  const matrix = document.createElement('div');
+  matrix.className = 'music-table-grid';
+  const corner = document.createElement('div');
+  corner.className = 'music-table-head music-table-era-head';
+  corner.textContent = 'Era';
+  matrix.appendChild(corner);
+  (Array.isArray(tab && tab.cultures) ? tab.cultures : []).forEach((culture) => {
+    const head = document.createElement('div');
+    head.className = 'music-table-head';
+    head.textContent = culture.label;
+    matrix.appendChild(head);
+  });
+  getMusicRenderEras(tab).forEach((era) => {
+    const eraCell = document.createElement('div');
+    eraCell.className = `music-era-head${era.synthetic ? ' music-playlist-head' : ''}`;
+    const eraName = document.createElement('strong');
+    eraName.textContent = era.label;
+    eraCell.appendChild(eraName);
+    matrix.appendChild(eraCell);
+
+    if (era.shared) {
+      const cell = renderMusicCell(tab, era, { key: 'all', label: 'All Cultures' });
+      cell.classList.add('music-cell-shared');
+      matrix.appendChild(cell);
+      return;
+    }
+    (Array.isArray(tab && tab.cultures) ? tab.cultures : []).forEach((culture) => {
+      matrix.appendChild(renderMusicCell(tab, era, culture));
+    });
+  });
+  tableWrap.appendChild(matrix);
+  card.appendChild(tableWrap);
+  wrap.appendChild(card);
+  return wrap;
+}
+
 function renderSectionTab(tab, tabKey) {
   const schema = SECTION_SCHEMAS[tabKey];
   const useInlineFilterActions = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders';
@@ -63356,6 +64239,8 @@ function renderActiveTab(options = {}) {
     el.tabContent.appendChild(renderBiqTab(tab));
   } else if (tab.type === 'biq') {
     el.tabContent.appendChild(renderBiqTab(tab));
+  } else if (tab.type === 'music') {
+    el.tabContent.appendChild(renderMusicTab(tab));
   } else if (state.activeTab === 'base') {
     el.tabContent.appendChild(renderBaseTab(tab));
   } else {
@@ -63386,6 +64271,7 @@ async function loadBundleAndRender(options = {}) {
   updatePathsSummary();
   updateModeState();
   invalidatePreviewStateForReload();
+  resetAudioPreviewForBundleChange();
   await window.c3xManager.setSettings(state.settings);
   setLoadingUi(true, options.loadingText || 'Loading configs...');
 
@@ -63672,7 +64558,7 @@ async function refreshCurrentBundleFromDisk() {
 
 function getTabsForSavePayload() {
   const tabsToSave = {};
-  ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'map'].forEach((key) => {
+  ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'music', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'map'].forEach((key) => {
     if (state.bundle && state.bundle.tabs && state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
   });
   return tabsToSave;
@@ -64037,6 +64923,8 @@ function mapSaveKindLabel(kind) {
   if (key === 'pediaicons') return 'PediaIcons';
   if (key === 'civilopedia') return 'Civilopedia';
   if (key === 'diplomacy') return 'Diplomacy';
+  if (key === 'music') return 'Music';
+  if (key === 'musicaudio') return 'Music File';
   if (key === 'atlas') return 'Icon Atlas';
   if (key === 'civpalette') return 'Civ Palette';
   return key.toUpperCase();
@@ -64587,6 +65475,44 @@ function finalizeSavedAtlasStateAfterNoReload(saveReport) {
   const activeTabNeedsRefresh = (kinds.resources && state.activeTab === 'resources')
     || (kinds.units32 && state.activeTab === 'units');
   return clearedPending || activeTabNeedsRefresh;
+}
+
+function finalizeSavedMusicStateAfterNoReload(saveReport) {
+  const savedMusic = (Array.isArray(saveReport) ? saveReport : []).some((entry) => {
+    const kind = String(entry && entry.kind || '').trim().toLowerCase();
+    return kind === 'music' || kind === 'musicaudio';
+  });
+  if (!savedMusic || !state.bundle || !state.bundle.tabs || !state.bundle.tabs.music) return false;
+  const tab = state.bundle.tabs.music;
+  const buildRoot = getMusicBuildRoot(tab);
+  const audioReportsBySource = new Map();
+  (Array.isArray(saveReport) ? saveReport : []).forEach((entry) => {
+    if (String(entry && entry.kind || '').trim().toLowerCase() !== 'musicaudio') return;
+    const sourceKey = normalizePathForCompare(entry && entry.sourcePath);
+    if (sourceKey) audioReportsBySource.set(sourceKey, entry);
+  });
+  let changed = false;
+  const assignments = tab.assignments && typeof tab.assignments === 'object' ? tab.assignments : {};
+  Object.values(assignments).forEach((eraCells) => {
+    if (!eraCells || typeof eraCells !== 'object') return;
+    Object.values(eraCells).forEach((tracks) => {
+      (Array.isArray(tracks) ? tracks : []).forEach((track) => {
+        if (!track || !track.pendingSourcePath) return;
+        const report = audioReportsBySource.get(normalizePathForCompare(track.pendingSourcePath));
+        const reportedRel = normalizeRelativePath(report && report.relativePath);
+        if (reportedRel) {
+          track.relativePath = reportedRel;
+          track.displayPath = reportedRel.replace(/\//g, '\\');
+        }
+        delete track.pendingSourcePath;
+        const rel = normalizeRelativePath(track.relativePath);
+        if (buildRoot && rel) track.absolutePath = joinLocalPath(buildRoot, rel);
+        track.missing = false;
+        changed = true;
+      });
+    });
+  });
+  return changed && state.activeTab === 'music';
 }
 
 function markScenarioDistrictsAsSaved() {
@@ -65247,13 +66173,14 @@ async function saveCurrentBundle() {
         return true;
       }
       const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload(res.saveReport);
+      const rerenderAfterMusicSave = finalizeSavedMusicStateAfterNoReload(res.saveReport);
       markCurrentBundleCleanAfterSave({
         referenceOpsByTab: referenceOpsForNoReloadSave,
         saveReport: res.saveReport
       });
       _dbgLog('INF', 'saveBundle', 'Skipped post-save bundle reload because Reload After Save is off');
       rerunQualityChecksAfterNoReloadSave();
-      if (rerenderAfterAtlasSave) renderActiveTab({ preserveTabScroll: true });
+      if (rerenderAfterAtlasSave || rerenderAfterMusicSave) renderActiveTab({ preserveTabScroll: true });
       if (hasBiqSaveWarning) {
         const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
         const suffix = warningText ? ` ${warningText}` : '';
@@ -66864,6 +67791,7 @@ async function init() {
     ['typeText', el.filesFilterTypeText],
     ['typeBiq', el.filesFilterTypeBiq],
     ['typeArtPcx', el.filesFilterTypeArtPcx],
+    ['typeMusic', el.filesFilterTypeMusic],
     ['statusNew', el.filesFilterStatusNew],
     ['statusChanged', el.filesFilterStatusChanged],
     ['statusUnchanged', el.filesFilterStatusUnchanged],

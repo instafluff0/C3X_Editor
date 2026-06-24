@@ -470,8 +470,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload\(res\.saveReport\);[\s\S]*?markCurrentBundleCleanAfterSave\([\s\S]*?\);[\s\S]*?rerunQualityChecksAfterNoReloadSave\(\);[\s\S]*?if \(rerenderAfterAtlasSave\) renderActiveTab\(\{ preserveTabScroll: true \}\);[\s\S]*?setStatus\(`Saved \$\{res\.saveReport\.length\} file\(s\): \$\{paths\}`\);/,
-    'successful no-reload saves should refresh audit warnings and re-render atlas pickers after saved Resource or Unit atlas writes'
+    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload\(res\.saveReport\);[\s\S]*?const rerenderAfterMusicSave = finalizeSavedMusicStateAfterNoReload\(res\.saveReport\);[\s\S]*?markCurrentBundleCleanAfterSave\([\s\S]*?\);[\s\S]*?rerunQualityChecksAfterNoReloadSave\(\);[\s\S]*?if \(rerenderAfterAtlasSave \|\| rerenderAfterMusicSave\) renderActiveTab\(\{ preserveTabScroll: true \}\);[\s\S]*?setStatus\(`Saved \$\{res\.saveReport\.length\} file\(s\): \$\{paths\}`\);/,
+    'successful no-reload saves should refresh audit warnings and re-render tabs after saved Resource, Unit, or Music file writes need UI reconciliation'
   );
   assert.match(
     rendererText,

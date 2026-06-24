@@ -2003,6 +2003,45 @@ function auditScenarioPlayableCivilizationSlots(bundle, result) {
   );
 }
 
+function auditPendingMusicImports(bundle, result) {
+  const musicTab = bundle && bundle.tabs && bundle.tabs.music;
+  const assignments = musicTab && musicTab.assignments;
+  if (!assignments || typeof assignments !== 'object') return;
+  const tracks = [];
+  Object.values(assignments).forEach((eraCells) => {
+    if (!eraCells || typeof eraCells !== 'object') return;
+    Object.values(eraCells).forEach((cellTracks) => {
+      (Array.isArray(cellTracks) ? cellTracks : []).forEach((track) => tracks.push(track));
+    });
+  });
+  tracks.forEach((track, index) => {
+    const pendingSource = String(track && track.pendingSourcePath || '').trim();
+    if (!pendingSource) return;
+    const label = String(track && (track.displayPath || track.relativePath) || pendingSource).trim();
+    if (!/\.mp3$/i.test(pendingSource)) {
+      addSectionIssue(result, 'music', index, `${label}: imported music must be an MP3 file.`, 'music-import-not-mp3');
+      return;
+    }
+    const metadata = track && track.metadata && typeof track.metadata === 'object' ? track.metadata : null;
+    if (!metadata || metadata.ok === false) {
+      addSectionIssue(result, 'music', index, `${label}: MP3 metadata could not be read; verify it plays before saving.`, 'music-import-metadata-unreadable');
+      return;
+    }
+    const sampleRate = Number(metadata.sampleRate);
+    const channels = Number(metadata.channels);
+    const bitrate = Number(metadata.bitrate);
+    if (Number.isFinite(sampleRate) && sampleRate !== 44100) {
+      addSectionIssue(result, 'music', index, `${label}: imported MP3 is ${sampleRate} Hz; Civ3 music is safest at 44100 Hz.`, 'music-import-sample-rate');
+    }
+    if (Number.isFinite(channels) && channels !== 2) {
+      addSectionIssue(result, 'music', index, `${label}: imported MP3 is ${channels === 1 ? 'mono' : `${channels} channels`}; Civ3 music is safest as stereo.`, 'music-import-channels');
+    }
+    if (Number.isFinite(bitrate) && bitrate < 128000) {
+      addSectionIssue(result, 'music', index, `${label}: imported MP3 is below 128 kbps; older Civ3 playback is safest at 128 kbps CBR or higher.`, 'music-import-bitrate');
+    }
+  });
+}
+
 function auditLoadedBundle(bundle, options = {}) {
   const result = createAuditAccumulator();
   if (!bundle || !bundle.tabs) return result;
@@ -2023,6 +2062,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditScenarioTextHealth(bundle, result);
   auditCivilopediaLinks(bundle, result);
   auditScenarioPlayableCivilizationSlots(bundle, result);
+  auditPendingMusicImports(bundle, result);
   return result;
 }
 

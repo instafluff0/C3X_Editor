@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = requir
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes } = require('./src/configCore');
+const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes, inspectMp3File } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const log = require('./src/log');
 
@@ -1430,6 +1430,21 @@ ipcMain.handle('manager:open-log-folder', async () => {
 
 ipcMain.handle('manager:path-exists', async (_event, dirPath) => {
   return pathExists(dirPath);
+});
+
+ipcMain.handle('manager:inspect-audio-file', async (_event, filePath) => {
+  try {
+    const target = String(filePath || '').trim();
+    if (!target || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
+      return { ok: false, error: 'Audio file not found.' };
+    }
+    if (!/\.mp3$/i.test(target)) {
+      return { ok: false, error: 'Only MP3 music files are supported.' };
+    }
+    return inspectMp3File(target);
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : 'Could not inspect audio file.' };
+  }
 });
 
 ipcMain.handle('manager:get-path-access', async (_event, paths) => {

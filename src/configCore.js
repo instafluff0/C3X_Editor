@@ -95,6 +95,45 @@ const FILE_SPECS = {
   }
 };
 
+const MUSIC_RELATIVE_TEXT_PATH = path.join('Text', 'music.txt');
+const MUSIC_RELATIVE_BUILD_PATH = path.join('Sounds', 'Build');
+const MUSIC_ERA_SPECS = [
+  { key: 'ancient', label: 'Ancient' },
+  { key: 'medieval', label: 'Medieval' },
+  { key: 'industrial', label: 'Industrial' },
+  { key: 'modern', label: 'Modern', shared: true }
+];
+const MUSIC_CULTURE_SPECS = [
+  { key: 'american', label: 'American', codes: ['NA'] },
+  { key: 'european', label: 'European', codes: ['EC'] },
+  { key: 'roman', label: 'Roman', codes: ['GR'] },
+  { key: 'mideast', label: 'Mideast', codes: ['ME'] },
+  { key: 'asian', label: 'Asian', codes: ['OR'] }
+];
+const MUSIC_CELL_ORDER = [
+  ...MUSIC_ERA_SPECS.filter((era) => !era.shared).flatMap((era) => (
+    MUSIC_CULTURE_SPECS.map((culture) => ({ era: era.key, culture: culture.key }))
+  )),
+  { era: 'modern', culture: 'all' }
+];
+const MUSIC_PLAYLIST_CELL = { era: 'playlist', culture: 'all' };
+const MUSIC_WRITE_CELL_ORDER = [...MUSIC_CELL_ORDER, MUSIC_PLAYLIST_CELL];
+const MUSIC_STOCK_CULTURE_CODE_CELLS = {
+  na: 'american',
+  ec: 'european',
+  gr: 'roman',
+  me: 'mideast',
+  or: 'asian'
+};
+const MUSIC_STOCK_MODERN_COMPACT_NAMES = new Set([
+  'smashfull',
+  'starsfull',
+  'technomixfull',
+  'modernfull'
+]);
+const MUSIC_COMPATIBLE_MIN_BITRATE = 128000;
+const MUSIC_COMPATIBLE_SAMPLE_RATE = 44100;
+
 const REFERENCE_TAB_SPECS = [
   { key: 'civilizations', title: 'Civs', prefix: 'RACE_' },
   { key: 'technologies', title: 'Techs', prefix: 'TECH_' },
@@ -2075,6 +2114,463 @@ function isSectionArtImagePathField(kind, key) {
   const keyLower = String(key || '').trim().toLowerCase();
   return (kindKey === 'districts' && keyLower === 'img_paths')
     || ((kindKey === 'wonders' || kindKey === 'naturalWonders') && keyLower === 'img_path');
+}
+
+function normalizeMusicRelativePath(raw) {
+  return normalizeRelativePath(raw).replace(/^sounds\/build\//i, '');
+}
+
+function toMusicWindowsPath(raw) {
+  return normalizeMusicRelativePath(raw).replace(/\//g, '\\');
+}
+
+function getConquestsRootPath(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  return root ? path.join(root, 'Conquests') : '';
+}
+
+function getMusicTextPathForRoot(rootPath) {
+  return rootPath ? path.join(rootPath, MUSIC_RELATIVE_TEXT_PATH) : '';
+}
+
+function getMusicBuildPathForRoot(rootPath) {
+  return rootPath ? path.join(rootPath, MUSIC_RELATIVE_BUILD_PATH) : '';
+}
+
+function walkFilesRecursiveSafe(rootPath, predicate) {
+  const out = [];
+  const root = String(rootPath || '').trim();
+  if (!root || !fs.existsSync(root)) return out;
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_err) {
+      return;
+    }
+    entries.forEach((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (!predicate || predicate(full, entry)) {
+        out.push(full);
+      }
+    });
+  };
+  walk(root);
+  return out;
+}
+
+function scanMusicBuildLibrary(rootPath, scope = '') {
+  const buildRoot = getMusicBuildPathForRoot(rootPath);
+  const files = walkFilesRecursiveSafe(buildRoot, (full) => /\.mp3$/i.test(full));
+  return files.map((fullPath) => {
+    const relativePath = normalizeMusicRelativePath(path.relative(buildRoot, fullPath));
+    return {
+      relativePath,
+      displayPath: toMusicWindowsPath(relativePath),
+      absolutePath: fullPath,
+      scope,
+      metadata: inspectMp3File(fullPath)
+    };
+  });
+}
+
+function buildMusicLibraryIndex(library) {
+  const byRelative = new Map();
+  (Array.isArray(library) ? library : []).forEach((entry) => {
+    const rel = normalizeMusicRelativePath(entry && entry.relativePath).toLowerCase();
+    if (!rel || byRelative.has(rel)) return;
+    byRelative.set(rel, entry);
+  });
+  return byRelative;
+}
+
+function parseMusicPlaylistText(text) {
+  const lines = String(text || '').split(/\r\n|\n|\r/);
+  const entries = [];
+  lines.forEach((line, index) => {
+    const raw = String(line || '').trim();
+    if (!raw) return;
+    entries.push({
+      id: `track-${index}`,
+      relativePath: normalizeMusicRelativePath(raw),
+      originalLine: raw,
+      lineIndex: index
+    });
+  });
+  return entries;
+}
+
+function buildMusicEntriesFromLibrary(library) {
+  return (Array.isArray(library) ? library : [])
+    .map((entry) => ({
+      id: `library-${normalizeMusicRelativePath(entry && entry.relativePath).toLowerCase()}`,
+      relativePath: normalizeMusicRelativePath(entry && entry.relativePath),
+      originalLine: toMusicWindowsPath(entry && entry.relativePath),
+      lineIndex: -1
+    }))
+    .filter((entry) => entry.relativePath)
+    .sort((a, b) => a.relativePath.localeCompare(b.relativePath, undefined, { sensitivity: 'base' }));
+}
+
+function inferMusicCellFromPath(relativePath, fallbackIndex = 0, total = 0) {
+  const rel = normalizeMusicRelativePath(relativePath);
+  const file = path.posix.basename(rel).replace(/\.[^.]+$/i, '');
+  const compact = file.replace(/[\s_-]+/g, '').toLowerCase();
+  const relLower = rel.toLowerCase();
+  const culture = MUSIC_CULTURE_SPECS.find((candidate) => (
+    candidate.codes.some((code) => compact.includes(String(code || '').toLowerCase()))
+    || relLower.includes(candidate.key.toLowerCase())
+  ));
+  if (/^(anc|ancient)/i.test(compact) || relLower.includes('ancient')) {
+    return { era: 'ancient', culture: culture ? culture.key : 'all' };
+  }
+  if (/^(mid|middle|medieval)/i.test(compact) || relLower.includes('middle ages') || relLower.includes('medieval')) {
+    return { era: 'medieval', culture: culture ? culture.key : 'all' };
+  }
+  if (/^(ind|industrial)/i.test(compact) || relLower.includes('indmodern') || relLower.includes('industrial')) {
+    return { era: 'industrial', culture: culture ? culture.key : 'all' };
+  }
+  if (/^(modern|smash|stars|technomix)/i.test(compact) || relLower.includes('modern')) {
+    return { era: 'modern', culture: 'all' };
+  }
+  return null;
+}
+
+function inferStockLibraryMusicCellFromPath(relativePath) {
+  const rel = normalizeMusicRelativePath(relativePath);
+  const file = path.posix.basename(rel).replace(/\.[^.]+$/i, '');
+  const compact = file.replace(/[\s_-]+/g, '').toLowerCase();
+  let match = compact.match(/^anc(na|ec|gr|me|or)(full)?$/i);
+  if (match) return { era: 'ancient', culture: MUSIC_STOCK_CULTURE_CODE_CELLS[match[1].toLowerCase()] || 'american' };
+  match = compact.match(/^mid(na|ec|gr|me|or)full$/i);
+  if (match) return { era: 'medieval', culture: MUSIC_STOCK_CULTURE_CODE_CELLS[match[1].toLowerCase()] || 'american' };
+  match = compact.match(/^ind(na|ec|gr|me|or)full$/i);
+  if (match) return { era: 'industrial', culture: MUSIC_STOCK_CULTURE_CODE_CELLS[match[1].toLowerCase()] || 'american' };
+  if (MUSIC_STOCK_MODERN_COMPACT_NAMES.has(compact)) return { era: 'modern', culture: 'all' };
+  return null;
+}
+
+function makeEmptyMusicAssignments() {
+  const assignments = {};
+  MUSIC_ERA_SPECS.forEach((era) => {
+    assignments[era.key] = {};
+    if (era.shared) {
+      assignments[era.key].all = [];
+    } else {
+      MUSIC_CULTURE_SPECS.forEach((culture) => {
+        assignments[era.key][culture.key] = [];
+      });
+    }
+  });
+  assignments[MUSIC_PLAYLIST_CELL.era] = { [MUSIC_PLAYLIST_CELL.culture]: [] };
+  return assignments;
+}
+
+function assignMusicTrack(assignments, cell, track) {
+  const eraKey = String(cell && cell.era || '').trim();
+  if (eraKey === MUSIC_PLAYLIST_CELL.era) {
+    if (!assignments[MUSIC_PLAYLIST_CELL.era]) assignments[MUSIC_PLAYLIST_CELL.era] = {};
+    if (!Array.isArray(assignments[MUSIC_PLAYLIST_CELL.era][MUSIC_PLAYLIST_CELL.culture])) {
+      assignments[MUSIC_PLAYLIST_CELL.era][MUSIC_PLAYLIST_CELL.culture] = [];
+    }
+    assignments[MUSIC_PLAYLIST_CELL.era][MUSIC_PLAYLIST_CELL.culture].push(track);
+    return;
+  }
+  const era = MUSIC_ERA_SPECS.find((entry) => entry.key === eraKey) || MUSIC_ERA_SPECS[0];
+  const cultureKey = era.shared ? 'all' : String(cell && cell.culture || '').trim();
+  const culture = era.shared
+    ? 'all'
+    : (MUSIC_CULTURE_SPECS.some((entry) => entry.key === cultureKey) ? cultureKey : MUSIC_CULTURE_SPECS[0].key);
+  if (!assignments[era.key]) assignments[era.key] = {};
+  if (!Array.isArray(assignments[era.key][culture])) assignments[era.key][culture] = [];
+  assignments[era.key][culture].push(track);
+}
+
+function flattenMusicAssignments(assignments) {
+  const rows = [];
+  MUSIC_WRITE_CELL_ORDER.forEach((cell) => {
+    const tracks = (((assignments || {})[cell.era] || {})[cell.culture]) || [];
+    tracks.forEach((track) => {
+      const rel = normalizeMusicRelativePath(track && track.relativePath);
+      if (rel) rows.push(rel);
+    });
+  });
+  return rows;
+}
+
+function bitrateFromMpegHeader(versionBits, layerBits, bitrateIndex) {
+  if (bitrateIndex <= 0 || bitrateIndex >= 15) return null;
+  const table = {
+    '3:3': [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+    '3:2': [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
+    '3:1': [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
+    '2:3': [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+    '2:2': [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+    '2:1': [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256]
+  };
+  const version = versionBits === 3 ? 3 : 2;
+  const key = `${version}:${layerBits}`;
+  const kbps = table[key] ? table[key][bitrateIndex] : 0;
+  return kbps ? kbps * 1000 : null;
+}
+
+function sampleRateFromMpegHeader(versionBits, sampleRateIndex) {
+  if (sampleRateIndex >= 3) return null;
+  const base = [44100, 48000, 32000][sampleRateIndex];
+  if (versionBits === 3) return base;
+  if (versionBits === 2) return Math.round(base / 2);
+  if (versionBits === 0) return Math.round(base / 4);
+  return null;
+}
+
+function inspectMp3File(filePath) {
+  const meta = {
+    ok: false,
+    bitrate: null,
+    sampleRate: null,
+    channels: null,
+    durationSeconds: null,
+    sizeBytes: 0,
+    codec: 'mp3'
+  };
+  try {
+    const stat = fs.statSync(filePath);
+    meta.sizeBytes = stat.size;
+    const fd = fs.openSync(filePath, 'r');
+    const len = Math.min(stat.size, 256 * 1024);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, 0);
+    fs.closeSync(fd);
+    let offset = 0;
+    if (buf.length >= 10 && buf.toString('latin1', 0, 3) === 'ID3') {
+      offset = 10 + ((buf[6] & 0x7f) << 21) + ((buf[7] & 0x7f) << 14) + ((buf[8] & 0x7f) << 7) + (buf[9] & 0x7f);
+    }
+    for (let i = offset; i + 4 <= buf.length; i += 1) {
+      if (buf[i] !== 0xff || (buf[i + 1] & 0xe0) !== 0xe0) continue;
+      const versionBits = (buf[i + 1] >> 3) & 0x03;
+      const layerBits = (buf[i + 1] >> 1) & 0x03;
+      const bitrateIndex = (buf[i + 2] >> 4) & 0x0f;
+      const sampleRateIndex = (buf[i + 2] >> 2) & 0x03;
+      const channelMode = (buf[i + 3] >> 6) & 0x03;
+      const bitrate = bitrateFromMpegHeader(versionBits, layerBits, bitrateIndex);
+      const sampleRate = sampleRateFromMpegHeader(versionBits, sampleRateIndex);
+      if (!bitrate || !sampleRate || layerBits === 0 || versionBits === 1) continue;
+      meta.ok = true;
+      meta.bitrate = bitrate;
+      meta.sampleRate = sampleRate;
+      meta.channels = channelMode === 3 ? 1 : 2;
+      meta.durationSeconds = bitrate > 0 ? Math.round((stat.size * 8 / bitrate) * 10) / 10 : null;
+      return meta;
+    }
+  } catch (err) {
+    meta.error = err.message;
+  }
+  return meta;
+}
+
+function resolveMusicEntry(entry, libraryIndex) {
+  const rel = normalizeMusicRelativePath(entry && entry.relativePath);
+  const libraryEntry = libraryIndex.get(rel.toLowerCase()) || null;
+  return {
+    ...entry,
+    relativePath: rel,
+    displayPath: toMusicWindowsPath(rel),
+    absolutePath: libraryEntry ? libraryEntry.absolutePath : '',
+    metadata: libraryEntry ? libraryEntry.metadata : null,
+    missing: !libraryEntry
+  };
+}
+
+function loadMusicTab({ mode, civ3Path, scenarioContext, textFileEncoding = DEFAULT_TEXT_FILE_ENCODING } = {}) {
+  const conquestsRoot = getConquestsRootPath(civ3Path);
+  const scenarioRoot = scenarioContext && (scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioContext.biqRoot);
+  const targetRoot = mode === 'scenario' ? scenarioRoot : conquestsRoot;
+  const activePath = getMusicTextPathForRoot(targetRoot);
+  const activeInfo = readTextFileWithEncodingInfoIfExists(activePath, { preferredEncoding: textFileEncoding });
+  const standardPath = getMusicTextPathForRoot(conquestsRoot);
+  const standardInfo = mode === 'scenario'
+    ? readTextFileWithEncodingInfoIfExists(standardPath, { preferredEncoding: textFileEncoding })
+    : null;
+  const conquestsLibrary = scanMusicBuildLibrary(conquestsRoot, 'standard');
+  const scenarioLibraries = mode === 'scenario'
+    ? dedupePathList([scenarioRoot, ...((scenarioContext && scenarioContext.searchRoots) || [])])
+      .filter((root) => root && normalizePathForCompare(root) !== normalizePathForCompare(conquestsRoot))
+      .flatMap((root) => scanMusicBuildLibrary(root, 'scenario'))
+    : [];
+  const library = [...scenarioLibraries, ...conquestsLibrary];
+  const libraryIndex = buildMusicLibraryIndex(library);
+  const inheritedStandardInfo = mode === 'scenario' && !activeInfo && standardInfo;
+  const generatedFromLibrary = !activeInfo && !inheritedStandardInfo && conquestsLibrary.length > 0;
+  const effectiveInfo = activeInfo || inheritedStandardInfo || null;
+  const entries = generatedFromLibrary
+    ? buildMusicEntriesFromLibrary(conquestsLibrary)
+    : parseMusicPlaylistText(effectiveInfo ? effectiveInfo.text : '');
+  const assignments = makeEmptyMusicAssignments();
+  entries.forEach((entry, index) => {
+    const resolved = resolveMusicEntry(entry, libraryIndex);
+    if (!activeInfo && mode === 'scenario') resolved.inherited = true;
+    const cell = generatedFromLibrary
+      ? inferStockLibraryMusicCellFromPath(entry.relativePath)
+      : inferMusicCellFromPath(entry.relativePath, index, entries.length);
+    if (cell) {
+      assignMusicTrack(assignments, cell, resolved);
+    } else {
+      assignMusicTrack(assignments, MUSIC_PLAYLIST_CELL, resolved);
+    }
+  });
+  return {
+    type: 'music',
+    key: 'music',
+    title: 'Music',
+    targetPath: activePath,
+    effectivePath: activeInfo ? activePath : inheritedStandardInfo ? standardPath : generatedFromLibrary ? getMusicBuildPathForRoot(conquestsRoot) : '',
+    effectiveSource: activeInfo ? (mode === 'scenario' ? 'scenario' : 'standard') : inheritedStandardInfo ? 'standard' : generatedFromLibrary ? 'standard-library' : 'none',
+    buildRoots: {
+      standard: getMusicBuildPathForRoot(conquestsRoot),
+      scenario: mode === 'scenario' ? getMusicBuildPathForRoot(scenarioRoot) : ''
+    },
+    eras: MUSIC_ERA_SPECS,
+    cultures: MUSIC_CULTURE_SPECS,
+    assignments,
+    library,
+    sourceDetails: {
+      activePath,
+      targetPath: activePath,
+      effectivePath: activeInfo ? activePath : inheritedStandardInfo ? standardPath : '',
+      activeEncoding: activeInfo ? activeInfo.encoding : inheritedStandardInfo ? inheritedStandardInfo.encoding : '',
+      activeBom: !!((activeInfo || inheritedStandardInfo) && (activeInfo || inheritedStandardInfo).bom),
+      hasActive: !!activeInfo,
+      inheritedFromStandard: !!inheritedStandardInfo || (mode === 'scenario' && generatedFromLibrary),
+      generatedFromLibrary,
+      libraryPath: generatedFromLibrary ? getMusicBuildPathForRoot(conquestsRoot) : ''
+    }
+  };
+}
+
+function serializeMusicTab(tab) {
+  return `${flattenMusicAssignments(tab && tab.assignments).map(toMusicWindowsPath).join('\r\n')}\r\n`;
+}
+
+function sanitizeMusicFileName(rawName) {
+  const base = path.basename(String(rawName || '').trim()).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+  const withExt = /\.mp3$/i.test(base) ? base : `${base || 'track'}.mp3`;
+  return withExt || 'track.mp3';
+}
+
+function reserveMusicRelativeTarget({ used, buildRoot, preferredRelativePath, sourcePath }) {
+  const preferred = normalizeMusicRelativePath(preferredRelativePath) || sanitizeMusicFileName(sourcePath);
+  const dir = normalizeRelativePath(path.posix.dirname(preferred));
+  const ext = path.posix.extname(preferred) || '.mp3';
+  const stem = path.posix.basename(preferred, ext) || path.posix.basename(sanitizeMusicFileName(sourcePath), '.mp3') || 'track';
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const fileName = `${stem}${attempt > 0 ? `_${attempt + 1}` : ''}${ext}`;
+    const rel = normalizeMusicRelativePath(dir && dir !== '.' ? path.posix.join(dir, fileName) : fileName);
+    const key = rel.toLowerCase();
+    if (used.has(key)) continue;
+    const targetPath = path.join(buildRoot, rel.replace(/\//g, path.sep));
+    if (fs.existsSync(targetPath)) continue;
+    used.add(key);
+    return { relativePath: rel, targetPath };
+  }
+  return null;
+}
+
+function shouldLocalizeMusicTrackForTarget(track, targetRoot) {
+  const sourcePath = String(track && track.absolutePath || '').trim();
+  if (!sourcePath || !isAbsoluteFilesystemPath(sourcePath) || !targetRoot) return false;
+  const rel = getScenarioRelativePathForAbsoluteSource(sourcePath, targetRoot);
+  if (!rel) return true;
+  const normalizedRel = normalizeRelativePath(rel);
+  return !/^sounds\/build\//i.test(normalizedRel);
+}
+
+function prepareMusicTabWrites({ tab, targetRoot, textFileEncoding = DEFAULT_TEXT_FILE_ENCODING } = {}) {
+  const targetPath = String(tab && tab.targetPath || (targetRoot ? getMusicTextPathForRoot(targetRoot) : '') || '').trim();
+  const buildRoot = getMusicBuildPathForRoot(targetRoot);
+  if (!tab || !targetPath || !buildRoot) return { ok: true, writes: [], saveReport: [] };
+  const workingTab = {
+    ...tab,
+    assignments: JSON.parse(JSON.stringify(tab.assignments || {})),
+    sourceDetails: { ...((tab && tab.sourceDetails) || {}) }
+  };
+  const writes = [];
+  const saveReport = [];
+  const usedRel = new Set();
+  flattenMusicAssignments(workingTab.assignments).forEach((rel) => {
+    if (rel) usedRel.add(normalizeMusicRelativePath(rel).toLowerCase());
+  });
+  const tracks = [];
+  MUSIC_WRITE_CELL_ORDER.forEach((cell) => {
+    ((((workingTab.assignments || {})[cell.era] || {})[cell.culture]) || []).forEach((track) => tracks.push(track));
+  });
+  tracks.forEach((track) => {
+    const sourcePath = String(track && (track.pendingSourcePath || track.sourcePath || (shouldLocalizeMusicTrackForTarget(track, targetRoot) ? track.absolutePath : '')) || '').trim();
+    if (!sourcePath || !isAbsoluteFilesystemPath(sourcePath)) return;
+    if (!/\.mp3$/i.test(sourcePath)) {
+      throw new Error(`Music imports must be MP3 files: ${sourcePath}`);
+    }
+    let stat = null;
+    try {
+      stat = fs.statSync(sourcePath);
+    } catch (_err) {
+      stat = null;
+    }
+    if (!stat || !stat.isFile()) {
+      throw new Error(`Music source file does not exist: ${sourcePath}`);
+    }
+    usedRel.delete(normalizeMusicRelativePath(track.relativePath).toLowerCase());
+    const sourceRel = getScenarioRelativePathForAbsoluteSource(sourcePath, targetRoot);
+    if (sourceRel && normalizePathForCompare(path.join(targetRoot, sourceRel)) === normalizePathForCompare(path.join(buildRoot, normalizeMusicRelativePath(track.relativePath).replace(/\//g, path.sep)))) {
+      delete track.pendingSourcePath;
+      return;
+    }
+    const reserved = reserveMusicRelativeTarget({
+      used: usedRel,
+      buildRoot,
+      preferredRelativePath: track.relativePath || sanitizeMusicFileName(sourcePath),
+      sourcePath
+    });
+    if (!reserved) {
+      throw new Error(`Could not reserve a scenario music target for ${sourcePath}`);
+    }
+    writes.push({
+      kind: 'musicAudio',
+      path: reserved.targetPath,
+      sourcePath,
+      data: fs.readFileSync(sourcePath)
+    });
+    saveReport.push({
+      kind: 'musicAudio',
+      path: reserved.targetPath,
+      sourcePath,
+      relativePath: reserved.relativePath
+    });
+    track.relativePath = reserved.relativePath;
+    track.displayPath = toMusicWindowsPath(reserved.relativePath);
+    track.absolutePath = reserved.targetPath;
+    track.metadata = inspectMp3File(sourcePath);
+    track.missing = false;
+    delete track.pendingSourcePath;
+  });
+  const sourceDetails = tab.sourceDetails || {};
+  const resolvedEncoding = resolveScenarioTextWriteEncoding({
+    targetPath,
+    sourcePath: String(sourceDetails.activePath || sourceDetails.effectivePath || ''),
+    explicitEncoding: String(sourceDetails.activeEncoding || ''),
+    preferredEncoding: textFileEncoding,
+    fallbackEncoding: 'windows-1252'
+  });
+  writes.push({
+    kind: 'music',
+    path: targetPath,
+    data: encodeTextBuffer(serializeMusicTab(workingTab), resolvedEncoding.encoding, { bom: resolvedEncoding.bom }),
+    encoding: resolvedEncoding.encoding,
+    bom: resolvedEncoding.bom
+  });
+  saveReport.push({ kind: 'music', path: targetPath });
+  return { ok: true, writes, saveReport };
 }
 
 function resolveCiv3RootPath(civ3Path) {
@@ -6845,6 +7341,12 @@ function loadBundle(payload) {
         bundle.tabs[spec.key] = referenceTabs[spec.key];
       }
     }
+    bundle.tabs.music = loadMusicTab({
+      mode,
+      civ3Path,
+      scenarioContext,
+      textFileEncoding
+    });
     const scenarioDistrictsMetadata = mode === 'scenario'
       ? loadScenarioDistrictsMetadata({
         scenarioPath: mode === 'scenario' ? (scenarioContext.contentWriteRoot || scenarioDir) : scenarioDir,
@@ -9816,11 +10318,39 @@ function buildSavePlan(payload) {
     saveReport.push({ kind, path: targetPath });
   }
 
+  const musicTab = payload.tabs.music;
+  const shouldSaveMusic = dirtyTabs.size === 0 || dirtyTabs.has('music');
+  if (shouldSaveMusic && musicTab) {
+    try {
+      const targetContentRoot = mode === 'scenario'
+        ? (scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioDir)
+        : getConquestsRootPath(civ3Path);
+      const musicWrites = prepareMusicTabWrites({
+        tab: musicTab,
+        targetRoot: targetContentRoot,
+        textFileEncoding
+      });
+      if (!musicWrites.ok) return musicWrites;
+      for (const write of musicWrites.writes || []) {
+        const target = String(write && write.path || '').trim();
+        const protectErr = failIfProtected(target, String(write && write.kind || 'music target'));
+        if (protectErr) return { ok: false, error: protectErr };
+        if (mode === 'scenario' && !isPathWithinAnyRoot(target, scenarioContext.writableRoots)) {
+          return { ok: false, error: `Refusing to write music outside this scenario: ${target}` };
+        }
+        plannedWrites.push(write);
+      }
+      for (const report of musicWrites.saveReport || []) saveReport.push(report);
+    } catch (err) {
+      return { ok: false, error: `Failed to save music edits: ${err.message}` };
+    }
+  }
+
   if (mode === 'scenario' && isBiqPath(scenarioPath)) {
     const protectErr = failIfProtected(scenarioPath, 'scenario BIQ target');
     if (protectErr) return { ok: false, error: protectErr };
 
-    const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations']);
+    const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'music']);
     const dirtyTabsAreOnlyNonBiq = dirtyTabs.size > 0
       && Array.from(dirtyTabs).every((tabKey) => nonBiqDirtyTabs.has(String(tabKey || '')));
     const hasPendingBiqOperations = hasPendingBiqOperationPayload(payload.tabs || {});
@@ -13554,5 +14084,6 @@ module.exports = {
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,
   isPrtoStrategyMapRecord,
-  buildPrtoStrategyMapAliases
+  buildPrtoStrategyMapAliases,
+  inspectMp3File
 };
