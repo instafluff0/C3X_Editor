@@ -2018,6 +2018,23 @@ function auditMusic(bundle, result) {
     if (track && track.missing && !playablePath) {
       addGeneralIssue(result, 'music', `${title} is listed in Music.txt, but the MP3 could not be found.`, 'music-file-missing');
     }
+    const rawBitrateKbps = track && track.bitrateKbps;
+    const rawSampleRateHz = track && track.sampleRateHz;
+    const bitrateKbps = rawBitrateKbps !== null && rawBitrateKbps !== undefined && rawBitrateKbps !== '' ? Number(rawBitrateKbps) : NaN;
+    const sampleRateHz = rawSampleRateHz !== null && rawSampleRateHz !== undefined && rawSampleRateHz !== '' ? Number(rawSampleRateHz) : NaN;
+    const channelMode = String(track && track.channelMode || '').trim().toLowerCase();
+    const compatibilityNotes = [];
+    if (Number.isFinite(bitrateKbps) && bitrateKbps !== 128) compatibilityNotes.push(`${bitrateKbps} kbps`);
+    if (Number.isFinite(sampleRateHz) && sampleRateHz !== 44100) compatibilityNotes.push(`${sampleRateHz / 1000} kHz`);
+    if (channelMode && channelMode !== 'stereo') compatibilityNotes.push(channelMode);
+    if (compatibilityNotes.length > 0) {
+      addGeneralIssue(
+        result,
+        'music',
+        `${title} is ${compatibilityNotes.join(', ')}. Civ3 custom build music is safest as 128 kbps CBR, 44.1 kHz, stereo MP3; other encodings can freeze Civ3 when a scenario starts.`,
+        'music-mp3-compatibility'
+      );
+    }
   });
 }
 

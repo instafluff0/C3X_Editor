@@ -51,5 +51,6 @@ This means an active scenario `Text/music.txt` should be shown as a single scena
 ## Compatibility Notes
 
 - MP3s are the supported music import format for this editor.
-- Pending imports should be checked for Civ3-safe metadata, but existing shipped scenarios should not be flagged unless an explicit referenced file is unresolved.
+- Pending imports and explicit scenario playlist files should be checked for Civ3-safe metadata; inherited stock-library views should not be flagged unless an explicit referenced file is unresolved.
 - The CivFanatics note reports that low-bitrate MP3s may play too fast in-game; editor QA should keep this as a pending-import compatibility warning rather than a hard error for existing content.
+- Observed stock Conquests build music, Star Wars TMA build music, and Tides of Crimson build music are all 128 kbps, 44.1 kHz, stereo MP3s. User-supplied 192 kbps GarageBand exports have been observed to freeze Civ3 when scenario music starts, so async QA should warn on playlist MP3s outside the 128 kbps CBR, 44.1 kHz, stereo profile.

@@ -5470,7 +5470,7 @@ function applyDirtyBadgeToTabButton(button, key, tab) {
         warningCount
       );
     }
-  } else if (shouldRunQualityChecks() && ['civilizations', 'technologies', 'resources', 'governments', 'improvements', 'gameConcepts'].includes(key)) {
+  } else if (shouldRunQualityChecks() && ['civilizations', 'technologies', 'resources', 'governments', 'improvements', 'gameConcepts', 'music'].includes(key)) {
     const warningCount = getLoadAuditBadgeCount(key);
     if (warningCount > 0) {
       appendWarningCountBadge(
@@ -63410,23 +63410,40 @@ function collectReservedMusicImportNames(tab) {
   return reserved;
 }
 
-function makeMusicTrackFromPath(filePath, relativePath = '') {
+async function inspectMusicFileBasic(filePath) {
+  const p = String(filePath || '').trim();
+  if (!p || !window.c3xManager || typeof window.c3xManager.inspectAudioFile !== 'function') return null;
+  try {
+    const result = await window.c3xManager.inspectAudioFile(p);
+    return result && result.ok && result.info ? result.info : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function makeMusicTrackFromPath(filePath, relativePath = '') {
   const p = String(filePath || '').trim();
   const rel = normalizeRelativePath(relativePath || getPathBaseName(p) || 'music.mp3');
   const title = getPathBaseName(rel) || getPathBaseName(p) || 'music.mp3';
   const buildRoot = String((state.bundle && state.bundle.tabs && state.bundle.tabs.music && state.bundle.tabs.music.buildTargetPath) || '').trim();
   const alreadyInBuild = !!getMusicRelativePathInsideBuildRoot(p, buildRoot);
+  const info = await inspectMusicFileBasic(p);
   return {
     id: `pending:${Date.now()}:${Math.random().toString(16).slice(2)}`,
     relativePath: rel,
     displayPath: rel,
     title,
-    fileName: getPathBaseName(p) || title,
     sourcePath: p,
     playablePath: p,
     pendingSourcePath: alreadyInBuild ? '' : p,
     explicit: true,
-    missing: false
+    missing: false,
+    fileName: info && info.fileName ? info.fileName : (getPathBaseName(p) || title),
+    size: info && Number.isFinite(Number(info.size)) ? Number(info.size) : 0,
+    durationSeconds: info && Number.isFinite(Number(info.durationSeconds)) ? Number(info.durationSeconds) : null,
+    bitrateKbps: info && Number.isFinite(Number(info.bitrateKbps)) ? Number(info.bitrateKbps) : null,
+    sampleRateHz: info && Number.isFinite(Number(info.sampleRateHz)) ? Number(info.sampleRateHz) : null,
+    channelMode: info && info.channelMode ? String(info.channelMode) : ''
   };
 }
 
@@ -63472,7 +63489,7 @@ async function addMusicFilesToPlaylist(tab, files) {
   const reserved = collectReservedMusicImportNames(tab);
   for (const filePath of paths) {
     const relativePath = await resolveMusicImportRelativePath(tab, filePath, reserved);
-    assignments.playlist.all.push(makeMusicTrackFromPath(filePath, relativePath));
+    assignments.playlist.all.push(await makeMusicTrackFromPath(filePath, relativePath));
   }
   markMusicDirty();
   renderActiveTab({ preserveTabScroll: true });
@@ -63489,7 +63506,7 @@ async function pickMusicFilesForPlaylist(tab) {
   ensureMusicPlaylistMode(tab);
   const reserved = collectReservedMusicImportNames(tab);
   const relativePath = await resolveMusicImportRelativePath(tab, filePath, reserved);
-  getMusicAssignments(tab).playlist.all.push(makeMusicTrackFromPath(filePath, relativePath));
+  getMusicAssignments(tab).playlist.all.push(await makeMusicTrackFromPath(filePath, relativePath));
   markMusicDirty();
   renderActiveTab({ preserveTabScroll: true });
 }
@@ -63883,9 +63900,13 @@ function renderMusicPlaylistEditor(tab) {
 }
 
 function renderMusicTab(tab) {
-  return String(tab && tab.layout || '').trim().toLowerCase() === 'playlist'
+  const content = String(tab && tab.layout || '').trim().toLowerCase() === 'playlist'
     ? renderMusicPlaylistEditor(tab)
     : renderMusicStockLibrary(tab);
+  const auditMessages = shouldRunQualityChecks() ? getLoadAuditAllMessages('music') : [];
+  const auditBox = createWarningBox(auditMessages, 'Quality Checks', { collapsible: true });
+  if (auditBox) content.insertBefore(auditBox, content.firstChild);
+  return content;
 }
 
 function renderSectionTab(tab, tabKey) {

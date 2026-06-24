@@ -88,6 +88,12 @@ test('Music now-playing panel exposes metadata and allows selected-track wavefor
   const getMusicPendingSeekRatioValue = extractFunctionSource(rendererText, 'getMusicPendingSeekRatioValue');
   const getMusicPendingSeekTimeValue = extractFunctionSource(rendererText, 'getMusicPendingSeekTimeValue');
   const applyPendingMusicSeek = extractFunctionSource(rendererText, 'applyPendingMusicSeek');
+  const inspectMusicFileBasic = extractFunctionSource(rendererText, 'inspectMusicFileBasic');
+  const makeMusicTrackFromPath = extractFunctionSource(rendererText, 'makeMusicTrackFromPath');
+  const addMusicFilesToPlaylist = extractFunctionSource(rendererText, 'addMusicFilesToPlaylist');
+  const pickMusicFilesForPlaylist = extractFunctionSource(rendererText, 'pickMusicFilesForPlaylist');
+  const renderMusicTab = extractFunctionSource(rendererText, 'renderMusicTab');
+  const applyDirtyBadgeToTabButton = extractFunctionSource(rendererText, 'applyDirtyBadgeToTabButton');
 
   assert.match(
     renderMusicNowPlayingPanel,
@@ -123,6 +129,36 @@ test('Music now-playing panel exposes metadata and allows selected-track wavefor
     getMusicNowPlayingMeta,
     /formatMusicTime\(current\)[\s\S]*?formatMusicTime\(duration\)[\s\S]*?bitrateKbps[\s\S]*?getMusicSampleRateLabel[\s\S]*?channelMode/,
     'now-playing metadata should include current/total time, bitrate, sample rate, and channel mode'
+  );
+  assert.match(
+    inspectMusicFileBasic,
+    /window\.c3xManager\.inspectAudioFile\(p\)/,
+    'renderer imports should use the main-process MP3 metadata inspector'
+  );
+  assert.match(
+    makeMusicTrackFromPath,
+    /function makeMusicTrackFromPath[\s\S]*?const info = await inspectMusicFileBasic\(p\);[\s\S]*?durationSeconds: info && Number\.isFinite\(Number\(info\.durationSeconds\)\)[\s\S]*?bitrateKbps: info && Number\.isFinite\(Number\(info\.bitrateKbps\)\)[\s\S]*?sampleRateHz: info && Number\.isFinite\(Number\(info\.sampleRateHz\)\)[\s\S]*?channelMode: info && info\.channelMode/,
+    'newly imported MP3 rows should carry inspected duration, bitrate, sample rate, and channel mode'
+  );
+  assert.match(
+    addMusicFilesToPlaylist,
+    /assignments\.playlist\.all\.push\(await makeMusicTrackFromPath\(filePath, relativePath\)\);/,
+    'drag/drop MP3 imports should wait for metadata before rendering the new row'
+  );
+  assert.match(
+    pickMusicFilesForPlaylist,
+    /getMusicAssignments\(tab\)\.playlist\.all\.push\(await makeMusicTrackFromPath\(filePath, relativePath\)\);/,
+    'picker MP3 imports should wait for metadata before rendering the new row'
+  );
+  assert.match(
+    renderMusicTab,
+    /getLoadAuditAllMessages\('music'\)[\s\S]*?createWarningBox\(auditMessages, 'Quality Checks'/,
+    'Music tab should render async QA warnings inside the tab content'
+  );
+  assert.match(
+    applyDirtyBadgeToTabButton,
+    /\['civilizations', 'technologies', 'resources', 'governments', 'improvements', 'gameConcepts', 'music'\]/,
+    'Music tab should use the shared async QA badge path'
   );
   assert.doesNotMatch(
     renderMusicNowPlayingPanel,
@@ -308,6 +344,42 @@ test('music audit warns only for explicit missing playlist MP3s', () => {
   });
   const inheritedResult = auditLoadedBundle(inherited);
   assert.equal(inheritedResult.tabs.music, undefined);
+});
+
+test('music audit warns about custom MP3s outside the working Civ3 build-music profile', () => {
+  const bundle = {
+    tabs: {
+      music: {
+        layout: 'playlist',
+        assignments: {
+          playlist: {
+            all: [
+              {
+                title: 'GarageBand Idea',
+                fileName: 'idea_20250323.mp3',
+                bitrateKbps: 192,
+                sampleRateHz: 44100,
+                channelMode: 'stereo'
+              },
+              {
+                title: 'Working Scenario Track',
+                fileName: 'Aggressor.mp3',
+                bitrateKbps: 128,
+                sampleRateHz: 44100,
+                channelMode: 'stereo'
+              }
+            ]
+          }
+        }
+      }
+    }
+  };
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.music.count, 1);
+  assert.equal(result.tabs.music.general[0].code, 'music-mp3-compatibility');
+  assert.match(result.tabs.music.general[0].message, /GarageBand Idea is 192 kbps/);
+  assert.match(result.tabs.music.general[0].message, /128 kbps CBR, 44\.1 kHz, stereo MP3/);
 });
 
 test('custom scenario music saves playlist and copied MP3s under scenario Sounds/Build', () => {
