@@ -166,6 +166,11 @@ const state = {
     title: '',
     selectedTrack: null,
     isPlaying: false,
+    isBuffering: false,
+    pendingSeekRatio: null,
+    currentTimeSeconds: 0,
+    durationSeconds: 0,
+    pendingSeekTimeSeconds: null,
     token: 0
   },
   biqMapArtLoading: {},
@@ -176,6 +181,27 @@ const state = {
   civSlotUiColorCache: {},
   civSlotUiColorLoading: {},
   civSlotUiColorListeners: {},
+  civColorPaletteSlots: [],
+  cleanCivColorPaletteSlots: [],
+  civColorPaletteScenarioPath: '',
+  civColorPaletteSelectedSlot: 0,
+  civColorPaletteSelectedIndex: 7,
+  civColorPaletteFilter: ['main'],
+  civColorPaletteShowAdvanced: true,
+  civColorPaletteShowExperimental: false,
+  civColorPaletteShowProtected: false,
+  civColorPaletteAdjustmentTool: '',
+  civColorPaletteAdjustmentAmount: 0,
+  civColorPaletteTintTargetRgb: null,
+  civColorPaletteMainDraftSlot: -1,
+  civColorPaletteMainDraftRgb: null,
+  civColorPaletteTargetRoot: '',
+  civColorPaletteWritableRoots: [],
+  civColorPaletteNeedsSearchFolderSetup: false,
+  civColorPaletteSearchFolderSetupRoot: '',
+  civColorPaletteSearchFolderSetupValue: '',
+  civColorPaletteLoading: false,
+  civColorPaletteError: '',
   biqMapColoredUnitIconCache: new Map(),
   biqMapColoredStartLocCache: new Map(),
   previewCache: new Map(),
@@ -383,6 +409,16 @@ const unitTableModal = {
   needsActiveTabRefresh: false,
   lastConfig: null,
   dirtyCacheInitialized: false
+};
+const civColorPaletteModal = {
+  node: null,
+  body: null,
+  title: null,
+  refreshBtn: null,
+  saveBtn: null,
+  undoBtn: null,
+  undoAllBtn: null,
+  lastConfig: null
 };
 const civilizationAnimationPreviewQueue = {
   active: 0,
@@ -2398,7 +2434,7 @@ function openFilesReadModal() {
 }
 
 function getSaveButtons() {
-  return [el.saveBtn, techTreeModal.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn, mapModal.saveBtn].filter((btn) => btn && btn.isConnected);
+  return [el.saveBtn, techTreeModal.saveBtn, unitAvailabilityModal.saveBtn, unitTableModal.saveBtn, civColorPaletteModal.saveBtn, mapModal.saveBtn].filter((btn) => btn && btn.isConnected);
 }
 
 function getRefreshButtons() {
@@ -2544,6 +2580,7 @@ function getActiveShortcutActionButton(command) {
   if (isModalVisible(techTreeModal)) return key === 'undo' ? techTreeModal.undoBtn : techTreeModal.saveBtn;
   if (isModalVisible(unitAvailabilityModal)) return key === 'undo' ? unitAvailabilityModal.undoBtn : unitAvailabilityModal.saveBtn;
   if (isModalVisible(unitTableModal)) return key === 'undo' ? unitTableModal.undoBtn : unitTableModal.saveBtn;
+  if (isModalVisible(civColorPaletteModal)) return key === 'undo' ? civColorPaletteModal.undoBtn : civColorPaletteModal.saveBtn;
   return key === 'undo' ? el.undoBtn : el.saveBtn;
 }
 
@@ -2695,6 +2732,7 @@ function refreshDirtyUi() {
   refreshTechTreeModalActionButtons();
   refreshUnitAvailabilityModalActionButtons();
   refreshUnitTableModalActionButtons();
+  refreshCivColorPaletteModalActionButtons();
   refreshMapModalUndoButtons();
   const mapUndoButtonsMs = shouldLogReferencePerf ? Number((debugNowMs() - mapUndoButtonsStartedAt).toFixed(2)) : 0;
   if (shouldLogReferencePerf) {
@@ -2741,6 +2779,23 @@ function cloneUndoSnapshotEntry(entry) {
       techTreeArrowRouteSnapshots: deepCloneUiValue(entry.techTreeArrowRouteSnapshots || {}),
       techTreeArrowMetadataEraKeys: deepCloneUiValue(entry.techTreeArrowMetadataEraKeys || {}),
       techTreeSelectedArrowKey: String(entry.techTreeSelectedArrowKey || '')
+    };
+  }
+  if (entry && typeof entry === 'object' && entry.kind === 'civ-color-palettes') {
+    return {
+      kind: 'civ-color-palettes',
+      scope: 'civpalettes',
+      slots: cloneCivColorPaletteSlots(entry.slots),
+      cleanSlots: cloneCivColorPaletteSlots(entry.cleanSlots),
+      scenarioPath: String(entry.scenarioPath || ''),
+      selectedSlot: Number(entry.selectedSlot || 0),
+      filter: normalizeCivColorPaletteFilterFacets(entry.filter),
+      targetRoot: String(entry.targetRoot || ''),
+      writableRoots: deepCloneUiValue(Array.isArray(entry.writableRoots) ? entry.writableRoots : []),
+      needsSearchFolderSetup: !!entry.needsSearchFolderSetup,
+      searchFolderSetupRoot: String(entry.searchFolderSetupRoot || ''),
+      searchFolderSetupValue: String(entry.searchFolderSetupValue || ''),
+      error: String(entry.error || '')
     };
   }
   if (entry && typeof entry === 'object' && entry.kind === 'tech-tree-auto-position') {
@@ -2800,6 +2855,9 @@ function getUndoSnapshotSignature(snapshot) {
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'tech-tree-arrow-style') {
     return `tech-tree-arrow-style:${JSON.stringify(cloneUndoSnapshotEntry(snapshot))}`;
+  }
+  if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'civ-color-palettes') {
+    return `civ-color-palettes:${JSON.stringify(cloneUndoSnapshotEntry(snapshot))}`;
   }
   if (snapshot && typeof snapshot === 'object' && snapshot.kind === 'tech-tree-auto-position') {
     return `tech-tree-auto-position:${JSON.stringify(cloneUndoSnapshotEntry(snapshot))}`;
@@ -2909,6 +2967,116 @@ function applyLoadedScienceAdvisorArrowMetadata(metadata) {
     ? getScienceAdvisorArrowMetadataEraKeysFromMaps(state.techTreeArrowBaselineRouteHints, state.techTreeArrowRouteOverrides, state.techTreeArrowRouteSnapshots)
     : {};
   state.techTreeSelectedArrowKey = '';
+}
+
+function cloneCivColorPaletteSlots(slots) {
+  return deepCloneUiValue(Array.isArray(slots) ? slots : []);
+}
+
+function getCivColorPaletteStateSignature(slots = state.civColorPaletteSlots) {
+  return JSON.stringify(cloneCivColorPaletteSlots(slots));
+}
+
+function getDirtyCivColorPaletteSlots() {
+  const current = Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : [];
+  const clean = Array.isArray(state.cleanCivColorPaletteSlots) ? state.cleanCivColorPaletteSlots : [];
+  const cleanBySlot = new Map(clean.map((slot) => [Number(slot && slot.slot), JSON.stringify(slot)]));
+  return current.filter((slot) => cleanBySlot.get(Number(slot && slot.slot)) !== JSON.stringify(slot));
+}
+
+function hasUnsavedCivColorPaletteChanges() {
+  return getCivColorPaletteStateSignature(state.civColorPaletteSlots) !== getCivColorPaletteStateSignature(state.cleanCivColorPaletteSlots);
+}
+
+function snapshotCivColorPaletteState() {
+  return {
+    kind: 'civ-color-palettes',
+    scope: 'civpalettes',
+    slots: cloneCivColorPaletteSlots(state.civColorPaletteSlots),
+    cleanSlots: cloneCivColorPaletteSlots(state.cleanCivColorPaletteSlots),
+    scenarioPath: String(state.civColorPaletteScenarioPath || ''),
+    selectedSlot: Number(state.civColorPaletteSelectedSlot || 0),
+    filter: normalizeCivColorPaletteFilterFacets(state.civColorPaletteFilter),
+    targetRoot: String(state.civColorPaletteTargetRoot || ''),
+    writableRoots: deepCloneUiValue(Array.isArray(state.civColorPaletteWritableRoots) ? state.civColorPaletteWritableRoots : []),
+    needsSearchFolderSetup: !!state.civColorPaletteNeedsSearchFolderSetup,
+    searchFolderSetupRoot: String(state.civColorPaletteSearchFolderSetupRoot || ''),
+    searchFolderSetupValue: String(state.civColorPaletteSearchFolderSetupValue || ''),
+    error: String(state.civColorPaletteError || '')
+  };
+}
+
+function restoreCivColorPaletteState(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || snapshot.kind !== 'civ-color-palettes') return false;
+  state.civColorPaletteSlots = cloneCivColorPaletteSlots(snapshot.slots);
+  state.cleanCivColorPaletteSlots = cloneCivColorPaletteSlots(snapshot.cleanSlots);
+  state.civColorPaletteScenarioPath = String(snapshot.scenarioPath || '');
+  state.civColorPaletteSelectedSlot = Number(snapshot.selectedSlot || 0);
+  state.civColorPaletteFilter = normalizeCivColorPaletteFilterFacets(snapshot.filter);
+  state.civColorPaletteTargetRoot = String(snapshot.targetRoot || '');
+  state.civColorPaletteWritableRoots = deepCloneUiValue(Array.isArray(snapshot.writableRoots) ? snapshot.writableRoots : []);
+  state.civColorPaletteNeedsSearchFolderSetup = !!snapshot.needsSearchFolderSetup;
+  state.civColorPaletteSearchFolderSetupRoot = String(snapshot.searchFolderSetupRoot || '');
+  state.civColorPaletteSearchFolderSetupValue = String(snapshot.searchFolderSetupValue || '');
+  state.civColorPaletteError = String(snapshot.error || '');
+  state.civColorPaletteLoading = false;
+  state.civColorPaletteAdjustmentTool = '';
+  state.civColorPaletteAdjustmentAmount = 0;
+  state.civColorPaletteTintTargetRgb = null;
+  state.civColorPaletteMainDraftSlot = -1;
+  state.civColorPaletteMainDraftRgb = null;
+  applyCivColorPaletteSlotsToUiCaches();
+  refreshCivColorPaletteDirtyState();
+  return true;
+}
+
+function refreshCivColorPaletteDirtyState() {
+  const dirtySlots = getDirtyCivColorPaletteSlots();
+  setTabDirtyCount('civpalettes', dirtySlots.length);
+  state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+  scheduleDirtyUiRefresh('civ-color-palettes');
+}
+
+function applyCivColorPaletteSlotsToUiCaches() {
+  const slots = Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : [];
+  slots.forEach((slot) => {
+    const idx = Number(slot && slot.slot);
+    const palette = Array.isArray(slot && slot.palette) ? slot.palette : [];
+    if (!Number.isInteger(idx) || idx < 0 || idx > 31 || palette.length < 24) return;
+    const base = 7 * 3;
+    const css = `rgb(${palette[base]}, ${palette[base + 1]}, ${palette[base + 2]})`;
+    state.civSlotUiColorCache[idx] = css;
+    delete state.civSlotUiColorLoading[idx];
+    state.biqMapArtCache[`ntp-${idx}`] = Uint8Array.from(palette);
+    delete state.biqMapNtpColorCache[idx];
+    const listeners = Array.isArray(state.civSlotUiColorListeners[idx]) ? state.civSlotUiColorListeners[idx] : [];
+    delete state.civSlotUiColorListeners[idx];
+    listeners.forEach((listener) => {
+      try {
+        listener(css);
+      } catch (_err) {}
+    });
+  });
+  refreshCivSlotUiColorConsumers();
+}
+
+function markSavedCivColorPaletteState() {
+  const dirtySlots = new Set(getDirtyCivColorPaletteSlots().map((slot) => Number(slot && slot.slot)));
+  if (dirtySlots.size > 0) {
+    state.civColorPaletteSlots = (Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : []).map((slot) => {
+      const slotIndex = Number(slot && slot.slot);
+      if (!dirtySlots.has(slotIndex)) return slot;
+      return {
+        ...slot,
+        sourceKind: 'scenario',
+        sourcePath: String(slot && slot.targetPath || slot && slot.sourcePath || ''),
+        targetExists: !!String(slot && slot.targetPath || '').trim()
+      };
+    });
+  }
+  applyCivColorPaletteSlotsToUiCaches();
+  state.cleanCivColorPaletteSlots = cloneCivColorPaletteSlots(state.civColorPaletteSlots);
+  setTabDirtyCount('civpalettes', 0);
 }
 
 function captureCleanScienceAdvisorArrowStyle() {
@@ -3194,6 +3362,9 @@ function getUndoSnapshotForKey(key = '') {
   }
   if (normalizedKey === 'TECH_TREE_ARROW_STYLE') {
     return snapshotTechTreeArrowStyleState();
+  }
+  if (normalizedKey === 'CIV_COLOR_PALETTES') {
+    return snapshotCivColorPaletteState();
   }
   if (normalizedKey === 'TECH_TREE_AUTO_POSITION') {
     return snapshotTechTreeAutoPositionState();
@@ -3599,7 +3770,7 @@ function commitAllTrackedEditSessions() {
 }
 
 function hasEffectiveUnsavedChanges() {
-  return !!state.isDirty || hasPendingTrackedEditSessions() || hasUnsavedTechTreeArrowArtChanges();
+  return !!state.isDirty || hasPendingTrackedEditSessions() || hasUnsavedTechTreeArrowArtChanges() || hasUnsavedCivColorPaletteChanges();
 }
 
 function hasImmediateUndoableChanges() {
@@ -3653,6 +3824,25 @@ function refreshUnitTableModalActionButtons() {
     hasUndoable,
     hasSaveable: hasUndoable
   });
+}
+
+function refreshCivColorPaletteModalActionButtons() {
+  const canEdit = !!(civColorPaletteModal.lastConfig && civColorPaletteModal.lastConfig.referenceEditable)
+    && !state.civColorPaletteLoading
+    && !state.civColorPaletteError;
+  const hasUndoable = hasImmediateEffectiveUndoableChanges();
+  setModalUndoSaveButtonState(civColorPaletteModal, {
+    canEdit,
+    hasUndoable,
+    hasSaveable: hasUndoable
+  });
+  if (civColorPaletteModal.refreshBtn) {
+    const refreshDisabled = state.civColorPaletteLoading || hasUnsavedCivColorPaletteChanges() || !isScenarioMode();
+    civColorPaletteModal.refreshBtn.disabled = refreshDisabled;
+    civColorPaletteModal.refreshBtn.title = hasUnsavedCivColorPaletteChanges()
+      ? 'Save or undo palette changes before refreshing from disk.'
+      : 'Refresh palette files from disk';
+  }
 }
 
 function hasChangedTrackedEditSession(key, getValue) {
@@ -4680,6 +4870,9 @@ function rebuildDirtyTabCounts() {
   if (hasUnsavedTechTreeArrowArtChanges()) {
     setTabDirtyCount('techtreearrowart', 1);
   }
+  if (hasUnsavedCivColorPaletteChanges()) {
+    setTabDirtyCount('civpalettes', getDirtyCivColorPaletteSlots().length || 1);
+  }
 }
 
 function rebuildReferenceDirtyCacheForTab(tabKey, tabOverride = null) {
@@ -5415,25 +5608,62 @@ function refreshActiveBiqRecordListDirtyBadges() {
   });
 }
 
+function getDebugLogTimestamp() {
+  return new Date().toISOString().slice(0, 23).replace('T', ' ');
+}
+
+function normalizeDebugLogLevelCode(level) {
+  const raw = String(level || '').trim().toLowerCase();
+  if (raw === 'error' || raw === 'err') return 'ERR';
+  if (raw === 'warn' || raw === 'warning' || raw === 'wrn') return 'WRN';
+  if (raw === 'info' || raw === 'inf') return 'INF';
+  return 'DBG';
+}
+
+function parseDebugLogMessage(message) {
+  const text = String(message || '');
+  const match = text.match(/^\[(DBG|INF|WRN|ERR)\]\[([^\]]+)\]\s*(.*)$/);
+  if (!match) return { level: '', category: '', message: text };
+  return {
+    level: match[1],
+    category: match[2],
+    message: match[3]
+  };
+}
+
+function appendDebugLogLine(line) {
+  if (!el.debugLog) return;
+  el.debugLog.textContent += `${String(line || '').trimEnd()}\n`;
+  el.debugLog.scrollTop = el.debugLog.scrollHeight;
+}
+
 function appendDebugLog(message, data, options = null) {
-  const stamp = new Date().toISOString().split('T')[1].replace('Z', '');
-  const payload = data ? ` ${JSON.stringify(data)}` : '';
+  const parsed = parseDebugLogMessage(message);
+  const level = normalizeDebugLogLevelCode((options && options.level) || parsed.level);
+  const category = String((options && options.category) || parsed.category || 'renderer-debug').trim() || 'renderer-debug';
+  const payload = data != null ? ` ${JSON.stringify(data)}` : '';
+  const formatted = `[C3X][${getDebugLogTimestamp()}][${level}][${category}] ${parsed.message}${payload}`;
   if (el.debugLog) {
-    el.debugLog.textContent += `[${stamp}] ${message}${payload}\n`;
-    el.debugLog.scrollTop = el.debugLog.scrollHeight;
+    appendDebugLogLine(formatted);
   }
-  const shouldMirrorExternally = !!(
-    options && options.external
-  ) || String(message || '').startsWith('biq-map:');
+  const shouldMirrorExternally = !(options && options.external === false);
   if (shouldMirrorExternally && window.c3xManager && typeof window.c3xManager.emitRendererDebugLog === 'function') {
     try {
       window.c3xManager.emitRendererDebugLog({
-        level: options && options.level ? options.level : 'debug',
-        category: options && options.category ? options.category : 'renderer-debug',
-        msg: `${message}${payload}`
+        level,
+        category,
+        msg: `${parsed.message}${payload}`,
+        formatted
       });
     } catch (_err) {}
   }
+}
+
+function appendMusicDebugLog(event, data = {}) {
+  appendDebugLog(`music:${event}`, data, {
+    external: true,
+    category: 'music-player'
+  });
 }
 
 function appendReferencePerfLog(message, data) {
@@ -15813,7 +16043,7 @@ const REFERENCE_RULE_SCHEMAS = {
       flavor_6: { group: 'Flavors', control: 'bool', label: 'Flavor6' },
       flavor_7: { group: 'Flavors', control: 'bool', label: 'Flavor7' },
       diplomacytextindex: { group: 'Colors', control: 'select', label: 'Diplomacy Text' },
-      uniquecolor: { group: 'Colors', control: 'select', label: 'Unique Color' },
+      uniquecolor: { group: 'Colors', control: 'select', label: 'Alternate Color' },
       defaultcolor: { group: 'Colors', control: 'select', label: 'Default Color' }
     }
   },
@@ -16545,11 +16775,14 @@ function appendRuleFieldsToGroupCard({ groupCard, fields, entry, tabKey, selecte
         const colorPicker = createColorSlotPicker({
           currentValue: field.value,
           max: 31,
+          getUsage: () => getCivilizationColorSlotUsage(selectedBaseIndex),
           onSelect: (value) => {
             rememberUndoSnapshotForKey(fieldUndoKey);
             field.value = String(value);
             setDirty(true);
             notifyFieldValueChange();
+            refreshCivilizationListColorChip(entry, selectedBaseIndex);
+            refreshColorSlotPickerUsageIndicators(el && el.tabContent);
             refreshMapAfterOwnerSupportChange(tabKey, baseKey);
           }
         });
@@ -20768,6 +21001,16 @@ const RESOURCE_REQUIRED_BY_GROUPS = [
 
 const RESOURCE_GENERATED_BY_GROUPS = [
   {
+    key: 'generatedByTerrain',
+    title: 'Terrain',
+    tabKey: 'terrain',
+    sectionTabKey: 'terrain',
+    sectionCode: 'TERR',
+    fieldKey: 'possibleResourcesMask',
+    kind: 'terrainPossibleResource',
+    dirtyTabKey: 'terrain'
+  },
+  {
     key: 'generatedByImprovements',
     title: 'Improvements',
     tabKey: 'improvements',
@@ -20829,6 +21072,14 @@ function isResourceUsageBiqStructureGroup(spec) {
   return !!(spec && spec.kind === 'biqStructureSection');
 }
 
+function isResourceUsageTerrainPossibleGroup(spec) {
+  return !!(spec && spec.kind === 'terrainPossibleResource');
+}
+
+function isResourceUsageBiqRecordGroup(spec) {
+  return isResourceUsageBiqStructureGroup(spec) || isResourceUsageTerrainPossibleGroup(spec);
+}
+
 function isResourceUsageSectionGroup(spec) {
   return !!(spec && (spec.kind === 'sectionList' || spec.kind === 'sectionSingle' || spec.kind === 'sectionGenerated'));
 }
@@ -20837,8 +21088,16 @@ function getResourceUsageDirtyTabKey(spec) {
   return String((spec && (spec.dirtyTabKey || spec.sectionTabKey || spec.tabKey)) || '').trim();
 }
 
+function getResourceUsageBiqRecordsForSpec(spec) {
+  if (!isResourceUsageBiqRecordGroup(spec)) return [];
+  const tabKey = getResourceUsageDirtyTabKey(spec);
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  const section = getBiqSectionFromTab(tab, spec.sectionCode);
+  return section && Array.isArray(section.records) ? section.records : [];
+}
+
 function getResourceUsageEntriesForSpec(spec) {
-  if (isResourceUsageBiqStructureGroup(spec)) return getBiqStructureRecordsForUnlockGroup(spec);
+  if (isResourceUsageBiqRecordGroup(spec)) return getResourceUsageBiqRecordsForSpec(spec);
   if (isResourceUsageSectionGroup(spec)) return getDistrictSectionsForUnlockGroup({ ...spec, kind: 'section' });
   if (spec && spec.kind === 'c3xBuildingResource') return getReferenceEntriesForUnlockGroup(spec);
   return getReferenceEntriesForUnlockGroup(spec);
@@ -20850,7 +21109,7 @@ function getResourceUsageItemCount(spec) {
 }
 
 function getResourceUsageEntryIndexForSpec(spec, entry, fallbackIndex) {
-  if (isResourceUsageBiqStructureGroup(spec)) {
+  if (isResourceUsageBiqRecordGroup(spec)) {
     const idx = Number(entry && entry.index);
     if (Number.isFinite(idx) && idx >= 0) return idx;
     const fallback = Number(fallbackIndex);
@@ -20864,8 +21123,8 @@ function getResourceUsageEntryIndexForSpec(spec, entry, fallbackIndex) {
 }
 
 function getResourceUsageOptions(spec, resourceIndex = null, resourceEntry = null) {
-  if (isResourceUsageBiqStructureGroup(spec)) {
-    const raw = getBiqStructureRecordsForUnlockGroup(spec).map((record, fallbackIdx) => {
+  if (isResourceUsageBiqRecordGroup(spec)) {
+    const raw = getResourceUsageBiqRecordsForSpec(spec).map((record, fallbackIdx) => {
       const idx = getResourceUsageEntryIndexForSpec(spec, record, fallbackIdx);
       if (idx == null) return null;
       const label = getDisplayBiqRecordName(spec.sectionCode, record, fallbackIdx) || `${spec.sectionCode} ${idx + 1}`;
@@ -20966,6 +21225,34 @@ function resourceUsageEntryHasOpenResourceSlot(entry, spec) {
     const raw = String(field.value == null ? '' : field.value).trim();
     return !raw || /^none$/i.test(raw) || resolved === -1;
   });
+}
+
+function terrainRecordHasPossibleResource(record, resourceIndex) {
+  const idx = Number(resourceIndex);
+  if (!record || !Number.isFinite(idx) || idx < 0) return false;
+  const mask = getTerrainResourceMask(record);
+  return mask[idx] === 1;
+}
+
+function setTerrainRecordPossibleResource(record, resourceIndex, shouldAllow) {
+  const idx = Number(resourceIndex);
+  if (!record || !Number.isFinite(idx) || idx < 0) return false;
+  const mask = getTerrainResourceMask(record).slice();
+  while (mask.length <= idx) mask.push(0);
+  const nextValue = shouldAllow ? 1 : 0;
+  if (mask[idx] === nextValue) return false;
+  mask[idx] = nextValue;
+  const maskField = ensureTerrainResourceMaskField(record);
+  if (!maskField) return false;
+  maskField.value = mask.join(',');
+  const countField = getBiqRecordFieldByBaseKey(record, 'numPossibleResources');
+  if (countField) {
+    const currentCount = parseIntFromDisplayValue(countField.value);
+    if (!Number.isFinite(currentCount) || currentCount < mask.length) {
+      countField.value = String(mask.length);
+    }
+  }
+  return true;
 }
 
 function canResourceUsageEntryAcceptResource(entry, spec, resourceIndex) {
@@ -21117,6 +21404,14 @@ function getResourceUsageSelectedEntries(spec, resourceIndex, resourceEntry = nu
       return { entry, entryIndex };
     }).filter(Boolean);
   }
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return [];
+    return getResourceUsageEntriesForSpec(spec).map((entry, fallbackIdx) => {
+      const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+      if (entryIndex == null || !terrainRecordHasPossibleResource(entry, resourceIndex)) return null;
+      return { entry, entryIndex };
+    }).filter(Boolean);
+  }
   if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return [];
   return getResourceUsageEntriesForSpec(spec).map((entry, fallbackIdx) => {
     const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
@@ -21196,6 +21491,23 @@ function setResourceUsageMembership(spec, resourceIndex, selectedEntryIndices, r
     if (didChange) state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
     return;
   }
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return;
+    const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
+      .map((value) => Number.parseInt(String(value), 10))
+      .filter((value) => Number.isFinite(value) && value >= 0));
+    let didChange = false;
+    getResourceUsageEntriesForSpec(spec).forEach((entry, fallbackIdx) => {
+      const entryIndex = getResourceUsageEntryIndexForSpec(spec, entry, fallbackIdx);
+      if (entryIndex == null) return;
+      didChange = setTerrainRecordPossibleResource(entry, resourceIndex, selected.has(entryIndex)) || didChange;
+    });
+    if (!didChange) return;
+    setDirty(true);
+    recomputeDirtyCountForTab(getResourceUsageDirtyTabKey(spec));
+    state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    return;
+  }
   if (!Number.isFinite(resourceIndex) || resourceIndex < 0) return;
   const selected = new Set((Array.isArray(selectedEntryIndices) ? selectedEntryIndices : [])
     .map((value) => Number.parseInt(String(value), 10))
@@ -21223,7 +21535,7 @@ function setResourceUsageMembership(spec, resourceIndex, selectedEntryIndices, r
   });
   if (!didChange) return;
   setDirty(true);
-  if (isResourceUsageBiqStructureGroup(spec)) {
+  if (isResourceUsageBiqRecordGroup(spec)) {
     recomputeDirtyCountForTab(getResourceUsageDirtyTabKey(spec));
   } else {
     rebuildReferenceDirtyCacheForTab(spec.tabKey);
@@ -21247,7 +21559,7 @@ function rememberResourceUsageUndoSnapshot(spec) {
     rememberUndoSnapshotForKey(`SECTION_TAB:${String(spec.tabKey || '').trim()}`);
     return;
   }
-  if (isResourceUsageBiqStructureGroup(spec)) {
+  if (isResourceUsageBiqRecordGroup(spec)) {
     const dirtyTabKey = getResourceUsageDirtyTabKey(spec);
     rememberUndoSnapshotForKey(dirtyTabKey ? `SECTION_TAB:${dirtyTabKey}` : '');
     return;
@@ -21258,12 +21570,22 @@ function rememberResourceUsageUndoSnapshot(spec) {
 function isResourceUsageSpecEditable(spec, referenceEditable) {
   if (spec && spec.kind === 'c3xBuildingResource') return canEditC3XBaseRows(getC3XBaseRow(spec.baseKey));
   if (isResourceUsageSectionGroup(spec)) return canEditC3XConfigTab(spec.tabKey);
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[getResourceUsageDirtyTabKey(spec)];
+    return !!(tab && !tab.readOnly);
+  }
   return !!referenceEditable;
 }
 
 function getResourceUsageAddOptions(spec, resourceIndex, resourceEntry, selectedIndices, allOptions) {
   const selected = new Set((Array.isArray(selectedIndices) ? selectedIndices : []).map((idx) => Number(idx)));
   const source = Array.isArray(allOptions) ? allOptions : getResourceUsageOptions(spec, resourceIndex, resourceEntry);
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    return source.filter((opt) => {
+      const idx = Number.parseInt(String(opt && opt.value), 10);
+      return Number.isFinite(idx) && !selected.has(idx);
+    });
+  }
   if (spec && !isResourceUsageSectionGroup(spec) && spec.kind !== 'c3xBuildingResource') {
     return source.filter((opt) => {
       const idx = Number.parseInt(String(opt && opt.value), 10);
@@ -21278,7 +21600,41 @@ function getResourceUsageAddOptions(spec, resourceIndex, resourceEntry, selected
 }
 
 function navigateToResourceUsageBiqStructureTarget(spec, target) {
-  return navigateToTechnologyUnlockBiqStructureTarget(spec, target);
+  if (!isResourceUsageBiqRecordGroup(spec) || !target) return false;
+  const tabKey = getResourceUsageDirtyTabKey(spec);
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.sections)) return false;
+  const sectionIndex = tab.sections.findIndex((section) => String(section && section.code || '').trim().toUpperCase() === String(spec.sectionCode || '').trim().toUpperCase());
+  if (sectionIndex < 0) return false;
+  const section = tab.sections[sectionIndex];
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  const targetRecord = target.record || null;
+  const targetIndex = Number(targetRecord && targetRecord.index);
+  const recordIndex = records.findIndex((record) => {
+    if (record === targetRecord) return true;
+    const recordIndexValue = Number(record && record.index);
+    return Number.isFinite(targetIndex) && Number.isFinite(recordIndexValue) && recordIndexValue === targetIndex;
+  });
+  if (recordIndex < 0) return false;
+  navigateWithHistory(() => {
+    state.activeTab = tabKey;
+    state.biqSectionSelectionByTab[tabKey] = sectionIndex;
+    state.biqRecordSelection[section.id] = recordIndex;
+  }, { preserveTabScroll: false });
+  return true;
+}
+
+function renderResourceUsageBiqRecordThumb(spec, holder, option) {
+  if (!holder || !option) return false;
+  const record = option.entry || (option.jumpTarget && option.jumpTarget.record) || null;
+  if (isResourceUsageTerrainPossibleGroup(spec)) {
+    const terrainTab = state.bundle && state.bundle.tabs && state.bundle.tabs.terrain;
+    const thumbEntry = getTerrainCivilopediaEntryForRecord(terrainTab, 'TERR', record);
+    if (!thumbEntry) return false;
+    loadReferenceListThumbnail('terrainPedia', thumbEntry, holder);
+    return true;
+  }
+  return renderTechnologyUnlockBiqStructureThumb(spec, holder, option);
 }
 
 function refreshResourceUsageBoardsInPlace(anchor, resourceEntry, referenceEditable) {
@@ -21320,28 +21676,28 @@ function renderResourceUsagePicker({
     : sourceOptions;
   if (mode === 'add' && options.length === 0) return null;
   const isSectionGroup = isResourceUsageSectionGroup(spec);
-  const isBiqStructureGroup = isResourceUsageBiqStructureGroup(spec);
+  const isBiqRecordGroup = isResourceUsageBiqRecordGroup(spec);
   const picker = createReferencePicker({
     options,
-    targetTabKey: isSectionGroup || isBiqStructureGroup ? '' : spec.tabKey,
+    targetTabKey: isSectionGroup || isBiqRecordGroup ? '' : spec.tabKey,
     currentValue: mode === 'add' ? '-1' : String(currentValue),
     searchPlaceholder: mode === 'add' ? `Add ${spec.title.toLowerCase()}...` : `Search ${spec.title.toLowerCase()}...`,
     noneLabel: mode === 'add' ? 'Add...' : '(none)',
     includeNone: true,
     resetAfterSelect: mode === 'add',
     showOptionThumbs: true,
-    resolveJumpTarget: (isSectionGroup || isBiqStructureGroup) ? ((option) => option && option.jumpTarget) : null,
-    onJump: (isSectionGroup || isBiqStructureGroup) ? ((target) => {
+    resolveJumpTarget: (isSectionGroup || isBiqRecordGroup) ? ((option) => option && option.jumpTarget) : null,
+    onJump: (isSectionGroup || isBiqRecordGroup) ? ((target) => {
       if (isSectionGroup && target && Number.isFinite(Number(target.districtIndex))) navigateToDistrict(Number(target.districtIndex));
-      if (isBiqStructureGroup) navigateToResourceUsageBiqStructureTarget(spec, target);
+      if (isBiqRecordGroup) navigateToResourceUsageBiqStructureTarget(spec, target);
     }) : null,
     renderOptionThumb: isSectionGroup ? (({ holder, option }) => {
       const section = option && option.section;
       if (!holder || !section) return false;
       loadDistrictRepresentativePreview(section, holder, 28);
       return true;
-    }) : (isBiqStructureGroup ? (({ holder, option }) => (
-      renderTechnologyUnlockBiqStructureThumb(spec, holder, option)
+    }) : (isBiqRecordGroup ? (({ holder, option }) => (
+      renderResourceUsageBiqRecordThumb(spec, holder, option)
     )) : null),
     readOnly: !referenceEditable,
     onSelect: referenceEditable ? (value) => {
@@ -22071,7 +22427,6 @@ function buildCivilizationTopFieldControl({ entry, field, referenceEditable, sel
   if (!field) return null;
   const wrap = document.createElement('div');
   wrap.className = 'civilization-top-field-wrap';
-  const spec = getRuleFieldSpec('civilizations', field) || {};
   appendRuleFieldsToGroupCard({
     groupCard: wrap,
     fields: [field],
@@ -22081,7 +22436,19 @@ function buildCivilizationTopFieldControl({ entry, field, referenceEditable, sel
     referenceEditable
   });
   if (options.compactRow) wrap.classList.add('civilization-top-field-wrap-compact');
+  if (options.label) {
+    const label = wrap.querySelector('.rule-row > .field-meta');
+    if (label) label.textContent = options.label;
+  }
   return wrap;
+}
+
+function appendCivilizationTopSubsectionTitle(control, label) {
+  const title = document.createElement('div');
+  title.className = 'field-meta civilization-top-subsection-title';
+  title.textContent = label;
+  control.appendChild(title);
+  return title;
 }
 
 function renderCivilizationBooleanMatrixCard(groupName, fields, entry, tabKey, referenceEditable, selectedBaseIndex = null) {
@@ -22697,18 +23064,80 @@ function buildCivilizationTopBoardCards(entry, referenceEditable, selectedBaseIn
     cards.personality = cell;
   }
 
+  const defaultColorField = getBiqFieldByBaseKey(entry, 'defaultcolor');
+  const uniqueColorField = getBiqFieldByBaseKey(entry, 'uniquecolor');
+  const diplomacyTextField = getBiqFieldByBaseKey(entry, 'diplomacytextindex');
   const colorFields = [
-    getBiqFieldByBaseKey(entry, 'defaultcolor'),
-    getBiqFieldByBaseKey(entry, 'uniquecolor'),
-    getBiqFieldByBaseKey(entry, 'diplomacytextindex')
+    defaultColorField,
+    uniqueColorField
   ].filter(Boolean);
-  if (colorFields.length > 0) {
-    const { cell, control } = createCivilizationTopBoardCell(entry, 'COLORS / DIPLOMACY', colorFields);
+  const diplomacyFields = [
+    diplomacyTextField
+  ].filter(Boolean);
+  const colorsAndDiplomacyFields = colorFields.concat(diplomacyFields);
+  if (colorsAndDiplomacyFields.length > 0) {
+    const { cell, control } = createCivilizationTopBoardCell(entry, 'COLORS / DIPLOMACY', colorsAndDiplomacyFields);
     cell.classList.add('civilization-top-cell-inline');
-    colorFields.forEach((field) => {
-      const fieldControl = buildCivilizationTopFieldControl({ entry, field, referenceEditable, selectedBaseIndex });
-      if (fieldControl) control.appendChild(fieldControl);
-    });
+
+    if (colorFields.length > 0) {
+      appendCivilizationTopSubsectionTitle(control, 'Colors');
+      colorFields.forEach((field) => {
+        const baseKey = String(field.baseKey || field.key || '').toLowerCase();
+        const label = baseKey === 'defaultcolor' ? 'Default' : (baseKey === 'uniquecolor' ? 'Alternate' : null);
+        const fieldControl = buildCivilizationTopFieldControl({
+          entry,
+          field,
+          referenceEditable,
+          selectedBaseIndex,
+          options: { label }
+        });
+        if (fieldControl) control.appendChild(fieldControl);
+      });
+    }
+    if (referenceEditable) {
+      const actions = document.createElement('div');
+      actions.className = 'civilization-color-editor-actions';
+      if (isScenarioMode()) {
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'ghost civilization-color-editor-trigger';
+        editBtn.innerHTML = '<span class="btn-icon">🎨</span>Edit Custom Colors';
+        editBtn.addEventListener('click', () => {
+          const defaultField = getBiqFieldByBaseKey(entry, 'defaultcolor');
+          const uniqueField = getBiqFieldByBaseKey(entry, 'uniquecolor');
+          openCivColorPaletteModal({
+            entryName: String(entry && entry.name || ''),
+            referenceEditable: !!referenceEditable,
+            selectedBaseIndex,
+            initialSlot: parseIntLoose(defaultField && defaultField.value, 0),
+            defaultSlot: parseIntLoose(defaultField && defaultField.value, 0),
+            uniqueSlot: parseIntLoose(uniqueField && uniqueField.value, 0)
+          });
+        });
+        actions.appendChild(editBtn);
+      }
+      const uniquePlan = getCivilizationUniqueColorAssignmentPlan();
+      const assignBtn = document.createElement('button');
+      assignBtn.type = 'button';
+      assignBtn.className = 'ghost civilization-color-assign-unique';
+      assignBtn.innerHTML = '<span class="btn-icon">🎯</span>Assign Unique Colors';
+      assignBtn.title = uniquePlan.ok
+        ? 'Give every civilization its own color slot, keeping the first civilization already using each slot.'
+        : uniquePlan.reason;
+      if (!uniquePlan.ok || uniquePlan.changedCount <= 0) assignBtn.disabled = true;
+      assignBtn.addEventListener('click', () => {
+        applyUniqueCivilizationColorAssignments(selectedBaseIndex);
+      });
+      actions.appendChild(assignBtn);
+      control.appendChild(actions);
+    }
+    if (diplomacyFields.length > 0) {
+      appendCivilizationTopSubsectionTitle(control, 'Diplomacy');
+      diplomacyFields.forEach((field) => {
+        const fieldControl = buildCivilizationTopFieldControl({ entry, field, referenceEditable, selectedBaseIndex });
+        if (fieldControl) control.appendChild(fieldControl);
+      });
+    }
     cards.colors = cell;
   }
   return cards;
@@ -23679,7 +24108,7 @@ function createRelationshipPickerTooltip({ spec, option = null, mode = 'selected
       getRelationshipSpecFieldLabel(spec),
       `Reverse ${relationLabel.toLowerCase()} view. Editing here updates the target C3X section, not the selected record itself.`
     ));
-  } else if (isTechnologyUnlockBiqStructureGroup(spec) || isResourceUsageBiqStructureGroup(spec)) {
+  } else if (isTechnologyUnlockBiqStructureGroup(spec) || isResourceUsageBiqRecordGroup(spec)) {
     const sourceTab = state.bundle && state.bundle.tabs
       ? state.bundle.tabs[getTechnologyUnlockDirtyTabKey(spec) || getResourceUsageDirtyTabKey(spec)]
       : null;
@@ -25412,10 +25841,208 @@ function createReferencePicker(config) {
   return wrap;
 }
 
+function getCivilizationColorSlotUsage(selectedBaseIndex = null) {
+  const result = Array.from({ length: 32 }, () => ({ defaultNames: [], uniqueNames: [] }));
+  const civTab = state && state.bundle && state.bundle.tabs ? state.bundle.tabs.civilizations : null;
+  const entries = Array.isArray(civTab && civTab.entries) ? civTab.entries : [];
+  entries.forEach((candidate, idx) => {
+    const name = getReferenceEntryDisplayName('civilizations', candidate) || `Civilization ${idx + 1}`;
+    const defaultSlot = parseCivilizationColorSlot(candidate, 'defaultcolor');
+    const uniqueSlot = parseCivilizationColorSlot(candidate, 'uniquecolor');
+    if (defaultSlot != null && result[defaultSlot]) result[defaultSlot].defaultNames.push(name);
+    if (uniqueSlot != null && result[uniqueSlot]) result[uniqueSlot].uniqueNames.push(name);
+  });
+  return result;
+}
+
+function buildUniqueCivilizationColorSlotAssignments(slotPairs, maxSlots = 32) {
+  const pairs = Array.isArray(slotPairs) ? slotPairs : [];
+  const slotCount = Math.max(0, Number(maxSlots) || 0);
+  if (slotCount <= 0) {
+    return { ok: false, reason: 'No color slots are available.', assignments: [], changedCount: 0 };
+  }
+  if (pairs.length > slotCount) {
+    return {
+      ok: false,
+      reason: `There are ${pairs.length} civilizations but only ${slotCount} color slots.`,
+      assignments: [],
+      changedCount: 0
+    };
+  }
+
+  const normalizeSlot = (value) => {
+    const parsed = Number.parseInt(String(value == null ? '' : value).trim(), 10);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed >= slotCount) return null;
+    return parsed;
+  };
+  const usedSlots = new Set();
+  const pending = [];
+  const assignments = new Array(pairs.length).fill(null);
+  pairs.forEach((pair, index) => {
+    const defaultSlot = normalizeSlot(pair && pair.defaultSlot);
+    const alternateSlot = normalizeSlot(pair && (pair.alternateSlot ?? pair.uniqueSlot));
+    const preferredSlot = defaultSlot == null ? alternateSlot : defaultSlot;
+    if (preferredSlot != null && !usedSlots.has(preferredSlot)) {
+      usedSlots.add(preferredSlot);
+      assignments[index] = preferredSlot;
+    } else {
+      pending.push(index);
+    }
+  });
+
+  const freeSlots = [];
+  for (let slot = 0; slot < slotCount; slot += 1) {
+    if (!usedSlots.has(slot)) freeSlots.push(slot);
+  }
+  if (pending.length > freeSlots.length) {
+    return {
+      ok: false,
+      reason: `There are ${pending.length} duplicate civilizations but only ${freeSlots.length} unused color slots.`,
+      assignments: [],
+      changedCount: 0
+    };
+  }
+  pending.forEach((entryIndex, pendingIndex) => {
+    assignments[entryIndex] = freeSlots[pendingIndex];
+  });
+
+  let changedCount = 0;
+  assignments.forEach((slot, index) => {
+    const pair = pairs[index] || {};
+    if (normalizeSlot(pair.defaultSlot) !== slot || normalizeSlot(pair.alternateSlot ?? pair.uniqueSlot) !== slot) {
+      changedCount += 1;
+    }
+  });
+  return { ok: true, reason: '', assignments, changedCount };
+}
+
+function getCivilizationUniqueColorAssignmentPlan() {
+  const civTab = state && state.bundle && state.bundle.tabs ? state.bundle.tabs.civilizations : null;
+  const entries = Array.isArray(civTab && civTab.entries) ? civTab.entries : [];
+  const slotPairs = entries.map((entry) => ({
+    defaultSlot: parseCivilizationColorSlot(entry, 'defaultcolor'),
+    alternateSlot: parseCivilizationColorSlot(entry, 'uniquecolor')
+  }));
+  const plan = buildUniqueCivilizationColorSlotAssignments(slotPairs, 32);
+  plan.entries = entries;
+  return plan;
+}
+
+function applyUniqueCivilizationColorAssignments(selectedBaseIndex = null) {
+  const plan = getCivilizationUniqueColorAssignmentPlan();
+  if (!plan.ok || !Array.isArray(plan.entries) || plan.entries.length === 0 || plan.changedCount <= 0) return plan;
+  rememberUndoSnapshotForKey('REFERENCE_TAB:civilizations');
+  plan.entries.forEach((entry, index) => {
+    const slot = plan.assignments[index];
+    if (!Number.isInteger(slot)) return;
+    const defaultField = getBiqFieldByBaseKey(entry, 'defaultcolor');
+    const alternateField = getBiqFieldByBaseKey(entry, 'uniquecolor');
+    if (defaultField) defaultField.value = String(slot);
+    if (alternateField) alternateField.value = String(slot);
+  });
+  setDirty(true, { knownDirtyTab: 'civilizations', reason: 'civilization-color-unique-assignment' });
+  rebuildReferenceDirtyCacheForTab('civilizations');
+  refreshColorSlotPickerUsageIndicators(el && el.tabContent);
+  if (Array.isArray(plan.entries)) {
+    plan.entries.forEach((entry, index) => refreshCivilizationListColorChip(entry, index));
+  }
+  refreshMapAfterOwnerSupportChange('civilizations', 'defaultcolor');
+  renderActiveTab({ preserveTabScroll: true, selectedBaseIndex });
+  return plan;
+}
+
+function formatCivilizationColorSlotUsagePanel(slot, usage) {
+  const defaultNames = usage && Array.isArray(usage.defaultNames) ? usage.defaultNames : [];
+  const uniqueNames = usage && Array.isArray(usage.uniqueNames) ? usage.uniqueNames : [];
+  return {
+    title: `Color ${slot}`,
+    defaultText: defaultNames.length > 0 ? defaultNames.join(', ') : 'Unused',
+    hasDefaultUsage: defaultNames.length > 0,
+    uniqueText: uniqueNames.length > 0 ? uniqueNames.join(', ') : ''
+  };
+}
+
+function formatCivilizationDefaultColorUsageSummary(usage, maxVisibleNames = 2) {
+  const defaultNames = usage && Array.isArray(usage.defaultNames) ? usage.defaultNames : [];
+  if (defaultNames.length === 0) return null;
+  const visibleCount = Math.max(1, Number(maxVisibleNames) || 1);
+  const visibleNames = defaultNames.slice(0, visibleCount);
+  const hiddenCount = defaultNames.length - visibleNames.length;
+  return {
+    text: `Default: ${visibleNames.join(', ')}${hiddenCount > 0 ? ` +${hiddenCount}` : ''}`,
+    title: `Default: ${defaultNames.join(', ')}`
+  };
+}
+
+function renderCivilizationColorSlotUsagePanel(panel, slot, usage) {
+  if (!panel) return;
+  panel.innerHTML = '';
+  if (slot == null) return;
+  const details = formatCivilizationColorSlotUsagePanel(slot, usage);
+  const title = document.createElement('strong');
+  title.textContent = details.title;
+  panel.appendChild(title);
+  const rows = [
+    { label: 'Default', text: details.defaultText },
+    { label: 'Alternate', text: details.uniqueText }
+  ];
+  rows.forEach((row) => {
+    if (!row.text) return;
+    const line = document.createElement('div');
+    line.className = 'color-slot-usage-row';
+    const label = document.createElement('span');
+    label.textContent = row.label;
+    const text = document.createElement('p');
+    text.textContent = row.text;
+    line.appendChild(label);
+    line.appendChild(text);
+    panel.appendChild(line);
+  });
+}
+
+function formatCivilizationColorSlotUsageLabel(slot, usage) {
+  const defaultNames = usage && Array.isArray(usage.defaultNames) ? usage.defaultNames : [];
+  const uniqueNames = usage && Array.isArray(usage.uniqueNames) ? usage.uniqueNames : [];
+  const parts = [`Color ${slot}`];
+  if (defaultNames.length > 0) parts.push(`default: ${defaultNames.join(', ')}`);
+  else parts.push('unused');
+  if (uniqueNames.length > 0) parts.push(`alternate: ${uniqueNames.join(', ')}`);
+  return parts.join('; ');
+}
+
+function refreshColorSlotPickerUsageIndicators(root = null) {
+  const scope = root || (typeof document !== 'undefined' ? document : null);
+  if (!scope || typeof scope.querySelectorAll !== 'function') return;
+  Array.from(scope.querySelectorAll('.color-slot-picker')).forEach((node) => {
+    if (node && typeof node.refreshUsageIndicators === 'function') node.refreshUsageIndicators();
+  });
+}
+
+function refreshColorSlotPickerColorSwatches(root = null) {
+  const scope = root || (typeof document !== 'undefined' ? document : null);
+  if (!scope || typeof scope.querySelectorAll !== 'function') return;
+  Array.from(scope.querySelectorAll('.color-slot-picker')).forEach((node) => {
+    if (node && typeof node.refreshColorSwatches === 'function') node.refreshColorSwatches();
+  });
+}
+
+function refreshCivSlotUiColorConsumers() {
+  const root = el && el.tabContent ? el.tabContent : null;
+  if (!root) return;
+  refreshColorSlotPickerColorSwatches(root);
+  if (state.activeTab !== 'civilizations') return;
+  const civTab = state.bundle && state.bundle.tabs ? state.bundle.tabs.civilizations : null;
+  const entries = Array.isArray(civTab && civTab.entries) ? civTab.entries : [];
+  entries.forEach((entry, idx) => {
+    refreshCivilizationListColorChip(entry, idx);
+  });
+}
+
 function createColorSlotPicker(config) {
   const opts = config || {};
   const max = Number.isFinite(opts.max) ? Math.max(1, Number(opts.max)) : 31;
   const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
+  const getUsage = typeof opts.getUsage === 'function' ? opts.getUsage : null;
   const wrap = document.createElement('div');
   wrap.className = 'color-slot-picker';
   const button = document.createElement('button');
@@ -25447,11 +26074,16 @@ function createColorSlotPicker(config) {
   menu.className = 'color-slot-picker-menu hidden';
   const grid = document.createElement('div');
   grid.className = 'color-slot-grid';
+  const usagePanel = getUsage ? document.createElement('div') : null;
+  if (usagePanel) {
+    menu.classList.add('has-usage-panel');
+    usagePanel.className = 'color-slot-usage-panel';
+    usagePanel.setAttribute('aria-live', 'polite');
+  }
   for (let i = 0; i <= max; i += 1) {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'color-slot-item';
-    item.title = `Color ${i}`;
     item.setAttribute('aria-label', `Color ${i}`);
     item.style.background = getCivSlotUiColor(i, (css) => {
       const node = swatchNodes.get(i);
@@ -25460,6 +26092,15 @@ function createColorSlotPicker(config) {
     });
     if (i === current) item.classList.add('active');
     swatchNodes.set(i, item);
+    item.addEventListener('mouseenter', () => {
+      if (!usagePanel) return;
+      hideRichTooltip();
+      const usageBySlot = getUsage ? getUsage() : null;
+      renderCivilizationColorSlotUsagePanel(usagePanel, i, usageBySlot && usageBySlot[i]);
+    });
+    item.addEventListener('mousemove', (ev) => {
+      if (usagePanel) ev.stopPropagation();
+    });
     item.addEventListener('click', (ev) => {
       ev.preventDefault();
       current = i;
@@ -25473,7 +26114,38 @@ function createColorSlotPicker(config) {
     grid.appendChild(item);
   }
   menu.appendChild(grid);
+  if (usagePanel) menu.appendChild(usagePanel);
+  menu.addEventListener('mouseleave', () => {
+    if (usagePanel) renderCivilizationColorSlotUsagePanel(usagePanel, null, null);
+  });
+  menu.addEventListener('mousemove', (ev) => {
+    if (usagePanel) ev.stopPropagation();
+  });
   wrap.appendChild(menu);
+  const refreshColorSwatches = () => {
+    renderBtn();
+    Array.from(grid.querySelectorAll('.color-slot-item')).forEach((node, idx) => {
+      node.style.background = getCivSlotUiColor(idx, (css) => {
+        if (node.isConnected) node.style.background = css;
+        if (idx === current && swatch.isConnected) swatch.style.background = css;
+      });
+    });
+  };
+  const refreshUsageIndicators = () => {
+    const usageBySlot = getUsage ? getUsage() : null;
+    Array.from(grid.querySelectorAll('.color-slot-item')).forEach((node, idx) => {
+      const usage = usageBySlot && usageBySlot[idx] ? usageBySlot[idx] : null;
+      const hasDefault = !!(usage && Array.isArray(usage.defaultNames) && usage.defaultNames.length > 0);
+      const hasUnique = !!(usage && Array.isArray(usage.uniqueNames) && usage.uniqueNames.length > 0);
+      node.classList.toggle('used-default', hasDefault);
+      node.classList.toggle('used-unique', hasUnique);
+      node.classList.toggle('unused-default', !!getUsage && !hasDefault);
+      node.setAttribute('aria-label', getUsage ? formatCivilizationColorSlotUsageLabel(idx, usage) : `Color ${idx}`);
+    });
+  };
+  wrap.refreshColorSwatches = refreshColorSwatches;
+  wrap.refreshUsageIndicators = refreshUsageIndicators;
+  refreshUsageIndicators();
 
   button.addEventListener('click', (ev) => {
     ev.preventDefault();
@@ -27270,6 +27942,52 @@ function getBiqFieldByBaseKey(entry, baseKey) {
   const target = String(baseKey || '').toLowerCase();
   if (!entry || !Array.isArray(entry.biqFields) || !target) return null;
   return entry.biqFields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === target) || null;
+}
+
+function parseCivilizationColorSlot(entry, baseKey) {
+  const field = getBiqFieldByBaseKey(entry, baseKey);
+  const parsed = parseIntFromDisplayValue(field && field.value);
+  const rawParsed = parsed == null ? Number.parseInt(String(field && field.value || '').trim(), 10) : parsed;
+  if (!Number.isFinite(rawParsed)) return null;
+  return Math.max(0, Math.min(31, rawParsed));
+}
+
+function createCivilizationListColorChip(entry) {
+  const defaultSlot = parseCivilizationColorSlot(entry, 'defaultcolor');
+  const uniqueSlot = parseCivilizationColorSlot(entry, 'uniquecolor');
+  if (defaultSlot == null && uniqueSlot == null) return null;
+  const primarySlot = defaultSlot == null ? uniqueSlot : defaultSlot;
+  const secondarySlot = uniqueSlot == null ? primarySlot : uniqueSlot;
+  const chip = document.createElement('span');
+  chip.className = 'civilization-list-color-chip';
+  chip.style.setProperty('--civ-primary-color', getCivSlotUiColor(primarySlot, (css) => {
+    if (chip.isConnected) chip.style.setProperty('--civ-primary-color', css);
+  }));
+  chip.style.setProperty('--civ-secondary-color', getCivSlotUiColor(secondarySlot, (css) => {
+    if (chip.isConnected) chip.style.setProperty('--civ-secondary-color', css);
+  }));
+  if (primarySlot !== secondarySlot) chip.classList.add('split');
+  chip.title = primarySlot === secondarySlot
+    ? `Default Color ${primarySlot}`
+    : `Default Color ${primarySlot} / Alternate Color ${secondarySlot}`;
+  return chip;
+}
+
+function refreshCivilizationListColorChip(entry, baseIndex) {
+  const listPane = el && el.tabContent ? el.tabContent.querySelector('.entry-list-pane') : null;
+  if (!listPane || !entry) return;
+  const entryIdentity = getReferenceEntryIdentity('civilizations', entry, baseIndex);
+  const itemBtn = Array.from(listPane.querySelectorAll('.entry-list-item[data-entry-id]'))
+    .find((node) => node.getAttribute('data-entry-id') === entryIdentity);
+  if (!itemBtn) return;
+  Array.from(itemBtn.querySelectorAll('.civilization-list-color-chip')).forEach((node) => node.remove());
+  const colorChip = createCivilizationListColorChip(entry);
+  if (colorChip) {
+    itemBtn.appendChild(colorChip);
+    itemBtn.title = colorChip.title;
+  } else {
+    itemBtn.removeAttribute('title');
+  }
 }
 
 function ensureBiqFieldByBaseKey(entry, baseKey, label = '', initialValue = '') {
@@ -30837,6 +31555,1388 @@ function openTechTreeModal(config) {
   }
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
+  refreshDirtyUi();
+}
+
+const CIV_COLOR_PALETTE_CITY_UI_ROLE_META = {
+  64: { label: 'City Border Inner', description: 'Inner pixels of city borders in-game.' },
+  65: { label: 'City Border Outer', description: 'Outer pixels of city borders in-game.' },
+  66: { label: 'Unit Disc / Mini-map', description: 'Used for city or unit discs, histographs, and the mini-map.' },
+  67: { label: 'Unknown Use', description: 'Observed game-facing slot, but its exact use is still unclear.' },
+  68: { label: 'City Fill', description: 'City color fill.' },
+  69: { label: 'Histograph Label', description: 'Civilization name color in the histograph.' }
+};
+
+function getCivColorPaletteMainRampIndices() {
+  return Array.from({ length: 16 }, (_, idx) => idx);
+}
+
+function getCivColorPaletteCityUiIndices() {
+  return [64, 65, 66, 67, 68, 69];
+}
+
+function getCivColorPaletteOtherUsefulIndices() {
+  return Array.from(new Set([
+    ...getCivColorPaletteAdditionalLinkedIndices(),
+    ...getCivColorPaletteRhyeIndices(),
+    ...getCivColorPaletteCityUiIndices()
+  ])).sort((a, b) => a - b);
+}
+
+function getCivColorPaletteAdditionalLinkedIndices() {
+  return [16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62];
+}
+
+function getCivColorPaletteRhyeIndices() {
+  return [10, 11, 12, 13, 14, 15, 20, 24, 26, 30, 32, 38, 44, 48, 50, 56, 60, 62];
+}
+
+function getCivColorPaletteGrayIndices() {
+  return [17, 19, 21, 23, 25, 27, 29, 31];
+}
+
+function getCivColorPaletteProtectedIndices() {
+  return [33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63];
+}
+
+function getCivColorPaletteMainAndUsefulIndices() {
+  return Array.from(new Set([
+    ...getCivColorPaletteMainRampIndices(),
+    ...getCivColorPaletteOtherUsefulIndices()
+  ])).sort((a, b) => a - b);
+}
+
+function getCivColorPaletteAllOtherIndices() {
+  const mainAndUseful = new Set(getCivColorPaletteMainAndUsefulIndices());
+  return Array.from({ length: 70 }, (_v, idx) => idx).filter((idx) => !mainAndUseful.has(idx));
+}
+
+function getCivColorPaletteFilterFacetDefinitions() {
+  return [
+    { key: 'main', label: 'Main shades', getIndices: getCivColorPaletteMainRampIndices },
+    { key: 'useful', label: 'Other useful colors', getIndices: getCivColorPaletteOtherUsefulIndices },
+    { key: 'gray', label: 'Gray', getIndices: getCivColorPaletteGrayIndices },
+    { key: 'protected', label: 'Protected', getIndices: getCivColorPaletteProtectedIndices },
+    { key: 'allOthers', label: 'All others', getIndices: getCivColorPaletteAllOtherIndices }
+  ];
+}
+
+function normalizeCivColorPaletteFilterFacets(filter = state.civColorPaletteFilter) {
+  const definitions = getCivColorPaletteFilterFacetDefinitions();
+  const validKeys = new Set(definitions.map((facet) => facet.key));
+  const legacyKeyMap = {
+    linked: 'useful',
+    city: 'useful',
+    all: ['main', 'useful', 'allOthers'],
+    allothers: 'allOthers',
+    all_others: 'allOthers',
+    'all-others': 'allOthers'
+  };
+  const rawItems = Array.isArray(filter)
+    ? filter
+    : String(filter || '').split(/[,|]/);
+  const keys = [];
+  rawItems.forEach((raw) => {
+    const rawKey = String(raw || '').trim();
+    if (!rawKey) return;
+    const lowerKey = rawKey.toLowerCase();
+    const mapped = Object.prototype.hasOwnProperty.call(legacyKeyMap, lowerKey) ? legacyKeyMap[lowerKey] : rawKey;
+    const mappedItems = Array.isArray(mapped) ? mapped : [mapped];
+    mappedItems.forEach((item) => {
+      const match = definitions.find((facet) => facet.key.toLowerCase() === String(item || '').trim().toLowerCase());
+      if (match && validKeys.has(match.key) && !keys.includes(match.key)) keys.push(match.key);
+    });
+  });
+  return keys.length ? keys : ['main'];
+}
+
+function getCivColorPaletteAutoGenerateIndices() {
+  return Array.from(new Set([
+    ...getCivColorPaletteMainRampIndices(),
+    ...getCivColorPaletteAdditionalLinkedIndices(),
+    ...getCivColorPaletteCityUiIndices()
+  ])).sort((a, b) => a - b);
+}
+
+function getCivColorPaletteSlotEntry(slot) {
+  const target = Number(slot);
+  return (Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : []).find((entry) => Number(entry && entry.slot) === target) || null;
+}
+
+function getCivColorPaletteCleanSlotEntry(slot) {
+  const target = Number(slot);
+  return (Array.isArray(state.cleanCivColorPaletteSlots) ? state.cleanCivColorPaletteSlots : []).find((entry) => Number(entry && entry.slot) === target) || null;
+}
+
+function getCivColorPaletteEditableIndices(filter = 'main') {
+  return Array.from({ length: 70 }, (_, idx) => idx);
+}
+
+function getCivColorPaletteVisibleIndicesForFilter(filter = state.civColorPaletteFilter) {
+  const activeKeys = new Set(normalizeCivColorPaletteFilterFacets(filter));
+  const indices = new Set();
+  getCivColorPaletteFilterFacetDefinitions().forEach((facet) => {
+    if (!activeKeys.has(facet.key)) return;
+    facet.getIndices().forEach((idx) => indices.add(idx));
+  });
+  return Array.from(indices).sort((a, b) => a - b);
+}
+
+function clampCivColorPaletteSlot(value) {
+  const num = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(31, num));
+}
+
+function clampCivColorPaletteIndex(value, filter = state.civColorPaletteFilter) {
+  const num = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(69, num));
+}
+
+function getCivColorPaletteRoleMeta(index) {
+  const idx = Number(index);
+  if (!Number.isFinite(idx) || idx < 0 || idx > 69) return { label: `${idx}: Color`, description: '' };
+  const grayRows = new Set([17, 19, 21, 23, 25, 27, 29, 31]);
+  const protectedRows = new Set([33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63]);
+  if (idx === 6) return { label: '6: Color of starting location/civ color in editor', description: '' };
+  if (idx === 7) return { label: '7: Color of pixel in PCX file', description: '' };
+  if (idx === 9) return { label: '9: Color of circle around leaderhead on Diplomacy screen', description: '' };
+  if (grayRows.has(idx)) return { label: `${idx}: Shade of gray - changing not recommended`, description: '' };
+  if (protectedRows.has(idx)) return { label: `${idx}: Should remain the same for all colors - do not change`, description: '' };
+  if (idx === 64) return { label: '64: Inner pixels of city borders (in-game)', description: '' };
+  if (idx === 65) return { label: '65: Outer pixel of city borders (in-game)', description: '' };
+  if (idx === 66) return { label: '66: City for unit discs, histographs, and mini-map', description: '' };
+  if (idx === 67) return { label: '67: Color - unknown', description: '' };
+  if (idx === 68) return { label: '68: City color', description: '' };
+  if (idx === 69) return { label: '69: Civ name in histograph', description: '' };
+  return { label: `${idx}: Color`, description: '' };
+}
+
+function getCivColorPaletteDisplayLabel(index) {
+  return getCivColorPaletteRoleMeta(index).label;
+}
+
+function getCivColorPaletteDisplayDescription(index) {
+  return getCivColorPaletteRoleMeta(index).description;
+}
+
+function getCivColorPaletteColorFromPalette(palette, index) {
+  const source = Array.isArray(palette) ? palette : [];
+  const idx = Number(index);
+  const base = idx * 3;
+  if (!Number.isInteger(idx) || idx < 0 || base + 2 >= source.length) return { r: 0, g: 0, b: 0 };
+  return {
+    r: Number(source[base]) || 0,
+    g: Number(source[base + 1]) || 0,
+    b: Number(source[base + 2]) || 0
+  };
+}
+
+function getCivColorPaletteColor(slotEntry, index) {
+  return getCivColorPaletteColorFromPalette(slotEntry && slotEntry.palette, index);
+}
+
+function clampCivColorPaletteByte(value) {
+  return Math.max(0, Math.min(255, Number.parseInt(String(value ?? ''), 10) || 0));
+}
+
+function normalizeCivColorPaletteRgb(rgb) {
+  const value = rgb && typeof rgb === 'object' ? rgb : {};
+  return {
+    r: clampCivColorPaletteByte(value.r),
+    g: clampCivColorPaletteByte(value.g),
+    b: clampCivColorPaletteByte(value.b)
+  };
+}
+
+function rgbToCss(rgb) {
+  const value = normalizeCivColorPaletteRgb(rgb);
+  return `rgb(${value.r}, ${value.g}, ${value.b})`;
+}
+
+function rgbToHex(rgb) {
+  const value = normalizeCivColorPaletteRgb(rgb);
+  return `#${[value.r, value.g, value.b].map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function hexToRgb(value) {
+  const raw = String(value || '').trim().replace(/^#/, '');
+  if (!/^[0-9a-f]{6}$/i.test(raw)) return null;
+  return {
+    r: Number.parseInt(raw.slice(0, 2), 16),
+    g: Number.parseInt(raw.slice(2, 4), 16),
+    b: Number.parseInt(raw.slice(4, 6), 16)
+  };
+}
+
+function clampCivColorPaletteUnit(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function wrapCivColorPaletteHue(value) {
+  if (!Number.isFinite(value)) return 0;
+  let next = value % 360;
+  if (next < 0) next += 360;
+  return next;
+}
+
+function rgbToHsv(rgb) {
+  const value = normalizeCivColorPaletteRgb(rgb);
+  const r = value.r / 255;
+  const g = value.g / 255;
+  const b = value.b / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let h = 0;
+  if (delta > 0) {
+    if (max === r) h = 60 * (((g - b) / delta) % 6);
+    else if (max === g) h = 60 * (((b - r) / delta) + 2);
+    else h = 60 * (((r - g) / delta) + 4);
+  }
+  return { h: wrapCivColorPaletteHue(h), s: max === 0 ? 0 : delta / max, v: max };
+}
+
+function hsvToRgb(hsv) {
+  const h = wrapCivColorPaletteHue(Number(hsv && hsv.h) || 0);
+  const s = clampCivColorPaletteUnit(Number(hsv && hsv.s) || 0);
+  const v = clampCivColorPaletteUnit(Number(hsv && hsv.v) || 0);
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+  if (h < 60) {
+    r1 = c; g1 = x;
+  } else if (h < 120) {
+    r1 = x; g1 = c;
+  } else if (h < 180) {
+    g1 = c; b1 = x;
+  } else if (h < 240) {
+    g1 = x; b1 = c;
+  } else if (h < 300) {
+    r1 = x; b1 = c;
+  } else {
+    r1 = c; b1 = x;
+  }
+  return normalizeCivColorPaletteRgb({
+    r: Math.round((r1 + m) * 255),
+    g: Math.round((g1 + m) * 255),
+    b: Math.round((b1 + m) * 255)
+  });
+}
+
+function generateCivColorPaletteFromMainColor(palette, targetMainRgb, options = {}) {
+  const source = Array.isArray(palette) ? palette.slice() : [];
+  const template = Array.isArray(options.templatePalette) && options.templatePalette.length >= source.length
+    ? options.templatePalette
+    : source;
+  const autoIndices = Array.isArray(options.autoIndices) && options.autoIndices.length
+    ? options.autoIndices
+    : getCivColorPaletteAutoGenerateIndices();
+  const mainIndex = Number.isFinite(Number(options.mainIndex)) ? Number(options.mainIndex) : 7;
+  const nextMain = normalizeCivColorPaletteRgb(targetMainRgb);
+  const templateMainHsv = rgbToHsv(getCivColorPaletteColorFromPalette(template, mainIndex));
+  const nextMainHsv = rgbToHsv(nextMain);
+  autoIndices.forEach((index) => {
+    const idx = Number(index);
+    const base = idx * 3;
+    if (!Number.isInteger(idx) || idx < 0 || base + 2 >= source.length) return;
+    let adjusted = nextMain;
+    if (idx !== mainIndex) {
+      const templateHsv = rgbToHsv(getCivColorPaletteColorFromPalette(template, idx));
+      const rawHueDelta = templateHsv.h - templateMainHsv.h;
+      const hueDelta = rawHueDelta > 180 ? rawHueDelta - 360 : (rawHueDelta < -180 ? rawHueDelta + 360 : rawHueDelta);
+      adjusted = hsvToRgb({
+        h: wrapCivColorPaletteHue(nextMainHsv.h + hueDelta),
+        s: clampCivColorPaletteUnit(nextMainHsv.s + (templateHsv.s - templateMainHsv.s)),
+        v: clampCivColorPaletteUnit(nextMainHsv.v + (templateHsv.v - templateMainHsv.v))
+      });
+    }
+    source[base] = adjusted.r;
+    source[base + 1] = adjusted.g;
+    source[base + 2] = adjusted.b;
+  });
+  return source;
+}
+
+function getCivColorPaletteAdjustedRgb(rgb, tool, amount = 0) {
+  const key = String(tool || '').trim().toLowerCase();
+  const hsv = rgbToHsv(rgb);
+  const normalizedAmount = Number(amount);
+  if (key === 'hue') {
+    return hsvToRgb({ ...hsv, h: wrapCivColorPaletteHue(hsv.h + (Number.isFinite(normalizedAmount) ? normalizedAmount : 0)) });
+  }
+  if (key === 'saturation') {
+    return hsvToRgb({ ...hsv, s: clampCivColorPaletteUnit(hsv.s + ((Number.isFinite(normalizedAmount) ? normalizedAmount : 0) / 100)) });
+  }
+  if (key === 'balance') {
+    return hsvToRgb({ ...hsv, v: clampCivColorPaletteUnit(hsv.v + ((Number.isFinite(normalizedAmount) ? normalizedAmount : 0) / 100)) });
+  }
+  if (key === 'tint') {
+    const targetHsv = rgbToHsv(amount);
+    return hsvToRgb({
+      h: targetHsv.h,
+      s: clampCivColorPaletteUnit(hsv.s * targetHsv.s),
+      v: hsv.v
+    });
+  }
+  return normalizeCivColorPaletteRgb(rgb);
+}
+
+function applyCivColorPaletteBatchAdjustmentToPalette(palette, indices, tool, amount = 0) {
+  const source = Array.isArray(palette) ? palette.slice() : [];
+  const visible = Array.from(new Set((Array.isArray(indices) ? indices : []).map((value) => Number(value))))
+    .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx <= 69);
+  visible.forEach((idx) => {
+    const base = idx * 3;
+    if (base < 0 || base + 2 >= source.length) return;
+    const adjusted = getCivColorPaletteAdjustedRgb(getCivColorPaletteColorFromPalette(source, idx), tool, amount);
+    source[base] = adjusted.r;
+    source[base + 1] = adjusted.g;
+    source[base + 2] = adjusted.b;
+  });
+  return source;
+}
+
+function getCivColorPaletteSlotSourcePillClass(slotEntry) {
+  return String(slotEntry && slotEntry.sourceKind || '').trim().toLowerCase() === 'scenario'
+    ? 'source-scenario'
+    : 'source-default';
+}
+
+function getCivColorPaletteSlotSourceLabel(slotEntry) {
+  return String(slotEntry && slotEntry.sourceKind || '').trim().toLowerCase() === 'scenario'
+    ? 'Scenario'
+    : 'Base';
+}
+
+function isCivColorPaletteSlotDirty(slot) {
+  const current = getCivColorPaletteSlotEntry(slot);
+  const clean = getCivColorPaletteCleanSlotEntry(slot);
+  return getCivColorPaletteStateSignature(current ? [current] : []) !== getCivColorPaletteStateSignature(clean ? [clean] : []);
+}
+
+function setCivColorPaletteSlotPalette(slot, paletteBytes) {
+  const slotIndex = clampCivColorPaletteSlot(slot);
+  const nextPalette = Array.isArray(paletteBytes) ? paletteBytes.slice() : [];
+  state.civColorPaletteSlots = (Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : []).map((entry) => {
+    if (Number(entry && entry.slot) !== slotIndex) return entry;
+    return {
+      ...entry,
+      palette: nextPalette.slice(),
+      representativeColor: getCivColorPaletteColorFromPalette(nextPalette, 7)
+    };
+  });
+  if (state.civColorPaletteMainDraftSlot === slotIndex) {
+    state.civColorPaletteMainDraftRgb = getCivColorPaletteColorFromPalette(nextPalette, 7);
+  }
+  applyCivColorPaletteSlotsToUiCaches();
+  refreshCivColorPaletteDirtyState();
+}
+
+function getCivColorPaletteGenerationTemplate(slotEntry) {
+  const template = Array.isArray(slotEntry && slotEntry.templatePalette) ? slotEntry.templatePalette : [];
+  if (template.length >= 70 * 3) return template;
+  return Array.isArray(slotEntry && slotEntry.palette) ? slotEntry.palette : [];
+}
+
+function setCivColorPaletteColor(slot, index, rgb) {
+  const slotIndex = clampCivColorPaletteSlot(slot);
+  const colorIndex = Number(index);
+  const nextRgb = normalizeCivColorPaletteRgb(rgb);
+  state.civColorPaletteSlots = (Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : []).map((entry) => {
+    if (Number(entry && entry.slot) !== slotIndex) return entry;
+    const palette = Array.isArray(entry && entry.palette) ? entry.palette.slice() : [];
+    const base = colorIndex * 3;
+    if (base < 0 || base + 2 >= palette.length) return entry;
+    palette[base] = nextRgb.r;
+    palette[base + 1] = nextRgb.g;
+    palette[base + 2] = nextRgb.b;
+    return {
+      ...entry,
+      palette,
+      representativeColor: getCivColorPaletteColor({ palette }, 7)
+    };
+  });
+  if (slotIndex === state.civColorPaletteMainDraftSlot && colorIndex === 7) {
+    state.civColorPaletteMainDraftRgb = { ...nextRgb };
+  }
+  applyCivColorPaletteSlotsToUiCaches();
+  refreshCivColorPaletteDirtyState();
+}
+
+function getCivColorPaletteRelativePathDisplay(filePath) {
+  const target = String(filePath || '').trim();
+  if (!target) return '';
+  return relativePathFromCiv3Root(target) || target;
+}
+
+function isCivColorPaletteModalVisible() {
+  return isModalVisible(civColorPaletteModal);
+}
+
+function ensureCivColorPaletteMainDraftForSlot(slot) {
+  const slotIndex = clampCivColorPaletteSlot(slot);
+  if (state.civColorPaletteMainDraftSlot !== slotIndex || !state.civColorPaletteMainDraftRgb) {
+    state.civColorPaletteMainDraftSlot = slotIndex;
+    state.civColorPaletteMainDraftRgb = getCivColorPaletteColor(getCivColorPaletteSlotEntry(slotIndex), 7);
+  }
+  return normalizeCivColorPaletteRgb(state.civColorPaletteMainDraftRgb);
+}
+
+function setCivColorPaletteMainDraft(slot, rgb) {
+  state.civColorPaletteMainDraftSlot = clampCivColorPaletteSlot(slot);
+  state.civColorPaletteMainDraftRgb = normalizeCivColorPaletteRgb(rgb);
+}
+
+function applyCivColorPaletteMainColor(slot, rgb, options = {}) {
+  const slotIndex = clampCivColorPaletteSlot(slot);
+  const nextRgb = normalizeCivColorPaletteRgb(rgb);
+  const entry = getCivColorPaletteSlotEntry(slotIndex);
+  if (!entry || !Array.isArray(entry.palette)) return false;
+  const templatePalette = getCivColorPaletteGenerationTemplate(entry);
+  const nextPalette = generateCivColorPaletteFromMainColor(entry.palette, nextRgb, { templatePalette });
+  if (JSON.stringify(Array.isArray(entry.palette) ? entry.palette : []) === JSON.stringify(nextPalette)) return false;
+  if (!options.skipUndo) rememberUndoSnapshotForKey('CIV_COLOR_PALETTES');
+  setCivColorPaletteMainDraft(slotIndex, nextRgb);
+  setCivColorPaletteSlotPalette(slotIndex, nextPalette);
+  state.civColorPaletteSelectedIndex = 7;
+  return true;
+}
+
+function ensureCivColorPaletteSelectedIndex() {
+  state.civColorPaletteSelectedIndex = clampCivColorPaletteIndex(
+    state.civColorPaletteSelectedIndex,
+    state.civColorPaletteFilter
+  );
+}
+
+function getCurrentCivColorPaletteModalConfig() {
+  return civColorPaletteModal.lastConfig && typeof civColorPaletteModal.lastConfig === 'object'
+    ? civColorPaletteModal.lastConfig
+    : {};
+}
+
+async function loadCivColorPaletteSlotsIntoState({ initialSlot = null, preserveSelection = false } = {}) {
+  if (!window.c3xManager || typeof window.c3xManager.inspectCivColorPalettes !== 'function') {
+    state.civColorPaletteError = 'The app is missing the Civ palette inspector bridge.';
+    state.civColorPaletteLoading = false;
+    if (isCivColorPaletteModalVisible()) renderCivColorPaletteModal();
+    return false;
+  }
+  state.civColorPaletteLoading = true;
+  state.civColorPaletteError = '';
+  if (isCivColorPaletteModalVisible()) renderCivColorPaletteModal();
+  try {
+    const res = await window.c3xManager.inspectCivColorPalettes({
+      civ3Path: state.settings && state.settings.civ3Path,
+      scenarioPath: state.settings && state.settings.scenarioPath,
+      scenarioSettingsTab: state.bundle && state.bundle.tabs ? state.bundle.tabs.scenarioSettings : null
+    });
+    if (!res || !res.ok) {
+      state.civColorPaletteSlots = [];
+      state.cleanCivColorPaletteSlots = [];
+      state.civColorPaletteScenarioPath = String(state.settings && state.settings.scenarioPath || '');
+      state.civColorPaletteTargetRoot = '';
+      state.civColorPaletteWritableRoots = [];
+      state.civColorPaletteNeedsSearchFolderSetup = false;
+      state.civColorPaletteSearchFolderSetupRoot = '';
+      state.civColorPaletteSearchFolderSetupValue = '';
+      state.civColorPaletteMainDraftSlot = -1;
+      state.civColorPaletteMainDraftRgb = null;
+      state.civColorPaletteError = String(res && res.error || 'Failed to inspect Civ palette files.');
+      state.civColorPaletteLoading = false;
+      refreshCivColorPaletteDirtyState();
+      if (isCivColorPaletteModalVisible()) renderCivColorPaletteModal();
+      return false;
+    }
+    const slots = (Array.isArray(res.slots) ? res.slots : []).map((entry) => {
+      const paletteBytes = entry && entry.paletteBase64 ? decodeBase64ToUint8(entry.paletteBase64) : new Uint8Array(256 * 3);
+      const templatePaletteBytes = entry && entry.templatePaletteBase64 ? decodeBase64ToUint8(entry.templatePaletteBase64) : paletteBytes;
+      return {
+        slot: clampCivColorPaletteSlot(entry && entry.slot),
+        fileName: String(entry && entry.fileName || ''),
+        assetPath: String(entry && entry.assetPath || ''),
+        sourcePath: String(entry && entry.sourcePath || ''),
+        sourceKind: String(entry && entry.sourceKind || ''),
+        palette: Array.from(paletteBytes),
+        templateSourcePath: String(entry && entry.templateSourcePath || ''),
+        templatePalette: Array.from(templatePaletteBytes),
+        representativeColor: entry && entry.representativeColor ? entry.representativeColor : getCivColorPaletteColor({ palette: Array.from(paletteBytes) }, 7),
+        targetPath: String(entry && entry.targetPath || ''),
+        targetExists: !!(entry && entry.targetExists),
+        targetScenarioLocal: !!(entry && entry.targetScenarioLocal)
+      };
+    });
+    state.civColorPaletteSlots = slots;
+    state.cleanCivColorPaletteSlots = cloneCivColorPaletteSlots(slots);
+    state.civColorPaletteScenarioPath = String(state.settings && state.settings.scenarioPath || '');
+    state.civColorPaletteTargetRoot = String(res.targetRoot || '');
+    state.civColorPaletteWritableRoots = deepCloneUiValue(Array.isArray(res.writableRoots) ? res.writableRoots : []);
+    state.civColorPaletteNeedsSearchFolderSetup = !!res.needsSearchFolderSetup;
+    state.civColorPaletteSearchFolderSetupRoot = String(res.searchFolderSetupRoot || '');
+    state.civColorPaletteSearchFolderSetupValue = String(res.searchFolderSetupValue || '');
+    const requestedSlot = preserveSelection ? state.civColorPaletteSelectedSlot : initialSlot;
+    state.civColorPaletteSelectedSlot = clampCivColorPaletteSlot(
+      requestedSlot == null ? state.civColorPaletteSelectedSlot : requestedSlot
+    );
+    state.civColorPaletteMainDraftSlot = -1;
+    state.civColorPaletteMainDraftRgb = null;
+    ensureCivColorPaletteSelectedIndex();
+    state.civColorPaletteLoading = false;
+    state.civColorPaletteError = '';
+    applyCivColorPaletteSlotsToUiCaches();
+    refreshCivColorPaletteDirtyState();
+    if (isCivColorPaletteModalVisible()) renderCivColorPaletteModal();
+    return true;
+  } catch (err) {
+    state.civColorPaletteSlots = [];
+    state.cleanCivColorPaletteSlots = [];
+    state.civColorPaletteScenarioPath = String(state.settings && state.settings.scenarioPath || '');
+    state.civColorPaletteMainDraftSlot = -1;
+    state.civColorPaletteMainDraftRgb = null;
+    state.civColorPaletteLoading = false;
+    state.civColorPaletteError = err && err.message ? err.message : 'Failed to inspect Civ palette files.';
+    refreshCivColorPaletteDirtyState();
+    if (isCivColorPaletteModalVisible()) renderCivColorPaletteModal();
+    return false;
+  }
+}
+
+async function configureCivColorPaletteScenarioSearchFolder() {
+  if (!state.civColorPaletteNeedsSearchFolderSetup || !state.civColorPaletteSearchFolderSetupValue) return;
+  rememberUndoSnapshotForKey('SECTION_TAB:scenarioSettings');
+  await reloadScenarioFromEditedSearchFolder(state.civColorPaletteSearchFolderSetupValue);
+  await loadCivColorPaletteSlotsIntoState({ preserveSelection: true });
+}
+
+function ensureCivColorPaletteModalNode() {
+  if (civColorPaletteModal.node && civColorPaletteModal.node.isConnected) return civColorPaletteModal.node;
+  const overlay = document.createElement('div');
+  overlay.className = 'civ-color-palette-modal-overlay hidden';
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.innerHTML = `
+    <div class="civ-color-palette-modal-panel" role="dialog" aria-modal="true" aria-label="Custom Civ Colors">
+      <div class="civ-color-palette-modal-header">
+        <strong id="civ-color-palette-modal-title">Custom Civ Colors</strong>
+        <div class="civ-color-palette-modal-actions">
+          <button type="button" class="ghost nav-btn refresh-btn civ-color-palette-refresh-btn" data-act="refresh" aria-label="Refresh from disk" title="Refresh from disk">⟳</button>
+          <button type="button" class="secondary civ-color-palette-save-btn" data-act="save"><span class="btn-icon">💾</span>Save</button>
+          <button type="button" class="ghost civ-color-palette-inline-btn" data-act="undo"><span class="btn-icon">↶</span>Undo</button>
+          <button type="button" class="ghost civ-color-palette-inline-btn" data-act="undo-all"><span class="btn-icon">↺</span>Undo All</button>
+          <button type="button" class="ghost" data-act="close">Close</button>
+        </div>
+      </div>
+      <div id="civ-color-palette-modal-body" class="civ-color-palette-modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  civColorPaletteModal.node = overlay;
+  civColorPaletteModal.body = overlay.querySelector('#civ-color-palette-modal-body');
+  civColorPaletteModal.title = overlay.querySelector('#civ-color-palette-modal-title');
+  civColorPaletteModal.refreshBtn = overlay.querySelector('[data-act="refresh"]');
+  civColorPaletteModal.saveBtn = overlay.querySelector('[data-act="save"]');
+  civColorPaletteModal.undoBtn = overlay.querySelector('[data-act="undo"]');
+  civColorPaletteModal.undoAllBtn = overlay.querySelector('[data-act="undo-all"]');
+  const closeBtn = overlay.querySelector('[data-act="close"]');
+  if (closeBtn) closeBtn.addEventListener('click', () => closeCivColorPaletteModal());
+  if (civColorPaletteModal.refreshBtn) {
+    civColorPaletteModal.refreshBtn.addEventListener('click', () => {
+      if (hasUnsavedCivColorPaletteChanges()) {
+        setStatus('Save or undo palette changes before refreshing from disk.');
+        return;
+      }
+      void loadCivColorPaletteSlotsIntoState({ preserveSelection: true });
+    });
+  }
+  if (civColorPaletteModal.saveBtn) civColorPaletteModal.saveBtn.addEventListener('click', saveCurrentBundle);
+  if (civColorPaletteModal.undoBtn) {
+    civColorPaletteModal.undoBtn.addEventListener('click', async () => {
+      if (!isScenarioMode() || !hasImmediateEffectiveUndoableChanges()) return;
+      await undoOneStep();
+      if (isCivColorPaletteModalVisible()) renderCivColorPaletteModal();
+    });
+  }
+  if (civColorPaletteModal.undoAllBtn) {
+    civColorPaletteModal.undoAllBtn.addEventListener('click', async () => {
+      if (!isScenarioMode() || !hasImmediateEffectiveUndoableChanges()) return;
+      await undoAllChanges();
+      if (isCivColorPaletteModalVisible()) renderCivColorPaletteModal();
+    });
+  }
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closeCivColorPaletteModal();
+  });
+  return overlay;
+}
+
+function closeCivColorPaletteModal() {
+  applyCivColorPaletteSlotsToUiCaches();
+  refreshCivSlotUiColorConsumers();
+  const overlay = ensureCivColorPaletteModalNode();
+  overlay.classList.add('hidden');
+  overlay.setAttribute('aria-hidden', 'true');
+  if (civColorPaletteModal.body) civColorPaletteModal.body.innerHTML = '';
+  state.civColorPaletteAdjustmentTool = '';
+  state.civColorPaletteAdjustmentAmount = 0;
+  state.civColorPaletteTintTargetRgb = null;
+  civColorPaletteModal.lastConfig = null;
+}
+
+function renderCivColorPaletteRoleSection(container, {
+  title,
+  description = '',
+  indices = [],
+  selectedIndex = 0,
+  selectedSlotEntry = null,
+  canEditColors = true
+} = {}) {
+  if (!container || !Array.isArray(indices) || !indices.length) return;
+  const section = document.createElement('section');
+  section.className = 'civ-color-palette-role-section';
+  const head = document.createElement('div');
+  head.className = 'civ-color-palette-role-section-head';
+  const strong = document.createElement('strong');
+  strong.textContent = title;
+  head.appendChild(strong);
+  if (description) {
+    const copy = document.createElement('p');
+    copy.textContent = description;
+    head.appendChild(copy);
+  }
+  section.appendChild(head);
+  const rows = document.createElement('div');
+  rows.className = 'civ-color-palette-role-rows';
+  indices.forEach((index) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'civ-color-palette-role-row';
+    if (index === selectedIndex) row.classList.add('active');
+    row.disabled = !canEditColors;
+    row.addEventListener('click', () => {
+      state.civColorPaletteSelectedIndex = index;
+      renderCivColorPaletteModal();
+    });
+    const swatch = document.createElement('span');
+    swatch.className = 'civ-color-palette-role-swatch';
+    swatch.style.background = rgbToCss(getCivColorPaletteColor(selectedSlotEntry, index));
+    row.appendChild(swatch);
+    const copy = document.createElement('span');
+    copy.className = 'civ-color-palette-role-copy';
+    const label = document.createElement('strong');
+    label.textContent = getCivColorPaletteDisplayLabel(index);
+    const desc = document.createElement('span');
+    desc.textContent = getCivColorPaletteDisplayDescription(index);
+    copy.appendChild(label);
+    copy.appendChild(desc);
+    row.appendChild(copy);
+    const meta = document.createElement('span');
+    meta.className = 'civ-color-palette-role-meta';
+    const indexTag = document.createElement('span');
+    indexTag.className = 'civ-color-palette-role-tag';
+    indexTag.textContent = `#${index}`;
+    meta.appendChild(indexTag);
+    if (getCivColorPaletteAutoGenerateIndices().includes(index)) {
+      const autoTag = document.createElement('span');
+      autoTag.className = 'civ-color-palette-role-tag accent';
+      autoTag.textContent = 'Auto';
+      meta.appendChild(autoTag);
+    }
+    row.appendChild(meta);
+    rows.appendChild(row);
+  });
+  section.appendChild(rows);
+  container.appendChild(section);
+}
+
+function captureCivColorPaletteModalScrollState() {
+  const body = civColorPaletteModal.body;
+  if (!body || typeof body.querySelector !== 'function') return null;
+  const slotGrid = body.querySelector('.civ-color-palette-slot-grid');
+  const tableWrap = body.querySelector('.civ-color-palette-table-wrap');
+  return {
+    slotGridTop: slotGrid ? slotGrid.scrollTop || 0 : 0,
+    tableTop: tableWrap ? tableWrap.scrollTop || 0 : 0,
+    tableLeft: tableWrap ? tableWrap.scrollLeft || 0 : 0
+  };
+}
+
+function restoreCivColorPaletteModalScrollState(scrollState) {
+  if (!scrollState || !civColorPaletteModal.body) return;
+  const slotGrid = civColorPaletteModal.body.querySelector('.civ-color-palette-slot-grid');
+  const tableWrap = civColorPaletteModal.body.querySelector('.civ-color-palette-table-wrap');
+  if (slotGrid) slotGrid.scrollTop = Math.max(0, Number(scrollState.slotGridTop) || 0);
+  if (tableWrap) {
+    tableWrap.scrollTop = Math.max(0, Number(scrollState.tableTop) || 0);
+    tableWrap.scrollLeft = Math.max(0, Number(scrollState.tableLeft) || 0);
+  }
+}
+
+function renderCivColorPaletteModal(options = {}) {
+  const overlay = ensureCivColorPaletteModalNode();
+  if (!civColorPaletteModal.body) return overlay;
+  const scrollState = options && options.preserveScroll === false
+    ? null
+    : captureCivColorPaletteModalScrollState();
+  const config = getCurrentCivColorPaletteModalConfig();
+  if (civColorPaletteModal.title) {
+    civColorPaletteModal.title.textContent = 'Custom Civ Colors';
+  }
+  civColorPaletteModal.body.innerHTML = '';
+  const panel = document.createElement('div');
+  panel.className = 'civ-color-palette-panel';
+  if (state.civColorPaletteLoading) {
+    const loading = document.createElement('div');
+    loading.className = 'civ-color-palette-empty';
+    loading.textContent = 'Loading civ palette files...';
+    panel.appendChild(loading);
+    civColorPaletteModal.body.appendChild(panel);
+    refreshCivColorPaletteModalActionButtons();
+    return overlay;
+  }
+  if (state.civColorPaletteError) {
+    const error = document.createElement('div');
+    error.className = 'civ-color-palette-empty error';
+    error.textContent = state.civColorPaletteError;
+    panel.appendChild(error);
+    civColorPaletteModal.body.appendChild(panel);
+    refreshCivColorPaletteModalActionButtons();
+    return overlay;
+  }
+  ensureCivColorPaletteSelectedIndex();
+  const selectedSlot = clampCivColorPaletteSlot(state.civColorPaletteSelectedSlot);
+  const selectedSlotEntry = getCivColorPaletteSlotEntry(selectedSlot);
+  if (!selectedSlotEntry) {
+    const empty = document.createElement('div');
+    empty.className = 'civ-color-palette-empty';
+    empty.textContent = 'No palette slots are available for this scenario.';
+    panel.appendChild(empty);
+    civColorPaletteModal.body.appendChild(panel);
+    refreshCivColorPaletteModalActionButtons();
+    return overlay;
+  }
+  const selectedColorIndex = clampCivColorPaletteIndex(state.civColorPaletteSelectedIndex);
+  state.civColorPaletteSelectedIndex = selectedColorIndex;
+  const mainDraftRgb = ensureCivColorPaletteMainDraftForSlot(selectedSlot);
+  const canEditColors = !!config.referenceEditable && !state.civColorPaletteNeedsSearchFolderSetup;
+  const getVisibleBatchIndices = () => getCivColorPaletteVisibleIndicesForFilter(state.civColorPaletteFilter);
+  const applyBatchAdjustment = (tool, amount = 0) => {
+    const currentSlotEntry = getCivColorPaletteSlotEntry(selectedSlot);
+    if (!currentSlotEntry || !Array.isArray(currentSlotEntry.palette)) return false;
+    const nextPalette = applyCivColorPaletteBatchAdjustmentToPalette(
+      currentSlotEntry.palette,
+      getVisibleBatchIndices(),
+      tool,
+      amount
+    );
+    if (JSON.stringify(nextPalette) === JSON.stringify(currentSlotEntry.palette)) return false;
+    rememberUndoSnapshotForKey('CIV_COLOR_PALETTES');
+    setCivColorPaletteSlotPalette(selectedSlot, nextPalette);
+    const visible = getVisibleBatchIndices();
+    if (!visible.includes(state.civColorPaletteSelectedIndex) && visible.length) {
+      state.civColorPaletteSelectedIndex = visible[0];
+    }
+    return true;
+  };
+
+  if (state.civColorPaletteNeedsSearchFolderSetup) {
+    const banner = document.createElement('div');
+    banner.className = 'civ-color-palette-banner';
+    const textWrap = document.createElement('div');
+    textWrap.className = 'civ-color-palette-banner-copy';
+    const title = document.createElement('strong');
+    title.textContent = 'Set up a scenario-local palette folder first';
+    const text = document.createElement('p');
+    text.textContent = 'This BIQ still points at shared content. The editor can create a local scenario search folder, reload the scenario against it, and then save `ntp00`-`ntp31` there.';
+    textWrap.appendChild(title);
+    textWrap.appendChild(text);
+    banner.appendChild(textWrap);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'secondary';
+    button.innerHTML = '<span class="btn-icon">↻</span>Set Up Folder';
+    button.addEventListener('click', () => {
+      void configureCivColorPaletteScenarioSearchFolder();
+    });
+    banner.appendChild(button);
+    panel.appendChild(banner);
+  }
+
+  const chrome = document.createElement('div');
+  chrome.className = 'civ-color-palette-layout';
+
+  const sidebar = document.createElement('div');
+  sidebar.className = 'civ-color-palette-sidebar';
+  const sidebarHead = document.createElement('div');
+  sidebarHead.className = 'civ-color-palette-sidebar-head';
+  const sidebarTitle = document.createElement('strong');
+  sidebarTitle.textContent = 'Colors';
+  sidebarHead.appendChild(sidebarTitle);
+  sidebar.appendChild(sidebarHead);
+  const slotGrid = document.createElement('div');
+  slotGrid.className = 'civ-color-palette-slot-grid';
+  const defaultUsageBySlot = getCivilizationColorSlotUsage();
+  (Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : []).forEach((slotEntry) => {
+    const slot = clampCivColorPaletteSlot(slotEntry && slotEntry.slot);
+    const defaultUsageSummary = formatCivilizationDefaultColorUsageSummary(defaultUsageBySlot && defaultUsageBySlot[slot]);
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'civ-color-palette-slot-card';
+    if (slot === selectedSlot) item.classList.add('active');
+    if (isCivColorPaletteSlotDirty(slot)) item.classList.add('dirty');
+    if (defaultUsageSummary) {
+      item.classList.add('has-default-usage');
+      item.title = defaultUsageSummary.title;
+    } else {
+      item.title = `Color ${slot}`;
+    }
+    item.addEventListener('click', () => {
+      state.civColorPaletteSelectedSlot = slot;
+      renderCivColorPaletteModal();
+    });
+    const swatch = document.createElement('span');
+    swatch.className = 'civ-color-palette-slot-swatch';
+    swatch.style.background = getCivSlotUiColor(slot);
+    item.appendChild(swatch);
+    const textWrap = document.createElement('span');
+    textWrap.className = 'civ-color-palette-slot-copy';
+    const label = document.createElement('strong');
+    label.textContent = `Color ${slot}`;
+    textWrap.appendChild(label);
+    if (defaultUsageSummary) {
+      const subtitle = document.createElement('span');
+      subtitle.className = 'civ-color-palette-slot-usage';
+      subtitle.textContent = defaultUsageSummary.text;
+      textWrap.appendChild(subtitle);
+    }
+    item.appendChild(textWrap);
+    slotGrid.appendChild(item);
+  });
+  sidebar.appendChild(slotGrid);
+  chrome.appendChild(sidebar);
+
+  const editor = document.createElement('div');
+  editor.className = 'civ-color-palette-editor';
+
+  const editorHead = document.createElement('div');
+  editorHead.className = 'civ-color-palette-editor-head';
+  const editorTitle = document.createElement('div');
+  editorTitle.className = 'civ-color-palette-editor-title';
+  const titleText = document.createElement('strong');
+  titleText.textContent = `Color ${selectedSlot}`;
+  editorTitle.appendChild(titleText);
+  editorHead.appendChild(editorTitle);
+
+  const mainControls = document.createElement('div');
+  mainControls.className = 'civ-color-palette-main-controls';
+  const mainSeedLabel = document.createElement('label');
+  mainSeedLabel.className = 'civ-color-palette-main-label';
+  mainSeedLabel.textContent = 'Set Main Color';
+  const mainSeedInput = document.createElement('input');
+  mainSeedInput.type = 'color';
+  mainSeedInput.id = `civ-color-palette-main-color-${selectedSlot}`;
+  mainSeedLabel.htmlFor = mainSeedInput.id;
+  mainSeedInput.value = rgbToHex(mainDraftRgb);
+  mainSeedInput.disabled = !canEditColors;
+  let mainSeedInputChangedDuringDrag = false;
+  let mainSeedInputUndoCaptured = false;
+  const commitMainSeedColor = (options = {}) => {
+    const next = hexToRgb(mainSeedInput.value);
+    if (!next) return false;
+    const changed = applyCivColorPaletteMainColor(selectedSlot, next, { skipUndo: !!options.skipUndo });
+    if (changed && options.deferRender) {
+      mainSeedInputChangedDuringDrag = true;
+    } else if (changed) {
+      renderCivColorPaletteModal();
+    }
+    return changed;
+  };
+  mainSeedInput.addEventListener('input', () => {
+    const changed = commitMainSeedColor({
+      deferRender: true,
+      skipUndo: mainSeedInputUndoCaptured
+    });
+    if (changed) mainSeedInputUndoCaptured = true;
+  });
+  mainSeedInput.addEventListener('change', () => {
+    const changed = commitMainSeedColor({ skipUndo: mainSeedInputUndoCaptured });
+    if (!changed && mainSeedInputChangedDuringDrag) renderCivColorPaletteModal();
+    mainSeedInputChangedDuringDrag = false;
+    mainSeedInputUndoCaptured = false;
+  });
+  mainSeedLabel.appendChild(mainSeedInput);
+  mainControls.appendChild(mainSeedLabel);
+  const mainSeedHex = document.createElement('input');
+  mainSeedHex.type = 'text';
+  mainSeedHex.className = 'civ-color-palette-hex-input';
+  mainSeedHex.value = rgbToHex(mainDraftRgb).toUpperCase();
+  mainSeedHex.placeholder = '#RRGGBB';
+  mainSeedHex.disabled = !canEditColors;
+  const commitMainSeedHex = () => {
+    const next = hexToRgb(mainSeedHex.value);
+    if (!next) {
+      mainSeedHex.value = rgbToHex(ensureCivColorPaletteMainDraftForSlot(selectedSlot)).toUpperCase();
+      return;
+    }
+    if (applyCivColorPaletteMainColor(selectedSlot, next)) renderCivColorPaletteModal();
+  };
+  mainSeedHex.addEventListener('change', commitMainSeedHex);
+  mainSeedHex.addEventListener('blur', commitMainSeedHex);
+  mainControls.appendChild(mainSeedHex);
+  editorHead.appendChild(mainControls);
+  editor.appendChild(editorHead);
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'civ-color-palette-filterbar files-read-filters';
+  filterBar.setAttribute('aria-label', 'Color row filters');
+  const activeFilterFacets = normalizeCivColorPaletteFilterFacets(state.civColorPaletteFilter);
+  state.civColorPaletteFilter = activeFilterFacets;
+  getCivColorPaletteFilterFacetDefinitions().forEach((facet) => {
+    const label = document.createElement('label');
+    label.className = 'files-filter-toggle civ-color-palette-filter-toggle';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = activeFilterFacets.includes(facet.key);
+    const textSpan = document.createElement('span');
+    textSpan.textContent = facet.label;
+    label.appendChild(checkbox);
+    label.appendChild(textSpan);
+    checkbox.addEventListener('change', () => {
+      const current = normalizeCivColorPaletteFilterFacets(state.civColorPaletteFilter);
+      let next = checkbox.checked
+        ? Array.from(new Set([...current, facet.key]))
+        : current.filter((key) => key !== facet.key);
+      if (next.length === 0) next = ['main'];
+      state.civColorPaletteFilter = next;
+      renderCivColorPaletteModal();
+    });
+    filterBar.appendChild(label);
+  });
+  const batchActions = document.createElement('div');
+  batchActions.className = 'civ-color-palette-batch-actions';
+  [
+    ['hue', 'Hue'],
+    ['saturation', 'Saturation'],
+    ['balance', 'Balance']
+  ].forEach(([tool, labelText]) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'civ-color-palette-batch-btn';
+    btn.textContent = labelText;
+    btn.disabled = !canEditColors;
+    if (String(state.civColorPaletteAdjustmentTool || '') === tool) btn.classList.add('active');
+    btn.addEventListener('click', () => {
+      state.civColorPaletteAdjustmentTool = tool;
+      state.civColorPaletteAdjustmentAmount = 0;
+      state.civColorPaletteTintTargetRgb = null;
+      renderCivColorPaletteModal();
+    });
+    batchActions.appendChild(btn);
+  });
+  const tintBtn = document.createElement('button');
+  tintBtn.type = 'button';
+  tintBtn.className = 'civ-color-palette-batch-btn';
+  tintBtn.textContent = 'Tint';
+  tintBtn.disabled = !canEditColors;
+  if (String(state.civColorPaletteAdjustmentTool || '') === 'tint') tintBtn.classList.add('active');
+  tintBtn.addEventListener('click', () => {
+    const visible = getVisibleBatchIndices();
+    const seedIndex = visible.includes(state.civColorPaletteSelectedIndex)
+      ? state.civColorPaletteSelectedIndex
+      : (visible.includes(7) ? 7 : (visible[0] ?? state.civColorPaletteSelectedIndex));
+    state.civColorPaletteAdjustmentTool = 'tint';
+    state.civColorPaletteAdjustmentAmount = 0;
+    state.civColorPaletteTintTargetRgb = getCivColorPaletteColor(selectedSlotEntry, seedIndex);
+    renderCivColorPaletteModal();
+  });
+  batchActions.appendChild(tintBtn);
+  filterBar.appendChild(batchActions);
+  editor.appendChild(filterBar);
+
+  const activeAdjustmentTool = String(state.civColorPaletteAdjustmentTool || '').trim().toLowerCase();
+  let table = null;
+  const getDisplayedRgbForIndex = (index, baseRgb = null) => {
+    const sourceRgb = baseRgb || getCivColorPaletteColor(getCivColorPaletteSlotEntry(selectedSlot), index);
+    if (['hue', 'saturation', 'balance'].includes(activeAdjustmentTool)) {
+      return getCivColorPaletteAdjustedRgb(sourceRgb, activeAdjustmentTool, state.civColorPaletteAdjustmentAmount);
+    }
+    if (activeAdjustmentTool === 'tint' && state.civColorPaletteTintTargetRgb) {
+      return getCivColorPaletteAdjustedRgb(sourceRgb, activeAdjustmentTool, state.civColorPaletteTintTargetRgb);
+    }
+    return sourceRgb;
+  };
+  const updateRenderedAdjustmentPreview = () => {
+    if (!table) return;
+    const rows = Array.from(table.querySelectorAll('.civ-color-palette-table-entry[data-palette-index]'));
+    rows.forEach((row) => {
+      const idx = Number.parseInt(row.dataset.paletteIndex || '', 10);
+      if (!Number.isInteger(idx)) return;
+      const currentRgb = getCivColorPaletteColor(getCivColorPaletteSlotEntry(selectedSlot), idx);
+      const displayRgb = getDisplayedRgbForIndex(idx, currentRgb);
+      const colorInput = row.querySelector('.civ-color-palette-table-color input[type="color"]');
+      if (colorInput) colorInput.value = rgbToHex(displayRgb);
+      const hexInput = row.querySelector('.civ-color-palette-table-hex input');
+      if (hexInput) hexInput.value = rgbToHex(displayRgb).toUpperCase();
+      ['r', 'g', 'b'].forEach((channel) => {
+        const valueInput = row.querySelector(`.civ-color-palette-table-number input[data-channel="${channel}"]`);
+        if (valueInput) valueInput.value = String(displayRgb[channel]);
+      });
+    });
+  };
+  if (['hue', 'saturation', 'balance'].includes(activeAdjustmentTool)) {
+    const visible = getVisibleBatchIndices();
+    const previewIndex = visible.includes(selectedColorIndex) ? selectedColorIndex : (visible[0] ?? selectedColorIndex);
+    const previewRgb = getCivColorPaletteColor(selectedSlotEntry, previewIndex);
+    const amount = Number.isFinite(Number(state.civColorPaletteAdjustmentAmount))
+      ? Number(state.civColorPaletteAdjustmentAmount)
+      : 0;
+    const toolMeta = activeAdjustmentTool === 'hue'
+      ? { title: 'Adjust Hue', unit: 'deg', min: -180, max: 180, step: 1 }
+      : activeAdjustmentTool === 'saturation'
+        ? { title: 'Adjust Saturation', unit: '%', min: -100, max: 100, step: 1 }
+        : { title: 'Adjust Balance', unit: '%', min: -100, max: 100, step: 1 };
+    const adjustPanel = document.createElement('div');
+    adjustPanel.className = 'civ-color-palette-adjust-panel';
+    const adjustTitle = document.createElement('strong');
+    adjustTitle.textContent = toolMeta.title;
+    adjustPanel.appendChild(adjustTitle);
+    const beforeSwatch = document.createElement('span');
+    beforeSwatch.className = 'civ-color-palette-adjust-swatch';
+    beforeSwatch.style.background = rgbToCss(previewRgb);
+    beforeSwatch.title = `Before ${rgbToHex(previewRgb).toUpperCase()}`;
+    adjustPanel.appendChild(beforeSwatch);
+    const afterSwatch = document.createElement('span');
+    afterSwatch.className = 'civ-color-palette-adjust-swatch';
+    afterSwatch.style.background = rgbToCss(getCivColorPaletteAdjustedRgb(previewRgb, activeAdjustmentTool, amount));
+    afterSwatch.title = `After ${rgbToHex(getCivColorPaletteAdjustedRgb(previewRgb, activeAdjustmentTool, amount)).toUpperCase()}`;
+    adjustPanel.appendChild(afterSwatch);
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = String(toolMeta.min);
+    slider.max = String(toolMeta.max);
+    slider.step = String(toolMeta.step);
+    slider.value = String(amount);
+    slider.disabled = !canEditColors;
+    adjustPanel.appendChild(slider);
+    const valueInput = document.createElement('input');
+    valueInput.type = 'number';
+    valueInput.min = String(toolMeta.min);
+    valueInput.max = String(toolMeta.max);
+    valueInput.step = String(toolMeta.step);
+    valueInput.value = String(amount);
+    valueInput.disabled = !canEditColors;
+    adjustPanel.appendChild(valueInput);
+    const unit = document.createElement('span');
+    unit.className = 'civ-color-palette-adjust-unit';
+    unit.textContent = toolMeta.unit;
+    adjustPanel.appendChild(unit);
+    const updateAdjustmentPreview = (rawValue) => {
+      const clamped = Math.max(toolMeta.min, Math.min(toolMeta.max, Number(rawValue) || 0));
+      state.civColorPaletteAdjustmentAmount = clamped;
+      slider.value = String(clamped);
+      valueInput.value = String(clamped);
+      const nextPreview = getCivColorPaletteAdjustedRgb(previewRgb, activeAdjustmentTool, clamped);
+      afterSwatch.style.background = rgbToCss(nextPreview);
+      afterSwatch.title = `After ${rgbToHex(nextPreview).toUpperCase()}`;
+      updateRenderedAdjustmentPreview();
+    };
+    slider.addEventListener('input', () => updateAdjustmentPreview(slider.value));
+    valueInput.addEventListener('input', () => updateAdjustmentPreview(valueInput.value));
+    const applyBtn = document.createElement('button');
+    applyBtn.type = 'button';
+    applyBtn.className = 'secondary';
+    applyBtn.textContent = 'Apply';
+    applyBtn.disabled = !canEditColors;
+    applyBtn.addEventListener('click', () => {
+      const nextAmount = Number(state.civColorPaletteAdjustmentAmount) || 0;
+      state.civColorPaletteAdjustmentTool = '';
+      state.civColorPaletteAdjustmentAmount = 0;
+      state.civColorPaletteTintTargetRgb = null;
+      if (applyBatchAdjustment(activeAdjustmentTool, nextAmount)) renderCivColorPaletteModal();
+      else renderCivColorPaletteModal();
+    });
+    adjustPanel.appendChild(applyBtn);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'ghost';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      state.civColorPaletteAdjustmentTool = '';
+      state.civColorPaletteAdjustmentAmount = 0;
+      state.civColorPaletteTintTargetRgb = null;
+      renderCivColorPaletteModal();
+    });
+    adjustPanel.appendChild(cancelBtn);
+    editor.appendChild(adjustPanel);
+  }
+  if (activeAdjustmentTool === 'tint') {
+    const visible = getVisibleBatchIndices();
+    const previewIndex = visible.includes(selectedColorIndex) ? selectedColorIndex : (visible[0] ?? selectedColorIndex);
+    const previewRgb = getCivColorPaletteColor(selectedSlotEntry, previewIndex);
+    const targetRgb = state.civColorPaletteTintTargetRgb
+      ? normalizeCivColorPaletteRgb(state.civColorPaletteTintTargetRgb)
+      : previewRgb;
+    state.civColorPaletteTintTargetRgb = targetRgb;
+    const tintPanel = document.createElement('div');
+    tintPanel.className = 'civ-color-palette-adjust-panel civ-color-palette-tint-panel';
+    const tintTitle = document.createElement('strong');
+    tintTitle.textContent = 'Tint Visible Rows';
+    tintPanel.appendChild(tintTitle);
+    const rampSampleIndices = (() => {
+      const candidates = (visible.length > 0 ? visible : [selectedColorIndex])
+        .filter((idx) => Number.isInteger(Number(idx)) && Number(idx) >= 0 && Number(idx) <= 69);
+      if (candidates.length <= 6) return Array.from(new Set(candidates));
+      return Array.from(new Set(Array.from({ length: 6 }, (_unused, idx) => (
+        candidates[Math.round((idx / 5) * (candidates.length - 1))]
+      ))));
+    })();
+    const previewWrap = document.createElement('div');
+    previewWrap.className = 'civ-color-palette-tint-preview';
+    const makeRampRow = (labelText) => {
+      const row = document.createElement('div');
+      row.className = 'civ-color-palette-tint-preview-row';
+      const label = document.createElement('span');
+      label.textContent = labelText;
+      row.appendChild(label);
+      const ramp = document.createElement('div');
+      ramp.className = 'civ-color-palette-tint-ramp';
+      row.appendChild(ramp);
+      previewWrap.appendChild(row);
+      return ramp;
+    };
+    const currentRamp = makeRampRow('Current rows');
+    const tintedRamp = makeRampRow('Tinted rows');
+    const tintedRampSwatches = [];
+    rampSampleIndices.forEach((index) => {
+      const currentRgb = getCivColorPaletteColor(selectedSlotEntry, index);
+      const currentSwatch = document.createElement('span');
+      currentSwatch.className = 'civ-color-palette-tint-ramp-swatch';
+      currentSwatch.style.background = rgbToCss(currentRgb);
+      currentSwatch.title = `${index}: ${rgbToHex(currentRgb).toUpperCase()}`;
+      currentRamp.appendChild(currentSwatch);
+      const tintedSwatch = document.createElement('span');
+      tintedSwatch.className = 'civ-color-palette-tint-ramp-swatch';
+      tintedRamp.appendChild(tintedSwatch);
+      tintedRampSwatches.push({ index, swatch: tintedSwatch });
+    });
+    const updateTintedRamp = () => {
+      tintedRampSwatches.forEach(({ index, swatch }) => {
+        const currentRgb = getCivColorPaletteColor(selectedSlotEntry, index);
+        const nextRgb = getCivColorPaletteAdjustedRgb(currentRgb, 'tint', state.civColorPaletteTintTargetRgb);
+        swatch.style.background = rgbToCss(nextRgb);
+        swatch.title = `${index}: ${rgbToHex(nextRgb).toUpperCase()}`;
+      });
+    };
+    updateTintedRamp();
+    tintPanel.appendChild(previewWrap);
+    const targetGroup = document.createElement('label');
+    targetGroup.className = 'civ-color-palette-tint-target';
+    const targetLabel = document.createElement('span');
+    targetLabel.textContent = 'Target';
+    targetGroup.appendChild(targetLabel);
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = rgbToHex(targetRgb);
+    colorInput.disabled = !canEditColors;
+    colorInput.title = 'Target tint color';
+    targetGroup.appendChild(colorInput);
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.value = rgbToHex(targetRgb).toUpperCase();
+    hexInput.disabled = !canEditColors;
+    hexInput.className = 'civ-color-palette-tint-hex';
+    hexInput.title = 'Target tint color';
+    targetGroup.appendChild(hexInput);
+    tintPanel.appendChild(targetGroup);
+    const updateTintTarget = (rawValue) => {
+      const parsed = hexToRgb(rawValue);
+      if (!parsed) return;
+      state.civColorPaletteTintTargetRgb = parsed;
+      const hex = rgbToHex(parsed).toUpperCase();
+      colorInput.value = rgbToHex(parsed);
+      hexInput.value = hex;
+      updateTintedRamp();
+      updateRenderedAdjustmentPreview();
+    };
+    colorInput.addEventListener('input', () => updateTintTarget(colorInput.value));
+    hexInput.addEventListener('input', () => updateTintTarget(hexInput.value));
+    const applyBtn = document.createElement('button');
+    applyBtn.type = 'button';
+    applyBtn.className = 'secondary';
+    applyBtn.textContent = 'Apply';
+    applyBtn.disabled = !canEditColors;
+    applyBtn.addEventListener('click', () => {
+      const target = normalizeCivColorPaletteRgb(state.civColorPaletteTintTargetRgb);
+      state.civColorPaletteAdjustmentTool = '';
+      state.civColorPaletteAdjustmentAmount = 0;
+      state.civColorPaletteTintTargetRgb = null;
+      if (applyBatchAdjustment('tint', target)) renderCivColorPaletteModal();
+      else renderCivColorPaletteModal();
+    });
+    tintPanel.appendChild(applyBtn);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'ghost';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      state.civColorPaletteAdjustmentTool = '';
+      state.civColorPaletteAdjustmentAmount = 0;
+      state.civColorPaletteTintTargetRgb = null;
+      renderCivColorPaletteModal();
+    });
+    tintPanel.appendChild(cancelBtn);
+    editor.appendChild(tintPanel);
+  }
+
+  const setRowColor = (index, rgb, options = {}) => {
+    const next = normalizeCivColorPaletteRgb(rgb);
+    const current = getCivColorPaletteColor(getCivColorPaletteSlotEntry(selectedSlot), index);
+    if (rgbToHex(next) === rgbToHex(current)) return;
+    if (Number(index) === 7) {
+      applyCivColorPaletteMainColor(selectedSlot, next, { skipUndo: !!options.skipUndo });
+    } else {
+      if (!options.skipUndo) rememberUndoSnapshotForKey('CIV_COLOR_PALETTES');
+      setCivColorPaletteColor(selectedSlot, index, next);
+    }
+    state.civColorPaletteSelectedIndex = index;
+    if (!options.deferRender) renderCivColorPaletteModal();
+  };
+
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'civ-color-palette-table-wrap';
+  table = document.createElement('div');
+  table.className = 'civ-color-palette-table';
+  table.classList.add('advanced');
+  const header = document.createElement('div');
+  header.className = 'civ-color-palette-table-row civ-color-palette-table-head';
+  const headerLabels = ['Role', 'Color', 'Hex', 'R', 'G', 'B'];
+  headerLabels.forEach((labelText) => {
+    const cell = document.createElement('div');
+    cell.className = 'civ-color-palette-table-cell';
+    cell.textContent = labelText;
+    header.appendChild(cell);
+  });
+  table.appendChild(header);
+  const visibleIndices = getCivColorPaletteVisibleIndicesForFilter(state.civColorPaletteFilter);
+  const isAdjustmentPreviewActive = ['hue', 'saturation', 'balance'].includes(activeAdjustmentTool);
+  visibleIndices.forEach((index) => {
+    const rgb = getCivColorPaletteColor(selectedSlotEntry, index);
+    const displayRgb = getDisplayedRgbForIndex(index, rgb);
+    const canEditRowColor = canEditColors && !isAdjustmentPreviewActive;
+    const row = document.createElement('div');
+    row.className = 'civ-color-palette-table-row civ-color-palette-table-entry';
+    row.dataset.paletteIndex = String(index);
+    if (index === selectedColorIndex) row.classList.add('active');
+    row.addEventListener('click', () => {
+      state.civColorPaletteSelectedIndex = index;
+      renderCivColorPaletteModal();
+    });
+    const labelCell = document.createElement('div');
+    labelCell.className = 'civ-color-palette-table-cell civ-color-palette-table-label';
+    labelCell.textContent = getCivColorPaletteDisplayLabel(index);
+    row.appendChild(labelCell);
+    const colorCell = document.createElement('div');
+    colorCell.className = 'civ-color-palette-table-cell civ-color-palette-table-color';
+    const rowColorInput = document.createElement('input');
+    rowColorInput.type = 'color';
+    rowColorInput.value = rgbToHex(displayRgb);
+    rowColorInput.disabled = !canEditRowColor;
+    rowColorInput.addEventListener('click', (ev) => ev.stopPropagation());
+    const commitRowColorInput = (ev) => {
+      ev.stopPropagation();
+      const next = hexToRgb(rowColorInput.value);
+      if (next) setRowColor(index, next, { deferRender: ev && ev.type === 'input' });
+    };
+    rowColorInput.addEventListener('input', commitRowColorInput);
+    rowColorInput.addEventListener('change', commitRowColorInput);
+    colorCell.appendChild(rowColorInput);
+    row.appendChild(colorCell);
+    const hexCell = document.createElement('div');
+    hexCell.className = 'civ-color-palette-table-cell civ-color-palette-table-hex';
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.value = rgbToHex(displayRgb).toUpperCase();
+    hexInput.placeholder = '#RRGGBB';
+    hexInput.disabled = !canEditRowColor;
+    const commitHex = () => {
+      const next = hexToRgb(hexInput.value);
+      if (!next) {
+        hexInput.value = rgbToHex(getDisplayedRgbForIndex(index)).toUpperCase();
+        return;
+      }
+      setRowColor(index, next);
+    };
+    hexInput.addEventListener('click', (ev) => ev.stopPropagation());
+    hexInput.addEventListener('change', (ev) => {
+      ev.stopPropagation();
+      commitHex();
+    });
+    hexInput.addEventListener('input', (ev) => {
+      ev.stopPropagation();
+      const next = hexToRgb(hexInput.value);
+      if (next) setRowColor(index, next, { deferRender: true });
+    });
+    hexInput.addEventListener('blur', commitHex);
+    hexCell.appendChild(hexInput);
+    row.appendChild(hexCell);
+    ['r', 'g', 'b'].forEach((channel) => {
+      const valueCell = document.createElement('div');
+      valueCell.className = 'civ-color-palette-table-cell civ-color-palette-table-number';
+      const valueInput = document.createElement('input');
+      valueInput.type = 'number';
+      valueInput.min = '0';
+      valueInput.max = '255';
+      valueInput.step = '1';
+      valueInput.dataset.channel = channel;
+      valueInput.value = String(displayRgb[channel]);
+      valueInput.disabled = !canEditRowColor;
+      valueInput.addEventListener('click', (ev) => ev.stopPropagation());
+      const commitChannelInput = (ev) => {
+        ev.stopPropagation();
+        const current = getCivColorPaletteColor(getCivColorPaletteSlotEntry(selectedSlot), index);
+        const next = { r: current.r, g: current.g, b: current.b };
+        next[channel] = clampCivColorPaletteByte(valueInput.value);
+        setRowColor(index, next, { deferRender: ev && ev.type === 'input' });
+      };
+      valueInput.addEventListener('input', commitChannelInput);
+      valueInput.addEventListener('change', commitChannelInput);
+      valueCell.appendChild(valueInput);
+      row.appendChild(valueCell);
+    });
+    table.appendChild(row);
+  });
+  tableWrap.appendChild(table);
+  editor.appendChild(tableWrap);
+
+  chrome.appendChild(editor);
+  panel.appendChild(chrome);
+  civColorPaletteModal.body.appendChild(panel);
+  restoreCivColorPaletteModalScrollState(scrollState);
+  refreshCivColorPaletteModalActionButtons();
+  return overlay;
+}
+
+function openCivColorPaletteModal(config = {}) {
+  const overlay = ensureCivColorPaletteModalNode();
+  civColorPaletteModal.lastConfig = config && typeof config === 'object' ? { ...config } : {};
+  const requestedSlot = clampCivColorPaletteSlot(
+    config && Object.prototype.hasOwnProperty.call(config, 'initialSlot')
+      ? config.initialSlot
+      : state.civColorPaletteSelectedSlot
+  );
+  state.civColorPaletteSelectedSlot = requestedSlot;
+  overlay.classList.remove('hidden');
+  overlay.setAttribute('aria-hidden', 'false');
+  const sameScenario = String(state.civColorPaletteScenarioPath || '') === String(state.settings && state.settings.scenarioPath || '');
+  if (sameScenario && Array.isArray(state.civColorPaletteSlots) && state.civColorPaletteSlots.length > 0) {
+    renderCivColorPaletteModal();
+  } else {
+    void loadCivColorPaletteSlotsIntoState({ initialSlot: requestedSlot, preserveSelection: false });
+  }
   refreshDirtyUi();
 }
 
@@ -37802,6 +39902,8 @@ function makeBlankReferenceFieldValue(field, tabKey = '') {
   }
   if (tabKey === 'governments') {
     if (base === 'prerequisitetechnology' || base === 'immuneto') return '-1';
+    if (base === 'questionmarkone' || base === 'questionmarktwo' || base === 'questionmarkthree' || base === 'questionmarkfour') return '0';
+    if (base === 'rulertitlepairsused') return '0';
     if (/^performanceofthisgovernmentversusgovernment\d+$/.test(base.replace(/[^a-z0-9]/g, ''))) return '0';
   }
   if (tabKey === 'improvements') {
@@ -40611,6 +42713,7 @@ function renderReferenceTab(tab, tabKey) {
     const entryIdentity = getReferenceEntryIdentity(tabKey, entry, baseIndex);
     itemBtn.setAttribute('data-entry-id', entryIdentity);
     itemBtn.classList.toggle('active', baseIndex === activeBaseIndex);
+    if (tabKey === 'civilizations') itemBtn.classList.add('entry-list-item-civilization');
     const showListThumb = tabKey !== 'gameConcepts' && !isUnitEraVariantEntry(entry);
     if (!showListThumb) itemBtn.classList.add('no-thumb');
     const thumb = showListThumb ? document.createElement('span') : null;
@@ -40619,6 +42722,13 @@ function renderReferenceTab(tab, tabKey) {
     title.textContent = entry.name;
     if (thumb) itemBtn.appendChild(thumb);
     itemBtn.appendChild(title);
+    if (tabKey === 'civilizations') {
+      const colorChip = createCivilizationListColorChip(entry);
+      if (colorChip) {
+        itemBtn.appendChild(colorChip);
+        itemBtn.title = colorChip.title;
+      }
+    }
     upsertUnitBiqIndexBadge(itemBtn, entry, unitBiqIndexBadgeRowsByIdentity.get(entryIdentity) || null);
     if (isReferenceEntryDirty(tabKey, entry)) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
@@ -60444,10 +62554,7 @@ function getMusicTrackMeta(track) {
   const parts = [];
   const duration = Number(track && track.durationSeconds);
   if (Number.isFinite(duration) && duration > 0) {
-    const total = Math.max(0, Math.round(duration));
-    const minutes = Math.floor(total / 60);
-    const seconds = String(total % 60).padStart(2, '0');
-    parts.push(`${minutes}:${seconds}`);
+    parts.push(formatMusicTime(duration));
   }
   const bitrate = Number(track && track.bitrateKbps);
   if (Number.isFinite(bitrate) && bitrate > 0) parts.push(`${Math.round(bitrate)} kbps`);
@@ -60461,19 +62568,325 @@ function getMusicTrackMeta(track) {
   return String(track && track.relativePath || '').trim();
 }
 
+function formatMusicTime(secondsValue) {
+  const total = Math.max(0, Math.round(Number(secondsValue) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, '0');
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`;
+  return `${minutes}:${seconds}`;
+}
+
+function getMusicSampleRateLabel(sampleRateHz) {
+  const sampleRate = Number(sampleRateHz);
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return '';
+  return sampleRate >= 1000
+    ? `${(sampleRate / 1000).toFixed(sampleRate % 1000 === 0 ? 0 : 1)} kHz`
+    : `${Math.round(sampleRate)} Hz`;
+}
+
+function getMusicPlayerDurationSeconds(player = state.musicPlayer, track = null) {
+  const audioDuration = Number(player && player.audio && player.audio.duration);
+  if (Number.isFinite(audioDuration) && audioDuration > 0) return audioDuration;
+  const playerDuration = Number(player && player.durationSeconds);
+  if (Number.isFinite(playerDuration) && playerDuration > 0) return playerDuration;
+  const trackDuration = Number(track && track.durationSeconds);
+  if (Number.isFinite(trackDuration) && trackDuration > 0) return trackDuration;
+  return 0;
+}
+
+function getMusicPendingSeekRatioValue(player = state.musicPlayer) {
+  const value = player && player.pendingSeekRatio;
+  if (value === null || value === undefined || value === '') return null;
+  const ratio = Number(value);
+  return Number.isFinite(ratio) && ratio >= 0 && ratio <= 1 ? ratio : null;
+}
+
+function getMusicPendingSeekTimeValue(player = state.musicPlayer) {
+  const value = player && player.pendingSeekTimeSeconds;
+  if (value === null || value === undefined || value === '') return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+function formatMusicDebugNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Number(n.toFixed(3)) : null;
+}
+
+function getMusicAudioDebugState(player = state.musicPlayer) {
+  const audio = player && player.audio;
+  const err = audio && audio.error ? audio.error : null;
+  return {
+    token: Number(player && player.token || 0),
+    trackId: String(player && player.trackId || ''),
+    title: String(player && player.title || ''),
+    hasAudio: !!audio,
+    readyState: audio ? Number(audio.readyState || 0) : null,
+    networkState: audio ? Number(audio.networkState || 0) : null,
+    paused: audio ? !!audio.paused : null,
+    ended: audio ? !!audio.ended : null,
+    seeking: audio ? !!audio.seeking : null,
+    audioCurrent: audio ? formatMusicDebugNumber(audio.currentTime) : null,
+    audioDuration: audio ? formatMusicDebugNumber(audio.duration) : null,
+    playerCurrent: formatMusicDebugNumber(player && player.currentTimeSeconds),
+    playerDuration: formatMusicDebugNumber(player && player.durationSeconds),
+    pendingRatio: formatMusicDebugNumber(player && player.pendingSeekRatio),
+    pendingTime: formatMusicDebugNumber(player && player.pendingSeekTimeSeconds),
+    pendingTarget: formatMusicDebugNumber(getMusicPendingSeekTargetSeconds(player)),
+    isPlaying: !!(player && player.isPlaying),
+    actuallyPlaying: getMusicAudioIsActuallyPlaying(player),
+    isBuffering: !!(player && player.isBuffering),
+    errorCode: err ? Number(err.code || 0) : null
+  };
+}
+
+function logMusicPlayerDebug(event, player = state.musicPlayer, extra = {}) {
+  appendMusicDebugLog(event, {
+    ...getMusicAudioDebugState(player),
+    ...extra
+  });
+}
+
+function getMusicPlayerCurrentSeconds(player = state.musicPlayer) {
+  const pendingRatio = getMusicPendingSeekRatioValue(player);
+  if (pendingRatio != null) {
+    const pendingTime = Number(player && player.currentTimeSeconds);
+    return Number.isFinite(pendingTime) && pendingTime >= 0 ? pendingTime : 0;
+  }
+  const audioTime = Number(player && player.audio && player.audio.currentTime);
+  if (Number.isFinite(audioTime) && audioTime >= 0) return audioTime;
+  const playerTime = Number(player && player.currentTimeSeconds);
+  return Number.isFinite(playerTime) && playerTime >= 0 ? playerTime : 0;
+}
+
+function getMusicPlayerProgressRatio(player = state.musicPlayer, track = null) {
+  const pendingRatio = getMusicPendingSeekRatioValue(player);
+  if (pendingRatio != null) {
+    return pendingRatio;
+  }
+  const duration = getMusicPlayerDurationSeconds(player, track);
+  if (!Number.isFinite(duration) || duration <= 0) return 0;
+  return Math.max(0, Math.min(1, getMusicPlayerCurrentSeconds(player) / duration));
+}
+
+function getMusicNowPlayingMeta(track, player = state.musicPlayer) {
+  if (!track) return '';
+  if (track.missing) return String(track.relativePath || 'Missing file');
+  const duration = getMusicPlayerDurationSeconds(player, track);
+  const current = Math.min(getMusicPlayerCurrentSeconds(player), duration || getMusicPlayerCurrentSeconds(player));
+  const parts = [];
+  if (duration > 0) parts.push(`${formatMusicTime(current)} / ${formatMusicTime(duration)}`);
+  const bitrate = Number(track && track.bitrateKbps);
+  if (Number.isFinite(bitrate) && bitrate > 0) parts.push(`${Math.round(bitrate)} kbps`);
+  const sampleRateLabel = getMusicSampleRateLabel(track && track.sampleRateHz);
+  if (sampleRateLabel) parts.push(sampleRateLabel);
+  const channelMode = String(track && track.channelMode || '').trim();
+  if (channelMode) parts.push(channelMode);
+  const rel = String(track && track.relativePath || '').trim();
+  if (rel && parts.length === 0) parts.push(rel);
+  return parts.join(' | ');
+}
+
+function syncMusicPlayerTimingFromAudio(player = state.musicPlayer) {
+  if (!player || !player.audio) return player;
+  const current = Number(player.audio.currentTime);
+  const duration = Number(player.audio.duration);
+  if (Number.isFinite(duration) && duration > 0) player.durationSeconds = duration;
+  const pendingRatio = getMusicPendingSeekRatioValue(player);
+  const pendingTime = getMusicPendingSeekTimeValue(player);
+  const hasPendingSeek = pendingRatio != null || pendingTime != null;
+  if (!hasPendingSeek && Number.isFinite(current) && current >= 0) player.currentTimeSeconds = current;
+  player.isPlaying = getMusicAudioIsActuallyPlaying(player);
+  return player;
+}
+
+function setMusicPendingSeekRatio(player, ratioValue) {
+  if (!player) return 0;
+  const ratio = Math.max(0, Math.min(1, Number(ratioValue) || 0));
+  player.pendingSeekRatio = ratio;
+  const duration = getMusicPlayerDurationSeconds(player, player.selectedTrack || null);
+  if (duration > 0) {
+    player.currentTimeSeconds = ratio * duration;
+    player.pendingSeekTimeSeconds = player.currentTimeSeconds;
+  }
+  logMusicPlayerDebug('pending-seek-set', player, {
+    ratio: Number(ratio.toFixed(4)),
+    duration: Number.isFinite(duration) ? Number(duration.toFixed(3)) : null,
+    target: formatMusicDebugNumber(player.pendingSeekTimeSeconds)
+  });
+  return ratio;
+}
+
+function clearMusicPendingSeek(player) {
+  if (!player) return;
+  player.pendingSeekRatio = null;
+  player.pendingSeekTimeSeconds = null;
+}
+
+function getMusicPendingSeekTargetSeconds(player = state.musicPlayer) {
+  if (!player) return null;
+  const duration = Number(player.audio && player.audio.duration);
+  const pendingRatio = getMusicPendingSeekRatioValue(player);
+  if (pendingRatio != null && Number.isFinite(duration) && duration > 0) {
+    return Math.max(0, Math.min(duration, pendingRatio * duration));
+  }
+  return getMusicPendingSeekTimeValue(player);
+}
+
+function isMusicPendingSeekLanded(player = state.musicPlayer) {
+  if (!player || !player.audio) return false;
+  const target = getMusicPendingSeekTargetSeconds(player);
+  if (!Number.isFinite(target)) return false;
+  const current = Number(player.audio.currentTime);
+  if (!Number.isFinite(current) || current < 0) return false;
+  return Math.abs(current - target) <= 0.6;
+}
+
+function setMusicAudioTime(player, secondsValue, options = {}) {
+  if (!player) return false;
+  const target = Math.max(0, Number(secondsValue) || 0);
+  player.currentTimeSeconds = target;
+  if (!player.audio) {
+    player.pendingSeekTimeSeconds = target;
+    logMusicPlayerDebug('seek-deferred-no-audio', player, { target: formatMusicDebugNumber(target) });
+    return false;
+  }
+  const duration = Number(player.audio.duration);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    player.pendingSeekTimeSeconds = target;
+    logMusicPlayerDebug('seek-deferred-no-duration', player, { target: formatMusicDebugNumber(target) });
+    return false;
+  }
+  try {
+    const clamped = Math.max(0, Math.min(duration, target));
+    player.audio.currentTime = clamped;
+    player.currentTimeSeconds = clamped;
+    logMusicPlayerDebug('seek-apply', player, {
+      target: Number(clamped.toFixed(3)),
+      duration: Number(duration.toFixed(3)),
+      current: Number(Number(player.audio.currentTime || 0).toFixed(3)),
+      keepPending: !!options.keepPending,
+      clearPending: options.clearPending === true
+    });
+    if (!options.keepPending && options.clearPending === true) clearMusicPendingSeek(player);
+    return true;
+  } catch (err) {
+    player.pendingSeekTimeSeconds = target;
+    logMusicPlayerDebug('seek-apply-error', player, {
+      target: formatMusicDebugNumber(target),
+      error: err && err.message ? String(err.message) : String(err || '')
+    });
+    return false;
+  }
+}
+
+function applyPendingMusicSeek(player = state.musicPlayer) {
+  if (!player || !player.audio) {
+    logMusicPlayerDebug('apply-pending-no-audio', player);
+    return false;
+  }
+  const duration = Number(player.audio.duration);
+  const pendingRatio = getMusicPendingSeekRatioValue(player);
+  const pendingTime = getMusicPendingSeekTimeValue(player);
+  if (pendingRatio != null && Number.isFinite(duration) && duration > 0) {
+    logMusicPlayerDebug('apply-pending-ratio', player, {
+      ratio: formatMusicDebugNumber(pendingRatio),
+      duration: formatMusicDebugNumber(duration)
+    });
+    return setMusicAudioTime(player, pendingRatio * duration);
+  }
+  if (pendingTime == null) {
+    logMusicPlayerDebug('apply-pending-none', player);
+    return false;
+  }
+  logMusicPlayerDebug('apply-pending-time', player, {
+    target: formatMusicDebugNumber(pendingTime)
+  });
+  return setMusicAudioTime(player, pendingTime, { keepPending: true });
+}
+
+function updateMusicPlayerTimingDom() {
+  const player = state.musicPlayer || {};
+  const track = player.selectedTrack || null;
+  const fill = document.querySelector('.music-waveform-progress');
+  if (fill) {
+    fill.style.width = `${Math.round(getMusicPlayerProgressRatio(player, track) * 1000) / 10}%`;
+  }
+  const time = document.querySelector('.music-now-time');
+  if (time) time.textContent = getMusicNowPlayingMeta(track, player);
+}
+
+function getMusicAudioIsActuallyPlaying(player = state.musicPlayer) {
+  const audio = player && player.audio;
+  return !!(audio && !audio.paused && !audio.ended && !audio.error);
+}
+
+function settleMusicPlayerPlaybackState(isPlaying, options = {}) {
+  const player = state.musicPlayer || {};
+  const nextPlaying = !!isPlaying;
+  const changed = player.isPlaying !== nextPlaying;
+  logMusicPlayerDebug('settle-before', player, {
+    requestedPlaying: nextPlaying,
+    forceRender: !!options.forceRender,
+    clearBuffering: !!options.clearBuffering
+  });
+  player.isPlaying = nextPlaying;
+  if (nextPlaying || options.clearBuffering) player.isBuffering = false;
+  syncMusicPlayerTimingFromAudio(player);
+  state.musicPlayer = player;
+  if (changed || options.forceRender) syncMusicPlayerUi();
+  else updateMusicPlayerTimingDom();
+  logMusicPlayerDebug('settle-after', state.musicPlayer, {
+    requestedPlaying: nextPlaying,
+    forceRender: !!options.forceRender,
+    clearBuffering: !!options.clearBuffering
+  });
+}
+
+function reconcileMusicPlayerPlaybackState(options = {}) {
+  logMusicPlayerDebug('reconcile', state.musicPlayer, {
+    forceRender: !!options.forceRender,
+    clearBuffering: !!options.clearBuffering
+  });
+  settleMusicPlayerPlaybackState(getMusicAudioIsActuallyPlaying(state.musicPlayer), options);
+}
+
+function setMusicPlayerBuffering(isBuffering, options = {}) {
+  const player = state.musicPlayer || {};
+  const next = !!isBuffering;
+  const changed = player.isBuffering !== next;
+  logMusicPlayerDebug('buffering', player, {
+    requestedBuffering: next,
+    forceRender: !!options.forceRender
+  });
+  player.isBuffering = next;
+  state.musicPlayer = player;
+  if (changed || options.forceRender) syncMusicPlayerUi();
+  else updateMusicPlayerTimingDom();
+}
+
 function syncMusicPlayerUi() {
   if (state.activeTab === 'music') renderActiveTab({ preserveTabScroll: true });
 }
 
 function stopMusicPlayer(resetTime = false) {
   const player = state.musicPlayer || {};
+  logMusicPlayerDebug('stop', player, { resetTime: !!resetTime });
   if (player.audio) {
     try {
       player.audio.pause();
       if (resetTime) player.audio.currentTime = 0;
     } catch (_err) {}
   }
+  syncMusicPlayerTimingFromAudio(player);
+  if (resetTime) {
+    player.currentTimeSeconds = 0;
+    clearMusicPendingSeek(player);
+  }
   player.isPlaying = false;
+  player.isBuffering = false;
   state.musicPlayer = player;
 }
 
@@ -60487,12 +62900,22 @@ function resetMusicPlayer() {
     title: '',
     selectedTrack: null,
     isPlaying: false,
+    isBuffering: false,
+    pendingSeekRatio: null,
+    currentTimeSeconds: 0,
+    durationSeconds: 0,
+    pendingSeekTimeSeconds: null,
     token: Number((state.musicPlayer && state.musicPlayer.token) || 0) + 1
   };
 }
 
 function selectMusicTrack(track) {
   const player = state.musicPlayer || {};
+  appendMusicDebugLog('select-track', {
+    trackId: getMusicTrackId(track),
+    title: getMusicTrackTitle(track),
+    hadAudio: !!player.audio
+  });
   stopMusicPlayer(true);
   const selected = cloneMusicTrackForPlayer(track);
   state.musicPlayer = {
@@ -60504,6 +62927,11 @@ function selectMusicTrack(track) {
     title: selected ? selected.title : '',
     selectedTrack: selected,
     isPlaying: false,
+    isBuffering: false,
+    pendingSeekRatio: null,
+    currentTimeSeconds: 0,
+    durationSeconds: selected ? Number(selected.durationSeconds) || 0 : 0,
+    pendingSeekTimeSeconds: null,
     token: Number(player.token || 0) + 1
   };
   syncMusicPlayerUi();
@@ -60511,74 +62939,373 @@ function selectMusicTrack(track) {
 
 function isMusicTrackPlaying(track) {
   const player = state.musicPlayer || {};
-  return !!(player.isPlaying && getMusicTrackId(track) === String(player.trackId || ''));
+  return !!(getMusicAudioIsActuallyPlaying(player) && getMusicTrackId(track) === String(player.trackId || ''));
 }
 
-async function playMusicTrack(track) {
+function attachMusicAudioHandlers(player, token) {
+  if (!player || !player.audio) return;
+  const logEvent = (eventName, extra = {}) => {
+    logMusicPlayerDebug(`event-${eventName}`, state.musicPlayer || player, {
+      handlerToken: token,
+      ...extra
+    });
+  };
+  const logThrottledEvent = (eventName) => {
+    const now = debugNowMs();
+    const lastKey = `musicDebug${eventName}At`;
+    const last = Number(player[lastKey] || 0);
+    if (now - last < 1000) return;
+    player[lastKey] = now;
+    logEvent(eventName);
+  };
+  appendMusicDebugLog('handlers-attached', {
+    token,
+    trackId: String(player.trackId || ''),
+    title: String(player.title || '')
+  });
+  player.audio.onloadedmetadata = () => {
+    if ((state.musicPlayer || {}).token !== token) {
+      logMusicPlayerDebug('event-loadedmetadata-stale', player, { handlerToken: token, activeToken: Number((state.musicPlayer || {}).token || 0) });
+      return;
+    }
+    logEvent('loadedmetadata-before');
+    syncMusicPlayerTimingFromAudio(state.musicPlayer);
+    applyPendingMusicSeek(state.musicPlayer);
+    state.musicPlayer.isBuffering = false;
+    updateMusicPlayerTimingDom();
+    logEvent('loadedmetadata-after');
+  };
+  player.audio.ondurationchange = () => {
+    if ((state.musicPlayer || {}).token !== token) {
+      logMusicPlayerDebug('event-durationchange-stale', player, { handlerToken: token, activeToken: Number((state.musicPlayer || {}).token || 0) });
+      return;
+    }
+    logEvent('durationchange-before');
+    syncMusicPlayerTimingFromAudio(state.musicPlayer);
+    applyPendingMusicSeek(state.musicPlayer);
+    state.musicPlayer.isBuffering = false;
+    updateMusicPlayerTimingDom();
+    logEvent('durationchange-after');
+  };
+  player.audio.onseeking = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('seeking');
+  };
+  player.audio.onseeked = () => {
+    if ((state.musicPlayer || {}).token !== token) {
+      logMusicPlayerDebug('event-seeked-stale', player, { handlerToken: token, activeToken: Number((state.musicPlayer || {}).token || 0) });
+      return;
+    }
+    logEvent('seeked-before');
+    if (isMusicPendingSeekLanded(state.musicPlayer)) {
+      logMusicPlayerDebug('seeked-accepted', state.musicPlayer, {
+        current: Number(Number(state.musicPlayer.audio && state.musicPlayer.audio.currentTime || 0).toFixed(3)),
+        target: Number(Number(getMusicPendingSeekTargetSeconds(state.musicPlayer) || 0).toFixed(3))
+      });
+      clearMusicPendingSeek(state.musicPlayer);
+    } else if (getMusicPendingSeekTargetSeconds(state.musicPlayer) != null) {
+      logMusicPlayerDebug('seeked-reapply', state.musicPlayer, {
+        current: Number(Number(state.musicPlayer.audio && state.musicPlayer.audio.currentTime || 0).toFixed(3)),
+        target: Number(Number(getMusicPendingSeekTargetSeconds(state.musicPlayer) || 0).toFixed(3))
+      });
+      applyPendingMusicSeek(state.musicPlayer);
+    }
+    syncMusicPlayerTimingFromAudio(state.musicPlayer);
+    state.musicPlayer.isBuffering = false;
+    updateMusicPlayerTimingDom();
+    logEvent('seeked-after');
+  };
+  player.audio.onplay = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('play');
+    settleMusicPlayerPlaybackState(true);
+  };
+  player.audio.onplaying = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('playing');
+    settleMusicPlayerPlaybackState(true);
+  };
+  player.audio.onpause = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('pause');
+    settleMusicPlayerPlaybackState(false);
+  };
+  player.audio.onended = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('ended');
+    settleMusicPlayerPlaybackState(false);
+  };
+  player.audio.onerror = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('error');
+    settleMusicPlayerPlaybackState(false, { forceRender: true });
+  };
+  player.audio.onabort = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('abort');
+    settleMusicPlayerPlaybackState(false, { forceRender: true });
+  };
+  player.audio.onemptied = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('emptied');
+    settleMusicPlayerPlaybackState(false, { forceRender: true });
+  };
+  player.audio.onwaiting = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('waiting');
+  };
+  player.audio.onstalled = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('stalled');
+  };
+  player.audio.oncanplay = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logEvent('canplay');
+  };
+  player.audio.ontimeupdate = () => {
+    if ((state.musicPlayer || {}).token !== token) return;
+    logThrottledEvent('timeupdate-before');
+    syncMusicPlayerTimingFromAudio(state.musicPlayer);
+    updateMusicPlayerTimingDom();
+    logThrottledEvent('timeupdate-after');
+  };
+}
+
+async function ensureMusicAudioForTrack(track) {
   const playablePath = getMusicTrackPath(track);
+  appendMusicDebugLog('ensure-start', {
+    trackId: getMusicTrackId(track),
+    title: getMusicTrackTitle(track),
+    hasPath: !!playablePath
+  });
   if (!playablePath) {
     setStatus('Music file not found.', true);
-    return false;
+    appendMusicDebugLog('ensure-missing-path', {
+      trackId: getMusicTrackId(track),
+      title: getMusicTrackTitle(track)
+    });
+    return null;
   }
   if (window.c3xManager && typeof window.c3xManager.pathExists === 'function') {
     const exists = await window.c3xManager.pathExists(playablePath);
     if (!exists) {
       setStatus('Music file not found.', true);
-      return false;
+      appendMusicDebugLog('ensure-path-not-found', {
+        trackId: getMusicTrackId(track),
+        title: getMusicTrackTitle(track),
+        path: playablePath
+      });
+      return null;
     }
   }
   const url = toFileUrlFromPath(playablePath);
   if (!url) {
     setStatus('Could not open music file.', true);
+    appendMusicDebugLog('ensure-no-url', {
+      trackId: getMusicTrackId(track),
+      title: getMusicTrackTitle(track),
+      path: playablePath
+    });
+    return null;
+  }
+  let player = state.musicPlayer || {};
+  const trackId = getMusicTrackId(track);
+  const sameAudio = !!(player.audio && player.url === url && String(player.trackId || '') === trackId);
+  logMusicPlayerDebug('ensure-audio-choice', player, {
+    requestedTrackId: trackId,
+    sameAudio
+  });
+  let createdAudio = false;
+  if (!sameAudio) {
+    const carryTime = String(player.trackId || '') === trackId ? Number(player.currentTimeSeconds) || 0 : 0;
+    const pendingRatio = getMusicPendingSeekRatioValue(player);
+    const pendingTime = getMusicPendingSeekTimeValue(player);
+    logMusicPlayerDebug('ensure-create-before-stop', player, {
+      requestedTrackId: trackId,
+      carryTime: formatMusicDebugNumber(carryTime),
+      pendingRatio: formatMusicDebugNumber(pendingRatio),
+      pendingTime: formatMusicDebugNumber(pendingTime)
+    });
+    stopMusicPlayer(false);
+    player = state.musicPlayer || {};
+    player.audio = new Audio();
+    player.audio.preload = 'auto';
+    player.url = url;
+    player.currentTimeSeconds = carryTime;
+    player.pendingSeekRatio = pendingRatio;
+    player.pendingSeekTimeSeconds = pendingTime != null ? pendingTime : (carryTime > 0 ? carryTime : null);
+    player.token = Number(player.token || 0) + 1;
+    createdAudio = true;
+  }
+  player.path = playablePath;
+  player.trackId = trackId;
+  player.title = getMusicTrackTitle(track);
+  player.selectedTrack = cloneMusicTrackForPlayer(track);
+  player.durationSeconds = getMusicPlayerDurationSeconds(player, player.selectedTrack);
+  attachMusicAudioHandlers(player, Number(player.token || 0));
+  state.musicPlayer = player;
+  if (createdAudio && player.audio) {
+    logMusicPlayerDebug('ensure-create-before-src', player, {
+      requestedTrackId: trackId
+    });
+    try {
+      player.audio.src = url;
+      if (typeof player.audio.load === 'function') player.audio.load();
+      logMusicPlayerDebug('ensure-create-after-load', player, {
+        requestedTrackId: trackId
+      });
+    } catch (err) {
+      logMusicPlayerDebug('ensure-load-error', player, {
+        requestedTrackId: trackId,
+        error: err && err.message ? String(err.message) : String(err || '')
+      });
+    }
+  } else {
+    logMusicPlayerDebug('ensure-reuse', player, {
+      requestedTrackId: trackId
+    });
+  }
+  return player;
+}
+
+function waitForMusicMetadata(player, timeoutMs = 1200) {
+  if (!player || !player.audio) {
+    logMusicPlayerDebug('metadata-wait-no-audio', player, { timeoutMs });
+    return Promise.resolve(false);
+  }
+  const duration = Number(player.audio.duration);
+  if (Number.isFinite(duration) && duration > 0) {
+    logMusicPlayerDebug('metadata-wait-immediate', player, { timeoutMs });
+    return Promise.resolve(true);
+  }
+  logMusicPlayerDebug('metadata-wait-start', player, { timeoutMs });
+  return new Promise((resolve) => {
+    let done = false;
+    let timer = null;
+    const finish = (value, reason) => {
+      if (done) return;
+      done = true;
+      try {
+        player.audio.removeEventListener('loadedmetadata', onReady);
+        player.audio.removeEventListener('durationchange', onReady);
+        player.audio.removeEventListener('canplay', onReady);
+      } catch (_err) {}
+      if (timer) window.clearTimeout(timer);
+      logMusicPlayerDebug('metadata-wait-finish', player, {
+        timeoutMs,
+        result: !!value,
+        reason: String(reason || '')
+      });
+      resolve(value);
+    };
+    const onReady = (ev) => finish(true, ev && ev.type ? ev.type : 'ready');
+    timer = window.setTimeout(() => finish(false, 'timeout'), timeoutMs);
+    player.audio.addEventListener('loadedmetadata', onReady, { once: true });
+    player.audio.addEventListener('durationchange', onReady, { once: true });
+    player.audio.addEventListener('canplay', onReady, { once: true });
+  });
+}
+
+async function seekSelectedMusicTrack(ratio) {
+  const player = state.musicPlayer || {};
+  const selectedTrack = player.selectedTrack || null;
+  if (!selectedTrack || !getMusicTrackPath(selectedTrack)) {
+    logMusicPlayerDebug('seek-selected-ignored-no-track', player, {
+      requestedRatio: formatMusicDebugNumber(ratio)
+    });
+    return;
+  }
+  const normalizedRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
+  let activePlayer = state.musicPlayer || {};
+  const wasPlaying = getMusicAudioIsActuallyPlaying(activePlayer);
+  logMusicPlayerDebug('seek-selected-start', activePlayer, {
+    requestedRatio: formatMusicDebugNumber(ratio),
+    normalizedRatio: formatMusicDebugNumber(normalizedRatio),
+    wasPlaying
+  });
+  setMusicPendingSeekRatio(activePlayer, normalizedRatio);
+  activePlayer.isBuffering = true;
+  state.musicPlayer = activePlayer;
+  syncMusicPlayerUi();
+  activePlayer = await ensureMusicAudioForTrack(selectedTrack);
+  if (!activePlayer) {
+    logMusicPlayerDebug('seek-selected-ensure-failed', state.musicPlayer, {
+      normalizedRatio: formatMusicDebugNumber(normalizedRatio)
+    });
+    setMusicPlayerBuffering(false, { forceRender: true });
+    return;
+  }
+  logMusicPlayerDebug('seek-selected-after-ensure', activePlayer, {
+    normalizedRatio: formatMusicDebugNumber(normalizedRatio)
+  });
+  const metadataReady = await waitForMusicMetadata(activePlayer);
+  logMusicPlayerDebug('seek-selected-after-metadata', activePlayer, {
+    normalizedRatio: formatMusicDebugNumber(normalizedRatio),
+    metadataReady: !!metadataReady
+  });
+  const applied = applyPendingMusicSeek(activePlayer);
+  logMusicPlayerDebug('seek-selected-after-apply', activePlayer, {
+    normalizedRatio: formatMusicDebugNumber(normalizedRatio),
+    applied: !!applied
+  });
+  activePlayer.isBuffering = false;
+  state.musicPlayer = activePlayer;
+  if (wasPlaying && activePlayer.audio) {
+    try {
+      const promise = activePlayer.audio.play();
+      if (promise && typeof promise.catch === 'function') await promise;
+    } catch (err) {
+      logMusicPlayerDebug('seek-selected-play-error', activePlayer, {
+        error: err && err.message ? String(err.message) : String(err || '')
+      });
+    }
+    reconcileMusicPlayerPlaybackState({ forceRender: true, clearBuffering: true });
+  } else {
+    settleMusicPlayerPlaybackState(false, { forceRender: true, clearBuffering: true });
+  }
+  logMusicPlayerDebug('seek-selected-finish', state.musicPlayer, {
+    normalizedRatio: formatMusicDebugNumber(normalizedRatio),
+    wasPlaying
+  });
+}
+
+async function playMusicTrack(track) {
+  appendMusicDebugLog('play-track-start', {
+    trackId: getMusicTrackId(track),
+    title: getMusicTrackTitle(track)
+  });
+  const player = await ensureMusicAudioForTrack(track);
+  if (!player || !player.audio) {
+    logMusicPlayerDebug('play-track-no-audio', player);
     return false;
   }
-  const player = state.musicPlayer || {};
-  const trackId = getMusicTrackId(track);
-  const token = Number(player.token || 0) + 1;
-  player.token = token;
   try {
-    if (player.audio && player.url === url) {
-      player.audio.currentTime = player.audio.currentTime || 0;
-    } else {
-      stopMusicPlayer(true);
-      player.audio = new Audio(url);
-      player.audio.preload = 'auto';
-      player.url = url;
+    if (getMusicPendingSeekRatioValue(player) != null || getMusicPendingSeekTimeValue(player) != null) {
+      logMusicPlayerDebug('play-track-pending-before-metadata', player);
+      player.isBuffering = true;
+      state.musicPlayer = player;
+      syncMusicPlayerUi();
+      const metadataReady = await waitForMusicMetadata(player);
+      logMusicPlayerDebug('play-track-pending-after-metadata', player, {
+        metadataReady: !!metadataReady
+      });
     }
-    player.path = playablePath;
-    player.trackId = trackId;
-    player.title = getMusicTrackTitle(track);
-    player.selectedTrack = cloneMusicTrackForPlayer(track);
-    player.isPlaying = true;
-    player.audio.onplay = () => {
-      if ((state.musicPlayer || {}).token !== token) return;
-      state.musicPlayer.isPlaying = true;
-      syncMusicPlayerUi();
-    };
-    player.audio.onpause = () => {
-      if ((state.musicPlayer || {}).token !== token) return;
-      state.musicPlayer.isPlaying = false;
-      syncMusicPlayerUi();
-    };
-    player.audio.onended = () => {
-      if ((state.musicPlayer || {}).token !== token) return;
-      state.musicPlayer.isPlaying = false;
-      syncMusicPlayerUi();
-    };
-    player.audio.ontimeupdate = () => {
-      const fill = document.querySelector('.music-waveform-progress');
-      if (!fill || !player.audio || !Number.isFinite(player.audio.duration) || player.audio.duration <= 0) return;
-      fill.style.width = `${Math.max(0, Math.min(100, (player.audio.currentTime / player.audio.duration) * 100))}%`;
-    };
+    const applied = applyPendingMusicSeek(player);
+    logMusicPlayerDebug('play-track-after-apply', player, {
+      applied: !!applied
+    });
+    player.isBuffering = false;
     state.musicPlayer = player;
     const promise = player.audio.play();
-    syncMusicPlayerUi();
     if (promise && typeof promise.catch === 'function') await promise;
-    return true;
-  } catch (_err) {
-    player.isPlaying = false;
-    state.musicPlayer = player;
-    syncMusicPlayerUi();
+    reconcileMusicPlayerPlaybackState({ forceRender: true, clearBuffering: true });
+    logMusicPlayerDebug('play-track-finish', state.musicPlayer);
+    return getMusicAudioIsActuallyPlaying(state.musicPlayer);
+  } catch (err) {
+    logMusicPlayerDebug('play-track-error', player, {
+      error: err && err.message ? String(err.message) : String(err || '')
+    });
+    settleMusicPlayerPlaybackState(false, { forceRender: true, clearBuffering: true });
     setStatus('Could not play music file.', true);
     return false;
   }
@@ -60587,7 +63314,7 @@ async function playMusicTrack(track) {
 function toggleMusicTrack(track) {
   const player = state.musicPlayer || {};
   const sameTrack = getMusicTrackId(track) === String(player.trackId || '');
-  if (sameTrack && player.audio && player.isPlaying) {
+  if (sameTrack && player.audio && getMusicAudioIsActuallyPlaying(player)) {
     stopMusicPlayer(false);
     syncMusicPlayerUi();
     return;
@@ -60600,6 +63327,7 @@ function makeMusicPlayButton(track) {
   btn.type = 'button';
   btn.className = 'music-play-btn';
   btn.classList.toggle('playing', isMusicTrackPlaying(track));
+  btn.classList.toggle('buffering', !!(state.musicPlayer && state.musicPlayer.isBuffering && getMusicTrackId(track) === String(state.musicPlayer.trackId || '')));
   btn.setAttribute('aria-label', isMusicTrackPlaying(track) ? 'Pause' : 'Play');
   const icon = document.createElement('span');
   icon.className = 'music-play-icon';
@@ -60926,25 +63654,24 @@ function renderMusicNowPlayingPanel() {
   const play = document.createElement('button');
   play.type = 'button';
   play.className = 'music-play-btn';
-  play.classList.toggle('playing', !!player.isPlaying);
+  play.classList.toggle('playing', getMusicAudioIsActuallyPlaying(player));
+  play.classList.toggle('buffering', !!player.isBuffering);
   play.disabled = !selectedTrack || !getMusicTrackPath(selectedTrack);
   const icon = document.createElement('span');
   icon.className = 'music-play-icon';
-  icon.textContent = player.isPlaying ? 'II' : '▶';
+  icon.textContent = getMusicAudioIsActuallyPlaying(player) ? 'II' : '▶';
   play.appendChild(icon);
   play.addEventListener('click', () => {
     if (!selectedTrack) return;
-    if (player.audio && player.isPlaying) {
+    const currentPlayer = state.musicPlayer || {};
+    if (currentPlayer.audio && getMusicTrackId(selectedTrack) === String(currentPlayer.trackId || '') && getMusicAudioIsActuallyPlaying(currentPlayer)) {
       stopMusicPlayer(false);
+      syncMusicPlayerUi();
     } else if (player.audio && String(player.trackId || '') === getMusicTrackId(selectedTrack)) {
-      const promise = player.audio.play();
-      player.isPlaying = true;
-      if (promise && typeof promise.catch === 'function') promise.catch(() => {});
+      void playMusicTrack(selectedTrack);
     } else {
       void playMusicTrack(selectedTrack);
-      return;
     }
-    syncMusicPlayerUi();
   });
   panel.appendChild(play);
   const label = document.createElement('div');
@@ -60952,14 +63679,15 @@ function renderMusicNowPlayingPanel() {
   const title = document.createElement('div');
   title.className = 'music-now-title';
   title.textContent = (selectedTrack && selectedTrack.title) || player.title || 'No song selected';
-  const sub = document.createElement('div');
-  sub.className = 'music-now-subtitle';
-  sub.textContent = selectedTrack ? (player.isPlaying ? 'Playing' : 'Selected') : 'Choose a song from the table';
   label.appendChild(title);
-  label.appendChild(sub);
+  const meta = document.createElement('div');
+  meta.className = 'music-now-time';
+  meta.textContent = getMusicNowPlayingMeta(selectedTrack, player);
+  if (meta.textContent) label.appendChild(meta);
   panel.appendChild(label);
   const wave = document.createElement('div');
   wave.className = 'music-waveform';
+  wave.classList.toggle('disabled', !selectedTrack || !getMusicTrackPath(selectedTrack));
   const bars = makeSeededMusicWaveform(selectedTrack);
   bars.forEach((height) => {
     const bar = document.createElement('span');
@@ -60968,16 +63696,19 @@ function renderMusicNowPlayingPanel() {
   });
   const progress = document.createElement('div');
   progress.className = 'music-waveform-progress';
-  if (player.audio && Number.isFinite(player.audio.duration) && player.audio.duration > 0) {
-    progress.style.width = `${Math.max(0, Math.min(100, (player.audio.currentTime / player.audio.duration) * 100))}%`;
-  }
+  progress.style.width = `${Math.round(getMusicPlayerProgressRatio(player, selectedTrack) * 1000) / 10}%`;
   wave.appendChild(progress);
   wave.addEventListener('pointerdown', (ev) => {
-    if (!player.audio || !Number.isFinite(player.audio.duration) || player.audio.duration <= 0) return;
+    if (!selectedTrack || !getMusicTrackPath(selectedTrack)) return;
     const rect = wave.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / Math.max(1, rect.width)));
-    player.audio.currentTime = ratio * player.audio.duration;
-    syncMusicPlayerUi();
+    logMusicPlayerDebug('waveform-pointerdown', state.musicPlayer, {
+      clientX: formatMusicDebugNumber(ev.clientX),
+      rectLeft: formatMusicDebugNumber(rect.left),
+      rectWidth: formatMusicDebugNumber(rect.width),
+      ratio: formatMusicDebugNumber(ratio)
+    });
+    void seekSelectedMusicTrack(ratio);
   });
   panel.appendChild(wave);
   return panel;
@@ -62079,6 +64810,9 @@ function renderActiveTab(options = {}) {
   if (state.activeTab !== 'units' && unitTableModal.node && !unitTableModal.node.classList.contains('hidden')) {
     closeUnitTableModal({ skipHistorySync: true });
   }
+  if (state.activeTab !== 'civilizations' && civColorPaletteModal.node && !civColorPaletteModal.node.classList.contains('hidden')) {
+    closeCivColorPaletteModal();
+  }
 
   if (tab.type === 'reference') {
     el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
@@ -62268,6 +65002,27 @@ async function loadBundleAndRender(options = {}) {
     state.civSlotUiColorCache = {};
     state.civSlotUiColorLoading = {};
     state.civSlotUiColorListeners = {};
+    state.civColorPaletteSlots = [];
+    state.cleanCivColorPaletteSlots = [];
+    state.civColorPaletteScenarioPath = '';
+    state.civColorPaletteSelectedSlot = 0;
+    state.civColorPaletteSelectedIndex = 7;
+    state.civColorPaletteFilter = ['main'];
+    state.civColorPaletteShowAdvanced = true;
+    state.civColorPaletteShowExperimental = false;
+    state.civColorPaletteShowProtected = false;
+    state.civColorPaletteAdjustmentTool = '';
+    state.civColorPaletteAdjustmentAmount = 0;
+    state.civColorPaletteTintTargetRgb = null;
+    state.civColorPaletteMainDraftSlot = -1;
+    state.civColorPaletteMainDraftRgb = null;
+    state.civColorPaletteTargetRoot = '';
+    state.civColorPaletteWritableRoots = [];
+    state.civColorPaletteNeedsSearchFolderSetup = false;
+    state.civColorPaletteSearchFolderSetupRoot = '';
+    state.civColorPaletteSearchFolderSetupValue = '';
+    state.civColorPaletteLoading = false;
+    state.civColorPaletteError = '';
     state.biqMapColoredUnitIconCache = new Map();
     state.biqMapColoredStartLocCache = new Map();
     if (!persistedView || !bundle.tabs[persistedView.activeTab]) {
@@ -62659,6 +65414,9 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
   const techTreeArrowDirtyEras = Object.keys(state.techTreeArrowArtDirtyByEra || {})
     .map((value) => Number(value))
     .filter((value) => Number.isInteger(value) && value >= 0);
+  const dirtyCivColorPaletteSlots = isScenarioMode()
+    ? getDirtyCivColorPaletteSlots()
+    : [];
   const shouldUpdateScienceAdvisorArrows = state.settings.mode === 'scenario'
     && techTreeArrowDirtyEras.length > 0;
   const scienceAdvisorArrowMetadataEraKeys = shouldUpdateScienceAdvisorArrows
@@ -62696,6 +65454,16 @@ function buildSavePayload({ tabsToSave, dirtyTabs }) {
       : {},
     scienceAdvisorArrowStyle: shouldUpdateScienceAdvisorArrows && state.settings.scienceAdvisorArrowStyle
       ? deepCloneUiValue(state.settings.scienceAdvisorArrowStyle)
+      : null,
+    civColorPalettes: dirtyCivColorPaletteSlots.length > 0
+      ? {
+          slots: dirtyCivColorPaletteSlots.map((slot) => ({
+            slot: Number(slot && slot.slot),
+            sourcePath: String(slot && slot.sourcePath || ''),
+            targetPath: String(slot && slot.targetPath || ''),
+            paletteBase64: toBase64FromUint8(Uint8Array.from(Array.isArray(slot && slot.palette) ? slot.palette : []))
+          }))
+        }
       : null,
     dirtyTabs,
     tabs: tabsToSave
@@ -62744,6 +65512,7 @@ function mapSaveKindLabel(kind) {
   if (key === 'civilopedia') return 'Civilopedia';
   if (key === 'diplomacy') return 'Diplomacy';
   if (key === 'atlas') return 'Icon Atlas';
+  if (key === 'civpalette') return 'Civ Palette';
   return key.toUpperCase();
 }
 
@@ -63635,6 +66404,7 @@ function markCurrentBundleCleanAfterSave(options = {}) {
   state.cleanSnapshot = snapshotTabs();
   state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
   captureCleanScienceAdvisorArrowStyle();
+  markSavedCivColorPaletteState();
   clearCleanReferenceDirtySignatureCache();
   state.undoHistory = [];
   state.isDirty = false;
@@ -64438,6 +67208,11 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && typeof targetSnapshot === 'object'
     && targetSnapshot.kind === 'tech-tree-arrow-style'
   );
+  const isCivColorPaletteSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'civ-color-palettes'
+  );
   const isTechTreeNodeDragSnapshot = !!(
     targetSnapshot
     && typeof targetSnapshot === 'object'
@@ -64458,6 +67233,7 @@ async function restoreEditableSnapshot(targetSnapshot, options = {}) {
     && !isScopedSectionTabSnapshot
     && !isScopedTabSnapshot
     && !isTechTreeArrowStyleSnapshot
+    && !isCivColorPaletteSnapshot
     && !isTechTreeNodeDragSnapshot
     && !isUnitReorderSnapshot
     && state.settings
@@ -64582,6 +67358,11 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
     && typeof targetSnapshot === 'object'
     && targetSnapshot.kind === 'tech-tree-arrow-style'
   );
+  const isCivColorPaletteSnapshot = !!(
+    targetSnapshot
+    && typeof targetSnapshot === 'object'
+    && targetSnapshot.kind === 'civ-color-palettes'
+  );
   const isTechTreeAutoPositionSnapshot = !!(
     targetSnapshot
     && typeof targetSnapshot === 'object'
@@ -64629,6 +67410,9 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
   if (isTechTreeArrowStyleSnapshot) {
     restoreTechTreeArrowStyleState(targetSnapshot);
   }
+  if (isCivColorPaletteSnapshot) {
+    restoreCivColorPaletteState(targetSnapshot);
+  }
   if (isTechTreeAutoPositionSnapshot) {
     restoreTechTreeArrowStyleState(targetSnapshot.arrowState);
   }
@@ -64641,7 +67425,7 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
       state.bundle.tabs = mergedTabs;
     } else if (isSerializedReferenceEntrySnapshot || isSerializedSectionSnapshot || isTechTreeNodeDragSnapshot || isUnitReorderSnapshot) {
       state.bundle.tabs = mergedTabs;
-    } else if (isTechTreeArrowStyleSnapshot) {
+    } else if (isTechTreeArrowStyleSnapshot || isCivColorPaletteSnapshot) {
       state.bundle.tabs = mergedTabs;
     } else {
       EDITABLE_TAB_KEYS.forEach((key) => {
@@ -64704,6 +67488,8 @@ function applyEditableSnapshotToCurrentBundle(targetSnapshot, options = {}) {
     if (!options.suppressTechTreeModalRefresh) reopenTechTreeModalForCurrentState();
   } else if (isTechTreeArrowStyleSnapshot && isTechTreeModalVisible()) {
     if (!options.suppressTechTreeModalRefresh) reopenTechTreeModalForCurrentState();
+  } else if (isCivColorPaletteSnapshot && isCivColorPaletteModalVisible()) {
+    renderCivColorPaletteModal();
   } else if (isTechTreeAutoPositionSnapshot && isTechTreeModalVisible()) {
     techTreeModal.needsActiveTabRefresh = true;
     if (!options.suppressTechTreeModalRefresh) reopenTechTreeModalForCurrentState();
@@ -65377,7 +68163,10 @@ async function init() {
 
   if (window.c3xManager && typeof window.c3xManager.onLog === 'function') {
     window.c3xManager.onLog((entry) => {
-      appendDebugLog(`[${entry.level}][${entry.category}] ${entry.msg}`);
+      const formatted = entry && entry.formatted
+        ? String(entry.formatted)
+        : `[C3X][${getDebugLogTimestamp()}][${entry.level}][${entry.category}] ${entry.msg}`;
+      appendDebugLogLine(formatted);
     });
   }
   if (window.c3xManager && typeof window.c3xManager.onOperationProgress === 'function') {
@@ -65726,6 +68515,12 @@ async function init() {
     }
     if (ev.key === 'Escape' && unitTableModal.node && !unitTableModal.node.classList.contains('hidden')) {
       closeUnitTableModal();
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (ev.key === 'Escape' && civColorPaletteModal.node && !civColorPaletteModal.node.classList.contains('hidden')) {
+      closeCivColorPaletteModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;

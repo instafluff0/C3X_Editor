@@ -3,11 +3,24 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { getPreview, encodePcx } = require('../src/artPreview');
 
 const RENDERER_PATH = path.join(__dirname, '..', 'src', 'renderer.js');
 const ART_PREVIEW_PATH = path.join(__dirname, '..', 'src', 'artPreview.js');
 const STYLES_PATH = path.join(__dirname, '..', 'src', 'styles.css');
+
+function writeSolidPcx(filePath, width, height, rgb) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const palette = new Uint8Array(768);
+  palette[3] = rgb[0];
+  palette[4] = rgb[1];
+  palette[5] = rgb[2];
+  const indices = new Uint8Array(width * height);
+  indices.fill(1);
+  fs.writeFileSync(filePath, encodePcx(indices, palette, width, height));
+}
 
 test('Terrain Worker Jobs expose read-only command button atlas cells', () => {
   const source = fs.readFileSync(RENDERER_PATH, 'utf8');
@@ -102,6 +115,36 @@ test('Worker command button preview resolves NormButtons through Conquests art l
     /if \(kind === 'workerCommandButtonSheet'\) \{[\s\S]*?resolveConquestsAssetPath\([\s\S]*?NormButtons\.pcx[\s\S]*?decodeByPath\(pcxPath, request\.crop, \{ transparentIndexes: \[0, 254, 255\] \}\)/,
     'Expected worker command button previews to resolve and crop NormButtons.pcx'
   );
+});
+
+test('District button preview resolves scenario sheet before C3X fallback', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'district-button-preview-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const c3xRoot = path.join(tmp, 'C3X');
+  const scenarioRoot = path.join(tmp, 'Scenario');
+  const fallbackPath = path.join(c3xRoot, 'Art', 'Districts', 'WorkerDistrictButtonsNorm.pcx');
+  const scenarioPath = path.join(scenarioRoot, 'Art', 'Districts', 'WorkerDistrictButtonsNorm.pcx');
+  writeSolidPcx(fallbackPath, 32, 32, [255, 0, 0]);
+  writeSolidPcx(scenarioPath, 64, 32, [0, 255, 0]);
+
+  const scenarioResult = getPreview({
+    kind: 'districtButtonSheet',
+    c3xPath: c3xRoot,
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq')
+  });
+  assert.equal(scenarioResult.ok, true);
+  assert.equal(path.resolve(scenarioResult.sourcePath), path.resolve(scenarioPath));
+  assert.equal(scenarioResult.width, 64);
+
+  fs.rmSync(scenarioPath);
+  const fallbackResult = getPreview({
+    kind: 'districtButtonSheet',
+    c3xPath: c3xRoot,
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq')
+  });
+  assert.equal(fallbackResult.ok, true);
+  assert.equal(path.resolve(fallbackResult.sourcePath), path.resolve(fallbackPath));
+  assert.equal(fallbackResult.width, 32);
 });
 
 test('Tech Tree obsolete improvement thumbnails draw a red X overlay', () => {

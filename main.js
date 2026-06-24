@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = requir
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer } = require('./src/configCore');
+const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const log = require('./src/log');
 
@@ -619,9 +619,9 @@ function createWindow() {
 
   // Forward main-process log entries to the renderer's in-app debug log panel.
   win.webContents.on('did-finish-load', () => {
-    log.setForwarder((level, category, msg) => {
+    log.setForwarder((entry) => {
       if (!win.isDestroyed()) {
-        win.webContents.send('manager:log', { level, category, msg });
+        win.webContents.send('manager:log', entry);
       }
     });
   });
@@ -1651,6 +1651,16 @@ ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
   return previewFileDiff(payload || {});
 });
 
+ipcMain.handle('manager:inspect-civ-color-palettes', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    return inspectScenarioCivColorPalettes(payload || {});
+  } catch (err) {
+    log.error('inspectCivColorPalettes', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not inspect civ color palettes.' };
+  }
+});
+
 ipcMain.handle('manager:get-preview', async (_event, payload) => {
   applyLogContextFromPayload(payload || {});
   const kind = payload && payload.kind;
@@ -1670,12 +1680,11 @@ ipcMain.on('manager:renderer-debug-log', (_event, entry) => {
   try {
     const payload = entry && typeof entry === 'object' ? entry : {};
     const level = String(payload.level || 'debug').trim().toLowerCase();
-    const category = String(payload.category || 'renderer-debug').trim() || 'renderer-debug';
-    const msg = String(payload.msg || '').trim();
-    if (!msg) return;
-    if (level === 'error') log.error(category, msg);
-    else if (level === 'warn' || level === 'warning') log.warn(category, msg);
-    else if (level === 'info') log.info(category, msg);
-    else log.debug(category, msg);
+    const formatted = String(payload.formatted || payload.msg || '').trimEnd();
+    if (!formatted) return;
+    if (level === 'error') log.writeFormatted(formatted, 'ERR');
+    else if (level === 'warn' || level === 'warning') log.writeFormatted(formatted, 'WRN');
+    else if (level === 'info') log.writeFormatted(formatted, 'INF');
+    else log.writeFormatted(formatted, 'DBG');
   } catch (_err) {}
 });
