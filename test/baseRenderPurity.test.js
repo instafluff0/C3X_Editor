@@ -998,7 +998,7 @@ test('reference warning badges include Game Concepts', () => {
 
   assert.match(
     text,
-    /\['civilizations', 'technologies', 'resources', 'governments', 'improvements', 'gameConcepts'\]\.includes\(key\)/,
+    /\['civilizations', 'technologies', 'resources', 'governments', 'improvements', 'gameConcepts', 'music'\]\.includes\(key\)/,
     'Game Concepts should use the shared reference-tab warning badge path'
   );
 });
