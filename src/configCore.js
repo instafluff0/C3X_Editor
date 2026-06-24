@@ -46,15 +46,28 @@ const SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS = [
 const SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH = 'Art/Advisors/techboxes.pcx';
 const SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH = 'c3x_editor_tech_tree_arrows.json';
 const SCIENCE_ADVISOR_ARROW_METADATA_FORMAT = 'c3x-editor-tech-tree-arrows';
-const CIV_COLOR_PALETTE_RELATIVE_DIR = path.join('Art', 'Units', 'Palettes');
-const CIV_COLOR_PALETTE_COUNT = 32;
-const CIV_COLOR_PALETTE_EDITABLE_COLOR_COUNT = 70;
 const SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES = [
   { w: 84, h: 54 },
   { w: 140, h: 54 },
   { w: 140, h: 85 },
   { w: 170, h: 54 }
 ];
+const MUSIC_TEXT_RELATIVE_PATH = path.join('Text', 'music.txt');
+const MUSIC_BUILD_RELATIVE_PATH = path.join('Sounds', 'Build');
+const MUSIC_CULTURES = [
+  { key: 'american', label: 'American', code: 'NA' },
+  { key: 'european', label: 'European', code: 'EC' },
+  { key: 'roman', label: 'Roman', code: 'GR' },
+  { key: 'mideast', label: 'Mideast', code: 'ME' },
+  { key: 'asian', label: 'Asian', code: 'OR' }
+];
+const MUSIC_ERAS = [
+  { key: 'ancient', label: 'Ancient Times', biqIndex: 0 },
+  { key: 'medieval', label: 'Middle Ages', biqIndex: 1 },
+  { key: 'industrial', label: 'Industrial Age', biqIndex: 2 },
+  { key: 'modern', label: 'Modern Times', biqIndex: 3, shared: true }
+];
+const MUSIC_CELL_KEYS = MUSIC_ERAS.map((era) => era.key).concat(['playlist']);
 
 const FILE_SPECS = {
   base: {
@@ -2206,159 +2219,6 @@ function deriveScenarioPathContext({
     autoCreatedSearchRoot,
     autoCreatedSearchValue
   };
-}
-
-function getCivColorPaletteFileName(slot) {
-  const idx = Math.max(0, Math.min(CIV_COLOR_PALETTE_COUNT - 1, Number(slot) || 0));
-  return `ntp${String(idx).padStart(2, '0')}.pcx`;
-}
-
-function getCivColorPaletteAssetPath(slot) {
-  return path.join(CIV_COLOR_PALETTE_RELATIVE_DIR, getCivColorPaletteFileName(slot));
-}
-
-function readPcxPaletteBytes(filePath) {
-  const source = String(filePath || '').trim();
-  if (!source) throw new Error('Missing PCX path.');
-  const buffer = fs.readFileSync(source);
-  if (buffer.length < 769 || buffer[buffer.length - 769] !== 12) {
-    throw new Error(`Missing 256-color PCX palette: ${source}`);
-  }
-  return buffer.slice(buffer.length - 768);
-}
-
-function getCivColorPaletteRepresentativeColor(paletteBytes) {
-  const palette = Buffer.isBuffer(paletteBytes) || paletteBytes instanceof Uint8Array
-    ? paletteBytes
-    : null;
-  if (!palette || palette.length < 24) return { r: 0, g: 0, b: 0 };
-  const base = 7 * 3;
-  return {
-    r: Number(palette[base]) || 0,
-    g: Number(palette[base + 1]) || 0,
-    b: Number(palette[base + 2]) || 0
-  };
-}
-
-function inspectScenarioCivColorPalettes(payload = {}) {
-  const civ3Path = String(payload.civ3Path || '').trim();
-  const scenarioPath = String(payload.scenarioPath || '').trim();
-  const scenarioSettingsTab = payload.scenarioSettingsTab || null;
-  if (!civ3Path) return { ok: false, error: 'Civilization III path is required.' };
-  if (!scenarioPath || !isBiqPath(scenarioPath)) return { ok: false, error: 'Load a scenario BIQ before editing custom civ palettes.' };
-
-  const scenarioContext = deriveScenarioPathContext({
-    scenarioPath,
-    civ3Path,
-    biqTab: scenarioSettingsTab,
-    searchFolderOverride: getPendingScenarioSearchFolderOverride({ scenarioSettings: scenarioSettingsTab }),
-    includeMissingSearchRoots: true,
-    ensureLocalSearchRoot: false
-  });
-  const scenarioRoot = scenarioContext.contentWriteRoot || '';
-  const bootstrapRoot = (!scenarioRoot && scenarioContext.autoCreatedSearchRoot)
-    ? scenarioContext.autoCreatedSearchRoot
-    : ((!scenarioRoot && isSharedScenariosRootDir(scenarioContext.biqRoot, civ3Path))
-      ? allocateScenarioSearchFolderPath({ scenarioPath, civ3Path })
-      : '');
-  const bootstrapValue = bootstrapRoot ? toScenarioSearchFolderValue(bootstrapRoot, scenarioPath) : '';
-  const targetRoot = scenarioRoot || bootstrapRoot || scenarioContext.biqRoot || '';
-  const writableRoots = dedupePathList([scenarioContext.biqRoot, ...scenarioContext.searchRoots, bootstrapRoot]);
-  const scenarioPreviewRoots = dedupePathList([...scenarioContext.searchRoots, scenarioContext.biqRoot]);
-  const slots = [];
-
-  for (let slot = 0; slot < CIV_COLOR_PALETTE_COUNT; slot += 1) {
-    const assetPath = getCivColorPaletteAssetPath(slot);
-    const resolvedPath = resolveConquestsAssetPath(civ3Path, assetPath, scenarioContext.biqRoot, scenarioPreviewRoots);
-    if (!resolvedPath) {
-      return { ok: false, error: `Could not find ${getCivColorPaletteFileName(slot)} in the scenario or base game content.` };
-    }
-    const templatePath = resolveConquestsAssetPath(civ3Path, assetPath, '', []);
-    const targetPath = targetRoot ? path.join(targetRoot, assetPath) : '';
-    const palette = readPcxPaletteBytes(resolvedPath);
-    const templatePalette = templatePath ? readPcxPaletteBytes(templatePath) : palette;
-    const scenarioLocal = isPathWithinAnyRoot(resolvedPath, writableRoots);
-    slots.push({
-      slot,
-      fileName: getCivColorPaletteFileName(slot),
-      assetPath,
-      sourcePath: resolvedPath,
-      sourceKind: scenarioLocal ? 'scenario' : 'base',
-      paletteBase64: Buffer.from(palette).toString('base64'),
-      templateSourcePath: templatePath || resolvedPath,
-      templatePaletteBase64: Buffer.from(templatePalette).toString('base64'),
-      representativeColor: getCivColorPaletteRepresentativeColor(palette),
-      targetPath,
-      targetExists: !!(targetPath && fs.existsSync(targetPath)),
-      targetScenarioLocal: !!(targetPath && isPathWithinAnyRoot(targetPath, writableRoots))
-    });
-  }
-
-  return {
-    ok: true,
-    scenarioRoot,
-    targetRoot,
-    writableRoots,
-    needsSearchFolderSetup: !scenarioRoot && !!bootstrapRoot,
-    searchFolderSetupRoot: bootstrapRoot,
-    searchFolderSetupValue: bootstrapValue,
-    slots
-  };
-}
-
-function prepareScenarioCivColorPaletteWrites(payload = {}) {
-  const root = payload && payload.civColorPalettes && typeof payload.civColorPalettes === 'object'
-    ? payload.civColorPalettes
-    : null;
-  const slots = Array.isArray(root && root.slots) ? root.slots : [];
-  const writes = [];
-  const saveReport = [];
-
-  for (const slotEntry of slots) {
-    const slot = Number(slotEntry && slotEntry.slot);
-    const targetPath = String(slotEntry && slotEntry.targetPath || '').trim();
-    const sourcePath = String(slotEntry && slotEntry.sourcePath || '').trim();
-    const paletteBase64 = String(slotEntry && slotEntry.paletteBase64 || '').trim();
-    if (!Number.isInteger(slot) || slot < 0 || slot >= CIV_COLOR_PALETTE_COUNT) {
-      return { ok: false, error: `Invalid civ color palette slot: ${slot}` };
-    }
-    if (!targetPath) {
-      return { ok: false, error: `Missing target path for ${getCivColorPaletteFileName(slot)}.` };
-    }
-    if (!sourcePath || !fs.existsSync(sourcePath)) {
-      return { ok: false, error: `Could not read source palette file for ${getCivColorPaletteFileName(slot)}.` };
-    }
-    if (!paletteBase64) {
-      return { ok: false, error: `Missing palette data for ${getCivColorPaletteFileName(slot)}.` };
-    }
-    const paletteBytes = Buffer.from(paletteBase64, 'base64');
-    if (paletteBytes.length !== 768) {
-      return { ok: false, error: `Palette data for ${getCivColorPaletteFileName(slot)} must be exactly 768 bytes.` };
-    }
-    const decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [] });
-    if (!decoded || !decoded.indices || !decoded.palette || decoded.palette.length < 768) {
-      return { ok: false, error: `${getCivColorPaletteFileName(slot)} is not a supported indexed PCX palette file.` };
-    }
-    const nextPalette = Buffer.from(decoded.palette);
-    paletteBytes.copy(nextPalette, 0, 0, Math.min(nextPalette.length, paletteBytes.length));
-    const data = encodePcx(decoded.indices, nextPalette, decoded.width, decoded.height);
-    if (bufferMatchesExistingFile(targetPath, data)) continue;
-    writes.push({
-      kind: 'civPalette',
-      path: targetPath,
-      sourcePath,
-      data,
-      slot
-    });
-    saveReport.push({
-      kind: 'civPalette',
-      path: targetPath,
-      slot,
-      detail: `Saved ${getCivColorPaletteFileName(slot)}`
-    });
-  }
-
-  return { ok: true, writes, saveReport };
 }
 
 function sanitizeScenarioStem(rawName) {
@@ -6395,11 +6255,6 @@ function quoteSectionToken(value) {
   return `"${escaped}"`;
 }
 
-function unquoteSectionToken(value) {
-  const raw = String(value == null ? '' : value).trim();
-  return raw.replace(/^"(.*)"$/, '$1').trim();
-}
-
 function tokenizeSectionListPreservingQuotes(text) {
   const input = String(text == null ? '' : text);
   const items = [];
@@ -6423,16 +6278,6 @@ function tokenizeSectionListPreservingQuotes(text) {
   const tail = cur.trim();
   if (tail) items.push(tail);
   return items;
-}
-
-function normalizeNaturalWonderAnimationValueForWrite(value) {
-  const raw = String(value == null ? '' : value).trim();
-  if (!raw) return '';
-  if (!raw.includes('"')) return raw;
-  return tokenizeSectionListPreservingQuotes(raw)
-    .map((token) => unquoteSectionToken(token))
-    .filter(Boolean)
-    .join(', ');
 }
 
 function findUnquotedColon(value) {
@@ -6598,7 +6443,7 @@ const SECTION_QUOTED_VALUE_KEYS_BY_KIND = {
   wonders: new Set([
     'name', 'buildable_by_civs', 'buildable_by_civ_traits', 'buildable_by_civ_govs', 'buildable_by_civ_cultures', 'img_path'
   ]),
-  naturalWonders: new Set(['name', 'img_path'])
+  naturalWonders: new Set(['name', 'img_path', 'animation'])
 };
 
 function normalizeSectionFieldValueForWrite(kind, key, value) {
@@ -6606,9 +6451,6 @@ function normalizeSectionFieldValueForWrite(kind, key, value) {
   const rawKey = String(key || '').trim();
   const keyLower = rawKey.toLowerCase();
   const rawValue = String(value == null ? '' : value).trim();
-  if (kindKey === 'naturalWonders' && keyLower === 'animation') {
-    return normalizeNaturalWonderAnimationValueForWrite(rawValue);
-  }
   const quotedKeys = SECTION_QUOTED_VALUE_KEYS_BY_KIND[kindKey];
   if (!quotedKeys || !quotedKeys.has(rawKey) || !rawValue) return rawValue;
   const normalizeArtPath = isSectionArtImagePathField(kindKey, rawKey);
@@ -6748,6 +6590,435 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
   return paths;
 }
 
+function getConquestsRootPath(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  return root ? path.join(root, 'Conquests') : '';
+}
+
+function getMusicTextPathForRoot(rootPath) {
+  const root = String(rootPath || '').trim();
+  return root ? path.join(root, MUSIC_TEXT_RELATIVE_PATH) : '';
+}
+
+function getMusicBuildPathForRoot(rootPath) {
+  const root = String(rootPath || '').trim();
+  return root ? path.join(root, MUSIC_BUILD_RELATIVE_PATH) : '';
+}
+
+function makeEmptyMusicAssignments() {
+  const out = {};
+  MUSIC_ERAS.forEach((era) => {
+    out[era.key] = {};
+    if (era.shared) {
+      out[era.key].all = [];
+    } else {
+      MUSIC_CULTURES.forEach((culture) => {
+        out[era.key][culture.key] = [];
+      });
+    }
+  });
+  out.playlist = { all: [] };
+  return out;
+}
+
+function normalizeMusicRelativePath(value) {
+  const raw = String(value || '').trim().replace(/\\/g, '/');
+  if (!raw) return '';
+  return raw.replace(/^sounds\/build\//i, '').replace(/^\/+/, '').replace(/\/+/g, '/');
+}
+
+function toMusicWindowsPath(value) {
+  return normalizeMusicRelativePath(value).replace(/\//g, '\\');
+}
+
+function parseMusicPlaylistText(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => normalizeMusicRelativePath(line))
+    .filter(Boolean);
+}
+
+function walkFilesRecursiveSafe(rootPath, options = {}) {
+  const root = String(rootPath || '').trim();
+  if (!root || !fs.existsSync(root)) return [];
+  const maxFiles = Number.isFinite(options.maxFiles) ? Math.max(1, options.maxFiles) : 1000;
+  const out = [];
+  const visit = (dirPath) => {
+    if (out.length >= maxFiles) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch (_err) {
+      return;
+    }
+    entries.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'en', { sensitivity: 'base' }));
+    entries.forEach((entry) => {
+      if (out.length >= maxFiles) return;
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) visit(fullPath);
+      else if (entry.isFile()) out.push(fullPath);
+    });
+  };
+  visit(root);
+  return out;
+}
+
+function inferStockMusicCellFromPath(relativePath) {
+  const normalized = normalizeMusicRelativePath(relativePath);
+  const base = path.basename(normalized).replace(/\.[^.]+$/u, '');
+  const compact = base.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const cultureByCode = new Map(MUSIC_CULTURES.map((culture) => [String(culture.code || '').toLowerCase(), culture.key]));
+  const ancient = compact.match(/^anc(na|ec|gr|me|or)(?:full)?$/);
+  if (ancient) return { eraKey: 'ancient', cultureKey: cultureByCode.get(ancient[1]) || '' };
+  const middle = compact.match(/^mid(na|ec|gr|me|or)full$/);
+  if (middle) return { eraKey: 'medieval', cultureKey: cultureByCode.get(middle[1]) || '' };
+  const industrial = compact.match(/^ind(na|ec|gr|me|or)full$/);
+  if (industrial) return { eraKey: 'industrial', cultureKey: cultureByCode.get(industrial[1]) || '' };
+  if (compact === 'smashfull' || compact === 'starsfull' || compact === 'technomixfull' || compact === 'modernfull') {
+    return { eraKey: 'modern', cultureKey: 'all' };
+  }
+  return null;
+}
+
+function parseMp3Metadata(filePath) {
+  let buf = null;
+  try {
+    buf = fs.readFileSync(filePath);
+  } catch (_err) {
+    return {};
+  }
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return {};
+  let offset = 0;
+  if (buf.length >= 10 && buf.subarray(0, 3).toString('latin1') === 'ID3') {
+    const size = ((buf[6] & 0x7f) << 21) | ((buf[7] & 0x7f) << 14) | ((buf[8] & 0x7f) << 7) | (buf[9] & 0x7f);
+    offset = Math.min(buf.length - 4, 10 + size);
+  }
+  const bitrateTable = {
+    mpeg1_layer3: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+    mpeg2_layer3: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160]
+  };
+  const sampleRateTable = {
+    3: [44100, 48000, 32000],
+    2: [22050, 24000, 16000],
+    0: [11025, 12000, 8000]
+  };
+  for (let i = offset; i + 4 <= buf.length; i += 1) {
+    if (buf[i] !== 0xff || (buf[i + 1] & 0xe0) !== 0xe0) continue;
+    const versionBits = (buf[i + 1] >> 3) & 0x03;
+    const layerBits = (buf[i + 1] >> 1) & 0x03;
+    const bitrateIndex = (buf[i + 2] >> 4) & 0x0f;
+    const sampleRateIndex = (buf[i + 2] >> 2) & 0x03;
+    const channelMode = (buf[i + 3] >> 6) & 0x03;
+    if (versionBits === 1 || layerBits !== 1 || bitrateIndex <= 0 || bitrateIndex >= 15 || sampleRateIndex >= 3) continue;
+    const versionKey = versionBits === 3 ? 'mpeg1_layer3' : 'mpeg2_layer3';
+    const bitrateKbps = bitrateTable[versionKey][bitrateIndex] || 0;
+    const sampleRateHz = (sampleRateTable[versionBits] || [])[sampleRateIndex] || 0;
+    if (!bitrateKbps || !sampleRateHz) continue;
+    const audioBytes = Math.max(0, buf.length - i - (buf.length > 128 && buf.subarray(buf.length - 128, buf.length - 125).toString('latin1') === 'TAG' ? 128 : 0));
+    const durationSeconds = bitrateKbps > 0 ? (audioBytes * 8) / (bitrateKbps * 1000) : null;
+    return {
+      durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
+      bitrateKbps,
+      sampleRateHz,
+      channelMode: channelMode === 3 ? 'mono' : 'stereo'
+    };
+  }
+  return {};
+}
+
+function inspectAudioFileBasic(filePath) {
+  const target = String(filePath || '').trim();
+  if (!target || !fs.existsSync(target)) return null;
+  let stat = null;
+  try {
+    stat = fs.statSync(target);
+  } catch (_err) {
+    stat = null;
+  }
+  return {
+    filePath: target,
+    fileName: path.basename(target),
+    extension: path.extname(target).replace(/^\./, '').toLowerCase(),
+    size: stat && Number.isFinite(stat.size) ? stat.size : 0,
+    ...parseMp3Metadata(target)
+  };
+}
+
+function makeMusicTrack({ relativePath, sourcePath = '', scope = '', inherited = false, explicit = false }) {
+  const rel = normalizeMusicRelativePath(relativePath || (sourcePath ? path.basename(sourcePath) : ''));
+  const title = path.basename(rel || sourcePath || '');
+  const info = inspectAudioFileBasic(sourcePath);
+  return {
+    id: crypto.createHash('sha1').update(`${scope}|${rel}|${sourcePath}`).digest('hex').slice(0, 12),
+    relativePath: rel,
+    displayPath: rel,
+    title,
+    sourcePath: String(sourcePath || ''),
+    playablePath: String(sourcePath || ''),
+    scope: String(scope || ''),
+    inherited: !!inherited,
+    explicit: !!explicit,
+    missing: !(sourcePath && fs.existsSync(sourcePath)),
+    fileName: info ? info.fileName : title,
+    size: info ? info.size : 0,
+    durationSeconds: info ? info.durationSeconds : null,
+    bitrateKbps: info ? info.bitrateKbps : null,
+    sampleRateHz: info ? info.sampleRateHz : null,
+    channelMode: info ? info.channelMode : ''
+  };
+}
+
+function scanMusicBuildLibrary(rootPath, scope) {
+  const buildRoot = getMusicBuildPathForRoot(rootPath);
+  if (!buildRoot || !fs.existsSync(buildRoot)) return [];
+  return walkFilesRecursiveSafe(buildRoot, { maxFiles: 2000 })
+    .filter((filePath) => /\.mp3$/i.test(filePath))
+    .map((filePath) => makeMusicTrack({
+      relativePath: normalizeMusicRelativePath(path.relative(buildRoot, filePath)),
+      sourcePath: filePath,
+      scope
+    }));
+}
+
+function buildMusicLibraryIndex(libraries) {
+  const tracks = [];
+  const byRelative = new Map();
+  (Array.isArray(libraries) ? libraries : []).forEach((track) => {
+    if (!track) return;
+    tracks.push(track);
+    const key = normalizeMusicRelativePath(track.relativePath).toLowerCase();
+    if (key && !byRelative.has(key)) byRelative.set(key, track);
+    const baseKey = path.basename(key);
+    if (baseKey && !byRelative.has(baseKey)) byRelative.set(baseKey, track);
+  });
+  return { tracks, byRelative };
+}
+
+function resolveMusicPlaylistEntry(relativePath, libraryIndex, options = {}) {
+  const rel = normalizeMusicRelativePath(relativePath);
+  const lookup = libraryIndex && libraryIndex.byRelative ? libraryIndex.byRelative : new Map();
+  const found = lookup.get(rel.toLowerCase()) || lookup.get(path.basename(rel).toLowerCase()) || null;
+  if (found) {
+    return {
+      ...found,
+      id: crypto.createHash('sha1').update(`${found.scope}|${rel}|${found.sourcePath}|${options.explicit ? 'explicit' : 'library'}`).digest('hex').slice(0, 12),
+      relativePath: rel,
+      displayPath: rel,
+      inherited: !!options.inherited,
+      explicit: !!options.explicit,
+      missing: false
+    };
+  }
+  return makeMusicTrack({ relativePath: rel, sourcePath: '', scope: options.explicit ? 'playlist' : 'library', inherited: !!options.inherited, explicit: !!options.explicit });
+}
+
+function assignMusicTrack(assignments, track, cell) {
+  const target = cell || inferStockMusicCellFromPath(track && track.relativePath);
+  const eraKey = String(target && target.eraKey || '').trim();
+  const cultureKey = String(target && target.cultureKey || '').trim();
+  if (eraKey && cultureKey && assignments[eraKey] && Array.isArray(assignments[eraKey][cultureKey])) {
+    assignments[eraKey][cultureKey].push(track);
+    return true;
+  }
+  assignments.playlist.all.push(track);
+  return false;
+}
+
+function flattenMusicAssignments(assignments, options = {}) {
+  const includeMatrix = options.includeMatrix !== false;
+  const out = [];
+  const seen = new Set();
+  const pushTrack = (track) => {
+    const rel = normalizeMusicRelativePath(track && track.relativePath);
+    if (!rel) return;
+    const key = `${rel.toLowerCase()}|${String(track && (track.pendingSourcePath || track.sourcePath) || '').toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(track);
+  };
+  if (includeMatrix) {
+    MUSIC_ERAS.forEach((era) => {
+      const cultureKeys = era.shared ? ['all'] : MUSIC_CULTURES.map((culture) => culture.key);
+      cultureKeys.forEach((cultureKey) => {
+        ((((assignments || {})[era.key] || {})[cultureKey]) || []).forEach(pushTrack);
+      });
+    });
+  }
+  ((((assignments || {}).playlist || {}).all) || []).forEach(pushTrack);
+  return out;
+}
+
+function scanStandardMusicLibraries(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  const conquestsRoot = getConquestsRootPath(civ3Path);
+  return dedupePathList([root, conquestsRoot])
+    .flatMap((rootPath) => scanMusicBuildLibrary(rootPath, normalizePathForCompare(rootPath) === normalizePathForCompare(root) ? 'standard-root' : 'conquests'));
+}
+
+function buildStockMusicAssignments(libraryTracks, inherited = false) {
+  const assignments = makeEmptyMusicAssignments();
+  (Array.isArray(libraryTracks) ? libraryTracks : []).forEach((track) => {
+    const nextTrack = { ...track, inherited: !!inherited, explicit: false };
+    assignMusicTrack(assignments, nextTrack, inferStockMusicCellFromPath(nextTrack.relativePath));
+  });
+  return assignments;
+}
+
+function findMusicTextFileCaseInsensitive(rootPath) {
+  const textDir = rootPath ? path.join(rootPath, 'Text') : '';
+  if (!textDir || !fs.existsSync(textDir)) return getMusicTextPathForRoot(rootPath);
+  try {
+    const entries = fs.readdirSync(textDir);
+    const hit = entries.find((name) => String(name || '').toLowerCase() === 'music.txt');
+    if (hit) return path.join(textDir, hit);
+  } catch (_err) {
+    // fall through
+  }
+  return getMusicTextPathForRoot(rootPath);
+}
+
+function loadMusicTab({ mode, civ3Path, scenarioContext, textFileEncoding }) {
+  const conquestsRoot = getConquestsRootPath(civ3Path);
+  const scenarioRoot = mode === 'scenario'
+    ? (scenarioContext && (scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioContext.biqRoot))
+    : '';
+  const targetRoot = mode === 'scenario' ? scenarioRoot : conquestsRoot;
+  const targetPath = getMusicTextPathForRoot(targetRoot);
+  const standardLibrary = scanStandardMusicLibraries(civ3Path);
+  const scenarioRoots = mode === 'scenario'
+    ? dedupePathList([scenarioRoot].concat((scenarioContext && scenarioContext.searchRoots) || []))
+    : [];
+  const scenarioLibraries = scenarioRoots.flatMap((rootPath) => scanMusicBuildLibrary(rootPath, normalizePathForCompare(rootPath) === normalizePathForCompare(scenarioRoot) ? 'scenario' : 'scenario-search'));
+  const libraryIndex = buildMusicLibraryIndex(scenarioLibraries.concat(standardLibrary));
+  const activePath = findMusicTextFileCaseInsensitive(targetRoot);
+  const activeInfo = readTextFileWithEncodingInfoIfExists(activePath, { preferredEncoding: textFileEncoding });
+  const tab = {
+    type: 'music',
+    title: 'Music',
+    layout: 'stock',
+    targetPath,
+    buildTargetPath: getMusicBuildPathForRoot(targetRoot),
+    cultures: MUSIC_CULTURES.map((culture) => ({ ...culture })),
+    eras: MUSIC_ERAS.map((era) => ({ ...era })),
+    assignments: makeEmptyMusicAssignments(),
+    library: standardLibrary,
+    effectiveSource: 'standard-library',
+    sourceDetails: {
+      targetPath,
+      activePath: activeInfo ? activePath : '',
+      hasActive: !!activeInfo,
+      inheritedFromStandard: mode === 'scenario' && !activeInfo,
+      generatedFromLibrary: !activeInfo,
+      activeEncoding: activeInfo ? activeInfo.encoding : '',
+      activeBom: !!(activeInfo && activeInfo.bom),
+      standardBuildRoots: dedupePathList([resolveCiv3RootPath(civ3Path), conquestsRoot]).map(getMusicBuildPathForRoot).filter(Boolean),
+      scenarioBuildRoots: scenarioRoots.map(getMusicBuildPathForRoot).filter(Boolean)
+    }
+  };
+  if (activeInfo) {
+    tab.layout = 'playlist';
+    tab.effectiveSource = mode === 'scenario' ? 'scenario' : 'standard';
+    tab.sourceDetails.generatedFromLibrary = false;
+    tab.sourceDetails.inheritedFromStandard = false;
+    parseMusicPlaylistText(activeInfo.text).forEach((relativePath) => {
+      tab.assignments.playlist.all.push(resolveMusicPlaylistEntry(relativePath, libraryIndex, { explicit: true }));
+    });
+    return tab;
+  }
+  tab.assignments = buildStockMusicAssignments(standardLibrary, mode === 'scenario');
+  return tab;
+}
+
+function getMusicTracksForSave(tab) {
+  if (!tab || typeof tab !== 'object') return [];
+  if (String(tab.layout || '').trim().toLowerCase() === 'playlist') {
+    return ((((tab.assignments || {}).playlist || {}).all) || []).filter(Boolean);
+  }
+  return flattenMusicAssignments(tab.assignments || {}, { includeMatrix: true });
+}
+
+function makeCollisionSafeMusicTarget(buildRoot, relativePath, existingTargets) {
+  const rel = normalizeMusicRelativePath(relativePath) || 'music.mp3';
+  const dirPart = path.dirname(rel);
+  const base = path.basename(rel, path.extname(rel)).replace(/[<>:"|?*\x00-\x1f]/g, '_') || 'music';
+  const ext = path.extname(rel) || '.mp3';
+  const safeDir = dirPart && dirPart !== '.' ? dirPart.replace(/\\/g, '/') : '';
+  let idx = 1;
+  while (idx < 10000) {
+    const name = idx === 1 ? `${base}${ext}` : `${base}_${idx}${ext}`;
+    const candidateRel = normalizeMusicRelativePath(safeDir ? `${safeDir}/${name}` : name);
+    const candidatePath = path.join(buildRoot, candidateRel);
+    const key = normalizePathForCompare(candidatePath);
+    if (!existingTargets.has(key) && !fs.existsSync(candidatePath)) {
+      existingTargets.add(key);
+      return { relativePath: candidateRel, targetPath: candidatePath };
+    }
+    idx += 1;
+  }
+  const fallbackRel = normalizeMusicRelativePath(`${safeDir ? `${safeDir}/` : ''}${base}_${Date.now()}${ext}`);
+  const fallbackPath = path.join(buildRoot, fallbackRel);
+  existingTargets.add(normalizePathForCompare(fallbackPath));
+  return { relativePath: fallbackRel, targetPath: fallbackPath };
+}
+
+function prepareMusicTabWrites({ tab, targetRoot, textFileEncoding }) {
+  if (!tab || !targetRoot) return { ok: true, writes: [], saveReport: [] };
+  const targetPath = String(tab.targetPath || getMusicTextPathForRoot(targetRoot));
+  const buildRoot = String(tab.buildTargetPath || getMusicBuildPathForRoot(targetRoot));
+  const tracks = getMusicTracksForSave(tab);
+  const writes = [];
+  const saveReport = [];
+  const existingTargets = new Set();
+  const serializedLines = [];
+  for (const track of tracks) {
+    let relativePath = normalizeMusicRelativePath(track && track.relativePath);
+    const pendingSourcePath = String(track && track.pendingSourcePath || '').trim();
+    if (pendingSourcePath) {
+      if (!fs.existsSync(pendingSourcePath)) {
+        return { ok: false, error: `Could not read imported music file: ${pendingSourcePath}` };
+      }
+      const preferredRelativePath = relativePath || normalizeMusicRelativePath(path.basename(pendingSourcePath));
+      const preferredTargetPath = path.join(buildRoot, preferredRelativePath);
+      if (normalizePathForCompare(preferredTargetPath) === normalizePathForCompare(pendingSourcePath)) {
+        relativePath = preferredRelativePath;
+        existingTargets.add(normalizePathForCompare(preferredTargetPath));
+      } else {
+        const target = makeCollisionSafeMusicTarget(buildRoot, preferredRelativePath, existingTargets);
+        relativePath = target.relativePath;
+        writes.push({
+          kind: 'musicAudio',
+          path: target.targetPath,
+          sourcePath: pendingSourcePath,
+          relativePath,
+          data: fs.readFileSync(pendingSourcePath)
+        });
+        saveReport.push({ kind: 'musicAudio', path: target.targetPath, sourcePath: pendingSourcePath, relativePath });
+      }
+    }
+    if (relativePath) serializedLines.push(toMusicWindowsPath(relativePath));
+  }
+  const serialized = serializedLines.join('\r\n') + (serializedLines.length > 0 ? '\r\n' : '');
+  const sourceDetails = tab.sourceDetails || {};
+  const resolvedEncoding = resolveScenarioTextWriteEncoding({
+    targetPath,
+    sourcePath: String(sourceDetails.activePath || ''),
+    explicitEncoding: String(sourceDetails.activeEncoding || ''),
+    preferredEncoding: textFileEncoding,
+    fallbackEncoding: 'windows-1252'
+  });
+  writes.push({
+    kind: 'music',
+    path: targetPath,
+    data: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: resolvedEncoding.bom }),
+    encoding: resolvedEncoding.encoding,
+    bom: resolvedEncoding.bom
+  });
+  saveReport.push({ kind: 'music', path: targetPath, applied: serializedLines.length });
+  return { ok: true, writes, saveReport };
+}
+
 function loadBundle(payload) {
   const readPaths = new Set();
   activeReadCollector = readPaths;
@@ -6873,6 +7144,13 @@ function loadBundle(payload) {
       if (referenceTabs.terrainPedia) bundle.tabs.terrainPedia = referenceTabs.terrainPedia;
       if (referenceTabs.workerActions) bundle.tabs.workerActions = referenceTabs.workerActions;
     }
+
+    bundle.tabs.music = loadMusicTab({
+      mode,
+      civ3Path,
+      scenarioContext,
+      textFileEncoding
+    });
 
     if (!deferMapTab && bundle.tabs.map) {
       bundle.tabs.map = materializeMapTab({
@@ -9816,11 +10094,28 @@ function buildSavePlan(payload) {
     saveReport.push({ kind, path: targetPath });
   }
 
+  const musicTab = payload.tabs && payload.tabs.music;
+  const shouldSaveMusic = !!musicTab && (dirtyTabs.has('music') || (dirtyTabs.size === 0 && String(musicTab.layout || '').trim().toLowerCase() === 'playlist'));
+  if (shouldSaveMusic) {
+    const musicTargetRoot = mode === 'scenario'
+      ? (scenarioContext.contentWriteRoot || scenarioDir)
+      : getConquestsRootPath(civ3Path);
+    const musicWrites = prepareMusicTabWrites({ tab: musicTab, targetRoot: musicTargetRoot, textFileEncoding });
+    if (!musicWrites.ok) return { ok: false, error: musicWrites.error || 'Failed to prepare music writes.' };
+    for (const write of musicWrites.writes || []) {
+      const label = write.kind === 'musicAudio' ? 'music audio target' : 'music playlist target';
+      const protectErr = failIfProtected(write.path, label);
+      if (protectErr) return { ok: false, error: protectErr };
+      plannedWrites.push(write);
+    }
+    (musicWrites.saveReport || []).forEach((entry) => saveReport.push(entry));
+  }
+
   if (mode === 'scenario' && isBiqPath(scenarioPath)) {
     const protectErr = failIfProtected(scenarioPath, 'scenario BIQ target');
     if (protectErr) return { ok: false, error: protectErr };
 
-    const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations']);
+    const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'music']);
     const dirtyTabsAreOnlyNonBiq = dirtyTabs.size > 0
       && Array.from(dirtyTabs).every((tabKey) => nonBiqDirtyTabs.has(String(tabKey || '')));
     const hasPendingBiqOperations = hasPendingBiqOperationPayload(payload.tabs || {});
@@ -10341,24 +10636,6 @@ function buildSavePlan(payload) {
           applied: importedBuildingCityAtlasWrite.assignments.length,
           detail: `Added ${importedBuildingCityAtlasWrite.assignments.length} imported improvement city icon row${importedBuildingCityAtlasWrite.assignments.length === 1 ? '' : 's'}`
         });
-      }
-    }
-
-    if (payload.civColorPalettes && typeof payload.civColorPalettes === 'object') {
-      const civPaletteWrites = prepareScenarioCivColorPaletteWrites(payload);
-      if (!civPaletteWrites.ok) {
-        return { ok: false, error: civPaletteWrites.error || 'Failed to save custom civ color palettes.' };
-      }
-      for (const write of civPaletteWrites.writes || []) {
-        const protectErr = failIfProtected(write.path, 'civ color palette target');
-        if (protectErr) return { ok: false, error: protectErr };
-        if (isProtectedBaseCiv3Path(civ3Path, write.path)) {
-          return { ok: false, error: `Refusing to modify base Civilization III file (civ color palette target): ${write.path}` };
-        }
-        plannedWrites.push(write);
-      }
-      for (const report of civPaletteWrites.saveReport || []) {
-        saveReport.push(report);
       }
     }
   }
@@ -11008,173 +11285,10 @@ function normalizeReferenceListFieldValueForSave(field, targetTabKey, indexMaps)
   return true;
 }
 
-function prettifyGovernmentPlanningKey(key, fallbackIndex = 0) {
-  const raw = String(key || '').trim().toUpperCase();
-  const cleaned = raw.replace(/^GOVT_/, '').replace(/_/g, ' ').trim();
-  if (!cleaned) return `Government ${fallbackIndex + 1}`;
-  return cleaned.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function buildPlannedGovernmentNames({ tabs, biqTab, indexMaps }) {
-  const planned = indexMaps && indexMaps.governments && Array.isArray(indexMaps.governments.records)
-    ? indexMaps.governments.records
-    : [];
-  if (planned.length === 0) return [];
-
-  const namesByKey = new Map();
-  const namesByOriginalIndex = new Map();
-  const governmentEntries = tabs && tabs.governments && Array.isArray(tabs.governments.entries)
-    ? tabs.governments.entries
-    : [];
-  governmentEntries.forEach((entry) => {
-    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-    const name = cleanDisplayText(entry && entry.name);
-    const originalIndex = parseAssignedBiqIndex(entry && entry.biqIndex);
-    if (key && name) namesByKey.set(key, name);
-    if (Number.isFinite(originalIndex) && originalIndex >= 0 && name) namesByOriginalIndex.set(originalIndex, name);
-  });
-
-  const originalRecords = getReferencePlanningRecordsForSection(biqTab, 'GOVT');
-  originalRecords.forEach((record, fallbackIdx) => {
-    const key = String(getBiqRecordPlanningRef(record) || '').trim().toUpperCase();
-    const name = cleanDisplayText(getBiqRecordDisplayName(record, key || `Government ${fallbackIdx + 1}`));
-    const originalIndex = parseAssignedBiqIndex(record && record.index);
-    if (key && name && !namesByKey.has(key)) namesByKey.set(key, name);
-    if (Number.isFinite(originalIndex) && originalIndex >= 0 && name && !namesByOriginalIndex.has(originalIndex)) {
-      namesByOriginalIndex.set(originalIndex, name);
-    }
-  });
-
-  return planned.map((record, fallbackIdx) => {
-    const key = String(record && (record.newRecordRef || record.key) || '').trim().toUpperCase();
-    const originalIndex = parseAssignedBiqIndex(record && record.originalIndex);
-    return namesByKey.get(key)
-      || (Number.isFinite(originalIndex) && originalIndex >= 0 ? namesByOriginalIndex.get(originalIndex) : '')
-      || prettifyGovernmentPlanningKey(key, fallbackIdx);
-  });
-}
-
-function normalizeGovernmentEntriesForSave({ tabs, biqTab, indexMaps }) {
-  const governmentTab = tabs && tabs.governments;
-  const entries = governmentTab && Array.isArray(governmentTab.entries) ? governmentTab.entries : [];
-  if (entries.length === 0) return 0;
-  const governmentNames = buildPlannedGovernmentNames({ tabs, biqTab, indexMaps });
-  const relationCount = governmentNames.length;
-  if (relationCount <= 0) return 0;
-  let changed = 0;
-
-  entries.forEach((entry) => {
-    if (!entry || !Array.isArray(entry.biqFields)) return;
-    const relationRows = new Map();
-    const preservedFields = [];
-    let currentRowIndex = -1;
-    let skippingRelationTail = false;
-
-    entry.biqFields.forEach((field) => {
-      const baseKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
-      const relationHeaderMatch = baseKey.match(/^performance_of_this_government_versus_government_(\d+)$/);
-      if (relationHeaderMatch) {
-        currentRowIndex = Number.parseInt(relationHeaderMatch[1], 10);
-        if (!relationRows.has(currentRowIndex)) {
-          relationRows.set(currentRowIndex, {
-            canBribe: '0',
-            canBribeOriginal: '0',
-            resistanceMod: '0',
-            resistanceModOriginal: '0',
-            briberyMod: '0',
-            briberyModOriginal: '0'
-          });
-        }
-        skippingRelationTail = true;
-        return;
-      }
-      if (skippingRelationTail && (baseKey === 'canbribe' || baseKey === 'resistancemodifier' || baseKey === 'briberymodifier')) {
-        const row = relationRows.get(currentRowIndex) || {
-          canBribe: '0',
-          canBribeOriginal: '0',
-          resistanceMod: '0',
-          resistanceModOriginal: '0',
-          briberyMod: '0',
-          briberyModOriginal: '0'
-        };
-        if (baseKey === 'canbribe') {
-          row.canBribe = String(field && field.value != null ? field.value : '0');
-          row.canBribeOriginal = String(field && field.originalValue != null ? field.originalValue : row.canBribe);
-        }
-        if (baseKey === 'resistancemodifier') {
-          row.resistanceMod = String(field && field.value != null ? field.value : '0');
-          row.resistanceModOriginal = String(field && field.originalValue != null ? field.originalValue : row.resistanceMod);
-        }
-        if (baseKey === 'briberymodifier') {
-          row.briberyMod = String(field && field.value != null ? field.value : '0');
-          row.briberyModOriginal = String(field && field.originalValue != null ? field.originalValue : row.briberyMod);
-        }
-        relationRows.set(currentRowIndex, row);
-        return;
-      }
-      skippingRelationTail = false;
-      preservedFields.push(field);
-    });
-
-    const nextFields = preservedFields.slice();
-    for (let idx = 0; idx < relationCount; idx += 1) {
-      const governmentName = String(governmentNames[idx] || `Government ${idx + 1}`).trim();
-      const row = relationRows.get(idx) || {
-        canBribe: '0',
-        canBribeOriginal: '0',
-        resistanceMod: '0',
-        resistanceModOriginal: '0',
-        briberyMod: '0',
-        briberyModOriginal: '0'
-      };
-      nextFields.push({
-        key: `performance_of_this_government_versus_government_${idx}`,
-        baseKey: `performance_of_this_government_versus_government_${idx}`,
-        label: `Performance Vs ${governmentName}`,
-        value: governmentName,
-        originalValue: governmentName,
-        editable: false
-      });
-      nextFields.push({
-        key: 'canbribe',
-        baseKey: 'canbribe',
-        label: 'Can Bribe',
-        value: String(row.canBribe),
-        originalValue: String(row.canBribeOriginal),
-        editable: true
-      });
-      nextFields.push({
-        key: 'resistancemodifier',
-        baseKey: 'resistancemodifier',
-        label: 'Resistance Modifier',
-        value: String(row.resistanceMod),
-        originalValue: String(row.resistanceModOriginal),
-        editable: true
-      });
-      nextFields.push({
-        key: 'briberymodifier',
-        baseKey: 'briberymodifier',
-        label: 'Propaganda',
-        value: String(row.briberyMod),
-        originalValue: String(row.briberyModOriginal),
-        editable: true
-      });
-    }
-    if (JSON.stringify(nextFields) !== JSON.stringify(entry.biqFields)) {
-      entry.biqFields = nextFields;
-      changed += 1;
-    }
-  });
-
-  return changed;
-}
-
 function normalizePendingReferenceTargetsForSave({ tabs, indexTabs, biqTab }) {
   const sourceTabs = tabs || {};
   const indexMaps = buildPlannedReferenceIndexMaps(indexTabs || sourceTabs, biqTab);
   let changed = 0;
-
-  changed += normalizeGovernmentEntriesForSave({ tabs: sourceTabs, biqTab, indexMaps });
 
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = sourceTabs[spec.key];
@@ -13516,13 +13630,16 @@ module.exports = {
   buildEffectiveReferenceTabs,
   resolveScenarioDir,
   resolveBiqPath,
-  inspectScenarioCivColorPalettes,
   createScenario,
   deleteScenario,
   loadMapImport,
   materializeMapTab,
   parseBiqSectionsFromBuffer,
   resolvePaths,
+  loadMusicTab,
+  normalizeMusicRelativePath,
+  inferStockMusicCellFromPath,
+  inspectAudioFileBasic,
   loadBundle,
   saveBundle,
   previewSavePlan,

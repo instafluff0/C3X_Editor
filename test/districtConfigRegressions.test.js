@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { parseSectionedConfig, serializeSectionedConfig, resolvePaths, loadBundle } = require('../src/configCore');
+const { parseSectionedConfig, resolvePaths, loadBundle } = require('../src/configCore');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-district-reg-'));
@@ -71,26 +71,6 @@ test('parseSectionedConfig preserves comma-separated quoted list', () => {
   const field = parsed.sections[0].fields.find((f) => f.key === 'dependent_improvs');
   assert.ok(field, 'expected dependent_improvs field');
   assert.equal(field.value, raw, 'fully-quoted list must be preserved as-is');
-});
-
-test('serializeSectionedConfig writes natural wonder animation specs unquoted with internal commas intact', () => {
-  const raw = 'ini=NaturalWonders\\Yellowstone\\Yellowstone.INI; hours=7-17; seasons=spring, summer, fall, winter; offsets=28,0; direction=southwest; frame_time_seconds=0.2';
-  const model = parseSectionedConfig(['#Wonder', 'name = Yellowstone', `animation = ${raw}`].join('\n'), '#Wonder');
-
-  const serialized = serializeSectionedConfig(model, '#Wonder', { kind: 'naturalWonders' });
-
-  assert.match(serialized, /animation\s*=\s*ini=NaturalWonders\\Yellowstone\\Yellowstone\.INI; hours=7-17; seasons=spring, summer, fall, winter; offsets=28,0; direction=southwest; frame_time_seconds=0\.2/);
-  assert.doesNotMatch(serialized, /animation\s*=\s*"/);
-});
-
-test('serializeSectionedConfig repairs quoted natural wonder animation fragments from prior saves', () => {
-  const broken = '"ini=NaturalWonders\\Yellowstone\\Yellowstone.INI;       hours=7-17; seasons=spring", "summer", "fall", "winter; offsets=28", "0; direction=southwest; frame_time_seconds=0.2"';
-  const model = parseSectionedConfig(['#Wonder', 'name = Yellowstone', `animation = ${broken}`].join('\n'), '#Wonder');
-
-  const serialized = serializeSectionedConfig(model, '#Wonder', { kind: 'naturalWonders' });
-
-  assert.match(serialized, /animation\s*=\s*ini=NaturalWonders\\Yellowstone\\Yellowstone\.INI;\s+hours=7-17; seasons=spring, summer, fall, winter; offsets=28, 0; direction=southwest; frame_time_seconds=0\.2/);
-  assert.doesNotMatch(serialized, /animation\s*=\s*"/);
 });
 
 // ---------------------------------------------------------------------------

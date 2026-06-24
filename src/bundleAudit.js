@@ -2003,6 +2003,24 @@ function auditScenarioPlayableCivilizationSlots(bundle, result) {
   );
 }
 
+function auditMusic(bundle, result) {
+  const tab = bundle && bundle.tabs && bundle.tabs.music ? bundle.tabs.music : null;
+  if (!tab || String(tab.layout || '').trim().toLowerCase() !== 'playlist') return;
+  const tracks = ((((tab.assignments || {}).playlist || {}).all) || []);
+  tracks.forEach((track, index) => {
+    const title = String(track && (track.title || track.fileName || track.relativePath) || `Track ${index + 1}`).trim();
+    const pendingSourcePath = String(track && track.pendingSourcePath || '').trim();
+    if (pendingSourcePath && !fileExists(pendingSourcePath)) {
+      addGeneralIssue(result, 'music', `${title} is staged for import, but the source MP3 file no longer exists.`, 'music-import-source-missing');
+      return;
+    }
+    const playablePath = String(track && (track.playablePath || track.sourcePath) || '').trim();
+    if (track && track.missing && !playablePath) {
+      addGeneralIssue(result, 'music', `${title} is listed in Music.txt, but the MP3 could not be found.`, 'music-file-missing');
+    }
+  });
+}
+
 function auditLoadedBundle(bundle, options = {}) {
   const result = createAuditAccumulator();
   if (!bundle || !bundle.tabs) return result;
@@ -2023,6 +2041,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditScenarioTextHealth(bundle, result);
   auditCivilopediaLinks(bundle, result);
   auditScenarioPlayableCivilizationSlots(bundle, result);
+  auditMusic(bundle, result);
   return result;
 }
 
