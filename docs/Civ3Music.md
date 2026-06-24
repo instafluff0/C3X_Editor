@@ -20,7 +20,7 @@ The tutorial describes the stock-era naming patterns:
 - Industrial tracks use `IndNAFull`, `IndECFull`, `IndGRFull`, `IndMEFull`, and `IndORFull`.
 - Modern tracks are shared rather than culture-specific, with names such as `SmashFull`, `StarsFull`, and `Techno MixFull`.
 
-Local installs may not contain every named stock file. This repo's current Civ3 Complete tree has no global `Conquests/Text/music.txt`; the editor therefore infers a stock-library view from available MP3s under `Sounds/Build`. Filenames that explicitly encode an era/culture pattern belong in the era/culture matrix. Other available MP3s should remain playable as generic playlist entries inside the same matrix rather than being forced into fake Middle or Industrial cells. Inferred empty cells must not be presented as explicit "no music" decisions.
+Local installs may not contain every named stock file. When there is no active `Text/music.txt`, the editor infers a stock-library view from available MP3s under both root `Sounds/Build` and `Conquests/Sounds/Build`. Filenames that explicitly encode an era/culture pattern belong in the era/culture matrix. Other available MP3s remain playable in `Other Music` rather than being forced into fake Middle or Industrial cells. Inferred empty cells must not be presented as explicit "no music" decisions.
 
 ## Scenario `Text/music.txt`
 
@@ -34,14 +34,16 @@ Observed shipped examples:
 - `Scenarios/Tides of Crimson/Text/music.txt` has 40 entries.
 - `Scenarios/Star Wars TMA/Text/Music.txt` is a long scenario-specific playlist.
 
-This means sparse rows and empty cells in the editor are often intentional. They should read as unassigned or inherited/stock behavior, not as validation failures.
+This means an active scenario `Text/music.txt` should be shown as a single scenario playlist, not as a deterministic era/culture matrix. Sparse matrix rows are meaningful only for stock/inherited library browsing, where they reflect filename-classified stock tracks rather than explicit scenario metadata.
 
 ## Editor UX Implications
 
-- The Music tab can organize entries by era and culture because that matches Civ3 modders' mental model, but it should not imply every cell is mandatory.
+- Standard Game, and scenarios without scenario-local `Text/music.txt`, should show a browsable era/culture matrix plus `Other Music`.
+- Scenarios with scenario-local `Text/music.txt` should show one ordered playlist.
+- Scenarios without scenario-local `Text/music.txt` should switch to a scenario-local playlist only after the user chooses to add custom music.
 - Empty inferred stock cells should stay visually quiet and should not claim a specific default track.
 - Empty explicit playlist cells should use quiet wording such as `No assigned song`.
-- Ambiguous MP3s should be playable in a matrix-integrated `Playlist` row rather than inferred into era/culture cells or shown in a separate side section.
+- Ambiguous MP3s should be playable in `Other Music` rather than inferred into era/culture cells.
 - Missing warnings should be reserved for explicit playlist entries that point to files the editor cannot resolve.
 - Scenario saves that modify music should become scenario-local: write scenario `Text/music.txt` and copy required MP3s under scenario `Sounds/Build`.
 - Drag/drop MP3 import should preserve the scenario-local write model and never silently edit base game assets in Scenario mode.

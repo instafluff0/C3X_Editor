@@ -832,24 +832,6 @@ function resolvePcxPath(c3xPath, fileName, scenarioRoots) {
   return candidates.filter(Boolean).find((p) => fileExists(p)) || null;
 }
 
-function resolveDistrictButtonSheetPath(c3xPath, scenarioPath, scenarioPaths) {
-  const candidates = [];
-  const addCandidate = (candidate) => {
-    if (!candidate || candidates.includes(candidate)) return;
-    candidates.push(candidate);
-  };
-  normalizeScenarioRoots(scenarioPath, scenarioPaths).forEach((root) => {
-    addCandidate(path.join(root, 'Art', 'Districts', 'WorkerDistrictButtonsNorm.pcx'));
-  });
-  if (c3xPath) {
-    addCandidate(path.join(String(c3xPath || ''), 'Art', 'Districts', 'WorkerDistrictButtonsNorm.pcx'));
-  }
-  const hit = candidates.find((p) => fileExists(p)) || null;
-  if (hit) return hit;
-  log.debug('resolveDistrictButtonSheet', `NOT FOUND: checked ${candidates.length} candidate(s)`);
-  return null;
-}
-
 function decodeByPath(filePath, crop, options = {}) {
   const ext = path.extname(filePath).toLowerCase();
   let image;
@@ -927,9 +909,9 @@ function getPreview(request) {
   }
 
   if (kind === 'districtButtonSheet') {
-    const pcxPath = resolveDistrictButtonSheetPath(c3xPath, scenarioPath, scenarioPaths);
+    const pcxPath = path.join(String(c3xPath || ''), 'Art', 'Districts', 'WorkerDistrictButtonsNorm.pcx');
     if (!fileExists(pcxPath)) {
-      log.warn('getPreview', 'districtButtonSheet: WorkerDistrictButtonsNorm.pcx not found');
+      log.warn('getPreview', `districtButtonSheet: not found at ${log.rel(pcxPath)}`);
       return { ok: false, error: 'Button sheet not found' };
     }
     return { ok: true, ...decodeByPath(pcxPath, request.crop) };

@@ -68,7 +68,6 @@ test('dirty counts cover every editable tab family through the shared recompute 
     'improvements',
     'governments',
     'units',
-    'music',
     'gameConcepts',
     'terrainPedia',
     'workerActions',
@@ -170,13 +169,6 @@ test('dirty badge refreshes are centralized for main tabs, reference rows, and B
     setDirty,
     /if \(knownDirtyTab\) \{[\s\S]*?setTabDirtyCount\(knownDirtyTab, Math\.max\(1, previousCount\)\);[\s\S]*?scheduleDirtyUiRefresh\(`set-dirty:\$\{knownDirtyTab\}`\);/,
     'known-tab dirty calls must preserve an existing precise count and schedule a shared refresh'
-  );
-
-  const applyUniqueCivilizationColorAssignments = extractFunctionSource(source, 'applyUniqueCivilizationColorAssignments');
-  assert.match(
-    applyUniqueCivilizationColorAssignments,
-    /setDirty\(true, \{ knownDirtyTab: 'civilizations', reason: 'civilization-color-unique-assignment' \}\);[\s\S]*?rebuildReferenceDirtyCacheForTab\('civilizations'\);/,
-    'bulk civ color assignment must rebuild the Civs dirty cache so every changed civ gets a row badge and the tab count is precise'
   );
 });
 

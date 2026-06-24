@@ -20,7 +20,7 @@ Quint uses a civilization list on the left and a multi-panel editor on the right
 - Number/plurality: radio buttons `Singular`, `Plural`
 - `Culture Group`: dropdown
 - `Default Color`: dropdown
-- `Unique Color`: dropdown in BIQ/Quint terms; use `Alternate` as the app label.
+- `Unique Color`: dropdown
 - `Diplomacy Text Index`: numeric/text field
 - `Unknown`: numeric/text field
 
@@ -74,10 +74,3 @@ Quint uses a civilization list on the left and a multi-panel editor on the right
 
 ## Notes
 - Quint keeps the civilization identity fields outside the titled panels, then uses titled panels for behavioral groupings.
-- Custom civilization color editing is scenario-only and edits `Art/Units/Palettes/ntp00.pcx` through `ntp31.pcx`; the BIQ only stores each civilization's selected default/alternate slot numbers.
-- The Custom Civ Colors modal should stay compact and table-oriented, close to Quint's mental model: slot list on the left, selected palette rows on the right, row labels using Quint's known in-game role text.
-- Color row filters should include `Rhye's Recommended`, `Main shades`, `Other useful colors`, `Gray`, `Protected`, and `All others`.
-- Setting the main color means editing row 7 and regenerating linked rows immediately from the stock Civ3 palette template for that slot. Do not derive the generated ramp from the current row colors, because scenario palettes may already be flattened or manually damaged.
-- Per-row hex/RGB/color-picker edits remain valid manual overrides. Hex edits to row 7 must trigger the same main-color generation path as the native color picker.
-- Hue, Saturation, Balance, and Tint adjustments should live with the row filters as compact batch controls and update every currently affected visible row preview live.
-- `Assign Unique Colors` should be minimally disruptive: keep the first civ already using a slot, move later duplicates to unused slots, and set default and alternate to the same slot for each changed civ.

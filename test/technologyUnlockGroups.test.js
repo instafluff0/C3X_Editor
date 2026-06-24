@@ -89,12 +89,12 @@ test('Techs Enables pickers expose relationship source tooltips', () => {
   );
   assert.match(
     source,
-    /isTechnologyUnlockBiqStructureGroup\(spec\) \|\| isResourceUsageBiqRecordGroup\(spec\)[\s\S]*?formatSourceInfo\(getBiqSourceMeta\(sourceTab\), 'BIQ'\)[\s\S]*?Section: \$\{spec\.sectionCode/,
+    /isTechnologyUnlockBiqStructureGroup\(spec\) \|\| isResourceUsageBiqStructureGroup\(spec\)[\s\S]*?formatSourceInfo\(getBiqSourceMeta\(sourceTab\), 'BIQ'\)[\s\S]*?Section: \$\{spec\.sectionCode/,
     'Expected Worker Jobs and other BIQ structure relationships to report BIQ source metadata, not C3X effective config metadata'
   );
   assert.doesNotMatch(
     source,
-    /isTechnologyUnlockBiqStructureGroup\(spec\) \|\| isResourceUsageBiqRecordGroup\(spec\)[\s\S]*?getSectionTabSourceMeta\(sourceTab\)/,
+    /isTechnologyUnlockBiqStructureGroup\(spec\) \|\| isResourceUsageBiqStructureGroup\(spec\)[\s\S]*?getSectionTabSourceMeta\(sourceTab\)/,
     'BIQ structure relationship tooltips must not use sectioned C3X config source metadata'
   );
 });

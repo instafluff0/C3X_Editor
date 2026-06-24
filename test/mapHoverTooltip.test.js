@@ -470,8 +470,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload\(res\.saveReport\);[\s\S]*?const rerenderAfterMusicSave = finalizeSavedMusicStateAfterNoReload\(res\.saveReport\);[\s\S]*?markCurrentBundleCleanAfterSave\([\s\S]*?\);[\s\S]*?rerunQualityChecksAfterNoReloadSave\(\);[\s\S]*?if \(rerenderAfterAtlasSave \|\| rerenderAfterMusicSave\) renderActiveTab\(\{ preserveTabScroll: true \}\);[\s\S]*?setStatus\(`Saved \$\{res\.saveReport\.length\} file\(s\): \$\{paths\}`\);/,
-    'successful no-reload saves should refresh audit warnings and re-render tabs after saved Resource, Unit, or Music file writes need UI reconciliation'
+    /if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?const rerenderAfterAtlasSave = finalizeSavedAtlasStateAfterNoReload\(res\.saveReport\);[\s\S]*?markCurrentBundleCleanAfterSave\([\s\S]*?\);[\s\S]*?rerunQualityChecksAfterNoReloadSave\(\);[\s\S]*?if \(rerenderAfterAtlasSave\) renderActiveTab\(\{ preserveTabScroll: true \}\);[\s\S]*?setStatus\(`Saved \$\{res\.saveReport\.length\} file\(s\): \$\{paths\}`\);/,
+    'successful no-reload saves should refresh audit warnings and re-render atlas pickers after saved Resource or Unit atlas writes'
   );
   assert.match(
     rendererText,
@@ -1019,7 +1019,7 @@ test('modal header Save buttons mirror the main save button wiring', () => {
 
   assert.match(
     rendererText,
-    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, techTreeModal\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn, civColorPaletteModal\.saveBtn, mapModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
+    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, techTreeModal\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn, mapModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
     'modal Save buttons should share the main Save label and dirty class before modal-specific action state is applied'
   );
   assert.match(

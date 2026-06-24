@@ -18,7 +18,6 @@ contextBridge.exposeInMainWorld('c3xManager', {
   openFilePath: (filePath) => ipcRenderer.invoke('manager:open-file-path', filePath),
   openLogFolder: () => ipcRenderer.invoke('manager:open-log-folder'),
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
-  inspectAudioFile: (filePath) => ipcRenderer.invoke('manager:inspect-audio-file', filePath),
   getPathAccess: (paths) => ipcRenderer.invoke('manager:get-path-access', paths),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
   createScenario: (payload) => ipcRenderer.invoke('manager:create-scenario', payload),
@@ -183,6 +182,5 @@ contextBridge.exposeInMainWorld('c3xManager', {
   updateScenarioOptionMenuState: (payload) => ipcRenderer.invoke('manager:update-scenario-option-menu-state', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload),
   previewSavePlan: (payload) => ipcRenderer.invoke('manager:preview-save-plan', payload),
-  previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload),
-  inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload)
+  previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload)
 });

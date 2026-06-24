@@ -3784,54 +3784,14 @@ function createDefaultRecord(code, civKey, io) {
 // copyRecord: deep clone a record
 // ---------------------------------------------------------------------------
 
-function cloneRecordValue(value) {
-  if (Buffer.isBuffer(value)) return Buffer.from(value);
-  if (Array.isArray(value)) return value.map((entry) => cloneRecordValue(entry));
-  if (value && typeof value === 'object') {
-    const clone = {};
-    Object.entries(value).forEach(([key, entry]) => {
-      clone[key] = cloneRecordValue(entry);
-    });
-    return clone;
-  }
-  return value;
-}
-
 function copyRecord(src) {
-  return cloneRecordValue(src || {});
-}
-
-function makeDefaultGovernmentRelation() {
-  return { canBribe: 0, briberyMod: 0, resistanceMod: 0 };
-}
-
-function normalizeGovernmentRelationMatrices(parsed) {
-  const govtSection = getSectionByCode(parsed, 'GOVT');
-  if (!govtSection || !Array.isArray(govtSection.records)) return 0;
-  const finalCount = govtSection.records.length;
-  let changed = 0;
-  govtSection.records.forEach((rec) => {
-    const relations = Array.isArray(rec && rec.relations) ? rec.relations : [];
-    const nextRelations = [];
-    for (let i = 0; i < finalCount; i += 1) {
-      const relation = relations[i];
-      if (relation && typeof relation === 'object' && !Buffer.isBuffer(relation)) {
-        nextRelations.push({
-          canBribe: Number.parseInt(String(relation.canBribe), 10) || 0,
-          briberyMod: Number.parseInt(String(relation.briberyMod), 10) || 0,
-          resistanceMod: Number.parseInt(String(relation.resistanceMod), 10) || 0
-        });
-      } else {
-        nextRelations.push(makeDefaultGovernmentRelation());
-      }
-    }
-    if (relations.length !== finalCount || Number(rec && rec.numGovts) !== finalCount) changed += 1;
-    rec.relations = nextRelations;
-    rec.numGovts = finalCount;
-    rec.index = Number.isFinite(Number(rec.index)) ? Number(rec.index) : govtSection.records.indexOf(rec);
-  });
-  if (changed > 0) govtSection._modified = true;
-  return changed;
+  const clone = {};
+  for (const [k, v] of Object.entries(src)) {
+    if (Buffer.isBuffer(v)) clone[k] = Buffer.from(v);
+    else if (Array.isArray(v)) clone[k] = v.map((x) => (Buffer.isBuffer(x) ? Buffer.from(x) : x));
+    else clone[k] = v;
+  }
+  return clone;
 }
 
 function getSectionByCode(parsed, sectionCode) {
@@ -6422,10 +6382,6 @@ function applyEdits(buf, edits, options = {}) {
     log.error('BiqApplyEdits', `normalizeDeletedReferenceSections failed: ${normalizeDeleteResult.error || 'unknown'}`);
     return { ok: false, error: normalizeDeleteResult.error || 'Failed to normalize deleted BIQ references.' };
   }
-  const normalizedGovernmentRelationCount = normalizeGovernmentRelationMatrices(parsed);
-  if (normalizedGovernmentRelationCount > 0) {
-    log.debug('BiqApplyEdits', `normalized ${normalizedGovernmentRelationCount} GOVT relation matrix record(s) to the final government count`);
-  }
   const playerLoadIssues = collectScenarioPlayerLoadabilityIssues(parsed);
   if (playerLoadIssues.length > 0) {
     const issue = playerLoadIssues[0];
@@ -6514,7 +6470,6 @@ module.exports = {
   getTileRecordLength,
   normalizeRaceDependentSections,
   normalizeDeletedReferenceSections,
-  normalizeGovernmentRelationMatrices,
   normalizeFixedPlayerPreplacedCityOwnership,
   normalizePreplacedCityScenarioStartFlags,
   collectMapReferenceIntegrityIssues,
