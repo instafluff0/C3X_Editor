@@ -1180,6 +1180,16 @@ test('sectioned tab selection paints active row before deferred detail render', 
   );
 });
 
+test('natural wonder map placement writes the C3X district sentinel name', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const setSelectedTileNaturalWonder = \(entry\) => applySelectedTileEdit\(\(_tile\) => \{[\s\S]*?const name = String\(entry\.name \|\| ''\)\.trim\(\);[\s\S]*?return upsertScenarioDistrictEntry\(geom\.xPos, geom\.yPos, \{[\s\S]*?district: 'Natural Wonder',[\s\S]*?wonderName: name,[\s\S]*?wonderCity: ''[\s\S]*?\}\);/,
+    'natural wonder map placement should serialize as district = Natural Wonder and wonder_name = the selected natural wonder'
+  );
+});
+
 test('modal map zoom previews on the existing canvas stack and defers the expensive rerender until input settles', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 

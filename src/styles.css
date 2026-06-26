@@ -8229,6 +8229,27 @@ details > summary:focus-visible {
   pointer-events: none;
 }
 
+.tech-tree-advisor-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.tech-tree-advisor-overlay canvas {
+  position: absolute;
+  display: block;
+  image-rendering: pixelated;
+}
+
+.tech-tree-advisor-face {
+  z-index: 1;
+}
+
+.tech-tree-advisor-dialog {
+  z-index: 2;
+}
+
 .tech-tree-node {
   position: absolute;
   pointer-events: auto;
@@ -8843,6 +8864,17 @@ details > summary:focus-visible {
   font-size: 0.74rem;
   white-space: nowrap;
   flex: 0 0 auto;
+}
+
+.unit-availability-match-picker {
+  flex: 0 0 226px;
+  min-width: 210px;
+  max-width: 240px;
+}
+
+.unit-availability-match-picker .tech-picker-btn {
+  min-height: 38px;
+  font-weight: 800;
 }
 
 .unit-availability-bulk-btn {

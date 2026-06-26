@@ -12115,6 +12115,27 @@ function drawPreviewFrameToCanvas(preview, canvas, options = {}) {
   ctx.drawImage(scratch.canvas, x, y, w, h);
 }
 
+function drawPreviewCropToCanvas(preview, canvas, crop = null) {
+  const ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+  if (!ctx || !preview || !preview.rgbaBase64) return false;
+  if (!preview._cachedRgbaBytes) {
+    preview._cachedRgbaBytes = fromBase64ToUint8(preview.rgbaBase64);
+  }
+  const scratch = getPreviewScratchCanvas(preview.width, preview.height);
+  if (!scratch || !scratch.ctx || !scratch.canvas) return false;
+  scratch.ctx.putImageData(new ImageData(new Uint8ClampedArray(preview._cachedRgbaBytes), preview.width, preview.height), 0, 0);
+  const sx = Math.max(0, Math.min(preview.width - 1, Math.floor(Number(crop && crop.x) || 0)));
+  const sy = Math.max(0, Math.min(preview.height - 1, Math.floor(Number(crop && crop.y) || 0)));
+  const sw = Math.max(1, Math.min(preview.width - sx, Math.floor(Number(crop && crop.w) || preview.width)));
+  const sh = Math.max(1, Math.min(preview.height - sy, Math.floor(Number(crop && crop.h) || preview.height)));
+  if (canvas.width !== sw) canvas.width = sw;
+  if (canvas.height !== sh) canvas.height = sh;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(scratch.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  return true;
+}
+
 function isTechTreeBackgroundArrowRgb(r, g, b) {
   if (scienceAdvisorArrows && typeof scienceAdvisorArrows.isScienceAdvisorArrowColor === 'function') {
     return scienceAdvisorArrows.isScienceAdvisorArrowColor(r, g, b);
@@ -17939,6 +17960,23 @@ function setUnitAvailableToCivilization(entry, civIndex, enabled) {
   field.value = encodeAvailableToFromIndices(values);
   setFieldReferenceTargetsMeta(field, 'civilizations', values, getCivilizationBitmaskOptions());
   return true;
+}
+
+function copyUnitAvailabilityBetweenCivilizations(rows, targetCivIndex, sourceCivIndex) {
+  const targetIdx = Number.parseInt(String(targetCivIndex), 10);
+  const sourceIdx = Number.parseInt(String(sourceCivIndex), 10);
+  if (!Number.isFinite(targetIdx) || targetIdx < 0 || targetIdx > 31) return 0;
+  if (!Number.isFinite(sourceIdx) || sourceIdx < 0 || sourceIdx > 31) return 0;
+  if (targetIdx === sourceIdx) return 0;
+  let changed = 0;
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const entry = row && row.entry ? row.entry : row;
+    if (!entry) return;
+    const wanted = isUnitAvailableToCivilization(entry, sourceIdx);
+    if (isUnitAvailableToCivilization(entry, targetIdx) === wanted) return;
+    if (setUnitAvailableToCivilization(entry, targetIdx, wanted)) changed += 1;
+  });
+  return changed;
 }
 
 function isGovernmentRelationsField(field) {
@@ -28114,6 +28152,8 @@ const TECH_TREE_ERA_BACKGROUND_CANDIDATES = {
   3: ['Art/Advisors/science_modern.pcx']
 };
 const TECH_TREE_TECHBOX_CANDIDATES = ['Art/Advisors/techboxes.pcx'];
+const TECH_TREE_ADVISOR_FACE_CANDIDATES = ['Art/SmallHeads/popupSCIENCE.pcx'];
+const TECH_TREE_ADVISOR_DIALOG_CANDIDATES = ['Art/Advisors/dialogbox.pcx'];
 const TECH_TREE_ARROW_METADATA_RELATIVE_PATH = 'c3x_editor_tech_tree_arrows.json';
 const TECH_TREE_NON_ERA_GUTTER_WIDTH = 220;
 const TECH_TREE_NON_ERA_GUTTER_LEFT = 18;
@@ -28121,6 +28161,11 @@ const TECH_TREE_NON_ERA_MIN_VERTICAL_GAP = 14;
 const TECH_TREE_ERA_PANE_LEFT_PADDING = 28;
 const TECH_TREE_STAGE_SIDE_PADDING = 24;
 const TECH_TREE_GAME_BOX_RENDER_Y_OFFSET = 4;
+const TECH_TREE_ADVISOR_FACE_CELL_SIZE = 150;
+const TECH_TREE_ADVISOR_FACE_X = 846;
+const TECH_TREE_ADVISOR_FACE_Y = -42;
+const TECH_TREE_ADVISOR_DIALOG_X = 802;
+const TECH_TREE_ADVISOR_DIALOG_Y = 108;
 const TECH_TREE_ARROW_FRAME_WARNING_TEXT = 'Warning: arrow may be permanently drawn on border';
 const TECH_TREE_ARROW_FRAME_WARNING_MARGIN = 6;
 const TECH_TREE_ARROW_FRAME_GUIDE_DASH = [8, 5];
@@ -28130,6 +28175,71 @@ function getTechTreeArrowFrameWarningNoteForEra(eraIndex) {
   const entry = state.techTreeArrowFrameWarningsByEra && state.techTreeArrowFrameWarningsByEra[key];
   const count = Number(entry && entry.count);
   return count > 0 ? TECH_TREE_ARROW_FRAME_WARNING_TEXT : '';
+}
+
+async function loadTechTreeAdvisorOverlayPreviews() {
+  const loadCandidate = async (candidates, options = {}) => {
+    for (const assetPath of candidates) {
+      try {
+        const res = await window.c3xManager.getPreview({
+          kind: 'civilopediaIcon',
+          civ3Path: state.settings.civ3Path,
+          scenarioPath: state.settings.scenarioPath,
+          scenarioPaths: getScenarioPreviewPaths(),
+          assetPath,
+          options
+        });
+        if (res && res.ok) return res;
+      } catch (_err) {
+        // Try next candidate.
+      }
+    }
+    return null;
+  };
+  const [face, dialog] = await Promise.all([
+    loadCandidate(TECH_TREE_ADVISOR_FACE_CANDIDATES, { transparentIndexes: [254, 255] }),
+    loadCandidate(TECH_TREE_ADVISOR_DIALOG_CANDIDATES, { transparentIndexes: [] })
+  ]);
+  return { face, dialog };
+}
+
+function renderTechTreeAdvisorOverlay(layer, previews, eraValue, baseX, baseY, baseW, baseH) {
+  if (!layer) return;
+  layer.innerHTML = '';
+  const facePreview = previews && previews.face;
+  const dialogPreview = previews && previews.dialog;
+  if (!facePreview && !dialogPreview) return;
+  const scaleX = Math.max(0.01, (Number(baseW) || 1024) / 1024);
+  const scaleY = Math.max(0.01, (Number(baseH) || 768) / 768);
+  const place = (canvas, x, y, w = canvas.width, h = canvas.height) => {
+    canvas.style.left = `${Math.round((Number(baseX) || 0) + (x * scaleX))}px`;
+    canvas.style.top = `${Math.round((Number(baseY) || 0) + (y * scaleY))}px`;
+    canvas.style.width = `${Math.max(1, Math.round(w * scaleX))}px`;
+    canvas.style.height = `${Math.max(1, Math.round(h * scaleY))}px`;
+  };
+  if (facePreview) {
+    const faceCanvas = document.createElement('canvas');
+    faceCanvas.className = 'tech-tree-advisor-face';
+    const eraIndex = Math.max(0, Math.min(3, Number.parseInt(String(eraValue), 10) || 0));
+    const cellSize = TECH_TREE_ADVISOR_FACE_CELL_SIZE;
+    if (drawPreviewCropToCanvas(facePreview, faceCanvas, {
+      x: 0,
+      y: eraIndex * cellSize,
+      w: cellSize,
+      h: cellSize
+    })) {
+      place(faceCanvas, TECH_TREE_ADVISOR_FACE_X, TECH_TREE_ADVISOR_FACE_Y, cellSize, cellSize);
+      layer.appendChild(faceCanvas);
+    }
+  }
+  if (dialogPreview) {
+    const dialogCanvas = document.createElement('canvas');
+    dialogCanvas.className = 'tech-tree-advisor-dialog';
+    if (drawPreviewCropToCanvas(dialogPreview, dialogCanvas)) {
+      place(dialogCanvas, TECH_TREE_ADVISOR_DIALOG_X, TECH_TREE_ADVISOR_DIALOG_Y, dialogCanvas.width, dialogCanvas.height);
+      layer.appendChild(dialogCanvas);
+    }
+  }
 }
 
 function getEraOptionsForTechTree() {
@@ -29255,6 +29365,8 @@ function createTechTreePanel({
   arrowHandles.classList.add('tech-tree-route-handles-layer');
   const nodesLayer = document.createElement('div');
   nodesLayer.className = 'tech-tree-nodes';
+  const advisorLayer = document.createElement('div');
+  advisorLayer.className = 'tech-tree-advisor-overlay';
   const selectedArrowLines = document.createElement('canvas');
   selectedArrowLines.classList.add('tech-tree-selected-arrow-lines');
   const selectedArrowHandles = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -29268,6 +29380,7 @@ function createTechTreePanel({
   stage.appendChild(lines);
   stage.appendChild(arrowHandles);
   stage.appendChild(nodesLayer);
+  stage.appendChild(advisorLayer);
   stage.appendChild(selectedArrowLines);
   stage.appendChild(selectedArrowHandles);
   stage.appendChild(arrowFrameWarningLayer);
@@ -29444,6 +29557,7 @@ function createTechTreePanel({
     persistCurrentViewSnapshot();
     nodesLayer.innerHTML = '';
     laneLayer.innerHTML = '';
+    advisorLayer.innerHTML = '';
     while (arrowHandles.firstChild) arrowHandles.removeChild(arrowHandles.firstChild);
     while (selectedArrowHandles.firstChild) selectedArrowHandles.removeChild(selectedArrowHandles.firstChild);
     const isGeneratedArrowPreviewActive = () => !!(state.techTreeArrowArtDirtyByEra && state.techTreeArrowArtDirtyByEra[eraDirtyKey]);
@@ -29512,6 +29626,14 @@ function createTechTreePanel({
         techBoxPreview = null;
       }
     }
+
+    let advisorOverlayPreviews = null;
+    try {
+      advisorOverlayPreviews = await loadTechTreeAdvisorOverlayPreviews();
+    } catch (_err) {
+      advisorOverlayPreviews = null;
+    }
+    if (renderToken !== bgRenderToken) return;
 
     let baseW = 1024;
     let baseH = 768;
@@ -29706,6 +29828,7 @@ function createTechTreePanel({
     bg.style.top = `${activeEraBaseY}px`;
     bg.style.width = `${nativeEraW}px`;
     bg.style.height = `${nativeEraH}px`;
+    renderTechTreeAdvisorOverlay(advisorLayer, advisorOverlayPreviews, eraValue, activeEraBaseX, activeEraBaseY, nativeEraW, nativeEraH);
     lines.width = Math.max(1, Math.round(contentW));
     lines.height = Math.max(1, Math.round(contentH));
     selectedArrowLines.width = Math.max(1, Math.round(contentW));
@@ -33447,6 +33570,21 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   const summary = document.createElement('div');
   summary.className = 'unit-availability-summary';
   actionRow.appendChild(summary);
+  const matchPicker = createReferencePicker({
+    targetTabKey: 'civilizations',
+    options: civOptions,
+    currentValue: '-1',
+    includeNone: true,
+    noneLabel: 'Match another civ...',
+    searchPlaceholder: 'Copy availability from...',
+    resetAfterSelect: true,
+    readOnly: !referenceEditable || civOptions.length <= 1,
+    onSelect: (value, option) => {
+      applyUnitAvailabilityMatch(value, option);
+    }
+  });
+  matchPicker.classList.add('unit-availability-match-picker');
+  actionRow.appendChild(matchPicker);
   const setVisibleBtn = document.createElement('button');
   setVisibleBtn.type = 'button';
   setVisibleBtn.className = 'ghost unit-availability-bulk-btn unit-availability-bulk-available';
@@ -33472,6 +33610,11 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
   const getSelectedCivIndex = () => {
     const idx = Number.parseInt(String(selectedCiv), 10);
     return Number.isFinite(idx) && idx >= 0 && idx <= 31 ? idx : null;
+  };
+
+  const getCivLabelByValue = (value, fallback = 'civilization') => {
+    const match = civOptions.find((opt) => String(opt.value) === String(value));
+    return match ? String(match.label || fallback) : fallback;
   };
 
   const syncUnitAvailabilityView = () => {
@@ -33510,6 +33653,34 @@ function createUnitAvailabilityPanel({ tab, referenceEditable, initialCivValue =
       map.set(row.identity, isUnitAvailableToCivilization(row.entry, civIdx));
     });
     return map;
+  };
+
+  const applyUnitAvailabilityMatch = (sourceValue, sourceOption = null) => {
+    if (!referenceEditable) return;
+    const targetIdx = getSelectedCivIndex();
+    const sourceIdx = Number.parseInt(String(sourceValue), 10);
+    if (targetIdx == null || !Number.isFinite(sourceIdx) || sourceIdx < 0 || sourceIdx > 31) return;
+    const sourceLabel = String(sourceOption && sourceOption.label || getCivLabelByValue(sourceIdx));
+    if (targetIdx === sourceIdx) {
+      setStatus('Choose a different civilization to copy from.', true);
+      return;
+    }
+    syncCurrentRows();
+    const changeCount = currentRows.reduce((count, row) => {
+      const sourceAvailable = isUnitAvailableToCivilization(row.entry, sourceIdx);
+      const targetAvailable = isUnitAvailableToCivilization(row.entry, targetIdx);
+      return count + (sourceAvailable === targetAvailable ? 0 : 1);
+    }, 0);
+    if (changeCount === 0) {
+      setStatus(`${getSelectedCivLabel()} already matches ${sourceLabel}.`);
+      return;
+    }
+    rememberUndoSnapshotForKey('REFERENCE_TAB:units');
+    const changed = copyUnitAvailabilityBetweenCivilizations(currentRows, targetIdx, sourceIdx);
+    if (changed <= 0) return;
+    setDirty(true);
+    setStatus(`Matched ${getSelectedCivLabel()} unit availability to ${sourceLabel} (${changed} changed).`);
+    render();
   };
 
   const getVisibleRows = (availabilityByIdentity = null) => {
@@ -57924,7 +58095,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const name = String(entry.name || '').trim();
     if (!name) return false;
     return upsertScenarioDistrictEntry(geom.xPos, geom.yPos, {
-      district: name,
+      district: 'Natural Wonder',
       wonderName: name,
       wonderCity: ''
     });

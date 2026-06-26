@@ -56,6 +56,16 @@ const DAY_NIGHT_HOURS = [
   '1600', '1700', '1800', '1900', '2000', '2100', '2200', '2300'
 ];
 
+const SEASON_DIRS = {
+  summer: 'Summer',
+  fall: 'Fall',
+  autumn: 'Fall',
+  winter: 'Winter',
+  spring: 'Spring'
+};
+
+const DEFAULT_SEASON_KEYS = ['summer', 'fall', 'winter', 'spring'];
+
 const DAY_NIGHT_TERRAIN_FILES = [
   'xtgc.pcx', 'xpgc.pcx', 'xdgc.pcx', 'xdpc.pcx', 'xdgp.pcx', 'xggc.pcx',
   'wCSO.pcx', 'wSSS.pcx', 'wOOO.pcx',
@@ -875,6 +885,82 @@ function formatHoursList(hours) {
     .join(', ');
 }
 
+function normalizeSeasonKey(value) {
+  const raw = String(value == null ? '' : value).trim().toLowerCase();
+  if (!raw) return '';
+  if (raw === 'autumn') return 'fall';
+  return SEASON_DIRS[raw] ? raw : '';
+}
+
+function parseConfigListTokens(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return [];
+  const unwrapped = raw.replace(/^\s*\[/, '').replace(/\]\s*$/, '');
+  return tokenizeWhitespaceListPreservingQuotes(unwrapped)
+    .map((token) => normalizeConfigToken(token))
+    .filter(Boolean);
+}
+
+function getSeasonsToAudit(bundle) {
+  const seasonalMode = String(getBaseRowValue(bundle, 'seasonal_cycle_mode') || '').trim().toLowerCase();
+  if (!seasonalMode || seasonalMode === 'off') return ['summer'];
+  if (seasonalMode === 'specified') {
+    const pinned = normalizeSeasonKey(getBaseRowValue(bundle, 'pinned_season_for_seasonal_cycle'));
+    return pinned ? [pinned] : ['summer'];
+  }
+  const enabled = parseConfigListTokens(getBaseRowValue(bundle, 'enabled_seasons'))
+    .map(normalizeSeasonKey)
+    .filter(Boolean);
+  const seen = new Set();
+  const unique = enabled.filter((season) => {
+    if (seen.has(season)) return false;
+    seen.add(season);
+    return true;
+  });
+  return unique.length > 0 ? unique : DEFAULT_SEASON_KEYS;
+}
+
+function formatDayNightHour(hourNumber) {
+  const normalized = ((Number(hourNumber) % 24) + 24) % 24;
+  return normalized === 0 ? '2400' : `${String(normalized).padStart(2, '0')}00`;
+}
+
+function getHoursToAudit(bundle) {
+  const mode = String(getBaseRowValue(bundle, 'day_night_cycle_mode') || '').trim().toLowerCase();
+  if (mode === 'specified') {
+    const raw = String(getBaseRowValue(bundle, 'pinned_hour_for_day_night_cycle') || '').trim();
+    if (/^-?\d+$/.test(raw)) return [formatDayNightHour(Number(raw))];
+  }
+  return DAY_NIGHT_HOURS;
+}
+
+function normalizeArtLeafName(fileName) {
+  const normalized = String(fileName || '').trim().replace(/^["']|["']$/g, '').replace(/^[/\\]+/, '').replace(/\\/g, '/');
+  return normalized ? path.basename(normalized) : '';
+}
+
+function resolveDayNightArtFile(bundle, family, seasonKey, hour, fileName) {
+  const leafName = normalizeArtLeafName(fileName);
+  if (!leafName) return '';
+  const seasonDir = SEASON_DIRS[seasonKey] || 'Summer';
+  const root = family === 'terrain' ? 'DayNight' : 'Districts';
+  const candidates = [
+    path.join(root, seasonDir, hour, leafName)
+  ];
+  if (seasonKey === 'summer') candidates.push(path.join(root, hour, leafName));
+  return candidates.find((relativePath) => resolveModArtFile(bundle, relativePath)) || '';
+}
+
+function formatSeasonHourLabel(seasons, seasonKey, hour) {
+  if ((!Array.isArray(seasons) || seasons.length <= 1) && seasonKey === 'summer') return `hour ${hour}`;
+  return `${SEASON_DIRS[seasonKey] || seasonKey} ${hour}`;
+}
+
+function formatSeasonHoursLabel(seasons, seasonKey) {
+  if ((!Array.isArray(seasons) || seasons.length <= 1) && seasonKey === 'summer') return 'hour(s)';
+  return `${SEASON_DIRS[seasonKey] || seasonKey} hour(s)`;
+}
+
 function getBaseLintMeta(key) {
   return C3X_BASE_MANIFEST[String(key || '').trim()] || null;
 }
@@ -1520,17 +1606,21 @@ function auditTechnologyPrerequisiteCycles(bundle, result) {
 function auditDayNightAssets(bundle, result) {
   const mode = String(getBaseRowValue(bundle, 'day_night_cycle_mode') || '').trim().toLowerCase();
   if (!mode || mode === 'off') return;
+  const seasons = getSeasonsToAudit(bundle);
+  const hours = getHoursToAudit(bundle);
 
-  DAY_NIGHT_HOURS.forEach((hour) => {
-    const missingTerrain = DAY_NIGHT_TERRAIN_FILES.filter((fileName) => !resolveModArtFile(bundle, path.join('DayNight', hour, fileName)));
-    if (missingTerrain.length > 0) {
-      addGeneralIssue(
-        result,
-        'base',
-        `Day/night hour ${hour} is missing terrain art: ${missingTerrain.join(', ')}.`,
-        'day-night-terrain-missing'
-      );
-    }
+  seasons.forEach((season) => {
+    hours.forEach((hour) => {
+      const missingTerrain = DAY_NIGHT_TERRAIN_FILES.filter((fileName) => !resolveDayNightArtFile(bundle, 'terrain', season, hour, fileName));
+      if (missingTerrain.length > 0) {
+        addGeneralIssue(
+          result,
+          'base',
+          `Day/night ${formatSeasonHourLabel(seasons, season, hour)} is missing terrain art: ${missingTerrain.join(', ')}.`,
+          'day-night-terrain-missing'
+        );
+      }
+    });
   });
 
   if (!parseConfigBool(getBaseRowValue(bundle, 'enable_districts'))) return;
@@ -1544,27 +1634,31 @@ function auditDayNightAssets(bundle, result) {
       .map((value) => normalizeConfigToken(value))
       .filter(Boolean);
     imgPaths.forEach((fileName) => {
-      const missingHours = DAY_NIGHT_HOURS.filter((hour) => !resolveModArtFile(bundle, path.join('Districts', hour, fileName)));
-      if (missingHours.length <= 0) return;
-      addSectionIssue(
-        result,
-        'districts',
-        index,
-        `${label}: Day/night art "${fileName}" is missing for hour(s): ${formatHoursList(missingHours)}.`,
-        'day-night-district-missing'
-      );
+      seasons.forEach((season) => {
+        const missingHours = hours.filter((hour) => !resolveDayNightArtFile(bundle, 'district', season, hour, fileName));
+        if (missingHours.length <= 0) return;
+        addSectionIssue(
+          result,
+          'districts',
+          index,
+          `${label}: Day/night art "${fileName}" is missing for ${formatSeasonHoursLabel(seasons, season)}: ${formatHoursList(missingHours)}.`,
+          'day-night-district-missing'
+        );
+      });
     });
   });
 
-  const missingAbandonedHours = DAY_NIGHT_HOURS.filter((hour) => !resolveModArtFile(bundle, path.join('Districts', hour, 'Abandoned.pcx')));
-  if (missingAbandonedHours.length > 0) {
-    addGeneralIssue(
-      result,
-      'districts',
-      `Day/night art "Abandoned.pcx" is missing for hour(s): ${formatHoursList(missingAbandonedHours)}.`,
-      'day-night-district-missing'
-    );
-  }
+  seasons.forEach((season) => {
+    const missingAbandonedHours = hours.filter((hour) => !resolveDayNightArtFile(bundle, 'district', season, hour, 'Abandoned.pcx'));
+    if (missingAbandonedHours.length > 0) {
+      addGeneralIssue(
+        result,
+        'districts',
+        `Day/night art "Abandoned.pcx" is missing for ${formatSeasonHoursLabel(seasons, season)}: ${formatHoursList(missingAbandonedHours)}.`,
+        'day-night-district-missing'
+      );
+    }
+  });
 }
 
 function getReferenceEntryAssetPaths(tabKey, entry) {

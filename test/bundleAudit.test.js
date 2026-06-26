@@ -15,6 +15,37 @@ function touch(filePath) {
   fs.writeFileSync(filePath, '');
 }
 
+const DAY_NIGHT_TERRAIN_FIXTURE_FILES = [
+  'xtgc.pcx', 'xpgc.pcx', 'xdgc.pcx', 'xdpc.pcx', 'xdgp.pcx', 'xggc.pcx',
+  'wCSO.pcx', 'wSSS.pcx', 'wOOO.pcx',
+  'lxtgc.pcx', 'lxpgc.pcx', 'lxdgc.pcx', 'lxdpc.pcx', 'lxdgp.pcx', 'lxggc.pcx',
+  'lwCSO.pcx', 'lwSSS.pcx', 'lwOOO.pcx',
+  'polarICEcaps-final.pcx',
+  'xhills.pcx', 'hill forests.pcx', 'hill jungle.pcx', 'LMHills.pcx',
+  'floodplains.pcx',
+  'deltaRivers.pcx', 'mtnRivers.pcx',
+  'waterfalls.pcx',
+  'irrigation DESETT.pcx', 'irrigation PLAINS.pcx', 'irrigation.pcx', 'irrigation TUNDRA.pcx',
+  'Volcanos.pcx', 'Volcanos forests.pcx', 'Volcanos jungles.pcx', 'Volcanos-snow.pcx',
+  'marsh.pcx',
+  'LMMountains.pcx', 'Mountains.pcx', 'mountain forests.pcx', 'mountain jungles.pcx', 'Mountains-snow.pcx',
+  'roads.pcx', 'railroads.pcx',
+  'LMForests.pcx', 'grassland forests.pcx', 'plains forests.pcx', 'tundra forests.pcx',
+  'landmark_terrain.pcx', 'tnt.pcx', 'goodyhuts.pcx', 'TerrainBuildings.pcx',
+  'pollution.pcx', 'craters.pcx',
+  'x_airfields and detect.pcx', 'x_victory.pcx',
+  'resources.pcx',
+  'rAMER.pcx', 'rEURO.pcx', 'rROMAN.pcx', 'rMIDEAST.pcx', 'rASIAN.pcx',
+  'AMERWALL.pcx', 'EUROWALL.pcx', 'ROMANWALL.pcx', 'MIDEASTWALL.pcx', 'ASIANWALL.pcx',
+  'DESTROY.pcx'
+];
+
+function touchDayNightTerrainSet(root, season, hour) {
+  DAY_NIGHT_TERRAIN_FIXTURE_FILES.forEach((fileName) => {
+    touch(path.join(root, 'Art', 'DayNight', season, hour, fileName));
+  });
+}
+
 function writeFile(filePath, text) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, text, 'latin1');
@@ -664,6 +695,45 @@ test('auditLoadedBundle reports missing day-night terrain and district hour art'
   assert.ok(result.tabs.base.general.some((entry) => /Day\/night hour 0100 is missing terrain art/.test(entry.message)));
   assert.ok(result.tabs.districts.sections['0'].some((entry) => /Day\/night art "Market\.pcx" is missing/.test(entry.message) && /0100/.test(entry.message)));
   assert.ok(result.tabs.districts.general.some((entry) => /Day\/night art "Abandoned\.pcx" is missing/.test(entry.message) && /0100/.test(entry.message)));
+});
+
+test('auditLoadedBundle resolves scenario seasonal day-night terrain and district art', () => {
+  const c3xRoot = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  touchDayNightTerrainSet(scenarioRoot, 'Winter', '1800');
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Summer', '1200', 'MySuperDistrict.PCX'));
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Summer', '1200', 'Abandoned.PCX'));
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Winter', '1800', 'MySuperDistrict.PCX'));
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Winter', '1800', 'Abandoned.PCX'));
+
+  const bundle = makeBundle(c3xRoot, {
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'specified' },
+          { key: 'pinned_hour_for_day_night_cycle', value: '18' },
+          { key: 'seasonal_cycle_mode', value: 'specified' },
+          { key: 'pinned_season_for_seasonal_cycle', value: 'winter' },
+          { key: 'enable_districts', value: 'true' }
+        ]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({ name: 'My Super District', img_paths: 'MySuperDistrict.PCX' })
+          ]
+        }
+      },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.base, undefined);
+  assert.equal(result.tabs.districts, undefined);
+  assert.equal(result.totalWarnings, 0);
 });
 
 test('auditLoadedBundle reports missing reference art files for Civs, Techs, Resources, Governments, Improvements, and Units', () => {

@@ -201,6 +201,32 @@ test('scenario districts codec preserves wonder completion fields and named tile
   assert.ok(serialized.endsWith('\n'));
 });
 
+test('scenario districts codec writes C3X natural wonder entries with canonical district name', () => {
+  const text = [
+    'DISTRICTS',
+    '',
+    '#District',
+    'coordinates  = 10,30',
+    'district     = Natural Wonder',
+    'wonder_name  = "Mount Everest"',
+    ''
+  ].join('\n');
+
+  const parsed = parseScenarioDistrictsText(text);
+  assert.deepEqual(parsed.entries, [{
+    x: 10,
+    y: 30,
+    district: 'Natural Wonder',
+    wonderName: 'Mount Everest',
+    wonderCity: ''
+  }]);
+
+  const serialized = serializeScenarioDistrictsText(parsed);
+  assert.match(serialized, /district\s+= Natural Wonder/);
+  assert.match(serialized, /wonder_name\s+= Mount Everest/);
+  assert.doesNotMatch(serialized, /wonder_city\s+=/);
+});
+
 test('parseBiqSectionsFromBuffer reads basic BIQ section metadata', () => {
   const header = Buffer.alloc(736, 0);
   header.write('BICX', 0, 'latin1');

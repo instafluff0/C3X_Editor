@@ -1,3 +1,11 @@
+* RELEASE 27.19.1
+- Added the era-specific Science Advisor face and dialog art overlay to the Tech Tree screen, using scenario-aware `popupSCIENCE.pcx` and `dialogbox.pcx` assets.
+- Added an Availability by Civ dropdown that lets the selected civilization immediately copy unit availability from another civilization in one undoable bulk edit.
+- Fixed day/night async QA so scenario seasonal folders such as `Art/DayNight/Summer/2400` and `Art/Districts/Winter/1800` satisfy terrain and district art checks.
+- Added developer-only SAV embedded BIQ extraction and save-inspection utilities, with tests isolated in a non-release debug tier, for debugging live-game rules, map resources, roads, units, and cities from saved games.
+- Added a debug-only SAV inspector `--biq-out` option that writes a synthesized BIQ with embedded rules plus live terrain, resource, overlay, city, unit, and colony placement data.
+- Fixed map natural wonder placement so `scenario.districts.txt` writes `district = Natural Wonder` with the selected natural wonder in `wonder_name`, matching C3X parser expectations.
+
 * RELEASE 27.19
 - Fixed Music async QA display so Music warnings show both as a tab badge and inside the Music tab content.
 - Added Music async QA warnings for custom playlist MP3s outside the observed Civ3-safe 128 kbps, 44.1 kHz, stereo profile, which can freeze Civ3 when scenario music starts.
