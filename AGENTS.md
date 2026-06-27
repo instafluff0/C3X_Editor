@@ -146,6 +146,7 @@ npm test
 - `docs/UIInvariants.md` for stable UI/save behavior contracts.
 - `docs/Quirks.md` for edge cases that commonly cause regressions.
 - `docs/FlcReference.md` for Civ3 FLC parsing/palette/timing/direction behavior from Civ3FlcEdit source review.
+- `docs/DayNightGenerator.md` for portable JavaScript day-night generation, source-art layout, generate.sh parity rules, and dev-only oracle tests.
 - `docs/biq/README.md` for Quint_Editor-derived BIQ handling architecture.
 - `docs/biq/IOPipeline.md` for BIQ read/write and optional-section pipeline details.
 - `docs/biq/districts/ScenarioFormat.md` for Quint district companion file format (`<scenario>.c3x.txt`) and validation rules.

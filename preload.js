@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   setSettings: (settings) => ipcRenderer.invoke('manager:set-settings', settings),
   pickDirectory: () => ipcRenderer.invoke('manager:pick-directory'),
   pickFile: (options) => ipcRenderer.invoke('manager:pick-file', options),
+  listDistrictArtFiles: (payload) => ipcRenderer.invoke('manager:list-district-art-files', payload),
   getPathForFile: (file) => {
     if (!file || !webUtils || typeof webUtils.getPathForFile !== 'function') return '';
     try {
@@ -184,5 +185,9 @@ contextBridge.exposeInMainWorld('c3xManager', {
   previewSavePlan: (payload) => ipcRenderer.invoke('manager:preview-save-plan', payload),
   previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload),
   inspectAudioFile: (filePath) => ipcRenderer.invoke('manager:inspect-audio-file', filePath),
-  inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload)
+  inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload),
+  scanDayNight: (payload) => ipcRenderer.invoke('manager:scan-day-night', payload),
+  previewDayNight: (payload) => ipcRenderer.invoke('manager:preview-day-night', payload),
+  runDayNight: (payload) => ipcRenderer.invoke('manager:run-day-night', payload),
+  seedDayNightSourceArt: (payload) => ipcRenderer.invoke('manager:seed-day-night-source-art', payload)
 });

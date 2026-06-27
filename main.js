@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
 const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes, inspectAudioFileBasic } = require('./src/configCore');
-const { getPreview } = require('./src/artPreview');
+const { getPreview, listDistrictArtFiles } = require('./src/artPreview');
+const { scanDayNightInputs, previewDayNightImage, getPcxFilePreview, seedDayNightSourceArt } = require('./src/dayNightGenerator');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -1403,6 +1404,16 @@ ipcMain.handle('manager:pick-file', async (_event, options) => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('manager:list-district-art-files', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    return listDistrictArtFiles(payload || {});
+  } catch (err) {
+    log.error('listDistrictArtFiles', `Threw: ${err.message}`);
+    return { ok: false, error: err.message, groups: [], total: 0 };
+  }
+});
+
 ipcMain.handle('manager:open-file-path', async (_event, filePath) => {
   const target = String(filePath || '').trim();
   if (!target) return { ok: false, error: 'No file path provided.' };
@@ -1670,10 +1681,70 @@ ipcMain.handle('manager:inspect-civ-color-palettes', async (_event, payload) => 
   }
 });
 
+ipcMain.handle('manager:scan-day-night', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    return scanDayNightInputs(payload || {});
+  } catch (err) {
+    log.error('scanDayNight', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not inspect day-night inputs.' };
+  }
+});
+
+ipcMain.handle('manager:preview-day-night', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    return await previewDayNightImage(payload || {});
+  } catch (err) {
+    log.error('previewDayNight', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not generate day-night preview.' };
+  }
+});
+
+ipcMain.handle('manager:run-day-night', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    const result = await runWorkerTask('runDayNightGeneration', payload || {}, {
+      onProgress: (entry) => sendOperationProgress(_event.sender, {
+        operation: 'daynight',
+        ...entry
+      })
+    });
+    if (result && result.ok) {
+      log.info('runDayNight', `OK — generated ${Number(result.generatedCount || 0)} PCX file(s) under ${log.rel(result.targetRoot)}`);
+    } else {
+      log.error('runDayNight', `Failed: ${result && result.error}`);
+    }
+    return result;
+  } catch (err) {
+    log.error('runDayNight', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Day-night generation failed.' };
+  }
+});
+
+ipcMain.handle('manager:seed-day-night-source-art', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    const result = seedDayNightSourceArt(payload || {});
+    if (result && result.ok) {
+      log.info('seedDayNight', `OK — copied ${Number(result.copiedCount || 0)} source art file(s) under ${log.rel(result.targetRoot)}`);
+    } else {
+      log.error('seedDayNight', `Failed: ${result && result.error}`);
+    }
+    return result;
+  } catch (err) {
+    log.error('seedDayNight', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Day-night source art seeding failed.' };
+  }
+});
+
 ipcMain.handle('manager:get-preview', async (_event, payload) => {
   applyLogContextFromPayload(payload || {});
   const kind = payload && payload.kind;
   try {
+    if (kind === 'pcxFile') {
+      return getPcxFilePreview(payload && payload.filePath);
+    }
     const result = getPreview(payload || {});
     if (!result || !result.ok) {
       log.warn('getPreview', `kind=${kind} — not found: ${result && result.error}`);

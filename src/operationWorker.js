@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const { saveBundle, createScenario, deleteScenario, loadMapImport } = require('./configCore');
 const { auditBundle } = require('./bundleAudit');
+const { runDayNightGeneration } = require('./dayNightGenerator');
 const log = require('./log');
 
 function resolveCiv3RootPath(civ3Path) {
@@ -38,7 +39,7 @@ function postMessage(type, payload = {}) {
   parentPort.postMessage({ type, ...payload });
 }
 
-function run() {
+async function run() {
   if (!parentPort) return;
   const task = String(workerData && workerData.task || '').trim();
   const payload = workerData && workerData.payload ? workerData.payload : {};
@@ -63,6 +64,8 @@ function run() {
       result = loadMapImport(payload);
     } else if (task === 'validateBundle') {
       result = auditBundle(payload);
+    } else if (task === 'runDayNightGeneration') {
+      result = await runDayNightGeneration(payload, { onProgress });
     } else {
       throw new Error(`Unknown worker task: ${task || '(empty)'}`);
     }

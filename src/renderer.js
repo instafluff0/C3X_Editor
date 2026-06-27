@@ -332,6 +332,63 @@ const state = {
     rollbackSummary: '',
     rollbackHasWarning: false
   },
+  dayNight: {
+    scan: null,
+    isScanning: false,
+    isOpen: false,
+    isRunning: false,
+    progressLabel: '',
+    progressCompleted: 0,
+    progressTotal: 0,
+    progressPercent: 0,
+    generatedCount: 0,
+    modalMode: 'look',
+    lastPreviewPath: '',
+    lastPreview: null,
+    sourcePreviewPath: '',
+    sourcePreview: null,
+    preview: null,
+    previewError: '',
+    previewRequestId: 0,
+    previewTimer: 0,
+    isPreviewing: false,
+    fileQuery: '',
+    fileListScrollTop: 0,
+    previewZoom: 1.5,
+    selectedFamily: 'districts',
+    selectedSeason: '',
+    selectedFile: '',
+    selectedHour: '1800',
+    families: ['terrain', 'districts'],
+    options: {
+      warmth: 1.7,
+      blue: 1.6,
+      darkness: 3.0,
+      desat: 0.8,
+      sat: 1.1,
+      contrast: 1.08,
+      sunriseCenter: 6,
+      sunsetCenter: 18,
+      twilightWidth: 2.6,
+      noonBlend: 0.5,
+      noonSigma: 1,
+      coreColor: '#ff8a20',
+      glowColor: '#dc6a00',
+      coreRadius: 1.1,
+      coreGain: 2.5,
+      haloRadius: 13,
+      haloGain: 20,
+      haloSep: 0.75,
+      haloGamma: 1.3,
+      highlightGain: 0.5,
+      sizeBoost: 1.7,
+      sizeRadius: 6.5,
+      sizeGamma: 0.75,
+      clipInterior: 'yes',
+      clipErode: 0,
+      blendMode: 'screen'
+    }
+  },
   loadAudit: {
     requestId: 0,
     pending: false,
@@ -806,11 +863,12 @@ const TAB_ICONS = {
   districts: 'icon-district',
   wonders: 'icon-wonder',
   naturalWonders: 'icon-natural-wonder',
-  animations: 'icon-anim'
+  animations: 'icon-anim',
+  dayNightCycle: 'icon-day-night'
 };
 const TAB_GROUPS = [
   { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'music', 'gameConcepts', 'map', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'terrainPedia', 'workerActions'] },
-  { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
+  { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'dayNightCycle'] }
 ];
 // Minimum C3X release required for each tab key. Tabs not listed here are always shown.
 // Use 'R<N>' strings to match the C3X_RELEASE_BY_KEY convention.
@@ -60101,21 +60159,26 @@ function createFieldInput(schemaField, value, onChange, options = {}) {
         onChange(normalized);
       });
     }
-    const browse = document.createElement('button');
-    browse.type = 'button';
-    browse.textContent = 'Browse';
-    browse.addEventListener('click', async () => {
-      const pickerOptions = getFilePickerOptionsForSectionField(schemaField, input.value);
-      const filePath = await window.c3xManager.pickFile(pickerOptions);
-      if (!filePath) return;
-      const nextPath = isSectionArtImagePathField(state.activeTab, schemaField.key)
-        ? normalizeScenarioArtRelativePath(filePath)
-        : filePath;
-      input.value = nextPath;
-      onChange(nextPath);
-    });
     wrap.appendChild(input);
-    wrap.appendChild(browse);
+    if (isSectionArtImagePathField(state.activeTab, schemaField.key)) {
+      wrap.appendChild(createDistrictArtFilePicker(input.value, (nextValue) => {
+        const nextPath = normalizeScenarioArtRelativePath(nextValue);
+        input.value = nextPath;
+        onChange(nextPath);
+      }));
+    } else {
+      const browse = document.createElement('button');
+      browse.type = 'button';
+      browse.textContent = 'Browse';
+      browse.addEventListener('click', async () => {
+        const pickerOptions = getFilePickerOptionsForSectionField(schemaField, input.value);
+        const filePath = await window.c3xManager.pickFile(pickerOptions);
+        if (!filePath) return;
+        input.value = filePath;
+        onChange(filePath);
+      });
+      wrap.appendChild(browse);
+    }
     return wrap;
   }
 
@@ -60297,6 +60360,199 @@ function makeDistrictImagePathPreview(pathValue) {
     holder.disabled = true;
   });
   return holder;
+}
+
+function makeDistrictArtFileOptionThumb(entry) {
+  const holder = document.createElement('span');
+  holder.className = 'district-art-option-thumb art-pending';
+  const canvas = document.createElement('canvas');
+  canvas.className = 'entry-thumb-canvas';
+  canvas.width = 36;
+  canvas.height = 36;
+  holder.appendChild(canvas);
+  const sourcePath = String(entry && entry.sourcePath || '').trim();
+  if (!sourcePath || !window.c3xManager || typeof window.c3xManager.getPreview !== 'function') return holder;
+  const cacheKey = JSON.stringify({
+    kind: 'district-art-option',
+    c3xPath: state.settings && state.settings.c3xPath,
+    sourcePath
+  });
+  const cached = state.previewCache.get(cacheKey);
+  const paint = (preview) => {
+    if (!preview || !preview.ok || !holder.isConnected) return;
+    drawPreviewFrameToCanvas(preview, canvas);
+    holder.classList.remove('art-pending');
+  };
+  if (cached) {
+    paint(cached);
+    return holder;
+  }
+  window.c3xManager.getPreview({
+    kind: 'district',
+    c3xPath: state.settings && state.settings.c3xPath,
+    fileName: sourcePath,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
+  }).then((res) => {
+    if (res && res.ok) setPreviewCache(cacheKey, res);
+    paint(res);
+  }).catch(() => {});
+  return holder;
+}
+
+function formatDistrictArtSourceLabel(entry, group) {
+  const dir = String(entry && entry.relativeDir || '').trim();
+  const root = String(entry && entry.root || group && group.root || '').trim();
+  const rootLabel = root ? getPathTail(root) : '';
+  if (rootLabel && dir) return `${rootLabel} / ${dir}`;
+  return dir || rootLabel || String(group && group.label || '').trim();
+}
+
+function createDistrictArtFilePicker(currentValue, onSelect) {
+  const wrap = document.createElement('div');
+  wrap.className = 'district-art-file-picker';
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.textContent = 'Select';
+  const menu = document.createElement('div');
+  menu.className = 'color-slot-picker-menu district-art-file-menu hidden';
+
+  const tools = document.createElement('div');
+  tools.className = 'district-art-file-tools';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = 'Filter PCX files';
+  const browse = document.createElement('button');
+  browse.type = 'button';
+  browse.className = 'ghost';
+  browse.textContent = 'Browse...';
+  tools.appendChild(search);
+  tools.appendChild(browse);
+
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.textContent = 'Loading art files...';
+  const list = document.createElement('div');
+  list.className = 'district-art-file-list';
+  menu.appendChild(tools);
+  menu.appendChild(status);
+  menu.appendChild(list);
+
+  let loaded = false;
+  let localValue = currentValue;
+  let groups = [];
+  const selectedName = () => normalizeScenarioArtRelativePath(localValue).toLowerCase();
+
+  const commit = (value) => {
+    const normalized = normalizeScenarioArtRelativePath(value);
+    if (!normalized) return;
+    localValue = normalized;
+    if (typeof onSelect === 'function') onSelect(normalized);
+    menu.classList.add('hidden');
+  };
+
+  const renderList = () => {
+    const query = String(search.value || '').trim().toLowerCase();
+    const currentName = selectedName();
+    list.innerHTML = '';
+    let visible = 0;
+    groups.forEach((group) => {
+      const files = (Array.isArray(group.files) ? group.files : []).filter((entry) => {
+        const haystack = `${entry.fileName || ''} ${entry.relativeDir || ''} ${group.label || ''}`.toLowerCase();
+        return !query || haystack.includes(query);
+      });
+      if (!files.length) return;
+      const groupEl = document.createElement('div');
+      groupEl.className = 'district-art-file-group';
+      const title = document.createElement('div');
+      title.className = 'district-art-file-group-title';
+      title.textContent = String(group.label || '').trim() || 'Art Files';
+      groupEl.appendChild(title);
+      files.forEach((entry) => {
+        visible += 1;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'district-art-file-option';
+        const isOverridden = entry && entry.effective === false;
+        item.classList.toggle('active', !!entry.effective && String(entry.fileName || '').toLowerCase() === currentName);
+        item.disabled = isOverridden;
+        const thumb = makeDistrictArtFileOptionThumb(entry);
+        const meta = document.createElement('span');
+        meta.className = 'district-art-file-option-meta';
+        const name = document.createElement('span');
+        name.className = 'district-art-file-option-name';
+        name.textContent = entry.fileName || '(unnamed)';
+        const source = document.createElement('span');
+        source.className = 'district-art-file-option-source';
+        source.textContent = isOverridden
+          ? 'Overridden by earlier art with the same filename'
+          : formatDistrictArtSourceLabel(entry, group);
+        meta.appendChild(name);
+        meta.appendChild(source);
+        item.appendChild(thumb);
+        item.appendChild(meta);
+        item.title = isOverridden
+          ? `${entry.fileName || ''} is not selectable because the saved filename resolves to an earlier file.`
+          : (entry.sourcePath || entry.fileName || '');
+        item.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          if (isOverridden) return;
+          commit(entry.fileName);
+        });
+        groupEl.appendChild(item);
+      });
+      list.appendChild(groupEl);
+    });
+    status.textContent = visible ? '' : 'No matching PCX files.';
+  };
+
+  const loadFiles = async () => {
+    if (loaded) {
+      renderList();
+      return;
+    }
+    loaded = true;
+    status.textContent = 'Loading art files...';
+    if (!window.c3xManager || typeof window.c3xManager.listDistrictArtFiles !== 'function') {
+      status.textContent = 'Art list is unavailable.';
+      return;
+    }
+    try {
+      const res = await window.c3xManager.listDistrictArtFiles({
+        c3xPath: state.settings && state.settings.c3xPath,
+        scenarioPath: state.settings && state.settings.scenarioPath,
+        scenarioPaths: getScenarioPreviewPaths()
+      });
+      groups = res && res.ok && Array.isArray(res.groups) ? res.groups : [];
+      status.textContent = groups.length ? '' : 'No PCX files found in district art folders.';
+      renderList();
+    } catch (_err) {
+      status.textContent = 'Could not list district art files.';
+    }
+  };
+
+  browse.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    const filePath = await window.c3xManager.pickFile(getFilePickerOptionsForSectionField({ key: 'img_paths' }, localValue));
+    if (!filePath) return;
+    commit(filePath);
+  });
+  search.addEventListener('input', renderList);
+  openBtn.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden');
+    if (!opening) return;
+    await loadFiles();
+    search.focus();
+  });
+  registerOutsideClickDismiss(wrap, () => {
+    menu.classList.add('hidden');
+  });
+
+  wrap.appendChild(openBtn);
+  wrap.appendChild(menu);
+  return wrap;
 }
 
 function getTokenColor(token, fieldKey = '') {
@@ -61581,12 +61837,7 @@ function renderDistrictImagePathsEditor(section, onValueChange) {
       fileName.title = current || '(not set)';
       const preview = makeDistrictImagePathPreview(current);
       preview.classList.add('inline-path-preview-inline');
-      const browse = document.createElement('button');
-      browse.type = 'button';
-      browse.textContent = 'Browse';
-      browse.addEventListener('click', async () => {
-        const filePath = await window.c3xManager.pickFile(getFilePickerOptionsForSectionField({ key: 'img_paths' }, current));
-        if (!filePath) return;
+      const picker = createDistrictArtFilePicker(current, (filePath) => {
         const next = rawValues.slice(0, expectedCount);
         while (next.length < expectedCount) next.push('');
         next[i] = filePath;
@@ -61595,7 +61846,7 @@ function renderDistrictImagePathsEditor(section, onValueChange) {
       });
       const actions = document.createElement('div');
       actions.className = 'district-image-actions';
-      actions.appendChild(browse);
+      actions.appendChild(picker);
       row.appendChild(preview);
       row.appendChild(fileName);
       row.appendChild(actions);
@@ -61618,18 +61869,13 @@ function renderDistrictImagePathsEditor(section, onValueChange) {
   fileName.title = current || '(not set)';
   const preview = makeDistrictImagePathPreview(current);
   preview.classList.add('inline-path-preview-inline');
-  const browse = document.createElement('button');
-  browse.type = 'button';
-  browse.textContent = 'Browse';
-  browse.addEventListener('click', async () => {
-    const filePath = await window.c3xManager.pickFile(getFilePickerOptionsForSectionField({ key: 'img_paths' }, current));
-    if (!filePath) return;
+  const picker = createDistrictArtFilePicker(current, (filePath) => {
     commit([filePath]);
     renderActiveTab({ preserveTabScroll: true });
   });
   const actions = document.createElement('div');
   actions.className = 'district-image-actions';
-  actions.appendChild(browse);
+  actions.appendChild(picker);
   row.appendChild(preview);
   row.appendChild(fileName);
   row.appendChild(actions);
@@ -64827,6 +65073,7 @@ function renderSectionTab(tab, tabKey) {
 
 function renderTabs() {
   el.tabs.innerHTML = '';
+  ensureDayNightCycleTab();
   renderScenarioOptionChips();
   if (state.activeTab === 'players' && !hasCustomPlayerData()) {
     state.activeTab = state.bundle.tabs.scenarioSettings ? 'scenarioSettings' : (Object.keys(state.bundle.tabs)[0] || 'base');
@@ -64880,6 +65127,1278 @@ function renderTabs() {
     groupWrap.appendChild(row);
     el.tabs.appendChild(groupWrap);
   });
+}
+
+function ensureDayNightCycleTab() {
+  if (!state.bundle || !state.bundle.tabs) return;
+  state.bundle.tabs.dayNightCycle = {
+    type: 'dayNightCycle',
+    title: 'Day-Night & Seasons'
+  };
+}
+
+function getDayNightDistrictsEnabled() {
+  const row = getC3XBaseRow('enable_districts');
+  if (!row) return true;
+  const value = String(row.value == null ? '' : row.value).trim().toLowerCase();
+  if (['false', '0', 'no', 'off'].includes(value)) return false;
+  if (['true', '1', 'yes', 'on'].includes(value)) return true;
+  return true;
+}
+
+function buildDayNightPayload(extra = {}) {
+  return {
+    mode: state.settings && state.settings.mode || 'global',
+    c3xPath: state.settings && state.settings.c3xPath || '',
+    civ3Path: state.settings && state.settings.civ3Path || '',
+    scenarioPath: state.settings && state.settings.scenarioPath || '',
+    scenarioSettingsTab: state.bundle && state.bundle.tabs ? state.bundle.tabs.scenarioSettings : null,
+    districtsEnabled: getDayNightDistrictsEnabled(),
+    ...extra
+  };
+}
+
+function getDayNightScanRoot(family = '') {
+  const scan = state.dayNight && state.dayNight.scan;
+  const roots = Array.isArray(scan && scan.roots) ? scan.roots : [];
+  return roots.find((root) => String(root && root.family || '') === String(family || state.dayNight.selectedFamily)) || roots[0] || null;
+}
+
+function getDayNightSelectedSeason() {
+  const root = getDayNightScanRoot();
+  const seasons = Array.isArray(root && root.seasons) ? root.seasons : [];
+  return seasons.find((season) => String(season && season.name || '') === String(state.dayNight.selectedSeason)) || seasons[0] || null;
+}
+
+function getDayNightSelectedFile() {
+  const season = getDayNightSelectedSeason();
+  const files = Array.isArray(season && season.files) ? season.files : [];
+  return files.find((file) => String(file && file.name || '') === String(state.dayNight.selectedFile)) || files[0] || null;
+}
+
+function syncDayNightSelectionsFromScan() {
+  const scan = state.dayNight.scan;
+  const roots = Array.isArray(scan && scan.roots) ? scan.roots : [];
+  const selectedRoot = roots.find((root) => String(root.family || '') === state.dayNight.selectedFamily) || roots.find((root) => Array.isArray(root.seasons) && root.seasons.length > 0) || roots[0];
+  if (selectedRoot) state.dayNight.selectedFamily = String(selectedRoot.family || 'districts');
+  const seasons = Array.isArray(selectedRoot && selectedRoot.seasons) ? selectedRoot.seasons : [];
+  const selectedSeason = seasons.find((season) => String(season.name || '') === state.dayNight.selectedSeason) || seasons[0];
+  state.dayNight.selectedSeason = selectedSeason ? String(selectedSeason.name || '') : '';
+  const files = Array.isArray(selectedSeason && selectedSeason.files) ? selectedSeason.files : [];
+  const selectedFile = files.find((file) => String(file.name || '') === state.dayNight.selectedFile) || files[0];
+  state.dayNight.selectedFile = selectedFile ? String(selectedFile.name || '') : '';
+}
+
+function invalidateDayNightScanForReload() {
+  if (!state.dayNight) return;
+  if (state.dayNight.previewTimer) {
+    window.clearTimeout(state.dayNight.previewTimer);
+    state.dayNight.previewTimer = 0;
+  }
+  state.dayNight.scan = null;
+  state.dayNight.isScanning = false;
+  state.dayNight.sourcePreviewPath = '';
+  state.dayNight.sourcePreview = null;
+  state.dayNight.preview = null;
+  state.dayNight.previewError = '';
+  state.dayNight.lastPreviewPath = '';
+  state.dayNight.lastPreview = null;
+  state.dayNight.fileQuery = '';
+  state.dayNight.fileListScrollTop = 0;
+}
+
+async function refreshDayNightScan({ rerender = true, schedulePreview: shouldSchedulePreview = true } = {}) {
+  if (!window.c3xManager || typeof window.c3xManager.scanDayNight !== 'function') return;
+  state.dayNight.isScanning = true;
+  if (rerender) {
+    renderActiveTab({ preserveTabScroll: true });
+    renderDayNightModal();
+  }
+  try {
+    const res = await window.c3xManager.scanDayNight(buildDayNightPayload());
+    state.dayNight.scan = res && res.ok ? res : { ok: false, error: res && res.error || 'Could not inspect day-night inputs.' };
+    syncDayNightSelectionsFromScan();
+    clearDayNightPreviewState();
+  } catch (err) {
+    state.dayNight.scan = { ok: false, error: err && err.message ? err.message : 'Could not inspect day-night inputs.' };
+  } finally {
+    state.dayNight.isScanning = false;
+    if (rerender) {
+      renderActiveTab({ preserveTabScroll: true });
+      renderDayNightModal();
+    }
+    if (shouldSchedulePreview && state.dayNight.scan && state.dayNight.scan.ok && getDayNightSelectedFile()) scheduleDayNightPreview(120);
+  }
+}
+
+function formatDayNightTargetLabel(scan) {
+  const target = String(scan && scan.targetRoot || '').trim();
+  if (!target) return 'No art target resolved';
+  return compactPathFromCiv3Root(target) || target;
+}
+
+function getDayNightRoots() {
+  const scan = state.dayNight && state.dayNight.scan;
+  return Array.isArray(scan && scan.roots) ? scan.roots : [];
+}
+
+function getDayNightFamilyLabel(family) {
+  return String(family || '') === 'terrain' ? 'Terrain' : 'Districts';
+}
+
+function getDayNightRootStats(root) {
+  const seasons = Array.isArray(root && root.seasons) ? root.seasons : [];
+  let sourceCount = 0;
+  let lightCount = 0;
+  let tintOnlyCount = 0;
+  let readySeasons = 0;
+  let generatedSeasons = 0;
+  seasons.forEach((season) => {
+    const files = Array.isArray(season && season.files) ? season.files : [];
+    sourceCount += files.length;
+    files.forEach((file) => {
+      if (file.hasSeasonAnnotation || file.hasSummerAnnotation) lightCount += 1;
+      else tintOnlyCount += 1;
+    });
+    if (season.noonExists && files.length > 0) readySeasons += 1;
+    if (!season.missingHourFolders || season.missingHourFolders.length === 0) generatedSeasons += 1;
+  });
+  return {
+    seasonCount: seasons.length,
+    sourceCount,
+    lightCount,
+    tintOnlyCount,
+    readySeasons,
+    generatedSeasons
+  };
+}
+
+function getDayNightFileAnnotationLabel(file) {
+  if (!file) return 'Tint only';
+  if (file.hasSeasonAnnotation) return 'Season light mask';
+  if (file.hasSummerAnnotation) return 'Summer light mask';
+  return 'Tint only';
+}
+
+function getDayNightFileAnnotationTone(file) {
+  if (!file) return 'neutral';
+  if (file.hasSeasonAnnotation) return 'ok';
+  if (file.hasSummerAnnotation) return 'info';
+  return 'muted';
+}
+
+function makeDayNightBadge(labelText, tone = 'neutral') {
+  const badge = document.createElement('span');
+  badge.className = `day-night-badge tone-${tone}`;
+  badge.textContent = labelText;
+  return badge;
+}
+
+function getDayNightStatus(scan) {
+  if (state.dayNight.isScanning) return { label: 'Scanning', tone: 'info' };
+  if (!scan) return { label: 'Checking art', tone: 'info' };
+  if (!scan.ok || scan.canGenerate === false) return { label: 'Needs attention', tone: 'warn' };
+  const roots = Array.isArray(scan.roots) ? scan.roots : [];
+  const sourceCount = roots.reduce((sum, root) => sum + getDayNightRootStats(root).sourceCount, 0);
+  if (sourceCount <= 0) return { label: 'Needs source art', tone: 'warn' };
+  const generatedReady = roots.some((root) => {
+    const seasons = Array.isArray(root && root.seasons) ? root.seasons : [];
+    return seasons.some((season) => season && season.noonExists && (!season.missingHourFolders || season.missingHourFolders.length === 0));
+  });
+  return { label: generatedReady ? 'Generated' : 'Ready', tone: 'ok' };
+}
+
+function getDayNightSelectedFilePath() {
+  const selectedFile = getDayNightSelectedFile();
+  return String(selectedFile && selectedFile.path || '');
+}
+
+function clearDayNightPreviewState({ keepSource = false } = {}) {
+  if (!keepSource) {
+    state.dayNight.sourcePreviewPath = '';
+    state.dayNight.sourcePreview = null;
+  }
+  state.dayNight.preview = null;
+  state.dayNight.previewError = '';
+}
+
+function scheduleDayNightPreview(delay = 160) {
+  if (state.dayNight.previewTimer) window.clearTimeout(state.dayNight.previewTimer);
+  state.dayNight.previewTimer = window.setTimeout(() => {
+    state.dayNight.previewTimer = 0;
+    void generateDayNightPreview({ quiet: true });
+  }, delay);
+}
+
+function setDayNightSelectedFamily(family) {
+  state.dayNight.selectedFamily = family;
+  state.dayNight.fileListScrollTop = 0;
+  syncDayNightSelectionsFromScan();
+  clearDayNightPreviewState();
+  renderActiveTab({ preserveTabScroll: true });
+  scheduleDayNightPreview(80);
+}
+
+function setDayNightSelectedSeason(seasonName) {
+  state.dayNight.selectedSeason = seasonName;
+  state.dayNight.fileListScrollTop = 0;
+  syncDayNightSelectionsFromScan();
+  clearDayNightPreviewState();
+  renderActiveTab({ preserveTabScroll: true });
+  scheduleDayNightPreview(80);
+}
+
+function setDayNightSelectedFile(fileName) {
+  state.dayNight.selectedFile = fileName;
+  clearDayNightPreviewState();
+  renderActiveTab({ preserveTabScroll: true });
+  scheduleDayNightPreview(80);
+}
+
+function setDayNightSelectedHour(hour) {
+  state.dayNight.selectedHour = hour;
+  state.dayNight.previewError = '';
+  scheduleDayNightPreview(260);
+}
+
+function setDayNightPreviewZoom(value) {
+  const zoom = Math.max(0.75, Math.min(5, Number(value) || 1));
+  if (Math.abs(Number(state.dayNight.previewZoom || 1) - zoom) < 0.01) return;
+  state.dayNight.previewZoom = zoom;
+  renderActiveTab({ preserveTabScroll: true });
+}
+
+function renderDayNightScopeControls(container) {
+  const roots = getDayNightRoots();
+  const familyChoices = roots.length > 0 ? roots.map((root) => root.family).filter(Boolean) : ['terrain', 'districts'];
+  const familyControl = document.createElement('div');
+  familyControl.className = 'day-night-family-tabs';
+  familyChoices.forEach((family) => {
+    const root = getDayNightScanRoot(family);
+    const stats = getDayNightRootStats(root);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'day-night-family-tab';
+    btn.classList.toggle('active', String(family) === String(state.dayNight.selectedFamily || ''));
+    const label = document.createElement('span');
+    label.textContent = getDayNightFamilyLabel(family);
+    const count = document.createElement('strong');
+    count.textContent = `${stats.sourceCount || 0}`;
+    const meta = document.createElement('small');
+    meta.textContent = `${stats.lightCount || 0} masks, ${stats.tintOnlyCount || 0} tint-only`;
+    btn.append(label, count, meta);
+    btn.addEventListener('click', () => setDayNightSelectedFamily(family));
+    familyControl.appendChild(btn);
+  });
+  container.appendChild(familyControl);
+
+  const root = getDayNightScanRoot();
+  const seasons = Array.isArray(root && root.seasons) ? root.seasons : [];
+  const seasonChoices = seasons.map((season) => String(season.name || '')).filter(Boolean);
+  if (seasonChoices.length > 0) {
+    const seasonWrap = document.createElement('div');
+    seasonWrap.className = 'day-night-season-tabs';
+    const seasonControl = makeSegmentedChoiceControl(seasonChoices, state.dayNight.selectedSeason, setDayNightSelectedSeason);
+    seasonWrap.appendChild(seasonControl);
+    container.appendChild(seasonWrap);
+  }
+}
+
+function renderDayNightHourControl(container) {
+  const options = getDayNightHourOptions();
+  const selectedIndex = Math.max(0, options.findIndex((entry) => String(entry.value) === String(state.dayNight.selectedHour)));
+  const formatHourLabel = (hour) => {
+    const n = Number.parseInt(String(hour).slice(0, 2), 10);
+    let period = 'Day';
+    if (n <= 5 || n >= 21 || hour === '2400') period = 'Night';
+    else if (n <= 8) period = 'Dawn';
+    else if (n >= 17 && n <= 20) period = 'Dusk';
+    return `${hour} ${period}`;
+  };
+  const wrap = document.createElement('div');
+  wrap.className = 'day-night-hour-control';
+  const label = document.createElement('span');
+  label.textContent = 'Preview Hour';
+  const sliderWrap = document.createElement('div');
+  sliderWrap.className = 'day-night-hour-slider-wrap';
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0';
+  slider.max = String(Math.max(0, options.length - 1));
+  slider.step = '1';
+  slider.value = String(selectedIndex < 0 ? 0 : selectedIndex);
+  slider.setAttribute('aria-label', 'Preview hour');
+  const output = document.createElement('output');
+  const selectedHour = String(options[selectedIndex] && options[selectedIndex].value || state.dayNight.selectedHour || '1800');
+  output.textContent = formatHourLabel(selectedHour);
+  const applyHour = () => {
+    const idx = Math.max(0, Math.min(options.length - 1, Number.parseInt(slider.value, 10) || 0));
+    const hour = String(options[idx] && options[idx].value || selectedHour);
+    output.textContent = formatHourLabel(hour);
+    if (String(state.dayNight.selectedHour || '') === hour) return;
+    state.dayNight.selectedHour = hour;
+    state.dayNight.previewError = '';
+    scheduleDayNightPreview(320);
+  };
+  slider.addEventListener('input', () => applyHour());
+  slider.addEventListener('change', () => applyHour());
+  const ticks = document.createElement('div');
+  ticks.className = 'day-night-hour-slider-ticks';
+  ['0100', '0600', '1200', '1800', '2400'].forEach((hour) => {
+    const tick = document.createElement('span');
+    tick.textContent = hour;
+    ticks.appendChild(tick);
+  });
+  sliderWrap.append(slider, ticks);
+  wrap.append(label, sliderWrap, output);
+  container.appendChild(wrap);
+}
+
+function getFilteredDayNightFiles() {
+  const season = getDayNightSelectedSeason();
+  const files = Array.isArray(season && season.files) ? season.files : [];
+  const query = normalizeSearchText(state.dayNight.fileQuery || '');
+  if (!query) return files;
+  return files.filter((file) => normalizeSearchText(`${file.name || ''} ${getDayNightFileAnnotationLabel(file)}`).includes(query));
+}
+
+function renderDayNightOverview(container, scan) {
+  const grid = document.createElement('div');
+  grid.className = 'day-night-overview-grid';
+  getDayNightRoots().forEach((root) => {
+    const stats = getDayNightRootStats(root);
+    const card = document.createElement('div');
+    card.className = 'day-night-family-card';
+    if (String(root.family || '') === String(state.dayNight.selectedFamily || '')) card.classList.add('active');
+    const top = document.createElement('div');
+    top.className = 'day-night-family-card-top';
+    const title = document.createElement('strong');
+    title.textContent = root.label || getDayNightFamilyLabel(root.family);
+    const status = root.exists && stats.sourceCount > 0 ? makeDayNightBadge('Source ready', 'ok') : makeDayNightBadge('Needs source art', 'warn');
+    top.append(title, status);
+    const meta = document.createElement('div');
+    meta.className = 'day-night-family-card-meta';
+    [
+      [`${stats.seasonCount} season${stats.seasonCount === 1 ? '' : 's'}`, 'neutral'],
+      [`${stats.sourceCount} noon image${stats.sourceCount === 1 ? '' : 's'}`, stats.sourceCount > 0 ? 'ok' : 'warn'],
+      [`${stats.lightCount} light mask${stats.lightCount === 1 ? '' : 's'}`, stats.lightCount > 0 ? 'info' : 'muted'],
+      [`${stats.tintOnlyCount} tint-only`, stats.tintOnlyCount > 0 ? 'muted' : 'neutral']
+    ].forEach(([text, tone]) => meta.appendChild(makeDayNightBadge(text, tone)));
+    card.append(top, meta);
+    card.addEventListener('click', () => setDayNightSelectedFamily(root.family));
+    grid.appendChild(card);
+  });
+  if (grid.childElementCount === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'day-night-empty-panel';
+    empty.textContent = scan && scan.ok ? 'No day-night art roots were found.' : 'Scan the current art target to inspect day-night readiness.';
+    grid.appendChild(empty);
+  }
+  container.appendChild(grid);
+}
+
+function renderDayNightFileBrowser(container) {
+  const panel = document.createElement('div');
+  panel.className = 'day-night-browser-panel';
+  const head = document.createElement('div');
+  head.className = 'day-night-browser-head';
+  const title = document.createElement('strong');
+  title.textContent = 'Source Art';
+  const count = document.createElement('span');
+  const currentSeason = getDayNightSelectedSeason();
+  const seasonFiles = Array.isArray(currentSeason && currentSeason.files) ? currentSeason.files : [];
+  count.textContent = `${seasonFiles.length} files`;
+  head.append(title, count);
+  panel.appendChild(head);
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'app-search-input day-night-file-search';
+  search.placeholder = 'Search source art...';
+  search.value = state.dayNight.fileQuery || '';
+  search.addEventListener('input', () => {
+    state.dayNight.fileQuery = search.value;
+    state.dayNight.fileListScrollTop = 0;
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  panel.appendChild(search);
+
+  const files = getFilteredDayNightFiles();
+  const list = document.createElement('div');
+  list.className = 'day-night-file-list';
+  list.addEventListener('scroll', () => {
+    state.dayNight.fileListScrollTop = list.scrollTop;
+  }, { passive: true });
+  files.forEach((file) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'day-night-file-row';
+    if (String(file.name || '') === String(state.dayNight.selectedFile || '')) row.classList.add('active');
+    const dot = document.createElement('span');
+    dot.className = `day-night-file-status-dot tone-${getDayNightFileAnnotationTone(file)}`;
+    dot.title = getDayNightFileAnnotationLabel(file);
+    dot.setAttribute('aria-label', getDayNightFileAnnotationLabel(file));
+    const name = document.createElement('span');
+    name.className = 'day-night-file-name';
+    name.textContent = file.name || '(unnamed PCX)';
+    row.title = `${file.name || '(unnamed PCX)'} - ${getDayNightFileAnnotationLabel(file)}`;
+    row.append(dot, name);
+    row.addEventListener('click', () => setDayNightSelectedFile(file.name));
+    list.appendChild(row);
+  });
+  if (files.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'day-night-empty-panel';
+    empty.textContent = state.dayNight.fileQuery ? 'No source art matches this search.' : 'No 1200 source art is available for this season.';
+    list.appendChild(empty);
+  }
+  panel.appendChild(list);
+  container.appendChild(panel);
+  const scrollTop = Number(state.dayNight.fileListScrollTop || 0);
+  if (scrollTop > 0) {
+    window.requestAnimationFrame(() => {
+      list.scrollTop = Math.min(scrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
+    });
+  }
+}
+
+function renderDayNightPreviewPane(container) {
+  const panel = document.createElement('div');
+  panel.className = 'day-night-preview-panel';
+  panel.classList.toggle('is-previewing', !!state.dayNight.isPreviewing);
+  const selectedFile = getDayNightSelectedFile();
+
+  const head = document.createElement('div');
+  head.className = 'day-night-preview-head';
+  const title = document.createElement('div');
+  const name = document.createElement('strong');
+  name.textContent = selectedFile ? selectedFile.name : 'Choose Source Art';
+  const sub = document.createElement('span');
+  sub.className = 'day-night-preview-sub';
+  sub.textContent = selectedFile
+    ? `${state.dayNight.selectedSeason || 'Season'} at ${state.dayNight.selectedHour || '1800'}`
+    : 'Preview a source PCX before generating output files.';
+  title.append(name, sub);
+  const badge = makeDayNightBadge(getDayNightFileAnnotationLabel(selectedFile), getDayNightFileAnnotationTone(selectedFile));
+  head.append(title, badge);
+  panel.appendChild(head);
+
+  const controls = document.createElement('div');
+  controls.className = 'day-night-preview-controls';
+  const zoomControl = document.createElement('div');
+  zoomControl.className = 'day-night-zoom-control';
+  const zoomLabel = document.createElement('span');
+  zoomLabel.textContent = 'Zoom';
+  const zoomSlider = document.createElement('input');
+  zoomSlider.type = 'range';
+  zoomSlider.min = '0.75';
+  zoomSlider.max = '5';
+  zoomSlider.step = '0.25';
+  zoomSlider.value = String(Number(state.dayNight.previewZoom || 1.5));
+  zoomSlider.setAttribute('aria-label', 'Preview zoom');
+  const zoomOut = document.createElement('button');
+  zoomOut.type = 'button';
+  zoomOut.className = 'ghost icon-only';
+  zoomOut.textContent = 'A-';
+  zoomOut.title = 'Zoom out';
+  const zoomIn = document.createElement('button');
+  zoomIn.type = 'button';
+  zoomIn.className = 'ghost icon-only';
+  zoomIn.textContent = 'A+';
+  zoomIn.title = 'Zoom in';
+  const zoomValue = document.createElement('output');
+  const syncZoomLabel = () => {
+    zoomValue.textContent = `${Math.round(Number(state.dayNight.previewZoom || 1.5) * 100)}%`;
+  };
+  syncZoomLabel();
+  zoomSlider.addEventListener('input', () => {
+    state.dayNight.previewZoom = Math.max(0.75, Math.min(5, Number(zoomSlider.value) || 1));
+    syncZoomLabel();
+    applyDayNightPreviewZoom(panel);
+  });
+  zoomSlider.addEventListener('change', () => setDayNightPreviewZoom(zoomSlider.value));
+  zoomOut.addEventListener('click', () => setDayNightPreviewZoom(Number(state.dayNight.previewZoom || 1.5) - 0.25));
+  zoomIn.addEventListener('click', () => setDayNightPreviewZoom(Number(state.dayNight.previewZoom || 1.5) + 0.25));
+  zoomControl.append(zoomLabel, zoomOut, zoomSlider, zoomIn, zoomValue);
+  controls.appendChild(zoomControl);
+  const previewBtn = document.createElement('button');
+  previewBtn.className = 'secondary';
+  previewBtn.type = 'button';
+  previewBtn.disabled = state.dayNight.isRunning || !selectedFile;
+  previewBtn.textContent = state.dayNight.previewError === 'Rendering preview...' ? 'Previewing...' : 'Preview';
+  previewBtn.addEventListener('click', () => generateDayNightPreview());
+  controls.appendChild(previewBtn);
+  panel.appendChild(controls);
+
+  const stage = document.createElement('div');
+  stage.className = 'day-night-preview-stage';
+  const split = document.createElement('div');
+  split.className = 'day-night-split-grid';
+  const sourceBox = document.createElement('div');
+  sourceBox.className = 'day-night-preview-box';
+  sourceBox.dataset.dayNightPreviewSlot = 'source';
+  renderDayNightLatestPreview(sourceBox, state.dayNight.sourcePreview, selectedFile ? 'Noon Source' : 'Choose a source PCX.');
+  split.appendChild(sourceBox);
+  const generatedBox = document.createElement('div');
+  generatedBox.className = 'day-night-preview-box';
+  generatedBox.dataset.dayNightPreviewSlot = 'generated';
+  renderDayNightLatestPreview(generatedBox, state.dayNight.preview, state.dayNight.previewError || `${state.dayNight.selectedHour || '1800'} Preview`);
+  split.appendChild(generatedBox);
+  stage.appendChild(split);
+  panel.appendChild(stage);
+  attachDayNightPreviewPanning(panel);
+
+  const note = document.createElement('div');
+  note.className = 'day-night-preview-note';
+  note.textContent = selectedFile && (selectedFile.hasSeasonAnnotation || selectedFile.hasSummerAnnotation)
+    ? 'This preview uses the selected light mask for night-hour glow and the noon PCX for all tinting.'
+    : 'Tint-only images still generate normally; they just do not add window glow or city lights.';
+  panel.appendChild(note);
+
+  container.appendChild(panel);
+}
+
+function setDayNightPreviewBusy(isBusy) {
+  state.dayNight.isPreviewing = !!isBusy;
+  const panel = document.querySelector('.day-night-preview-panel');
+  if (panel) panel.classList.toggle('is-previewing', !!isBusy);
+}
+
+function refreshDayNightPreviewPaneInPlace() {
+  const panel = document.querySelector('.day-night-preview-panel');
+  if (!panel) {
+    renderDayNightSurfaces();
+    return;
+  }
+  const selectedFile = getDayNightSelectedFile();
+  const sub = panel.querySelector('.day-night-preview-sub');
+  if (sub) {
+    sub.textContent = selectedFile
+      ? `${state.dayNight.selectedSeason || 'Season'} at ${state.dayNight.selectedHour || '1800'}`
+      : 'Preview a source PCX before generating output files.';
+  }
+  const sourceBox = panel.querySelector('.day-night-preview-box[data-day-night-preview-slot="source"]');
+  const generatedBox = panel.querySelector('.day-night-preview-box[data-day-night-preview-slot="generated"]');
+  const keepLeft = sourceBox ? sourceBox.scrollLeft : 0;
+  const keepTop = sourceBox ? sourceBox.scrollTop : 0;
+  if (sourceBox) renderDayNightLatestPreview(sourceBox, state.dayNight.sourcePreview, selectedFile ? 'Noon Source' : 'Choose a source PCX.');
+  if (generatedBox) renderDayNightLatestPreview(generatedBox, state.dayNight.preview, state.dayNight.previewError || `${state.dayNight.selectedHour || '1800'} Preview`);
+  [sourceBox, generatedBox].filter(Boolean).forEach((box) => {
+    box.scrollLeft = keepLeft;
+    box.scrollTop = keepTop;
+  });
+  attachDayNightPreviewPanning(panel);
+}
+
+function syncDayNightPreviewScroll(sourceBox) {
+  if (!sourceBox) return;
+  document.querySelectorAll('.day-night-preview-box[data-day-night-preview-slot]').forEach((box) => {
+    if (box === sourceBox) return;
+    box.scrollLeft = sourceBox.scrollLeft;
+    box.scrollTop = sourceBox.scrollTop;
+  });
+}
+
+function attachDayNightPreviewPanning(root = document) {
+  const scope = root && typeof root.querySelectorAll === 'function' ? root : document;
+  scope.querySelectorAll('.day-night-preview-box[data-day-night-preview-slot]').forEach((box) => {
+    if (box.dataset.dayNightPanReady === '1') return;
+    box.dataset.dayNightPanReady = '1';
+    box.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0) return;
+      if (ev.target && /^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(String(ev.target.tagName || ''))) return;
+      const canPan = box.scrollWidth > box.clientWidth || box.scrollHeight > box.clientHeight;
+      if (!canPan) return;
+      ev.preventDefault();
+      const startX = ev.clientX;
+      const startY = ev.clientY;
+      const startLeft = box.scrollLeft;
+      const startTop = box.scrollTop;
+      box.classList.add('is-panning');
+      try { box.setPointerCapture(ev.pointerId); } catch (_err) {}
+      const move = (moveEv) => {
+        box.scrollLeft = startLeft - (moveEv.clientX - startX);
+        box.scrollTop = startTop - (moveEv.clientY - startY);
+        syncDayNightPreviewScroll(box);
+      };
+      const end = () => {
+        box.classList.remove('is-panning');
+        try { box.releasePointerCapture(ev.pointerId); } catch (_err) {}
+        box.removeEventListener('pointermove', move);
+        box.removeEventListener('pointerup', end);
+        box.removeEventListener('pointercancel', end);
+      };
+      box.addEventListener('pointermove', move);
+      box.addEventListener('pointerup', end);
+      box.addEventListener('pointercancel', end);
+    });
+  });
+}
+
+function renderDayNightGeneratePanel(container, scan) {
+  const actions = document.createElement('div');
+  actions.className = 'day-night-action-cluster';
+  const familyToggles = document.createElement('div');
+  familyToggles.className = 'day-night-generation-scope';
+  const scopeLabel = document.createElement('span');
+  scopeLabel.textContent = 'Generate';
+  familyToggles.appendChild(scopeLabel);
+  const roots = getDayNightRoots();
+  const toggleFamilies = roots.length > 0 ? roots.map((entry) => entry.family).filter(Boolean) : ['terrain', 'districts'];
+  toggleFamilies.forEach((family) => {
+    const label = document.createElement('label');
+    label.className = 'day-night-output-toggle';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = getDayNightGenerationFamilies().includes(family);
+    cb.addEventListener('change', () => {
+      const set = new Set(getDayNightGenerationFamilies());
+      if (cb.checked) set.add(family);
+      else set.delete(family);
+      state.dayNight.families = Array.from(set);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    const span = document.createElement('span');
+    span.textContent = getDayNightFamilyLabel(family);
+    label.append(cb, span);
+    familyToggles.appendChild(label);
+  });
+  actions.appendChild(familyToggles);
+
+  const seedCandidates = Array.isArray(scan && scan.seedCandidates) ? scan.seedCandidates : [];
+  const seedBtn = document.createElement('button');
+  seedBtn.className = 'ghost';
+  seedBtn.type = 'button';
+  seedBtn.disabled = state.dayNight.isRunning || seedCandidates.length === 0;
+  seedBtn.textContent = 'Add Source Art';
+  seedBtn.title = seedCandidates.length > 0
+    ? seedCandidates.map((entry) => `${entry.label || entry.family}: ${compactPathFromCiv3Root(entry.sourceRoot) || entry.sourceRoot}`).join('\n')
+    : 'No fallback source art is available.';
+  seedBtn.addEventListener('click', () => seedDayNightSourceArtFromModal());
+  const lookBtn = document.createElement('button');
+  lookBtn.className = 'ghost';
+  lookBtn.type = 'button';
+  lookBtn.disabled = state.dayNight.isRunning;
+  lookBtn.textContent = 'Look Settings';
+  lookBtn.addEventListener('click', () => openDayNightLookModal());
+  const runBtn = document.createElement('button');
+  runBtn.className = 'secondary';
+  runBtn.type = 'button';
+  runBtn.disabled = state.dayNight.isRunning || state.dayNight.isScanning || !scan || !scan.ok || scan.canGenerate === false || getDayNightGenerationFamilies().length === 0;
+  runBtn.textContent = state.dayNight.isRunning ? 'Generating...' : 'Generate';
+  runBtn.addEventListener('click', () => runDayNightGenerationFromModal());
+  actions.append(seedBtn, lookBtn, runBtn);
+  container.appendChild(actions);
+}
+
+function renderDayNightCycleTab() {
+  ensureDayNightCycleTab();
+  const wrap = document.createElement('div');
+  wrap.className = 'day-night-tab';
+
+  const scan = state.dayNight.scan;
+
+  if (!scan) {
+    const summary = document.createElement('div');
+    summary.className = 'day-night-summary';
+    summary.textContent = 'Scanning the current art target for source seasons, noon PCXs, generated hour folders, and light masks.';
+    wrap.appendChild(summary);
+  } else if (!scan.ok) {
+    const summary = document.createElement('div');
+    summary.className = 'day-night-summary is-error';
+    summary.textContent = scan.error || 'Day-night scan failed.';
+    wrap.appendChild(summary);
+  }
+
+  if (scan && scan.ok) {
+    const toolStrip = document.createElement('div');
+    toolStrip.className = 'day-night-tool-strip';
+    renderDayNightScopeControls(toolStrip);
+    const hourStrip = document.createElement('div');
+    hourStrip.className = 'day-night-time-strip';
+    renderDayNightHourControl(hourStrip);
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'ghost day-night-refresh-btn';
+    refreshBtn.type = 'button';
+    refreshBtn.textContent = state.dayNight.isScanning ? 'Scanning...' : 'Refresh';
+    refreshBtn.disabled = !!state.dayNight.isScanning;
+    refreshBtn.title = formatDayNightTargetLabel(scan);
+    refreshBtn.addEventListener('click', () => refreshDayNightScan());
+    hourStrip.appendChild(refreshBtn);
+    toolStrip.appendChild(hourStrip);
+    renderDayNightGeneratePanel(toolStrip, scan);
+    wrap.appendChild(toolStrip);
+
+    const workspace = document.createElement('div');
+    workspace.className = 'day-night-workspace';
+    renderDayNightFileBrowser(workspace);
+    renderDayNightPreviewPane(workspace);
+    wrap.appendChild(workspace);
+
+    const warnings = Array.isArray(scan.warnings) ? scan.warnings : [];
+    if (warnings.length > 0) {
+      const warn = document.createElement('div');
+      warn.className = 'day-night-warning';
+      warn.textContent = warnings.join(' ');
+      wrap.appendChild(warn);
+    }
+  }
+  if (!scan && !state.dayNight.isScanning) {
+    void refreshDayNightScan({ rerender: true });
+  } else if (scan && scan.ok && getDayNightSelectedFile() && !state.dayNight.preview && !state.dayNight.previewError && !state.dayNight.previewTimer) {
+    scheduleDayNightPreview(120);
+  }
+  return wrap;
+}
+
+function ensureDayNightModalNode() {
+  let overlay = document.getElementById('day-night-modal-overlay');
+  if (overlay) return overlay;
+  overlay = document.createElement('div');
+  overlay.id = 'day-night-modal-overlay';
+  overlay.className = 'confirm-modal-overlay day-night-modal-overlay hidden';
+  overlay.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay && !state.dayNight.isRunning) closeDayNightModal();
+  });
+  return overlay;
+}
+
+function openDayNightModal(mode = 'look') {
+  state.dayNight.isOpen = true;
+  state.dayNight.modalMode = mode || 'look';
+  ensureDayNightModalNode();
+  renderDayNightModal();
+  if (!state.dayNight.scan && !state.dayNight.isScanning) void refreshDayNightScan();
+}
+
+function openDayNightLookModal() {
+  openDayNightModal('look');
+}
+
+function openDayNightProgressModal() {
+  openDayNightModal('progress');
+}
+
+function closeDayNightModal() {
+  if (state.dayNight.isRunning) return;
+  state.dayNight.isOpen = false;
+  const overlay = ensureDayNightModalNode();
+  overlay.classList.add('hidden');
+  overlay.setAttribute('aria-hidden', 'true');
+}
+
+function makeDayNightSelect(options, selected, onChange) {
+  const select = document.createElement('select');
+  options.forEach((opt) => {
+    const option = document.createElement('option');
+    option.value = String(opt.value);
+    option.textContent = String(opt.label);
+    option.selected = String(opt.value) === String(selected);
+    select.appendChild(option);
+  });
+  select.addEventListener('change', () => onChange(select.value));
+  return select;
+}
+
+function makeDayNightField(labelText, control) {
+  const label = document.createElement('label');
+  label.className = 'day-night-field';
+  const span = document.createElement('span');
+  span.textContent = labelText;
+  label.append(span, control);
+  return label;
+}
+
+function makeDayNightNumberInput(key, labelText, step = '0.1') {
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.step = step;
+  input.value = String(state.dayNight.options[key]);
+  input.addEventListener('input', () => {
+    const n = Number(input.value);
+    if (Number.isFinite(n)) {
+      state.dayNight.options[key] = n;
+      scheduleDayNightPreview(320);
+    }
+  });
+  return makeDayNightField(labelText, input);
+}
+
+function makeDayNightTextInput(key, labelText) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = String(state.dayNight.options[key] || '');
+  input.addEventListener('input', () => {
+    state.dayNight.options[key] = input.value;
+    scheduleDayNightPreview(420);
+  });
+  return makeDayNightField(labelText, input);
+}
+
+function getDayNightHourOptions() {
+  const out = [];
+  for (let hour = 1; hour <= 24; hour += 1) {
+    const value = `${String(hour).padStart(2, '0')}00`;
+    out.push({ value, label: value });
+  }
+  return out;
+}
+
+function resetDayNightOptionsToDefaults() {
+  state.dayNight.options = {
+    warmth: 1.7,
+    blue: 1.6,
+    darkness: 3.0,
+    desat: 0.8,
+    sat: 1.1,
+    contrast: 1.08,
+    sunriseCenter: 6,
+    sunsetCenter: 18,
+    twilightWidth: 2.6,
+    noonBlend: 0.5,
+    noonSigma: 1,
+    coreColor: '#ff8a20',
+    glowColor: '#dc6a00',
+    coreRadius: 1.1,
+    coreGain: 2.5,
+    haloRadius: 13,
+    haloGain: 20,
+    haloSep: 0.75,
+    haloGamma: 1.3,
+    highlightGain: 0.5,
+    sizeBoost: 1.7,
+    sizeRadius: 6.5,
+    sizeGamma: 0.75,
+    clipInterior: 'yes',
+    clipErode: 0,
+    blendMode: 'screen'
+  };
+  state.dayNight.preview = null;
+  state.dayNight.previewError = '';
+  scheduleDayNightPreview(80);
+  renderDayNightModal();
+}
+
+function getDayNightGenerationFamilies() {
+  const families = Array.isArray(state.dayNight.families) && state.dayNight.families.length > 0
+    ? state.dayNight.families
+    : ['terrain', 'districts'];
+  if (getDayNightDistrictsEnabled()) return families;
+  return families.filter((family) => family !== 'districts');
+}
+
+function renderDayNightLatestPreview(container, preview, title) {
+  container.innerHTML = '';
+  if (!preview || !preview.rgbaBase64) {
+    const empty = document.createElement('div');
+    empty.className = 'day-night-preview-empty';
+    empty.textContent = title || 'Preview appears here.';
+    container.appendChild(empty);
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.className = 'preview-canvas day-night-preview-canvas';
+  const crop = getDayNightPreviewContentBounds(preview);
+  canvas.width = crop ? crop.w : preview.width;
+  canvas.height = crop ? crop.h : preview.height;
+  if (crop) drawPreviewCropToCanvas(preview, canvas, crop);
+  else drawPreviewFrameToCanvas(preview, canvas, { transparentBackground: true });
+  canvas.dataset.nativeWidth = String(canvas.width);
+  canvas.dataset.nativeHeight = String(canvas.height);
+  applyDayNightPreviewZoomToCanvas(canvas);
+  const meta = document.createElement('div');
+  meta.className = 'preview-meta';
+  meta.textContent = crop && (crop.w !== preview.width || crop.h !== preview.height)
+    ? `${title || 'Preview'} - ${crop.w}x${crop.h} visible (${preview.width}x${preview.height} source)`
+    : `${title || 'Preview'} - ${preview.width}x${preview.height}`;
+  container.append(canvas, meta);
+}
+
+function applyDayNightPreviewZoomToCanvas(canvas) {
+  if (!canvas) return;
+  const zoom = Math.max(0.75, Math.min(5, Number(state.dayNight.previewZoom || 1.5) || 1));
+  const nativeW = Math.max(1, Number(canvas.dataset && canvas.dataset.nativeWidth || canvas.width) || 1);
+  const nativeH = Math.max(1, Number(canvas.dataset && canvas.dataset.nativeHeight || canvas.height) || 1);
+  canvas.style.width = `${Math.round(nativeW * zoom)}px`;
+  canvas.style.height = `${Math.round(nativeH * zoom)}px`;
+}
+
+function applyDayNightPreviewZoom(root) {
+  const scope = root && typeof root.querySelectorAll === 'function' ? root : document;
+  scope.querySelectorAll('.day-night-preview-canvas').forEach((canvas) => applyDayNightPreviewZoomToCanvas(canvas));
+}
+
+function getDayNightPreviewContentBounds(preview) {
+  if (!preview || !preview.rgbaBase64 || !preview.width || !preview.height) return null;
+  if (!preview._cachedRgbaBytes) preview._cachedRgbaBytes = fromBase64ToUint8(preview.rgbaBase64);
+  const rgba = preview._cachedRgbaBytes;
+  const width = Number(preview.width) || 0;
+  const height = Number(preview.height) || 0;
+  if (width <= 0 || height <= 0 || !rgba || rgba.length < width * height * 4) return null;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  const isEmptyPixel = (r, g, b, a) => {
+    if (a <= 8) return true;
+    if (r >= 248 && g >= 248 && b >= 248) return true;
+    if (r >= 248 && g <= 8 && b >= 248) return true;
+    if (r <= 8 && g >= 248 && b <= 8) return true;
+    return false;
+  };
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width * 4;
+    for (let x = 0; x < width; x += 1) {
+      const idx = row + x * 4;
+      if (isEmptyPixel(rgba[idx], rgba[idx + 1], rgba[idx + 2], rgba[idx + 3])) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < minX || maxY < minY) return null;
+  const pad = 2;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(width - 1, maxX + pad);
+  maxY = Math.min(height - 1, maxY + pad);
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+function renderDayNightKnobs(container) {
+  const dayDetails = document.createElement('details');
+  dayDetails.open = true;
+  const daySummary = document.createElement('summary');
+  daySummary.textContent = 'Day/Night palette';
+  dayDetails.appendChild(daySummary);
+  const dayGrid = document.createElement('div');
+  dayGrid.className = 'day-night-knob-grid';
+  [
+    ['warmth', 'Warmth', '0.1'],
+    ['blue', 'Blue', '0.1'],
+    ['darkness', 'Darkness', '0.1'],
+    ['desat', 'Desaturation', '0.05'],
+    ['sat', 'Saturation', '0.05'],
+    ['contrast', 'Contrast', '0.01'],
+    ['sunriseCenter', 'Sunrise Center', '0.1'],
+    ['sunsetCenter', 'Sunset Center', '0.1'],
+    ['twilightWidth', 'Twilight Width', '0.1'],
+    ['noonBlend', 'Noon Blend', '0.05'],
+    ['noonSigma', 'Noon Sigma', '0.1']
+  ].forEach(([key, label, step]) => dayGrid.appendChild(makeDayNightNumberInput(key, label, step)));
+  dayDetails.appendChild(dayGrid);
+  container.appendChild(dayDetails);
+
+  const lightDetails = document.createElement('details');
+  const lightSummary = document.createElement('summary');
+  lightSummary.textContent = 'City lights';
+  lightDetails.appendChild(lightSummary);
+  const lightGrid = document.createElement('div');
+  lightGrid.className = 'day-night-knob-grid';
+  [
+    ['coreColor', 'Core Color'],
+    ['glowColor', 'Glow Color']
+  ].forEach(([key, label]) => lightGrid.appendChild(makeDayNightTextInput(key, label)));
+  [
+    ['coreRadius', 'Core Radius', '0.1'],
+    ['coreGain', 'Core Gain', '0.1'],
+    ['haloRadius', 'Halo Radius', '0.1'],
+    ['haloGain', 'Halo Gain', '0.1'],
+    ['haloSep', 'Halo Separation', '0.05'],
+    ['haloGamma', 'Halo Gamma', '0.05'],
+    ['highlightGain', 'Highlight Gain', '0.05'],
+    ['sizeBoost', 'Size Boost', '0.1'],
+    ['sizeRadius', 'Size Radius', '0.1'],
+    ['sizeGamma', 'Size Gamma', '0.05'],
+    ['clipErode', 'Clip Erode', '1']
+  ].forEach(([key, label, step]) => lightGrid.appendChild(makeDayNightNumberInput(key, label, step)));
+  const clipSelect = makeDayNightSelect([
+    { value: 'yes', label: 'Clip interior' },
+    { value: 'no', label: 'Do not clip' }
+  ], state.dayNight.options.clipInterior, (value) => {
+    state.dayNight.options.clipInterior = value;
+    scheduleDayNightPreview(240);
+  });
+  lightGrid.appendChild(makeDayNightField('Interior Clip', clipSelect));
+  const blendSelect = makeDayNightSelect([
+    { value: 'screen', label: 'Screen' },
+    { value: 'add', label: 'Add' }
+  ], state.dayNight.options.blendMode, (value) => {
+    state.dayNight.options.blendMode = value;
+    scheduleDayNightPreview(240);
+  });
+  lightGrid.appendChild(makeDayNightField('Blend Mode', blendSelect));
+  lightDetails.appendChild(lightGrid);
+  container.appendChild(lightDetails);
+}
+
+function renderDayNightSurfaces({ preserveTabScroll = true } = {}) {
+  if (state.activeTab === 'dayNightCycle') renderActiveTab({ preserveTabScroll });
+  renderDayNightModal();
+}
+
+async function generateDayNightPreview(options = {}) {
+  if (state.dayNight.isRunning) return;
+  const quiet = !!(options && options.quiet);
+  const selectedFile = getDayNightSelectedFile();
+  if (!selectedFile) {
+    state.dayNight.previewError = 'Choose a source PCX first.';
+    renderDayNightSurfaces();
+    return;
+  }
+  const requestId = state.dayNight.previewRequestId + 1;
+  state.dayNight.previewRequestId = requestId;
+  if (!quiet) {
+    state.dayNight.previewError = 'Rendering preview...';
+    state.dayNight.preview = null;
+  } else {
+    setDayNightPreviewBusy(true);
+  }
+  const sourcePath = String(selectedFile.path || '');
+  if (state.dayNight.sourcePreviewPath !== sourcePath) {
+    state.dayNight.sourcePreviewPath = sourcePath;
+    state.dayNight.sourcePreview = null;
+  }
+  if (!quiet) renderDayNightSurfaces();
+  let generatedOk = false;
+  try {
+    const sourcePromise = state.dayNight.sourcePreview
+      ? Promise.resolve(state.dayNight.sourcePreview)
+      : window.c3xManager.getPreview({ kind: 'pcxFile', filePath: sourcePath });
+    const generatedPromise = window.c3xManager.previewDayNight(buildDayNightPayload({
+      filePath: selectedFile.path,
+      annotationPath: selectedFile.annotationPath || '',
+      hour: state.dayNight.selectedHour,
+      options: state.dayNight.options
+    }));
+    const [sourceRes, res] = await Promise.all([sourcePromise, generatedPromise]);
+    if (state.dayNight.previewRequestId !== requestId) return;
+    if (sourceRes && sourceRes.ok) {
+      state.dayNight.sourcePreviewPath = sourcePath;
+      state.dayNight.sourcePreview = sourceRes;
+    }
+    if (res && res.ok) {
+      state.dayNight.preview = res;
+      generatedOk = true;
+    } else {
+      state.dayNight.previewError = res && res.error || 'Could not generate preview.';
+    }
+  } catch (err) {
+    if (state.dayNight.previewRequestId !== requestId) return;
+    state.dayNight.previewError = err && err.message ? err.message : 'Could not generate preview.';
+  }
+  if (generatedOk) state.dayNight.previewError = '';
+  if (quiet) {
+    setDayNightPreviewBusy(false);
+    refreshDayNightPreviewPaneInPlace();
+    if (state.dayNight.isOpen && String(state.dayNight.modalMode || '') === 'progress') renderDayNightModal();
+  } else {
+    renderDayNightSurfaces();
+  }
+}
+
+async function runDayNightGenerationFromModal() {
+  if (state.dayNight.isRunning || !window.c3xManager || typeof window.c3xManager.runDayNight !== 'function') return;
+  state.dayNight.isRunning = true;
+  state.dayNight.generatedCount = 0;
+  state.dayNight.progressLabel = 'Preparing generation...';
+  state.dayNight.progressCompleted = 0;
+  state.dayNight.progressTotal = 0;
+  state.dayNight.progressPercent = 0;
+  state.dayNight.lastPreview = null;
+  state.dayNight.lastPreviewPath = '';
+  state.dayNight.isOpen = true;
+  state.dayNight.modalMode = 'progress';
+  renderDayNightModal();
+  try {
+    const res = await window.c3xManager.runDayNight(buildDayNightPayload({
+      families: getDayNightGenerationFamilies(),
+      options: state.dayNight.options
+    }));
+    state.dayNight.isRunning = false;
+    if (res && res.ok) {
+      state.dayNight.generatedCount = Number(res.generatedCount || 0);
+      state.dayNight.progressLabel = `Generated ${state.dayNight.generatedCount} PCX file${state.dayNight.generatedCount === 1 ? '' : 's'}.`;
+      setStatus(state.dayNight.progressLabel);
+      await refreshDayNightScan({ rerender: false });
+    } else {
+      state.dayNight.progressLabel = res && res.error || 'Day-night generation failed.';
+      setStatus(state.dayNight.progressLabel, true);
+    }
+  } catch (err) {
+    state.dayNight.isRunning = false;
+    state.dayNight.progressLabel = err && err.message ? err.message : 'Day-night generation failed.';
+    setStatus(state.dayNight.progressLabel, true);
+  }
+  renderDayNightModal();
+  renderActiveTab({ preserveTabScroll: true });
+}
+
+async function seedDayNightSourceArtFromModal() {
+  const scan = state.dayNight.scan;
+  const candidates = Array.isArray(scan && scan.seedCandidates) ? scan.seedCandidates : [];
+  if (state.dayNight.isRunning || candidates.length === 0 || !window.c3xManager || typeof window.c3xManager.seedDayNightSourceArt !== 'function') return;
+  state.dayNight.progressLabel = 'Copying missing source art...';
+  state.dayNight.progressCompleted = 0;
+  state.dayNight.progressTotal = 0;
+  state.dayNight.progressPercent = 0;
+  state.dayNight.isOpen = true;
+  state.dayNight.modalMode = 'progress';
+  renderDayNightModal();
+  try {
+    const res = await window.c3xManager.seedDayNightSourceArt(buildDayNightPayload({
+      families: candidates.map((entry) => entry.family).filter(Boolean)
+    }));
+    if (res && res.ok) {
+      const copied = Number(res.copiedCount || 0);
+      state.dayNight.progressLabel = `Copied ${copied} source art file${copied === 1 ? '' : 's'}.`;
+      setStatus(state.dayNight.progressLabel);
+      await refreshDayNightScan({ rerender: false });
+    } else {
+      state.dayNight.progressLabel = res && res.error || 'Could not seed source art.';
+      setStatus(state.dayNight.progressLabel, true);
+    }
+  } catch (err) {
+    state.dayNight.progressLabel = err && err.message ? err.message : 'Could not seed source art.';
+    setStatus(state.dayNight.progressLabel, true);
+  }
+  renderDayNightModal();
+  renderActiveTab({ preserveTabScroll: true });
+}
+
+async function loadDayNightProgressPreview(filePath) {
+  const pathText = String(filePath || '').trim();
+  if (!pathText || !window.c3xManager || typeof window.c3xManager.getPreview !== 'function') return;
+  state.dayNight.lastPreviewPath = pathText;
+  try {
+    const res = await window.c3xManager.getPreview({ kind: 'pcxFile', filePath: pathText });
+    if (state.dayNight.lastPreviewPath !== pathText) return;
+    if (res && res.ok) {
+      state.dayNight.lastPreview = res;
+      renderDayNightModal();
+    }
+  } catch (_err) {}
+}
+
+function handleDayNightProgress(entry) {
+  const stage = String(entry && entry.stage || '').trim().toLowerCase();
+  const label = String(entry && entry.label || '').trim();
+  state.dayNight.progressLabel = label || state.dayNight.progressLabel;
+  if (Number.isFinite(Number(entry && entry.completed))) state.dayNight.progressCompleted = Number(entry.completed);
+  if (Number.isFinite(Number(entry && entry.total))) state.dayNight.progressTotal = Number(entry.total);
+  const total = Number(state.dayNight.progressTotal || 0);
+  const completed = Number(state.dayNight.progressCompleted || 0);
+  state.dayNight.progressPercent = total > 0 ? Math.max(0, Math.min(100, Math.round((completed / total) * 100))) : 0;
+  if (stage === 'image') {
+    state.dayNight.generatedCount += 1;
+    const previewPath = String(entry && entry.previewPath || entry && entry.path || '').trim();
+    if (previewPath) void loadDayNightProgressPreview(previewPath);
+  }
+  renderDayNightModal();
+}
+
+function renderDayNightModal() {
+  const overlay = ensureDayNightModalNode();
+  if (!state.dayNight.isOpen) {
+    overlay.classList.add('hidden');
+    overlay.setAttribute('aria-hidden', 'true');
+    return;
+  }
+  overlay.classList.remove('hidden');
+  overlay.setAttribute('aria-hidden', 'false');
+  overlay.innerHTML = '';
+
+  const modal = document.createElement('div');
+  modal.className = 'confirm-modal day-night-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  overlay.appendChild(modal);
+
+  const h = document.createElement('h3');
+  const mode = state.dayNight.isRunning ? 'progress' : String(state.dayNight.modalMode || 'look');
+  h.textContent = mode === 'progress' ? 'Generating Day-Night Art' : 'Look Settings';
+  modal.appendChild(h);
+  const p = document.createElement('p');
+  p.textContent = mode === 'progress'
+    ? 'Writing C3X day-night PCX folders for the selected art families.'
+    : 'Tune the generated tint and light behavior. Preview updates use these settings.';
+  modal.appendChild(p);
+
+  const scan = state.dayNight.scan;
+
+  const body = document.createElement('div');
+  body.className = 'day-night-modal-body';
+  modal.appendChild(body);
+
+  const progress = document.createElement('div');
+  progress.className = 'day-night-progress';
+  const progressTop = document.createElement('div');
+  progressTop.className = 'save-progress-meta-row';
+  const label = document.createElement('span');
+  label.className = 'save-progress-step';
+  label.textContent = state.dayNight.progressLabel || 'Idle';
+  const pct = document.createElement('span');
+  pct.className = 'save-progress-percent';
+  pct.textContent = state.dayNight.progressTotal > 0
+    ? `${state.dayNight.progressPercent}% (${state.dayNight.progressCompleted}/${state.dayNight.progressTotal})`
+    : (state.dayNight.isRunning ? 'Working...' : `${state.dayNight.generatedCount || 0} generated`);
+  progressTop.append(label, pct);
+  const bar = document.createElement('div');
+  bar.className = 'save-progress-bar';
+  const fill = document.createElement('div');
+  fill.className = 'save-progress-bar-fill';
+  fill.style.width = `${Number(state.dayNight.progressPercent || 0)}%`;
+  bar.appendChild(fill);
+  progress.append(progressTop, bar);
+
+  const warnings = Array.isArray(scan && scan.warnings) ? scan.warnings : [];
+  if (mode === 'progress') {
+    body.appendChild(progress);
+    if (state.dayNight.lastPreview || state.dayNight.lastPreviewPath) {
+      const previewGrid = document.createElement('div');
+      previewGrid.className = 'day-night-progress-preview-grid';
+      const liveBox = document.createElement('div');
+      liveBox.className = 'day-night-preview-box';
+      renderDayNightLatestPreview(liveBox, state.dayNight.lastPreview, state.dayNight.lastPreviewPath ? `Generated ${getPathBaseName(state.dayNight.lastPreviewPath)}` : 'Latest generated image appears here.');
+      previewGrid.appendChild(liveBox);
+      body.appendChild(previewGrid);
+    }
+  } else {
+    const status = document.createElement('div');
+    status.className = 'day-night-modal-status';
+    status.textContent = scan && scan.ok ? `Previewing ${formatDayNightTargetLabel(scan)}` : (scan && scan.error || 'Scan has not run yet.');
+    body.appendChild(status);
+    const knobs = document.createElement('div');
+    knobs.className = 'day-night-knobs';
+    renderDayNightKnobs(knobs);
+    body.appendChild(knobs);
+  }
+  if (warnings.length > 0 && mode !== 'progress') {
+    const warn = document.createElement('div');
+    warn.className = 'day-night-warning';
+    warn.textContent = warnings.join(' ');
+    body.appendChild(warn);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'confirm-modal-actions';
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'ghost';
+  resetBtn.type = 'button';
+  resetBtn.disabled = state.dayNight.isRunning;
+  resetBtn.textContent = 'Reset Defaults';
+  resetBtn.addEventListener('click', () => resetDayNightOptionsToDefaults());
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'ghost';
+  closeBtn.type = 'button';
+  closeBtn.disabled = state.dayNight.isRunning;
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', () => closeDayNightModal());
+  if (mode === 'progress') actions.append(closeBtn);
+  else actions.append(resetBtn, closeBtn);
+  modal.appendChild(actions);
 }
 
 async function runBundleAudit(payload) {
@@ -65019,6 +66538,8 @@ function renderActiveTab(options = {}) {
     el.tabContent.appendChild(renderBiqTab(tab));
   } else if (state.activeTab === 'base') {
     el.tabContent.appendChild(renderBaseTab(tab));
+  } else if (state.activeTab === 'dayNightCycle' || tab.type === 'dayNightCycle') {
+    el.tabContent.appendChild(renderDayNightCycleTab());
   } else if (state.activeTab === 'music' || tab.type === 'music') {
     el.tabContent.appendChild(renderMusicTab(tab));
   } else {
@@ -65049,6 +66570,7 @@ async function loadBundleAndRender(options = {}) {
   updatePathsSummary();
   updateModeState();
   invalidatePreviewStateForReload();
+  invalidateDayNightScanForReload();
   await window.c3xManager.setSettings(state.settings);
   setLoadingUi(true, options.loadingText || 'Loading configs...');
 
@@ -65123,6 +66645,7 @@ async function loadBundleAndRender(options = {}) {
     const persistedView = explicitViewSnapshot || (shouldUsePersistedView ? loadPersistedViewSnapshot() : null);
     resetMusicPlayer();
     state.bundle = bundle;
+    ensureDayNightCycleTab();
     state.filesReadEntriesCache = null;
     state.filesReadEntriesCacheDirty = true;
   state.isDirty = false;
@@ -65281,6 +66804,10 @@ async function loadBundleAndRender(options = {}) {
     updateModeState(bundle);
     renderFilesReadModal();
     void refreshFilesReadAccess();
+    void refreshDayNightScan({
+      rerender: state.activeTab === 'dayNightCycle',
+      schedulePreview: state.activeTab === 'dayNightCycle'
+    });
     const auditPayload = buildAuditPayloadFromState({
       scenarioPath: state.settings.scenarioPath,
       scenarioSearchFolderOverride
@@ -65893,6 +67420,10 @@ function upsertSaveDetailItemStatus(pathValue, patch) {
 function handleOperationProgress(entry) {
   if (!entry || !entry.operation) return;
   const operation = String(entry.operation || 'save');
+  if (operation.toLowerCase() === 'daynight') {
+    handleDayNightProgress(entry);
+    return;
+  }
   const stage = String(entry.stage || '').trim().toLowerCase();
   const label = String(entry.label || '').trim();
   const pathValue = String(entry.path || '').trim();

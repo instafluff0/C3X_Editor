@@ -24,12 +24,17 @@ const BIQ_TESTS = new Set([
   'unitsParity.test.js'
 ]);
 
+const DAY_NIGHT_TESTS = new Set([
+  'dayNightAnnotationDraft.test.js',
+  'dayNightGenerator.test.js'
+]);
+
 const SAV_DEBUG_TESTS = new Set([
   'savBiqExtract.test.js',
   'savInspect.test.js'
 ]);
 
-const TIERS = new Set(['fast', 'map', 'biq', 'sav-debug', 'full']);
+const TIERS = new Set(['fast', 'map', 'day-night', 'biq', 'sav-debug', 'full']);
 
 function listTestFiles() {
   return fs.readdirSync(TEST_DIR)
@@ -45,13 +50,14 @@ function getTierFiles(tier) {
   const files = listTestFiles();
   if (tier === 'full') return files.filter((file) => !SAV_DEBUG_TESTS.has(file.name));
   if (tier === 'map') return files.filter((file) => MAP_TESTS.has(file.name));
+  if (tier === 'day-night') return files.filter((file) => DAY_NIGHT_TESTS.has(file.name));
   if (tier === 'biq') return files.filter((file) => BIQ_TESTS.has(file.name));
   if (tier === 'sav-debug') return files.filter((file) => SAV_DEBUG_TESTS.has(file.name));
-  return files.filter((file) => !BIQ_TESTS.has(file.name) && !SAV_DEBUG_TESTS.has(file.name));
+  return files.filter((file) => !BIQ_TESTS.has(file.name) && !DAY_NIGHT_TESTS.has(file.name) && !SAV_DEBUG_TESTS.has(file.name));
 }
 
 function printUsage() {
-  console.error('Usage: node scripts/run-tests.js [fast|map|biq|sav-debug|full] [-- node --test args]');
+  console.error('Usage: node scripts/run-tests.js [fast|map|day-night|biq|sav-debug|full] [-- node --test args]');
 }
 
 const separatorIndex = process.argv.indexOf('--');

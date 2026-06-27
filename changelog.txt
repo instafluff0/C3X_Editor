@@ -1,3 +1,19 @@
+* RELEASE 27.20.0
+- Replaced Districts, Wonder Districts, and Natural Wonders image-path browsing with a scenario/base C3X art picker that lists PCX files from district art folders while preserving filename-only saves.
+- Added a C3X Day-Night & Seasons generator modal backed by a portable JavaScript PCX generation engine, with readiness scans, annotation status, knob controls, source-art seeding, previews, progress updates, a dev-only generate.sh parity harness, and implementation notes for future generator work.
+- Expanded day-night generator parity coverage to include terrain files with no annotations, Summer-fallback annotation files, district annotation files, generated-light cleanup checks, and aggregate dev-oracle diff diagnostics.
+- Fixed day-night light-style parsing to match upstream `generate.sh` behavior, preventing yellow/orange annotation highlights from rendering visibly hotter than the source-of-truth output.
+- Added an experimental portable JavaScript day-night light annotation draft helper, including safe light-key palette reservation, orange/yellow auto-placement, magic-background preservation, and fixture-backed regression tests.
+- Moved portable day-night and season generation tests into a dedicated `test:day-night` runner tier while keeping them included in `test:full`.
+- Reworked the Day-Night & Seasons tab into a readiness-and-preview workspace with per-family source summaries, season controls, searchable source PCX rows, light-mask/tint-only labels, non-destructive before/after previews by selected hour, and a simpler Generate Day-Night Art flow.
+- Kept Day-Night & Seasons file checks in sync with app Refresh and scenario changes by clearing stale scans during bundle reloads and rescanning the active art target after the new bundle loads.
+- Preserved the Day-Night & Seasons source-art list scroll position while selecting different files for preview, while still resetting it for a different family, season, or search.
+- Replaced the primary Day-Night preview hour dropdown with an hourly cycle slider, including `1200` as the noon source-art preview point without changing generated output folders.
+- Simplified the Day-Night & Seasons workspace into compact family/season/time controls, a quieter source-art list, a focused Before/Split/After preview stage, and a bottom Generate action strip.
+- Refined the Day-Night & Seasons workspace so the tab restores after restart, previews stay in split comparison mode, visible art is cropped for display, zoom controls help inspect small assets, the hour slider updates asynchronously while dragging, and generation controls no longer float over the preview.
+- Removed the Day-Night & Seasons title/status hero, made the family/season/hour controls sticky while scrolling, kept slider previews from stealing drag focus, and added linked drag-panning for zoomed split previews.
+- Replaced the Day-Night & Seasons bottom generation bar with compact sticky toolbar actions, moved generation progress into a focused modal, and moved advanced look knobs into a dedicated settings dialog.
+
 * RELEASE 27.19.1
 - Added the era-specific Science Advisor face and dialog art overlay to the Tech Tree screen, using scenario-aware `popupSCIENCE.pcx` and `dialogbox.pcx` assets.
 - Added an Availability by Civ dropdown that lets the selected civilization immediately copy unit availability from another civilization in one undoable bulk edit.

@@ -13976,6 +13976,8 @@ module.exports = {
   buildScenarioPediaIconsEditResult,
   buildScenarioPediaIconsRepairResult,
   buildScenarioDiplomacyEditResult,
+  deriveScenarioPathContext,
+  isPathWithinAnyRoot,
   collectPediaIconsReferenceEdits,
   pickScenarioReferenceArtTargetRelativePath,
   parseDiplomacyDocumentWithOrder,

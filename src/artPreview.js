@@ -832,6 +832,87 @@ function resolvePcxPath(c3xPath, fileName, scenarioRoots) {
   return candidates.filter(Boolean).find((p) => fileExists(p)) || null;
 }
 
+const DISTRICT_ART_PICKER_REL_DIRS = [
+  path.join('Art', 'Districts', 'Summer', '1200'),
+  path.join('Art', 'Districts', '1200')
+];
+
+function listDistrictArtFiles(request = {}) {
+  const c3xPath = String(request.c3xPath || '').trim();
+  const scenarioRoots = normalizeScenarioRoots(request.scenarioPath, request.scenarioPaths);
+  const groups = [];
+
+  const addGroup = ({ source, label, root }) => {
+    const rootPath = String(root || '').trim();
+    if (!rootPath) return;
+    const files = [];
+    const seenPaths = new Set();
+    DISTRICT_ART_PICKER_REL_DIRS.forEach((relativeDir) => {
+      const dirPath = path.join(rootPath, relativeDir);
+      let dirents = [];
+      try {
+        dirents = fs.readdirSync(dirPath, { withFileTypes: true });
+      } catch (_err) {
+        return;
+      }
+      dirents
+        .filter((dirent) => dirent.isFile() && /\.pcx$/i.test(dirent.name))
+        .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }))
+        .forEach((dirent) => {
+          const sourcePath = path.join(dirPath, dirent.name);
+          const pathKey = sourcePath.toLowerCase();
+          if (seenPaths.has(pathKey)) return;
+          seenPaths.add(pathKey);
+          files.push({
+            fileName: dirent.name,
+            source,
+            sourcePath,
+            root: rootPath,
+            relativeDir: relativeDir.replace(/\\/g, '/')
+          });
+        });
+    });
+    if (files.length > 0) {
+      groups.push({ source, label, root: rootPath, files });
+    }
+  };
+
+  scenarioRoots.forEach((root, index) => {
+    addGroup({
+      source: 'scenario',
+      label: index === 0 ? 'Scenario Art' : 'Scenario Search Art',
+      root
+    });
+  });
+  addGroup({ source: 'base', label: 'Base C3X Art', root: c3xPath });
+
+  const effectiveByName = new Map();
+  groups.forEach((group) => {
+    group.files.forEach((entry) => {
+      const key = String(entry.fileName || '').toLowerCase();
+      const effective = effectiveByName.get(key);
+      if (effective) {
+        entry.effective = false;
+        entry.overriddenBy = {
+          source: effective.source,
+          sourcePath: effective.sourcePath,
+          root: effective.root,
+          relativeDir: effective.relativeDir
+        };
+      } else {
+        entry.effective = true;
+        effectiveByName.set(key, entry);
+      }
+    });
+  });
+
+  return {
+    ok: true,
+    groups,
+    total: groups.reduce((sum, group) => sum + group.files.length, 0)
+  };
+}
+
 function resolveDistrictButtonSheetPath(c3xPath, scenarioPath, scenarioPaths) {
   const candidates = [];
   const addCandidate = (candidate) => {
@@ -1528,6 +1609,7 @@ function encodeRgbaToLeaderFlc(rgba, width, height, options = {}) {
 
 module.exports = {
   getPreview,
+  listDistrictArtFiles,
   parseUnitAnimationIni,
   resolveConquestsAssetPath,
   resolveUnitIniPath,
