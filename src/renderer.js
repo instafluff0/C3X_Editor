@@ -4005,6 +4005,7 @@ function captureCleanSnapshot() {
   refreshDirtyUi();
   refreshTabDirtyBadges();
   refreshActiveReferenceListDirtyBadges();
+  refreshUnitTableDirtyBadges();
   refreshActiveBiqRecordListDirtyBadges();
 }
 
@@ -4052,6 +4053,7 @@ function flushDirtyUiRefresh() {
   const refreshActiveReferenceListDirtyBadgesStartedAt = mapPerfNowMs();
   refreshActiveReferenceListDirtyBadges();
   const refreshActiveReferenceListDirtyBadgesMs = Number((mapPerfNowMs() - refreshActiveReferenceListDirtyBadgesStartedAt).toFixed(2));
+  refreshUnitTableDirtyBadges();
   const refreshActiveBiqRecordListDirtyBadgesStartedAt = mapPerfNowMs();
   refreshActiveBiqRecordListDirtyBadges();
   const refreshActiveBiqRecordListDirtyBadgesMs = Number((mapPerfNowMs() - refreshActiveBiqRecordListDirtyBadgesStartedAt).toFixed(2));
@@ -4112,6 +4114,7 @@ function setDirty(next, options = {}) {
     refreshDirtyUi();
     refreshTabDirtyBadges();
     refreshActiveReferenceListDirtyBadges();
+    refreshUnitTableDirtyBadges();
     refreshActiveBiqRecordListDirtyBadges();
     return;
   }
@@ -4139,6 +4142,7 @@ function setDirty(next, options = {}) {
       refreshDirtyUi();
       refreshTabDirtyBadges();
       refreshActiveReferenceListDirtyBadges();
+      refreshUnitTableDirtyBadges();
       refreshActiveBiqRecordListDirtyBadges();
       return;
     }
@@ -5542,6 +5546,24 @@ function refreshActiveReferenceListDirtyBadges() {
     if (entry && isDirty) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
+  });
+}
+
+function refreshUnitTableDirtyBadges() {
+  if (!isUnitTableModalVisible() || !unitTableModal.body) return;
+  const rowEls = Array.from(unitTableModal.body.querySelectorAll('tr[data-unit-table-row-id]'));
+  if (rowEls.length === 0) return;
+  const dirtySet = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab.units;
+  const hasDirtySet = !!(state.isDirty && dirtySet && typeof dirtySet.has === 'function');
+  rowEls.forEach((rowEl) => {
+    const thumb = rowEl.querySelector('.unit-table-thumb');
+    if (!thumb) return;
+    Array.from(thumb.querySelectorAll('.dirty-dot-badge')).forEach((node) => node.remove());
+    const identity = String(rowEl.getAttribute('data-unit-table-row-id') || '').trim();
+    if (!identity || !hasDirtySet || !dirtySet.has(identity)) return;
+    const nameInput = rowEl.querySelector('.unit-table-name-cell input');
+    const nameText = String(nameInput && nameInput.value || '').trim() || 'Unit';
+    appendDirtyBadge(thumb, `${nameText} has unsaved edits`);
   });
 }
 
@@ -66724,6 +66746,7 @@ function markCurrentBundleCleanAfterSave(options = {}) {
   recomputeFilesReadIssueCount();
   refreshTabDirtyBadges();
   refreshActiveReferenceListDirtyBadges();
+  refreshUnitTableDirtyBadges();
   refreshActiveBiqRecordListDirtyBadges();
   if (referenceOrderChanged || pediaSourceMetaChanged) {
     renderTabs();

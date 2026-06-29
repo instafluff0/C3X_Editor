@@ -122,7 +122,7 @@ test('dirty counts cover every editable tab family through the shared recompute 
   );
 });
 
-test('dirty badge refreshes are centralized for main tabs, reference rows, and BIQ record lists', () => {
+test('dirty badge refreshes are centralized for main tabs, modal rows, reference rows, and BIQ record lists', () => {
   const source = rendererSource();
 
   const applyDirtyBadgeToTabButton = extractFunctionSource(source, 'applyDirtyBadgeToTabButton');
@@ -146,6 +146,13 @@ test('dirty badge refreshes are centralized for main tabs, reference rows, and B
     'reference list row badges must use the maintained dirty-key set with an active-row precision refresh'
   );
 
+  const refreshUnitTableDirtyBadges = extractFunctionSource(source, 'refreshUnitTableDirtyBadges');
+  assert.match(
+    refreshUnitTableDirtyBadges,
+    /isUnitTableModalVisible\(\)[\s\S]*?querySelectorAll\('tr\[data-unit-table-row-id\]'\)[\s\S]*?Array\.from\(thumb\.querySelectorAll\('\.dirty-dot-badge'\)\)[\s\S]*?dirtySet\.has\(identity\)[\s\S]*?appendDirtyBadge\(thumb,/,
+    'Unit Table row badges must remove stale dirty dots and repaint from the shared Units dirty-key set'
+  );
+
   const refreshActiveBiqRecordListDirtyBadges = extractFunctionSource(source, 'refreshActiveBiqRecordListDirtyBadges');
   assert.match(
     refreshActiveBiqRecordListDirtyBadges,
@@ -156,14 +163,14 @@ test('dirty badge refreshes are centralized for main tabs, reference rows, and B
   const flushDirtyUiRefresh = extractFunctionSource(source, 'flushDirtyUiRefresh');
   assert.match(
     flushDirtyUiRefresh,
-    /updateActiveDirtyCaches\(\)[\s\S]*?refreshDirtyUi\(\)[\s\S]*?refreshTabDirtyBadges\(\)[\s\S]*?refreshActiveReferenceListDirtyBadges\(\)[\s\S]*?refreshActiveBiqRecordListDirtyBadges\(\)/,
-    'deferred dirty refresh must update counts, chrome, tab badges, reference row badges, and BIQ record badges together'
+    /updateActiveDirtyCaches\(\)[\s\S]*?refreshDirtyUi\(\)[\s\S]*?refreshTabDirtyBadges\(\)[\s\S]*?refreshActiveReferenceListDirtyBadges\(\)[\s\S]*?refreshUnitTableDirtyBadges\(\)[\s\S]*?refreshActiveBiqRecordListDirtyBadges\(\)/,
+    'deferred dirty refresh must update counts, chrome, tab badges, modal row badges, reference row badges, and BIQ record badges together'
   );
 
   const setDirty = extractFunctionSource(source, 'setDirty');
   assert.match(
     setDirty,
-    /if \(!next\) \{[\s\S]*?state\.isDirty = false;[\s\S]*?clearDirtyTabCounts\(\);[\s\S]*?refreshDirtyUi\(\);[\s\S]*?refreshTabDirtyBadges\(\);[\s\S]*?refreshActiveReferenceListDirtyBadges\(\);[\s\S]*?refreshActiveBiqRecordListDirtyBadges\(\);/,
+    /if \(!next\) \{[\s\S]*?state\.isDirty = false;[\s\S]*?clearDirtyTabCounts\(\);[\s\S]*?refreshDirtyUi\(\);[\s\S]*?refreshTabDirtyBadges\(\);[\s\S]*?refreshActiveReferenceListDirtyBadges\(\);[\s\S]*?refreshUnitTableDirtyBadges\(\);[\s\S]*?refreshActiveBiqRecordListDirtyBadges\(\);/,
     'clearing dirty state must clear counts and every badge surface immediately'
   );
   assert.match(

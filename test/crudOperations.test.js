@@ -1045,6 +1045,9 @@ function loadRendererNoReloadCleanHelpers(targetBundle) {
     markSavedCivColorPaletteState: () => {},
     refreshTabDirtyBadges: () => {},
     refreshActiveReferenceListDirtyBadges: () => {},
+    refreshUnitTableDirtyBadges: () => {
+      sandbox.state.unitTableDirtyBadgesRefreshedAfterSave = true;
+    },
     refreshActiveBiqRecordListDirtyBadges: () => {},
     renderTabs: () => {},
     renderActiveTab: () => {},
@@ -2452,6 +2455,7 @@ test('no-reload save clean-state matrix covers BIQ reference, structure, and map
 
   assert.deepEqual(state.dirtyTabCounts, {});
   assert.equal(state.isDirty, false);
+  assert.equal(state.unitTableDirtyBadgesRefreshedAfterSave, true);
   assert.equal(Array.isArray(state.undoHistory), true);
   assert.equal(state.undoHistory.length, 0);
   assert.ok(state.cleanSnapshot && state.cleanTabsCache, 'expected clean snapshot/cache to be rebuilt');
