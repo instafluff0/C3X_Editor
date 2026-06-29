@@ -1331,6 +1331,265 @@ test('scenario save localizes uploaded tech icons into tech chooser folder', () 
   ]);
 });
 
+test('scenario save shortens uploaded technology icon paths to Civ3-safe length', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'algorithmic_governance_with_extra_descriptive_words_large_icon_upload.pcx');
+  const smallSource = path.join(external, 'algorithmic_governance_with_extra_descriptive_words_small_icon_upload.pcx');
+  fs.writeFileSync(largeSource, 'large');
+  fs.writeFileSync(smallSource, 'small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_ALGORITHMIC_GOVERNANCE',
+        iconPaths: [largeSource, smallSource],
+        originalIconPaths: [],
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const [largePath, smallPath] = tabs.technologies.entries[0].iconPaths;
+  assert.match(largePath, /^Art\/tech chooser\/Icons\//);
+  assert.match(smallPath, /^Art\/tech chooser\/Icons\//);
+  assert.ok(largePath.replace(/\//g, '\\').length <= 65, largePath);
+  assert.ok(smallPath.replace(/\//g, '\\').length <= 65, smallPath);
+  assert.equal(fs.existsSync(path.join(scenario, ...largePath.split('/'))), true);
+  assert.equal(fs.existsSync(path.join(scenario, ...smallPath.split('/'))), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  const escapedSmall = smallPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\//g, '\\\\');
+  const escapedLarge = largePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\//g, '\\\\');
+  assert.match(saved, new RegExp(`#TECH_ALGORITHMIC_GOVERNANCE\\r?\\n${escapedSmall}`));
+  assert.match(saved, new RegExp(`#TECH_ALGORITHMIC_GOVERNANCE_LARGE\\r?\\n${escapedLarge}`));
+});
+
+test('scenario save avoids overwriting existing art when a staged shortened path collides on disk', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largePath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute.pcx';
+  const oldSmallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute_small.pcx';
+  const stagedSmallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_ins_small.pcx';
+  fs.mkdirSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings'), { recursive: true });
+  fs.writeFileSync(path.join(scenario, ...largePath.split('/')), 'large');
+  fs.writeFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'existing-short-name');
+  const smallSource = path.join(external, 'replacement-small.pcx');
+  fs.writeFileSync(smallSource, 'replacement-small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_SUPERINTELLIGENCE_INSTITUTE',
+        iconPaths: [largePath, stagedSmallPath],
+        originalIconPaths: [largePath, oldSmallPath],
+        pendingArtSources: {
+          'iconPaths:1': smallSource
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: 'SINGLE',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.readFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'latin1'), 'existing-short-name');
+  assert.equal(tabs.improvements.entries[0].iconPaths[1], 'Art/Civilopedia/Icons/Buildings/superintelligence_ins_1_small.pcx');
+  assert.equal(fs.readFileSync(path.join(scenario, ...tabs.improvements.entries[0].iconPaths[1].split('/')), 'latin1'), 'replacement-small');
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_BLDG_SUPERINTELLIGENCE_INSTITUTE\r?\nSINGLE\r?\nArt\\Civilopedia\\Icons\\Buildings\\superintelligence_institute\.pcx\r?\nArt\\Civilopedia\\Icons\\Buildings\\superintelligence_ins_1_small\.pcx/);
+});
+
+test('scenario save reuses an existing staged shortened art path when the file already matches', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const oldSmallPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatformsmall.pcx';
+  const stagedSmallPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatf_small.pcx';
+  fs.mkdirSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings'), { recursive: true });
+  fs.writeFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'replacement-small');
+  const smallSource = path.join(external, 'replacement-small.pcx');
+  fs.writeFileSync(smallSource, 'replacement-small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+        iconPaths: [stagedSmallPath],
+        originalIconPaths: [oldSmallPath],
+        pendingArtSources: {
+          'iconPaths:0': smallSource
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: 'SINGLE',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(tabs.improvements.entries[0].iconPaths[0], stagedSmallPath);
+  assert.equal(fs.readFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'latin1'), 'replacement-small');
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_BLDG_OFFSHORE_PLATFORM\r?\nSINGLE\r?\nArt\\Civilopedia\\Icons\\Buildings\\offshoredrillingplatf_small\.pcx/);
+});
+
+test('scenario save applies a staged shortened art path to repeated ERA building icon lines', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformlarge.pcx';
+  const stagedPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatf_large.pcx';
+  fs.writeFileSync(pediaIconsPath, [
+    '#ICON_BLDG_OFFSHORE_PLATFORM',
+    'ERA',
+    '26',
+    stagedPath,
+    longPath,
+    longPath,
+    longPath,
+    ''
+  ].join('\n'), 'latin1');
+  fs.mkdirSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings'), { recursive: true });
+  fs.writeFileSync(path.join(scenario, ...stagedPath.split('/')), 'same-large');
+  const source = path.join(external, 'offshore-large.pcx');
+  fs.writeFileSync(source, 'same-large');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+        buildingIconKind: 'ERA',
+        originalBuildingIconKind: 'ERA',
+        buildingIconIndex: '26',
+        originalBuildingIconIndex: '26',
+        iconPaths: [stagedPath, longPath, longPath, longPath],
+        originalIconPaths: [longPath, longPath, longPath, longPath],
+        pendingArtSources: {
+          'iconPaths:0': source
+        },
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.deepEqual(tabs.improvements.entries[0].iconPaths, [stagedPath, stagedPath, stagedPath, stagedPath]);
+  const pediaDoc = parsePediaIconsDocumentWithOrder(fs.readFileSync(pediaIconsPath).toString('latin1'));
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_OFFSHORE_PLATFORM), [
+    'ERA',
+    '26',
+    stagedPath,
+    stagedPath,
+    stagedPath,
+    stagedPath
+  ]);
+});
+
 test('scenario save writes generated blank tech placeholder PCXs into tech chooser folder', () => {
   const root = mkTmpDir();
   const scenario = path.join(root, 'MyScenario');

@@ -818,6 +818,283 @@ test('auditLoadedBundle reports missing reference art files for Civs, Techs, Res
   assert.match(result.tabs.units.sections['0'][0].message, /Warrior: Missing art file "Art\/Civilopedia\/Icons\/Units\/warriorlarge\.pcx"/);
 });
 
+test('auditLoadedBundle warns and offers a staged repair for Civ3-long reference art paths', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'Art/Civilopedia/Icons/Governments/algorithmic_governance_small.pcx';
+  touch(path.join(scenarioRoot, ...longPath.split('/')));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      technologies: {
+        entries: [{
+          name: 'Artificial General Intelligence',
+          civilopediaKey: 'TECH_ARTIFICIAL_GENERAL_INTELLIGENCE',
+          iconPaths: [longPath],
+          originalIconPaths: [longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      improvements: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.technologies.sections['0'][0];
+  assert.equal(warning.code, 'reference-art-path-too-long');
+  assert.match(warning.message, /is 66 characters/);
+  assert.deepEqual(warning.action, {
+    type: 'shorten-reference-art-path',
+    tabKey: 'technologies',
+    group: 'iconPaths',
+    index: 0,
+    civilopediaKey: 'TECH_ARTIFICIAL_GENERAL_INTELLIGENCE',
+    currentPath: longPath,
+    replacementPath: 'Art/tech chooser/Icons/algorithmic_governance_small.pcx',
+    sourcePath: path.join(scenarioRoot, ...longPath.split('/')),
+    label: 'Shorten to Art/tech chooser/Icons/algorithmic_governance_small.pcx',
+    description: 'Stage this art under Art/tech chooser/Icons/algorithmic_governance_small.pcx.'
+  });
+  assert.ok(warning.action.replacementPath.replace(/\//g, '\\').length <= 65);
+});
+
+test('auditLoadedBundle does not propose a shortened art path already used by sibling art', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const largePath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute.pcx';
+  const smallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute_small.pcx';
+  const shortenedSmallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_ins_small.pcx';
+  touch(path.join(scenarioRoot, ...largePath.split('/')));
+  touch(path.join(scenarioRoot, ...smallPath.split('/')));
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...shortenedSmallPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...shortenedSmallPath.split('/')), 'different art');
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'The Superintelligence Institute',
+          civilopediaKey: 'BLDG_SUPERINTELLIGENCE_INSTITUTE',
+          iconPaths: [largePath, smallPath],
+          originalIconPaths: [largePath, smallPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.improvements.sections['0'][0];
+  assert.equal(warning.code, 'reference-art-path-too-long');
+  assert.notEqual(warning.action.replacementPath, largePath);
+  assert.notEqual(warning.action.replacementPath, shortenedSmallPath);
+  assert.equal(warning.action.replacementPath, 'Art/Civilopedia/Icons/Buildings/superintelligence_insti_small.pcx');
+  assert.ok(warning.action.replacementPath.replace(/\//g, '\\').length <= 65);
+});
+
+test('auditLoadedBundle does not warn for stock 65-character standard-game art paths', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformlarge.pcx';
+  touch(path.join(scenarioRoot, ...longPath.split('/')));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          iconPaths: [longPath],
+          originalIconPaths: [longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
+test('auditLoadedBundle reuses an existing shortened art path when it already matches the source file', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitylarge.pcx';
+  const shortenedPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_large.pcx';
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...longPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...longPath.split('/')), 'same art');
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...shortenedPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...shortenedPath.split('/')), 'same art');
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          iconPaths: [longPath],
+          originalIconPaths: [longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.improvements.sections['0'][0];
+  assert.equal(warning.action.replacementPath, shortenedPath);
+});
+
+test('auditLoadedBundle suggests an already-used matching shortened art path for repeated ERA art', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitylarge.pcx';
+  const shortenedPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_large.pcx';
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...longPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...longPath.split('/')), 'same art');
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...shortenedPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...shortenedPath.split('/')), 'same art');
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          buildingIconKind: 'ERA',
+          buildingIconIndex: '26',
+          iconPaths: [shortenedPath, longPath],
+          originalIconPaths: [shortenedPath, longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.improvements.sections['0'][0];
+  assert.equal(warning.action.replacementPath, shortenedPath);
+});
+
+test('auditLoadedBundle preserves large and small suffixes when shortening unseparated art names', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const largePath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitylarge.pcx';
+  const smallPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitysmall.pcx';
+  touch(path.join(scenarioRoot, ...largePath.split('/')));
+  touch(path.join(scenarioRoot, ...smallPath.split('/')));
+  touch(path.join(scenarioRoot, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'offshoredrillingplatformlar.pcx'));
+  touch(path.join(scenarioRoot, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'offshoredrillingplatformsma.pcx'));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          iconPaths: [largePath, smallPath],
+          originalIconPaths: [largePath, smallPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 2);
+  const warnings = result.tabs.improvements.sections['0'];
+  assert.equal(warnings[0].action.replacementPath, 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_large.pcx');
+  assert.equal(warnings[1].action.replacementPath, 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_small.pcx');
+  assert.ok(warnings.every((warning) => warning.action.replacementPath.replace(/\//g, '\\').length <= 65));
+});
+
 test('auditLoadedBundle reports BIQ improvements missing from scenario PediaIcons files', () => {
   const civ3Root = mkTmpDir();
   const scenarioRoot = mkTmpDir();

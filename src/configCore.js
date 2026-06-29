@@ -46,6 +46,7 @@ const SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS = [
 const SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH = 'Art/Advisors/techboxes.pcx';
 const SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH = 'c3x_editor_tech_tree_arrows.json';
 const SCIENCE_ADVISOR_ARROW_METADATA_FORMAT = 'c3x-editor-tech-tree-arrows';
+const CIV3_PEDIA_ART_PATH_MAX_CHARS = 65;
 const CIV_COLOR_PALETTE_RELATIVE_DIR = path.join('Art', 'Units', 'Palettes');
 const CIV_COLOR_PALETTE_COUNT = 32;
 const CIV_COLOR_PALETTE_EDITABLE_COLOR_COUNT = 70;
@@ -4925,6 +4926,63 @@ function applyReferenceArtDefaultFileNameSuffix(fileName, tabKey, group, index) 
     return appendFileNameStemSuffix(fileName, `_icon${idx + 1}`);
   }
   return fileName;
+}
+
+function getCiv3PediaArtPathLength(rawPath) {
+  return String(rawPath || '').trim().replace(/^["']|["']$/g, '').replace(/\//g, '\\').length;
+}
+
+function splitPreservedPediaArtSuffix(stem) {
+  const value = String(stem || '');
+  const match = value.match(/^(.+?)([_ -]?)(small|large|sm|lg|32|128)$/i);
+  if (!match) return { base: value, suffix: '' };
+  const separator = match[2] || '_';
+  return { base: match[1] || value, suffix: `${separator}${String(match[3] || '').toLowerCase()}` };
+}
+
+function appendStemNumberBeforePediaArtSuffix(stem, attempt, maxStemLength) {
+  const suffixParts = splitPreservedPediaArtSuffix(stem);
+  const numericSuffix = `_${Number(attempt) + 1}`;
+  const preservedSuffix = suffixParts.suffix.length < maxStemLength ? suffixParts.suffix : '';
+  const baseStem = preservedSuffix ? suffixParts.base : stem;
+  const baseMax = Math.max(1, maxStemLength - numericSuffix.length - preservedSuffix.length);
+  const trimmedBase = baseStem.slice(0, baseMax).replace(/[._ -]+$/g, '') || 'art';
+  return `${trimmedBase}${numericSuffix}${preservedSuffix}`;
+}
+
+function shortenPediaArtRelativePath(rawPath) {
+  const normalized = normalizeRelativePath(rawPath);
+  if (!normalized || getCiv3PediaArtPathLength(normalized) <= CIV3_PEDIA_ART_PATH_MAX_CHARS) return normalized;
+  const dir = path.posix.dirname(normalized);
+  const ext = path.posix.extname(normalized) || '.pcx';
+  const stem = path.posix.basename(normalized, ext) || 'art';
+  const prefix = dir && dir !== '.' ? `${dir}/` : '';
+  const maxFileNameLength = CIV3_PEDIA_ART_PATH_MAX_CHARS - getCiv3PediaArtPathLength(prefix);
+  if (maxFileNameLength <= ext.length + 1) return normalized;
+  const maxStemLength = Math.max(1, maxFileNameLength - ext.length);
+  const suffixParts = splitPreservedPediaArtSuffix(stem);
+  const suffix = suffixParts.suffix.length < maxStemLength ? suffixParts.suffix : '';
+  const baseMax = Math.max(1, maxStemLength - suffix.length);
+  const baseStem = suffix ? suffixParts.base : stem;
+  const trimmedStem = `${baseStem.slice(0, baseMax).replace(/[._ -]+$/g, '') || 'art'}${suffix}`;
+  return normalizeRelativePath(`${prefix}${trimmedStem}${ext}`);
+}
+
+function appendNumericSuffixToPediaArtPath(relTarget, attempt) {
+  const normalized = normalizeRelativePath(relTarget);
+  const ext = path.posix.extname(normalized) || '.pcx';
+  const dir = path.posix.dirname(normalized);
+  const stem = path.posix.basename(normalized, ext) || 'art';
+  const prefix = dir && dir !== '.' ? `${dir}/` : '';
+  const suffix = `_${Number(attempt) + 1}`;
+  const maxFileNameLength = CIV3_PEDIA_ART_PATH_MAX_CHARS - getCiv3PediaArtPathLength(prefix);
+  if (maxFileNameLength > ext.length + suffix.length) {
+    const maxStemLength = Math.max(1, maxFileNameLength - ext.length);
+    const trimmedStem = appendStemNumberBeforePediaArtSuffix(stem, attempt, maxStemLength);
+    return normalizeRelativePath(`${prefix}${trimmedStem}${ext}`);
+  }
+  const nextBase = appendFileNameStemSuffix(`${stem}${ext}`, suffix);
+  return shortenPediaArtRelativePath(dir && dir !== '.' ? path.posix.join(dir, nextBase) : nextBase);
 }
 
 function findFirstPathLine(lines) {
@@ -12988,42 +13046,43 @@ function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1,
     index
   );
   if (!baseName) return '';
+  const fit = (relativePath) => shortenPediaArtRelativePath(relativePath);
   if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
     const originalDir = normalizeRelativePath(path.posix.dirname(normalizedOriginal));
     const shouldPreserveOriginalDir = originalDir && originalDir !== '.' &&
       isExpectedReferenceArtDirectory(tabKey, group, index, originalDir);
     if (shouldPreserveOriginalDir) {
-      return normalizeRelativePath(path.posix.join(originalDir, baseName));
+      return fit(path.posix.join(originalDir, baseName));
     }
   }
   if (tabKey === 'civilizations' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Races', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Races', baseName));
   }
   if (tabKey === 'civilizations' && group === 'racePaths') {
     if (Number(index) === 0) {
-      return normalizeRelativePath(path.join('Art', 'Leaderheads', baseName));
+      return fit(path.join('Art', 'Leaderheads', baseName));
     }
-    return normalizeRelativePath(path.join('Art', 'Advisors', baseName));
+    return fit(path.join('Art', 'Advisors', baseName));
   }
   if (tabKey === 'improvements' && group === 'wonderSplashPath') {
-    return normalizeRelativePath(path.join('Art', 'Wonder Splash', baseName));
+    return fit(path.join('Art', 'Wonder Splash', baseName));
   }
   if (tabKey === 'improvements' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Buildings', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Buildings', baseName));
   }
   if (tabKey === 'technologies' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'tech chooser', 'Icons', baseName));
+    return fit(path.join('Art', 'tech chooser', 'Icons', baseName));
   }
   if (tabKey === 'units' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Units', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Units', baseName));
   }
   if (tabKey === 'resources' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Resources', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Resources', baseName));
   }
   if (tabKey === 'governments' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Governments', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Governments', baseName));
   }
-  return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', baseName));
+  return fit(path.join('Art', 'Civilopedia', 'Icons', baseName));
 }
 
 function getExpectedReferenceArtDirectory(tabKey, group, index) {
@@ -13242,14 +13301,18 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
     const right = Buffer.isBuffer(b) ? b : Buffer.from(b || []);
     return left.length === right.length && Buffer.compare(left, right) === 0;
   };
-  const appendRelativePathSuffix = (relTarget, suffix, attempt) => {
-    const normalized = normalizeRelativePath(relTarget);
-    const ext = path.posix.extname(normalized) || '.pcx';
-    const dir = path.posix.dirname(normalized);
-    const stem = path.posix.basename(normalized, ext);
-    const numberedSuffix = attempt > 0 ? `${suffix}_${attempt + 1}` : suffix;
-    const nextBase = appendFileNameStemSuffix(`${stem}${ext}`, numberedSuffix);
-    return normalizeRelativePath(dir && dir !== '.' ? path.posix.join(dir, nextBase) : nextBase);
+  const appendRelativePathSuffix = (relTarget, _suffix, attempt) => {
+    const suffix = String(_suffix || '').trim();
+    if (/^_icon\d+$/i.test(suffix)) {
+      const normalized = normalizeRelativePath(relTarget);
+      const ext = path.posix.extname(normalized) || '.pcx';
+      const dir = path.posix.dirname(normalized);
+      const stem = path.posix.basename(normalized, ext);
+      const numberedSuffix = attempt > 0 ? `${suffix}_${attempt + 1}` : suffix;
+      const nextBase = appendFileNameStemSuffix(`${stem}${ext}`, numberedSuffix);
+      return shortenPediaArtRelativePath(dir && dir !== '.' ? path.posix.join(dir, nextBase) : nextBase);
+    }
+    return appendNumericSuffixToPediaArtPath(relTarget, attempt);
   };
   const reserveRelativeArtTarget = (relTarget, data, context = {}) => {
     let candidate = normalizeRelativePath(relTarget);
@@ -13260,6 +13323,18 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
       const key = canonicalTargetKey(targetPath);
       const existingPath = queuedKeys.get(key);
       if (!existingPath) {
+        if (fs.existsSync(targetPath)) {
+          let existingData = null;
+          try {
+            const stats = fs.statSync(targetPath);
+            if (stats && stats.isFile()) existingData = fs.readFileSync(targetPath);
+          } catch (_err) {
+            existingData = null;
+          }
+          if (existingData && buffersEqual(existingData, data)) return candidate;
+          candidate = appendRelativePathSuffix(relTarget, suffix, attempt);
+          continue;
+        }
         queuedKeys.set(key, targetPath);
         return candidate;
       }
@@ -13273,6 +13348,28 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
     if (!key) return;
     queued.set(key, data);
   };
+  const replaceMatchingLocalizedReferences = (sourceValues, rawValue, originalValue, actualRelTarget, index, options = {}) => {
+    const allowRawDuplicates = !!(options && options.allowRawDuplicates);
+    const originalKey = normalizeAssetReferencePath(originalValue).toLowerCase();
+    const matchKeys = new Set([
+      allowRawDuplicates ? normalizeAssetReferencePath(rawValue).toLowerCase() : '',
+      originalKey
+    ].filter(Boolean));
+    let changed = false;
+    sourceValues.forEach((value, valueIndex) => {
+      const valueKey = normalizeAssetReferencePath(value).toLowerCase();
+      if (!valueKey || !matchKeys.has(valueKey)) return;
+      if (sourceValues[valueIndex] !== actualRelTarget) {
+        sourceValues[valueIndex] = actualRelTarget;
+        changed = true;
+      }
+    });
+    if (!changed && sourceValues[index] !== actualRelTarget) {
+      sourceValues[index] = actualRelTarget;
+      changed = true;
+    }
+    return changed;
+  };
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = tabs[spec.key];
     if (!tab || !Array.isArray(tab.entries)) continue;
@@ -13285,6 +13382,9 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
         const sourceValues = Array.isArray(entry && entry[fieldKey]) ? [...entry[fieldKey]] : [];
         const originalValues = Array.isArray(entry && entry[originalFieldKey]) ? entry[originalFieldKey] : [];
         let changed = false;
+        const shouldLocalizeDuplicateReferences = spec.key === 'improvements' &&
+          fieldKey === 'iconPaths' &&
+          /^(ERA|CULTURE)$/i.test(String(entry && entry.buildingIconKind || '').trim());
         sourceValues.forEach((rawValue, index) => {
           const pendingConversion = getPendingReferenceArtConversion(entry, fieldKey, index);
           const pendingSource = getPendingReferenceArtSource(entry, fieldKey, index);
@@ -13327,10 +13427,9 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             });
             const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
             queueFileWrite(targetPath, data);
-            if (sourceValues[index] !== actualRelTarget) {
-              sourceValues[index] = actualRelTarget;
-              changed = true;
-            }
+            changed = replaceMatchingLocalizedReferences(sourceValues, rawValue, originalValues[index], actualRelTarget, index, {
+              allowRawDuplicates: shouldLocalizeDuplicateReferences
+            }) || changed;
             return;
           }
           if (pendingSource && isAbsoluteFilesystemPath(pendingSource)) {
@@ -13374,10 +13473,9 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             });
             const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
             queueFileWrite(targetPath, data);
-            if (sourceValues[index] !== actualRelTarget) {
-              sourceValues[index] = actualRelTarget;
-              changed = true;
-            }
+            changed = replaceMatchingLocalizedReferences(sourceValues, rawValue, originalValues[index], actualRelTarget, index, {
+              allowRawDuplicates: shouldLocalizeDuplicateReferences
+            }) || changed;
             return;
           }
           if (!isAbsoluteFilesystemPath(normalized)) {

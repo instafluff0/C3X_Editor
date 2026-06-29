@@ -100,6 +100,8 @@ const REFERENCE_ART_TABS = [
   'units'
 ];
 
+const CIV3_PEDIA_ART_PATH_MAX_CHARS = 65;
+
 const FIRAXIS_HOMELESS_PLACEHOLDER_LINES = [
   '#',
   'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
@@ -1661,19 +1663,150 @@ function auditDayNightAssets(bundle, result) {
   });
 }
 
+function normalizePediaArtPathForCiv3Length(rawPath) {
+  return String(rawPath || '').trim().replace(/^["']|["']$/g, '').replace(/\//g, '\\');
+}
+
+function getCiv3PediaArtPathLength(rawPath) {
+  return normalizePediaArtPathForCiv3Length(rawPath).length;
+}
+
+function getExpectedReferenceArtDirectoryForAudit(tabKey, group, index) {
+  const normalizedTab = String(tabKey || '').trim();
+  const normalizedGroup = String(group || '').trim();
+  const idx = Number(index);
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'iconPaths') return 'Art/Civilopedia/Icons/Races';
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'racePaths') {
+    return idx === 0 ? 'Art/Leaderheads' : 'Art/Advisors';
+  }
+  if (normalizedTab === 'improvements' && normalizedGroup === 'wonderSplashPath') return 'Art/Wonder Splash';
+  if (normalizedTab === 'improvements' && normalizedGroup === 'iconPaths') return 'Art/Civilopedia/Icons/Buildings';
+  if (normalizedTab === 'technologies' && normalizedGroup === 'iconPaths') return 'Art/tech chooser/Icons';
+  if (normalizedTab === 'units' && normalizedGroup === 'iconPaths') return 'Art/Civilopedia/Icons/Units';
+  if (normalizedTab === 'resources' && normalizedGroup === 'iconPaths') return 'Art/Civilopedia/Icons/Resources';
+  if (normalizedTab === 'governments' && normalizedGroup === 'iconPaths') return 'Art/Civilopedia/Icons/Governments';
+  return 'Art/Civilopedia/Icons';
+}
+
+function sanitizePediaArtFileName(rawName, fallbackStem = 'art') {
+  const base = path.posix.basename(String(rawName || '').replace(/\\/g, '/'))
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/g, '');
+  const stem = base.replace(/\.[^.]+$/i, '').trim().replace(/[. ]+$/g, '') || fallbackStem;
+  const ext = (path.posix.extname(base) || '.pcx').toLowerCase();
+  return `${stem}${ext}`;
+}
+
+function splitPreservedPediaArtSuffix(stem) {
+  const value = String(stem || '');
+  const match = value.match(/^(.+?)([_ -]?)(small|large|sm|lg|32|128)$/i);
+  if (!match) return { base: value, suffix: '' };
+  const separator = match[2] || '_';
+  return { base: match[1] || value, suffix: `${separator}${String(match[3] || '').toLowerCase()}` };
+}
+
+function appendStemNumberBeforePediaArtSuffix(stem, attempt, maxStemLength) {
+  const suffixParts = splitPreservedPediaArtSuffix(stem);
+  const numericSuffix = `_${Number(attempt) + 1}`;
+  const preservedSuffix = suffixParts.suffix.length < maxStemLength ? suffixParts.suffix : '';
+  const baseStem = preservedSuffix ? suffixParts.base : stem;
+  const baseMax = Math.max(1, maxStemLength - numericSuffix.length - preservedSuffix.length);
+  const trimmedBase = baseStem.slice(0, baseMax).replace(/[._ -]+$/g, '') || 'art';
+  return `${trimmedBase}${numericSuffix}${preservedSuffix}`;
+}
+
+function shortenPediaArtRelativePath(rawPath) {
+  const normalized = normalizeAssetReferencePath(rawPath);
+  if (!normalized || getCiv3PediaArtPathLength(normalized) <= CIV3_PEDIA_ART_PATH_MAX_CHARS) return normalized;
+  const dir = path.posix.dirname(normalized);
+  const fileName = sanitizePediaArtFileName(path.posix.basename(normalized), 'art');
+  const ext = path.posix.extname(fileName) || '.pcx';
+  const stem = path.posix.basename(fileName, ext) || 'art';
+  const prefix = dir && dir !== '.' ? `${dir}/` : '';
+  const maxFileNameLength = CIV3_PEDIA_ART_PATH_MAX_CHARS - normalizePediaArtPathForCiv3Length(prefix).length;
+  if (maxFileNameLength <= ext.length + 1) return normalized;
+  const maxStemLength = Math.max(1, maxFileNameLength - ext.length);
+  const suffixParts = splitPreservedPediaArtSuffix(stem);
+  const suffix = suffixParts.suffix.length < maxStemLength ? suffixParts.suffix : '';
+  const baseMax = Math.max(1, maxStemLength - suffix.length);
+  const baseStem = suffix ? suffixParts.base : stem;
+  const trimmedStem = `${baseStem.slice(0, baseMax).replace(/[._ -]+$/g, '') || 'art'}${suffix}`;
+  return normalizeAssetReferencePath(`${prefix}${trimmedStem}${ext}`);
+}
+
+function appendNumericSuffixToPediaArtPath(relPath, attempt) {
+  const normalized = normalizeAssetReferencePath(relPath);
+  const dir = path.posix.dirname(normalized);
+  const ext = path.posix.extname(normalized) || '.pcx';
+  const stem = path.posix.basename(normalized, ext) || 'art';
+  const prefix = dir && dir !== '.' ? `${dir}/` : '';
+  const suffix = `_${Number(attempt) + 1}`;
+  const maxFileNameLength = CIV3_PEDIA_ART_PATH_MAX_CHARS - normalizePediaArtPathForCiv3Length(prefix).length;
+  if (maxFileNameLength > ext.length + suffix.length) {
+    const maxStemLength = Math.max(1, maxFileNameLength - ext.length);
+    const trimmedStem = appendStemNumberBeforePediaArtSuffix(stem, attempt, maxStemLength);
+    return normalizeAssetReferencePath(`${prefix}${trimmedStem}${ext}`);
+  }
+  return shortenPediaArtRelativePath(normalized);
+}
+
+function filesHaveSameBytes(leftPath, rightPath) {
+  const left = String(leftPath || '').trim();
+  const right = String(rightPath || '').trim();
+  if (!left || !right) return false;
+  try {
+    const leftResolved = path.resolve(left);
+    const rightResolved = path.resolve(right);
+    if (leftResolved.toLowerCase() === rightResolved.toLowerCase()) return true;
+    const leftStats = fs.statSync(leftResolved);
+    const rightStats = fs.statSync(rightResolved);
+    if (!leftStats.isFile() || !rightStats.isFile() || leftStats.size !== rightStats.size) return false;
+    return Buffer.compare(fs.readFileSync(leftResolved), fs.readFileSync(rightResolved)) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function buildShortReferenceArtPath(bundle, tabKey, entry, asset, reservedPaths = new Set()) {
+  const fieldKey = String(asset && asset.fieldKey || '').trim() || (asset && asset.group === 'race' ? 'racePaths' : 'iconPaths');
+  const index = Number.isFinite(Number(asset && asset.index)) ? Number(asset.index) : 0;
+  const rawPath = normalizeAssetReferencePath(asset && asset.path);
+  const dir = getExpectedReferenceArtDirectoryForAudit(tabKey, fieldKey, index);
+  const fallbackStem = String(entry && entry.civilopediaKey || entry && entry.name || 'art')
+    .replace(/^(RACE|TECH|GOOD|BLDG|GOVT|PRTO)_/i, '')
+    .toLowerCase();
+  const fileName = sanitizePediaArtFileName(path.posix.basename(rawPath || fallbackStem), fallbackStem);
+  const baseCandidate = shortenPediaArtRelativePath(normalizeAssetReferencePath(`${dir}/${fileName}`));
+  const sourcePath = resolveReferenceArtFile(bundle, entry, rawPath) || '';
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = attempt === 0 ? baseCandidate : appendNumericSuffixToPediaArtPath(baseCandidate, attempt - 1);
+    const candidateKey = candidate.toLowerCase();
+    if (candidateKey === rawPath.toLowerCase()) continue;
+    if (reservedPaths.has(candidateKey)) {
+      const reservedSource = resolveReferenceArtFile(bundle, entry, reservedPaths.get(candidateKey)) || '';
+      if (!filesHaveSameBytes(reservedSource, sourcePath)) continue;
+    }
+    const existingCandidate = resolveReferenceArtFile(bundle, entry, candidate);
+    if (existingCandidate && !filesHaveSameBytes(existingCandidate, sourcePath)) continue;
+    return candidate;
+  }
+  return baseCandidate;
+}
+
 function getReferenceEntryAssetPaths(tabKey, entry) {
   const assetPaths = [];
-  const add = (group, value) => {
+  const add = (group, value, fieldKey = group, index = 0) => {
     const normalized = String(value || '').trim();
     if (!normalized) return;
-    assetPaths.push({ group, path: normalized });
+    assetPaths.push({ group, fieldKey, index, path: normalized });
   };
-  (Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : []).forEach((value) => add('icon', value));
+  (Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : []).forEach((value, index) => add('icon', value, 'iconPaths', index));
   if (String(tabKey || '').trim() === 'improvements' && entry && entry.wonderSplashPath) {
-    add('icon', entry.wonderSplashPath);
+    add('icon', entry.wonderSplashPath, 'wonderSplashPath', 0);
   }
   if (String(tabKey || '').trim() === 'civilizations') {
-    (Array.isArray(entry && entry.racePaths) ? entry.racePaths : []).forEach((value) => add('race', value));
+    (Array.isArray(entry && entry.racePaths) ? entry.racePaths : []).forEach((value, index) => add('race', value, 'racePaths', index));
   }
   return assetPaths;
 }
@@ -1700,10 +1833,50 @@ function auditReferenceArt(bundle, result) {
     entries.forEach((entry, index) => {
       const label = getReferenceEntryDisplayName(tabKey, entry) || `${tabKey} ${index + 1}`;
       const seenPaths = new Set();
-      getReferenceEntryAssetPaths(tabKey, entry).forEach((asset) => {
+      const entryAssetPaths = getReferenceEntryAssetPaths(tabKey, entry);
+      entryAssetPaths.forEach((asset) => {
         const dedupeKey = String(asset && asset.path || '').trim().toLowerCase();
         if (!dedupeKey || seenPaths.has(dedupeKey)) return;
         seenPaths.add(dedupeKey);
+        const pathLength = getCiv3PediaArtPathLength(asset.path);
+        if (pathLength > CIV3_PEDIA_ART_PATH_MAX_CHARS) {
+          const currentPathKey = normalizeAssetReferencePath(asset.path).toLowerCase();
+          const reservedPaths = new Map();
+          entryAssetPaths.forEach((item) => {
+            const itemPath = normalizeAssetReferencePath(item && item.path);
+            const itemKey = itemPath.toLowerCase();
+            if (itemKey && itemKey !== currentPathKey && !reservedPaths.has(itemKey)) {
+              reservedPaths.set(itemKey, itemPath);
+            }
+          });
+          const replacementPath = buildShortReferenceArtPath(bundle, tabKey, entry, asset, reservedPaths);
+          const replacementLength = getCiv3PediaArtPathLength(replacementPath);
+          const sourcePath = resolveReferenceArtFile(bundle, entry, asset.path) || '';
+          const action = replacementPath
+            && replacementLength <= CIV3_PEDIA_ART_PATH_MAX_CHARS
+            && replacementPath.toLowerCase() !== normalizeAssetReferencePath(asset.path).toLowerCase()
+            ? {
+              type: 'shorten-reference-art-path',
+              tabKey,
+              group: String(asset.fieldKey || '').trim() || 'iconPaths',
+              index: Number.isFinite(Number(asset.index)) ? Number(asset.index) : 0,
+              civilopediaKey: String(entry && entry.civilopediaKey || ''),
+              currentPath: String(asset.path || ''),
+              replacementPath,
+              sourcePath: String(sourcePath || ''),
+              label: `Shorten to ${replacementPath}`,
+              description: `Stage this art under ${replacementPath}.`
+            }
+            : null;
+          addSectionIssue(
+            result,
+            tabKey,
+            index,
+            `${label}: Art path "${asset.path}" is ${pathLength} characters; Civ3 may truncate PediaIcons art paths after ${CIV3_PEDIA_ART_PATH_MAX_CHARS} characters.`,
+            'reference-art-path-too-long',
+            action ? { action } : {}
+          );
+        }
         const cacheKey = JSON.stringify({
           civ3Path: bundle && bundle.civ3Path,
           scenarioPath: String(entry && entry._importScenarioPath || bundle && bundle.scenarioPath || bundle && bundle.scenarioInputPath || ''),
@@ -1779,6 +1952,14 @@ function readAuditTextFile(filePath) {
 
 function normalizePediaIconLineForAudit(line) {
   return String(line || '').trim().replace(/\//g, '\\').toLowerCase();
+}
+
+function normalizeAssetReferencePath(rawPath) {
+  return String(rawPath || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\/g, '/')
+    .replace(/^\.?[\\/]+/, '');
 }
 
 function collectPediaIconsKeys(doc, predicate) {

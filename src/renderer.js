@@ -355,6 +355,8 @@ const state = {
   }
 };
 
+const CIV3_PEDIA_ART_PATH_MAX_CHARS = 65;
+
 const TAB_SEARCH_RENDER_DELAY_MS = 120;
 const mapCore = (typeof window !== 'undefined' && window.MapEditorCore) ? window.MapEditorCore : null;
 const mapRenderPlanner = (typeof window !== 'undefined' && window.MapRenderPlanner) ? window.MapRenderPlanner : null;
@@ -38372,6 +38374,38 @@ function sanitizePendingArtPcxFileName(rawName) {
   return `${stem}.pcx`;
 }
 
+function getCiv3PediaArtPathLength(rawPath) {
+  return String(rawPath || '').trim().replace(/^["']|["']$/g, '').replace(/\//g, '\\').length;
+}
+
+function splitPreservedPediaArtSuffix(stem) {
+  const value = String(stem || '');
+  const match = value.match(/^(.+?)([_ -]?)(small|large|sm|lg|32|128)$/i);
+  if (!match) return { base: value, suffix: '' };
+  const separator = match[2] || '_';
+  return { base: match[1] || value, suffix: `${separator}${String(match[3] || '').toLowerCase()}` };
+}
+
+function shortenPediaArtRelativePathForUi(rawPath) {
+  const normalized = normalizeRelativePath(rawPath);
+  if (!normalized || getCiv3PediaArtPathLength(normalized) <= CIV3_PEDIA_ART_PATH_MAX_CHARS) return normalized;
+  const dir = getParentPath(normalized);
+  const fileName = getPathBaseName(normalized);
+  const extMatch = fileName.match(/(\.[^.]+)$/);
+  const ext = extMatch ? extMatch[1] : '.pcx';
+  const stem = fileName.replace(/\.[^.]+$/i, '') || 'art';
+  const prefix = dir ? `${dir}/` : '';
+  const maxFileNameLength = CIV3_PEDIA_ART_PATH_MAX_CHARS - getCiv3PediaArtPathLength(prefix);
+  if (maxFileNameLength <= ext.length + 1) return normalized;
+  const maxStemLength = Math.max(1, maxFileNameLength - ext.length);
+  const suffixParts = splitPreservedPediaArtSuffix(stem);
+  const suffix = suffixParts.suffix.length < maxStemLength ? suffixParts.suffix : '';
+  const baseMax = Math.max(1, maxStemLength - suffix.length);
+  const baseStem = suffix ? suffixParts.base : stem;
+  const trimmedStem = `${baseStem.slice(0, baseMax).replace(/[._ -]+$/g, '') || 'art'}${suffix}`;
+  return normalizeRelativePath(`${prefix}${trimmedStem}${ext}`);
+}
+
 function sanitizePendingLeaderFlcFileName(rawName) {
   const base = getPathBaseName(String(rawName || '').trim())
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
@@ -38397,6 +38431,36 @@ function setReferenceArtSlotDestinationPath(entry, slot, nextPathRaw) {
   if (key === 'iconPaths' && slot.index === 0) entry.thumbPath = nextPath;
 }
 
+function setMatchingReferenceArtSlotDestinationPaths(entry, slot, currentPathRaw, nextPathRaw) {
+  if (!entry || !slot) return 0;
+  const nextPath = normalizeAssetReferencePath(toPediaRelativeAssetPath(nextPathRaw || ''));
+  const currentPath = normalizeAssetReferencePath(currentPathRaw || '');
+  if (!nextPath || !currentPath) return 0;
+  if (slot.group === 'wonderSplashPath') {
+    const existingPath = normalizeAssetReferencePath(entry.wonderSplashPath || '');
+    if (existingPath.toLowerCase() !== currentPath.toLowerCase()) return 0;
+    entry.wonderSplashPath = nextPath;
+    return 1;
+  }
+  const key = slot.group === 'racePaths' ? 'racePaths' : 'iconPaths';
+  const arr = Array.isArray(entry[key]) ? [...entry[key]] : [];
+  let changedCount = 0;
+  arr.forEach((value, index) => {
+    const valuePath = normalizeAssetReferencePath(value || '');
+    if (valuePath.toLowerCase() !== currentPath.toLowerCase()) return;
+    arr[index] = nextPath;
+    changedCount += 1;
+  });
+  if (changedCount <= 0) {
+    arr[slot.index] = nextPath;
+    changedCount = 1;
+  }
+  while (arr.length > 0 && !String(arr[arr.length - 1] || '').trim()) arr.pop();
+  entry[key] = arr;
+  if (key === 'iconPaths' && arr[0]) entry.thumbPath = arr[0];
+  return changedCount;
+}
+
 function pickScenarioReferenceArtTargetRelativePathForUi({ tabKey, slot, entry, originalPath, sourcePath }) {
   const normalizedOriginal = normalizeAssetReferencePath(originalPath);
   const normalizedSource = normalizeAssetReferencePath(sourcePath);
@@ -38405,24 +38469,25 @@ function pickScenarioReferenceArtTargetRelativePathForUi({ tabKey, slot, entry, 
   const pcxName = pcxFileNameForArtSlot(baseName, tabKey, slot, entry);
   const group = String(slot && slot.group || '').trim();
   const index = Number(slot && slot.index);
+  const fit = (relativePath) => shortenPediaArtRelativePathForUi(relativePath);
   if (normalizedOriginal && !isAbsoluteAssetPath(normalizedOriginal)) {
     const originalDir = getParentPath(normalizedOriginal);
     const shouldPreserveOriginalDir = originalDir && isExpectedReferenceArtDirectoryForUi(tabKey, group, index, originalDir);
     if (shouldPreserveOriginalDir) {
-      return normalizeRelativePath(`${originalDir}/${pcxName}`);
+      return fit(`${originalDir}/${pcxName}`);
     }
   }
-  if (tabKey === 'civilizations' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Races/${pcxName}`);
+  if (tabKey === 'civilizations' && group === 'iconPaths') return fit(`Art/Civilopedia/Icons/Races/${pcxName}`);
   if (tabKey === 'civilizations' && group === 'racePaths') {
-    return normalizeRelativePath(Number(index) === 0 ? `Art/Leaderheads/${pcxName}` : `Art/Advisors/${pcxName}`);
+    return fit(Number(index) === 0 ? `Art/Leaderheads/${pcxName}` : `Art/Advisors/${pcxName}`);
   }
-  if (tabKey === 'improvements' && group === 'wonderSplashPath') return normalizeRelativePath(`Art/Wonder Splash/${pcxName}`);
-  if (tabKey === 'improvements' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Buildings/${pcxName}`);
-  if (tabKey === 'technologies' && group === 'iconPaths') return normalizeRelativePath(`Art/tech chooser/Icons/${pcxName}`);
-  if (tabKey === 'units' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Units/${pcxName}`);
-  if (tabKey === 'resources' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Resources/${pcxName}`);
-  if (tabKey === 'governments' && group === 'iconPaths') return normalizeRelativePath(`Art/Civilopedia/Icons/Governments/${pcxName}`);
-  return normalizeRelativePath(`Art/Civilopedia/Icons/${pcxName}`);
+  if (tabKey === 'improvements' && group === 'wonderSplashPath') return fit(`Art/Wonder Splash/${pcxName}`);
+  if (tabKey === 'improvements' && group === 'iconPaths') return fit(`Art/Civilopedia/Icons/Buildings/${pcxName}`);
+  if (tabKey === 'technologies' && group === 'iconPaths') return fit(`Art/tech chooser/Icons/${pcxName}`);
+  if (tabKey === 'units' && group === 'iconPaths') return fit(`Art/Civilopedia/Icons/Units/${pcxName}`);
+  if (tabKey === 'resources' && group === 'iconPaths') return fit(`Art/Civilopedia/Icons/Resources/${pcxName}`);
+  if (tabKey === 'governments' && group === 'iconPaths') return fit(`Art/Civilopedia/Icons/Governments/${pcxName}`);
+  return fit(`Art/Civilopedia/Icons/${pcxName}`);
 }
 
 function getExpectedReferenceArtDirectoryForUi(tabKey, group, index) {
@@ -64914,7 +64979,8 @@ async function runBundleAudit(payload) {
 
 async function handleLoadAuditAction(action) {
   if (!action || typeof action !== 'object') return;
-  if (String(action.type || '') !== 'copy-scenario-pediaicons-block') return;
+  const actionType = String(action.type || '');
+  if (actionType !== 'copy-scenario-pediaicons-block' && actionType !== 'shorten-reference-art-path') return;
   const civilopediaKey = String(action.civilopediaKey || '').trim();
   const targetKey = civilopediaKey.toUpperCase();
   const tabKey = String(action.tabKey || 'improvements').trim();
@@ -64935,6 +65001,49 @@ async function handleLoadAuditAction(action) {
     ) || ''
   ).trim().toUpperCase() === targetKey);
   const entry = entryIndex >= 0 ? entries[entryIndex] : null;
+  if (actionType === 'shorten-reference-art-path') {
+    if (!entry) {
+      setStatus(`Could not find the ${displayType} entry for this art path warning.`, true);
+      return;
+    }
+    const group = String(action.group || 'iconPaths').trim();
+    const slotIndex = Number.isFinite(Number(action.index)) ? Number(action.index) : 0;
+    const currentPath = normalizeAssetReferencePath(action.currentPath || '');
+    const replacementPath = normalizeAssetReferencePath(action.replacementPath || '');
+    if (!group || !currentPath || !replacementPath) {
+      setStatus('Could not stage the art path repair; the warning was missing path details.', true);
+      return;
+    }
+    const slot = { group, index: slotIndex, path: currentPath };
+    const pendingSource = getPendingReferenceArtSource(entry, slot);
+    const pendingConversion = getPendingReferenceArtConversion(entry, slot);
+    let resolvedSource = '';
+    if (!pendingSource && !pendingConversion) {
+      resolvedSource = normalizeAssetReferencePath(action.sourcePath || '');
+      if (!resolvedSource || !isAbsoluteAssetPath(resolvedSource)) {
+        resolvedSource = await resolveExistingAssetPath(currentPath);
+      }
+      if (!resolvedSource) {
+        setStatus(`Could not stage "${replacementPath}" because the current art file was not found on disk.`, true);
+        return;
+      }
+    }
+    rememberUndoSnapshotForKey(buildReferenceEntryUndoKey(tabKey, entry, entryIndex));
+    if (resolvedSource) setPendingReferenceArtSource(entry, slot, resolvedSource);
+    const changedCount = setMatchingReferenceArtSlotDestinationPaths(entry, slot, currentPath, replacementPath);
+    entry.forcePediaIconsBlockWrite = true;
+    dismissLoadAuditSectionEntry(tabKey, entryIndex, (auditEntry) => (
+      String(auditEntry && auditEntry.code || '') === 'reference-art-path-too-long'
+      && String(auditEntry && auditEntry.action && auditEntry.action.currentPath || '').trim().toLowerCase() === currentPath.toLowerCase()
+    ));
+    state.referenceSelection[tabKey] = entryIndex;
+    state.activeTab = tabKey;
+    setDirty(true);
+    renderTabs();
+    renderActiveTab({ preserveTabScroll: true });
+    setStatus(`Staged shorter art path "${replacementPath}" for ${changedCount || 1} matching path${(changedCount || 1) === 1 ? '' : 's'}. Use Save to copy the file and update PediaIcons.txt.`);
+    return;
+  }
   if (entry && tabKey === 'technologies' && (!Array.isArray(entry.iconPaths) || entry.iconPaths.length <= 0)) {
     applyBlankTechIconPlaceholders(entry, civilopediaKey);
   }
