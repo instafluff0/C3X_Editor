@@ -1043,7 +1043,7 @@ function buildAppMenu() {
             label: 'Resources',
             submenu: [
               {
-                label: 'Automatically Add Imported Resource Icons to resources.pcx',
+                label: 'Automatically Add Imported Resource Art',
                 type: 'checkbox',
                 checked: currentAutoAddImportedResourceIcons,
                 click: (item) => sendAutoAddImportedResourceIconsSelection(item && item.checked)

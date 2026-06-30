@@ -92,7 +92,7 @@ const state = {
   referenceFilter: {},
   referenceEraFilter: {},
   referenceImprovementKind: {},
-  referenceResourceSort: {},
+  referenceResourceTypeFilter: {},
   referenceUnitSort: {},
   unitTableView: {
     isOpen: false,
@@ -7302,15 +7302,45 @@ function normalizeMainUnitReferenceSort(value) {
   return mode === 'az' || mode === 'za' ? mode : 'ingame';
 }
 
-function normalizeMainResourceReferenceSort(value) {
-  const mode = String(value || 'ingame').trim().toLowerCase();
-  return mode === 'type' ? mode : 'ingame';
+function getResourceReferenceTypeFilterOptions() {
+  return [
+    { value: 'bonus', label: 'Bonus' },
+    { value: 'luxury', label: 'Luxury' },
+    { value: 'strategic', label: 'Strategic' }
+  ];
 }
 
-function sanitizeReferenceResourceSortMap(mapLike) {
+function getDefaultResourceReferenceTypeFilterValues() {
+  return getResourceReferenceTypeFilterOptions().map((opt) => opt.value);
+}
+
+function normalizeResourceReferenceTypeFilterValues(values, options = {}) {
+  const validValues = getDefaultResourceReferenceTypeFilterValues();
+  const valid = new Set(validValues);
+  if (values == null && options && options.defaultToAll) return validValues;
+  const source = Array.isArray(values)
+    ? values
+    : (typeof values === 'string' ? values.split(',') : []);
+  return Array.from(new Set(source
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter((value) => valid.has(value))));
+}
+
+function getResourceReferenceTypeFilterValuesForTab(tabKey) {
+  const key = String(tabKey || '').trim();
+  if (!state.referenceResourceTypeFilter || typeof state.referenceResourceTypeFilter !== 'object') {
+    state.referenceResourceTypeFilter = {};
+  }
+  const hasValue = Object.prototype.hasOwnProperty.call(state.referenceResourceTypeFilter, key);
+  const selected = normalizeResourceReferenceTypeFilterValues(state.referenceResourceTypeFilter[key], { defaultToAll: !hasValue });
+  state.referenceResourceTypeFilter[key] = selected;
+  return selected;
+}
+
+function sanitizeReferenceResourceTypeFilterMap(mapLike) {
   const next = cloneStateMap(mapLike);
   if (Object.prototype.hasOwnProperty.call(next, 'resources')) {
-    next.resources = normalizeMainResourceReferenceSort(next.resources);
+    next.resources = normalizeResourceReferenceTypeFilterValues(next.resources);
   }
   return next;
 }
@@ -7388,7 +7418,7 @@ function captureViewSnapshot() {
     referenceFilter: cloneStateMap(state.referenceFilter),
     referenceEraFilter: cloneStateMap(state.referenceEraFilter),
     referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
-    referenceResourceSort: sanitizeReferenceResourceSortMap(state.referenceResourceSort),
+    referenceResourceTypeFilter: sanitizeReferenceResourceTypeFilterMap(state.referenceResourceTypeFilter),
     referenceUnitSort: sanitizeReferenceUnitSortMap(state.referenceUnitSort),
     unitTableView: sanitizeUnitTableView(state.unitTableView),
     unitAvailabilityView: sanitizeUnitAvailabilityView(state.unitAvailabilityView),
@@ -7592,7 +7622,7 @@ function applyViewSnapshot(snapshot) {
   state.referenceFilter = cloneStateMap(snapshot.referenceFilter);
   state.referenceEraFilter = cloneStateMap(snapshot.referenceEraFilter);
   state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
-  state.referenceResourceSort = sanitizeReferenceResourceSortMap(snapshot.referenceResourceSort);
+  state.referenceResourceTypeFilter = sanitizeReferenceResourceTypeFilterMap(snapshot.referenceResourceTypeFilter);
   state.referenceUnitSort = sanitizeReferenceUnitSortMap(snapshot.referenceUnitSort);
   state.unitTableView = sanitizeUnitTableView(snapshot.unitTableView);
   state.unitAvailabilityView = sanitizeUnitAvailabilityView(snapshot.unitAvailabilityView);
@@ -13792,6 +13822,21 @@ async function refreshPendingImportedUnitIconAssignments(tab) {
     if (String(iconField.value) !== String(targetIconIndex)) {
       iconField.value = String(targetIconIndex);
       changed = true;
+    }
+    const pendingLuxury = entry._pendingImportedLuxuryIcon && typeof entry._pendingImportedLuxuryIcon === 'object'
+      ? entry._pendingImportedLuxuryIcon
+      : null;
+    if (isLuxuryResourceEntry(entry) && pendingLuxury) {
+      const sourceLuxuryIndex = parseIntLoose(pendingLuxury.sourceIconIndex, NaN);
+      const targetLuxuryIndex = getResourceLuxuryOrdinal(resourceTab, entry);
+      if (Number.isFinite(sourceLuxuryIndex) && sourceLuxuryIndex >= 0 && Number.isFinite(targetLuxuryIndex) && targetLuxuryIndex >= 0) {
+        if (String(pendingLuxury.targetIconIndex) !== String(targetLuxuryIndex)) changed = true;
+        entry._pendingImportedLuxuryIcon = {
+          sourceIconIndex: sourceLuxuryIndex,
+          targetIconIndex: targetLuxuryIndex,
+          importScenarioPath: String(op.importArtFrom || '')
+        };
+      }
     }
   }
   return changed;
@@ -26261,6 +26306,37 @@ function getActiveImportedIconOps(tab) {
   return Array.from(activeByRef.values());
 }
 
+function getResourceTypeValue(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'type');
+  const raw = field ? (field.value == null ? field.originalValue : field.value) : '';
+  const parsed = parseIntLoose(raw, NaN);
+  if (Number.isFinite(parsed)) return parsed;
+  const text = String(raw || '').trim().toLowerCase();
+  if (text.includes('luxury')) return 1;
+  if (text.includes('strategic')) return 2;
+  if (text.includes('bonus')) return 0;
+  return NaN;
+}
+
+function isLuxuryResourceEntry(entry) {
+  return getResourceTypeValue(entry) === 1;
+}
+
+function getResourceLuxuryOrdinal(resourceTab, entryOrRef) {
+  const entries = Array.isArray(resourceTab && resourceTab.entries) ? resourceTab.entries : [];
+  const targetRef = typeof entryOrRef === 'string'
+    ? String(entryOrRef || '').trim().toUpperCase()
+    : String(entryOrRef && entryOrRef.civilopediaKey || '').trim().toUpperCase();
+  let ordinal = 0;
+  for (const entry of entries) {
+    if (!isLuxuryResourceEntry(entry)) continue;
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (entry === entryOrRef || (targetRef && ref === targetRef)) return ordinal;
+    ordinal += 1;
+  }
+  return -1;
+}
+
 function getReferenceIconIndexAllocationFloor(tab, fieldKey, excludedRefs = new Set()) {
   let maxIndex = -1;
   (Array.isArray(tab && tab.entries) ? tab.entries : []).forEach((entry) => {
@@ -26398,6 +26474,76 @@ function getResourceAtlasMetrics(preview) {
 function drawResourceIconToCanvas(preview, spriteIndex, canvas) {
   if (!preview || !canvas || !Number.isFinite(spriteIndex) || spriteIndex < 0) return false;
   const metrics = getResourceAtlasMetrics(preview);
+  if (!metrics) return false;
+  const { atlas, cols, rows, cellW, cellH } = metrics;
+  const row = Math.floor(spriteIndex / cols);
+  const col = spriteIndex % cols;
+  if (row >= rows) return false;
+  const sx = col * cellW;
+  const sy = row * cellH;
+  if (sx + cellW > atlas.width || sy + cellH > atlas.height) return false;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(atlas, sx, sy, cellW, cellH, 0, 0, canvas.width, canvas.height);
+  return true;
+}
+
+function getLuxuryIconsSmallAtlasIndices(preview) {
+  if (!preview || !preview.indicesBase64) return null;
+  if (!preview._cachedLuxuryIconIndexBytes) preview._cachedLuxuryIconIndexBytes = fromBase64ToUint8(preview.indicesBase64);
+  return preview._cachedLuxuryIconIndexBytes;
+}
+
+function detectLuxuryIconsSmallAtlasRowsFromPreview(preview, cols, cellW, cellH) {
+  const indices = getLuxuryIconsSmallAtlasIndices(preview);
+  const width = Number(preview && preview.width);
+  const height = Number(preview && preview.height);
+  if (!indices || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return Math.max(1, Math.floor((height || 0) / cellH));
+  }
+  const guideIndex = indices[0];
+  const guideXs = [];
+  for (let col = 0; col <= cols; col += 1) {
+    const x = col * cellW;
+    if (x >= 0 && x < width) guideXs.push(x);
+  }
+  let rows = 0;
+  const maxRows = Math.floor(height / cellH);
+  for (let row = 0; row < maxRows; row += 1) {
+    const startY = row * cellH;
+    let samples = 0;
+    let matches = 0;
+    for (let y = startY; y < startY + cellH && y < height; y += 1) {
+      for (const x of guideXs) {
+        samples += 1;
+        if (indices[y * width + x] === guideIndex) matches += 1;
+      }
+    }
+    if (samples > 0 && matches / samples >= 0.65) {
+      rows += 1;
+      continue;
+    }
+    break;
+  }
+  return Math.max(1, rows);
+}
+
+function getLuxuryIconsSmallAtlasMetrics(preview) {
+  const atlas = rgbaToCanvas(preview);
+  if (!atlas || !atlas.width || !atlas.height) return null;
+  const cols = 8;
+  const cellW = 22;
+  const cellH = 22;
+  if (atlas.width < cols * cellW) return null;
+  const rows = detectLuxuryIconsSmallAtlasRowsFromPreview(preview, cols, cellW, cellH);
+  return { atlas, cols, rows, cellW, cellH };
+}
+
+function drawLuxuryIconToCanvas(preview, spriteIndex, canvas) {
+  if (!preview || !canvas || !Number.isFinite(spriteIndex) || spriteIndex < 0) return false;
+  const metrics = getLuxuryIconsSmallAtlasMetrics(preview);
   if (!metrics) return false;
   const { atlas, cols, rows, cellW, cellH } = metrics;
   const row = Math.floor(spriteIndex / cols);
@@ -26600,6 +26746,18 @@ function hasPendingImportedResourceIconMeta(entry) {
   return !!(entry && entry._pendingImportedResourceIcon && typeof entry._pendingImportedResourceIcon === 'object');
 }
 
+function getPendingImportedLuxuryIcon(entry) {
+  const pending = entry && entry._pendingImportedLuxuryIcon && typeof entry._pendingImportedLuxuryIcon === 'object'
+    ? entry._pendingImportedLuxuryIcon
+    : null;
+  if (!pending) return null;
+  const sourceIconIndex = Number.parseInt(String(pending.sourceIconIndex), 10);
+  const targetIconIndex = Number.parseInt(String(pending.targetIconIndex), 10);
+  if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) return null;
+  if (!Number.isFinite(targetIconIndex) || targetIconIndex < 0) return null;
+  return { ...pending, sourceIconIndex, targetIconIndex };
+}
+
 function getPendingImportedIconForTabEntry(tabKey, entry) {
   if (tabKey === 'units') return getPendingImportedUnitIcon(entry);
   if (tabKey === 'resources') return getPendingImportedResourceIcon(entry);
@@ -26687,6 +26845,16 @@ async function drawPendingImportedResourceIconToCanvas(entry, canvas) {
   const pending = getPendingImportedResourceIcon(entry);
   if (!pending || !canvas) return false;
   return drawPendingImportedResourceIconItemToCanvas({ entry, pending }, canvas);
+}
+
+async function drawPendingImportedLuxuryIconToCanvas(entry, canvas) {
+  const pending = getPendingImportedLuxuryIcon(entry);
+  if (!pending || !canvas) return false;
+  const sourcePreview = await getLuxuryIconsSmallAtlasPreview({
+    scenarioPath: String(pending.importScenarioPath || entry && entry._importScenarioPath || ''),
+    scenarioPaths: Array.isArray(entry && entry._importScenarioPaths) ? entry._importScenarioPaths : []
+  });
+  return drawLuxuryIconToCanvas(sourcePreview, pending.sourceIconIndex, canvas);
 }
 
 function getPendingImportedBuildingCityIconMeta(entry) {
@@ -26914,6 +27082,28 @@ async function getResourcesAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
     return res;
   }
   return null;
+}
+
+async function getLuxuryIconsSmallAtlasPreview({ scenarioPath, scenarioPaths } = {}) {
+  const resolvedScenarioPath = String(
+    typeof scenarioPath === 'string' ? scenarioPath : getActiveScenarioPreviewPath()
+  );
+  const resolvedScenarioPaths = Array.isArray(scenarioPaths) ? scenarioPaths : getScenarioPreviewPaths();
+  const cacheKey = JSON.stringify({
+    kind: 'luxuryicons-small-atlas',
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths.join('|')
+  });
+  const res = await getOrStartPreviewRequest(cacheKey, () => window.c3xManager.getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths,
+    assetPath: 'Art/city screen/luxuryicons_small.pcx',
+    options: { returnIndexed: true }
+  }));
+  return res && res.ok ? res : null;
 }
 
 async function getBuildingCityAtlasPreview({ size = 'large', scenarioPath, scenarioPaths } = {}) {
@@ -33176,13 +33366,6 @@ function getUnitReferenceSortOptions(options = {}) {
   return out;
 }
 
-function getResourceReferenceSortOptions() {
-  return [
-    { value: 'ingame', label: 'In-game order' },
-    { value: 'type', label: 'Type' }
-  ];
-}
-
 function getResourceReferenceInGameSortIndex(entry) {
   const pendingRaw = entry && entry.pendingBiqIndex;
   const raw = pendingRaw == null || pendingRaw === ''
@@ -33213,6 +33396,14 @@ function getResourceReferenceTypeSortOrder(entry) {
   if (raw === '1' || raw.startsWith('luxury')) return 1;
   if (raw === '2' || raw.startsWith('strategic')) return 2;
   return 99;
+}
+
+function getResourceReferenceTypeFilterKey(entry) {
+  const order = getResourceReferenceTypeSortOrder(entry);
+  if (order === 0) return 'bonus';
+  if (order === 1) return 'luxury';
+  if (order === 2) return 'strategic';
+  return '';
 }
 
 function compareResourceReferenceTypeOrder(a, b) {
@@ -38250,6 +38441,70 @@ function renderSimpleIconArtEditor({ tabKey, entry, referenceEditable, onChanged
   return wrap;
 }
 
+function renderResourceLuxuryIconPreview(entry) {
+  if (!isLuxuryResourceEntry(entry)) return null;
+  const resourceTab = state.bundle && state.bundle.tabs ? state.bundle.tabs.resources : null;
+  const luxuryIndex = getResourceLuxuryOrdinal(resourceTab, entry);
+  const card = document.createElement('div');
+  card.className = 'unit-art-index-card resource-luxury-icon-card';
+  const label = document.createElement('label');
+  label.className = 'field-meta';
+  label.textContent = 'City Luxury Icon';
+  card.appendChild(label);
+
+  const previewRow = document.createElement('div');
+  previewRow.className = 'path-input-with-btn unit-icon-index-picker luxury-icon-preview';
+  const previewHost = document.createElement('span');
+  previewHost.className = 'entry-thumb';
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  canvas.className = 'entry-thumb-canvas';
+  previewHost.appendChild(canvas);
+  const ordinal = document.createElement('span');
+  ordinal.className = 'field-meta';
+  ordinal.textContent = Number.isFinite(luxuryIndex) && luxuryIndex >= 0
+    ? `Luxury slot ${luxuryIndex}`
+    : 'Luxury slot unavailable';
+  previewRow.appendChild(previewHost);
+  previewRow.appendChild(ordinal);
+  card.appendChild(previewRow);
+
+  const warn = document.createElement('div');
+  warn.className = 'unit-icon-field-warning hidden';
+  card.appendChild(warn);
+
+  const showWarning = (text) => {
+    warn.textContent = text;
+    warn.classList.remove('hidden');
+  };
+
+  if (!Number.isFinite(luxuryIndex) || luxuryIndex < 0) {
+    showWarning('Could not determine this resource\'s Luxury order in the BIQ.');
+    return card;
+  }
+
+  const pending = getPendingImportedLuxuryIcon(entry);
+  const drawPromise = pending
+    ? drawPendingImportedLuxuryIconToCanvas(entry, canvas)
+    : getLuxuryIconsSmallAtlasPreview().then((preview) => drawLuxuryIconToCanvas(preview, luxuryIndex, canvas));
+  drawPromise.then((ok) => {
+    if (!card.isConnected) return;
+    if (!ok) {
+      previewHost.innerHTML = '';
+      previewHost.textContent = '#';
+      showWarning('Could not render this Luxury resource in luxuryicons_small.pcx.');
+    }
+  }).catch(() => {
+    if (!card.isConnected) return;
+    previewHost.innerHTML = '';
+    previewHost.textContent = '#';
+    showWarning('Could not load luxuryicons_small.pcx for this Luxury resource.');
+  });
+
+  return card;
+}
+
 function renderResourceArtEditor(entry, referenceEditable, onChanged) {
   const entryUndoKey = buildReferenceEntryUndoKey('resources', entry);
   const wrap = renderSimpleIconArtEditor({
@@ -38304,6 +38559,8 @@ function renderResourceArtEditor(entry, referenceEditable, onChanged) {
     }));
     wrap.appendChild(indexCard);
   }
+  const luxuryCard = renderResourceLuxuryIconPreview(entry);
+  if (luxuryCard) wrap.appendChild(luxuryCard);
   return wrap;
 }
 
@@ -40349,6 +40606,7 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     delete entry._importScenarioPath;
     delete entry._importScenarioPaths;
     delete entry._pendingImportedResourceIcon;
+    delete entry._pendingImportedLuxuryIcon;
     delete entry._pendingImportedUnitIcon;
     delete entry._pendingImportedBuildingCityIcon;
     entry.iconPaths = [];
@@ -40595,11 +40853,26 @@ async function loadImportEntriesForTab(tabKey, source) {
       name: String(record && (record.name || record.eraName || record.description) || '').trim()
     })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && (item.civilopediaKey || item.name));
   };
+  const isSourceLuxuryResource = (entry) => {
+    const field = getBiqRecordFieldByBaseKey(entry, 'type');
+    const raw = field ? (field.value == null ? field.originalValue : field.value) : '';
+    const text = String(raw || '').trim().toLowerCase();
+    const parsed = Number.parseInt(text, 10);
+    return parsed === 1 || text.includes('luxury');
+  };
+  let sourceLuxuryOrdinal = -1;
   const entries = tabKey === 'resources'
-    ? srcTab.entries.map((entry) => ({
-        ...entry,
-        _importResourceTerrainMembership: buildImportedResourceTerrainMembership(loaded, entry)
-      }))
+    ? srcTab.entries.map((entry) => {
+        const next = {
+          ...entry,
+          _importResourceTerrainMembership: buildImportedResourceTerrainMembership(loaded, entry)
+        };
+        if (isSourceLuxuryResource(entry)) {
+          sourceLuxuryOrdinal += 1;
+          next._importResourceLuxuryOrdinal = sourceLuxuryOrdinal;
+        }
+        return next;
+      })
     : srcTab.entries;
   return {
     entries,
@@ -41875,22 +42148,27 @@ function renderReferenceTab(tab, tabKey) {
     kindFilter.value = state.referenceImprovementKind[tabKey] || 'all';
     controlsRight.appendChild(kindFilter);
   }
-  let resourceSortSelect = null;
+  let resourceTypeFilterControl = null;
   let unitSortSelect = null;
   let unitAvailabilityBtn = null;
   let unitTableBtn = null;
   if (tabKey === 'resources') {
-    resourceSortSelect = document.createElement('select');
-    getResourceReferenceSortOptions().forEach((opt) => {
-      const o = document.createElement('option');
-      o.value = opt.value;
-      o.textContent = opt.label;
-      resourceSortSelect.appendChild(o);
+    resourceTypeFilterControl = document.createElement('div');
+    resourceTypeFilterControl.className = 'resource-type-filter segmented-multi-list';
+    resourceTypeFilterControl.setAttribute('aria-label', 'Resource type filter');
+    const selectedTypes = getResourceReferenceTypeFilterValuesForTab(tabKey);
+    getResourceReferenceTypeFilterOptions().forEach((opt) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'segmented-multi-btn resource-type-filter-btn';
+      btn.dataset.resourceType = opt.value;
+      btn.textContent = opt.label;
+      btn.classList.toggle('active', selectedTypes.includes(opt.value));
+      btn.setAttribute('aria-pressed', selectedTypes.includes(opt.value) ? 'true' : 'false');
+      btn.title = `Toggle ${opt.label} resources`;
+      resourceTypeFilterControl.appendChild(btn);
     });
-    const mainResourceSort = normalizeMainResourceReferenceSort(state.referenceResourceSort[tabKey]);
-    state.referenceResourceSort[tabKey] = mainResourceSort;
-    resourceSortSelect.value = mainResourceSort;
-    controlsRight.appendChild(resourceSortSelect);
+    controlsRight.appendChild(resourceTypeFilterControl);
   }
   if (tabKey === 'units') {
     unitSortSelect = document.createElement('select');
@@ -42107,6 +42385,14 @@ function renderReferenceTab(tab, tabKey) {
           if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
             newEntry._pendingImportedResourceIcon = {
               sourceIconIndex,
+              targetIconIndex: null,
+              importScenarioPath: String(result.importFilePath || '')
+            };
+          }
+          const sourceLuxuryIndex = parseIntLoose(result.importedEntry && result.importedEntry._importResourceLuxuryOrdinal, NaN);
+          if (isLuxuryResourceEntry(result.importedEntry) && Number.isFinite(sourceLuxuryIndex) && sourceLuxuryIndex >= 0) {
+            newEntry._pendingImportedLuxuryIcon = {
+              sourceIconIndex: sourceLuxuryIndex,
               targetIconIndex: null,
               importScenarioPath: String(result.importFilePath || '')
             };
@@ -42980,20 +43266,18 @@ function renderReferenceTab(tab, tabKey) {
           if (String(entryEra) !== selectedEra) return false;
         }
       }
+      if (tabKey === 'resources') {
+        const selectedTypes = getResourceReferenceTypeFilterValuesForTab(tabKey);
+        if (!selectedTypes.includes(getResourceReferenceTypeFilterKey(entry))) return false;
+      }
       return true;
     });
 
   if (tabKey === 'resources') {
-    const resourceSort = normalizeMainResourceReferenceSort(state.referenceResourceSort[tabKey]);
-    state.referenceResourceSort[tabKey] = resourceSort;
-    if (resourceSort === 'ingame') {
-      filteredEntries.sort((a, b) => {
-        const order = compareResourceReferenceInGameOrder(a.entry, b.entry, { preferUnsavedNew: true });
-        return order || (a.baseIndex - b.baseIndex);
-      });
-    } else if (resourceSort === 'type') {
-      filteredEntries.sort((a, b) => compareResourceReferenceTypeOrder(a.entry, b.entry) || (a.baseIndex - b.baseIndex));
-    }
+    filteredEntries.sort((a, b) => {
+      const order = compareResourceReferenceInGameOrder(a.entry, b.entry, { preferUnsavedNew: true });
+      return order || (a.baseIndex - b.baseIndex);
+    });
   }
 
   if (tabKey === 'units') {
@@ -43349,7 +43633,7 @@ function renderReferenceTab(tab, tabKey) {
     const hasFilter = !!String(state.referenceFilter[tabKey] || '').trim()
       || ((tabKey === 'technologies' || tabKey === 'units') && (state.referenceEraFilter[tabKey] || 'all') !== 'all')
       || (tabKey === 'improvements' && (state.referenceImprovementKind[tabKey] || 'all') !== 'all')
-      || (tabKey === 'resources' && normalizeMainResourceReferenceSort(state.referenceResourceSort[tabKey]) !== 'ingame')
+      || (tabKey === 'resources' && getResourceReferenceTypeFilterValuesForTab(tabKey).length !== getDefaultResourceReferenceTypeFilterValues().length)
       || (tabKey === 'units' && normalizeMainUnitReferenceSort(state.referenceUnitSort[tabKey]) !== 'ingame');
     empty.innerHTML = hasFilter
       ? '<p class="hint">No entries match the current filters.</p>'
@@ -44352,10 +44636,22 @@ function renderReferenceTab(tab, tabKey) {
       renderReferenceBody({ preserveDetailIfSameSelection: true });
     });
   }
-  if (resourceSortSelect) {
-    resourceSortSelect.addEventListener('change', () => {
-      state.referenceResourceSort[tabKey] = normalizeMainResourceReferenceSort(resourceSortSelect.value);
-      resourceSortSelect.value = state.referenceResourceSort[tabKey];
+  if (resourceTypeFilterControl) {
+    resourceTypeFilterControl.addEventListener('click', (event) => {
+      const btn = event.target && event.target.closest ? event.target.closest('.resource-type-filter-btn') : null;
+      if (!btn || !resourceTypeFilterControl.contains(btn)) return;
+      const value = String(btn.dataset.resourceType || '').trim().toLowerCase();
+      const selected = new Set(normalizeResourceReferenceTypeFilterValues(state.referenceResourceTypeFilter[tabKey]));
+      if (selected.has(value)) selected.delete(value);
+      else selected.add(value);
+      state.referenceResourceTypeFilter[tabKey] = normalizeResourceReferenceTypeFilterValues(Array.from(selected));
+      const selectedTypes = new Set(state.referenceResourceTypeFilter[tabKey]);
+      Array.from(resourceTypeFilterControl.querySelectorAll('.resource-type-filter-btn')).forEach((node) => {
+        const active = selectedTypes.has(String(node.dataset.resourceType || '').trim().toLowerCase());
+        node.classList.toggle('active', active);
+        node.setAttribute('aria-pressed', active ? 'true' : 'false');
+        node.title = `Toggle ${node.textContent} resources`;
+      });
       state.referenceListScrollTop[tabKey] = 0;
       renderReferenceBody({ preserveDetailIfSameSelection: true });
     });
@@ -65379,7 +65675,7 @@ async function loadBundleAndRender(options = {}) {
       state.referenceFilter = cloneStateMap(persistedView.referenceFilter);
       state.referenceEraFilter = cloneStateMap(persistedView.referenceEraFilter);
       state.referenceImprovementKind = cloneStateMap(persistedView.referenceImprovementKind);
-      state.referenceResourceSort = sanitizeReferenceResourceSortMap(persistedView.referenceResourceSort);
+      state.referenceResourceTypeFilter = sanitizeReferenceResourceTypeFilterMap(persistedView.referenceResourceTypeFilter);
       state.referenceUnitSort = sanitizeReferenceUnitSortMap(persistedView.referenceUnitSort);
       state.referenceContextPaneVisible = cloneStateMap(persistedView.referenceContextPaneVisible);
       state.biqSectionSelectionByTab = cloneStateMap(persistedView.biqSectionSelectionByTab);
@@ -66360,6 +66656,13 @@ function buildSaveOutcome(preparedItems, res, fallbackError = '') {
       item.note = item.note || 'Saved';
     }
   });
+  (Array.isArray(res && res.saveReport) ? res.saveReport : []).forEach((entry) => {
+    const warningNote = String(entry && entry.warningNote || '').trim();
+    if (!warningNote) return;
+    const item = ensureItem(entry && entry.path);
+    if (!item) return;
+    item.warningNote = [item.warningNote, warningNote].filter(Boolean).join(' ');
+  });
   if (res && res.ok) {
     byPath.forEach((item) => {
       item.status = 'success';
@@ -66412,21 +66715,25 @@ function shouldReloadBundleAfterSave() {
 }
 
 function getSavedAtlasKinds(saveReport) {
-  const kinds = { resources: false, units32: false };
+  const kinds = { resources: false, luxuryIconsSmall: false, units32: false };
   (Array.isArray(saveReport) ? saveReport : []).forEach((entry) => {
     if (String(entry && entry.kind || '').trim().toLowerCase() !== 'atlas') return;
     const pathText = normalizePathForCompare(entry && entry.path);
     if (pathText.endsWith('/art/resources.pcx')) kinds.resources = true;
+    if (pathText.endsWith('/art/city screen/luxuryicons_small.pcx')) kinds.luxuryIconsSmall = true;
     if (pathText.endsWith('/art/units/units_32.pcx')) kinds.units32 = true;
   });
   return kinds;
 }
 
 function clearSavedAtlasPreviewCaches(kinds) {
-  if (!kinds || (!kinds.resources && !kinds.units32)) return;
+  if (!kinds || (!kinds.resources && !kinds.luxuryIconsSmall && !kinds.units32)) return;
   clearPreviewCacheEntries((key) => {
     const lower = String(key || '').toLowerCase();
     if (kinds.resources && (lower.includes('"kind":"resources-atlas"') || lower.includes('"assetpath":"art/resources.pcx"'))) {
+      return true;
+    }
+    if (kinds.luxuryIconsSmall && (lower.includes('"kind":"luxuryicons-small-atlas"') || lower.includes('"assetpath":"art/city screen/luxuryicons_small.pcx"'))) {
       return true;
     }
     if (kinds.units32 && (lower.includes('"kind":"units32-atlas"') || lower.includes('"assetpath":"art/units/units_32.pcx"'))) {
@@ -66456,9 +66763,24 @@ function clearSavedImportedAtlasPendingState(kinds) {
           delete entry._pendingImportedResourceIcon;
           changed = true;
         }
+        if (entry && entry._pendingImportedLuxuryIcon) {
+          delete entry._pendingImportedLuxuryIcon;
+          changed = true;
+        }
       });
     }
     if (clearPendingAtlasCopyState(tab, 'resources')) changed = true;
+  }
+  if (kinds.luxuryIconsSmall) {
+    const tab = state.bundle.tabs.resources;
+    if (tab && Array.isArray(tab.entries)) {
+      tab.entries.forEach((entry) => {
+        if (entry && entry._pendingImportedLuxuryIcon) {
+          delete entry._pendingImportedLuxuryIcon;
+          changed = true;
+        }
+      });
+    }
   }
   if (kinds.units32) {
     const tab = state.bundle.tabs.units;
@@ -66477,10 +66799,10 @@ function clearSavedImportedAtlasPendingState(kinds) {
 
 function finalizeSavedAtlasStateAfterNoReload(saveReport) {
   const kinds = getSavedAtlasKinds(saveReport);
-  if (!kinds.resources && !kinds.units32) return false;
+  if (!kinds.resources && !kinds.luxuryIconsSmall && !kinds.units32) return false;
   clearSavedAtlasPreviewCaches(kinds);
   const clearedPending = clearSavedImportedAtlasPendingState(kinds);
-  const activeTabNeedsRefresh = (kinds.resources && state.activeTab === 'resources')
+  const activeTabNeedsRefresh = ((kinds.resources || kinds.luxuryIconsSmall) && state.activeTab === 'resources')
     || (kinds.units32 && state.activeTab === 'units');
   return clearedPending || activeTabNeedsRefresh;
 }

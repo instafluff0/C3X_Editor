@@ -212,7 +212,7 @@ test('civilization playable toggle is read-only for barbarians', () => {
 test('map owner picker scopes owner choices by Quint owner type', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
-  const ownerPickerBlock = text.match(/const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?\n  \};\n  const getMapOwnerTypeFromPickerValue/);
+  const ownerPickerBlock = text.match(/const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?\r?\n  \};\r?\n  const getMapOwnerTypeFromPickerValue/);
   assert.ok(ownerPickerBlock, 'Renderer should expose a map owner picker option builder');
 
   assert.match(
@@ -245,8 +245,8 @@ test('map owner picker scopes owner choices by Quint owner type', () => {
 test('map owner picker keeps direct barbarians separate from civilization assignment', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
-  const ownerPickerBlock = text.match(/const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?\n  \};\n  const getMapOwnerTypeFromPickerValue/);
-  const pickerValueBlock = text.match(/const getMapOwnerPickerValueFromOwnership = \(ownerTypeRaw, ownerRaw\) => \{[\s\S]*?\n  \};\n  const getMapUnitOwnerOptions/);
+  const ownerPickerBlock = text.match(/const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?\r?\n  \};\r?\n  const getMapOwnerTypeFromPickerValue/);
+  const pickerValueBlock = text.match(/const getMapOwnerPickerValueFromOwnership = \(ownerTypeRaw, ownerRaw\) => \{[\s\S]*?\r?\n  \};\r?\n  const getMapUnitOwnerOptions/);
   assert.ok(ownerPickerBlock, 'Renderer should expose map owner picker option building');
   assert.ok(pickerValueBlock, 'Renderer should expose map ownership-to-picker value resolution');
 
@@ -659,7 +659,7 @@ test('C3X era alias editors use compact semantic table styling', () => {
   );
   assert.match(
     stylesText,
-    /\.civ-era-alias-table input,\n\.civ-era-alias-table select \{[\s\S]*?border: 1px solid transparent;[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/,
+    /\.civ-era-alias-table input,\r?\n\.civ-era-alias-table select \{[\s\S]*?border: 1px solid transparent;[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/,
     'Era alias table controls should read like table cells until focused'
   );
   assert.match(
@@ -763,7 +763,9 @@ test('reference CRUD captures undo before pending BIQ record ops mutate', () => 
   const importHandler = sliceBetween(
     referenceCrud,
     "importBtn.addEventListener('click', async () => {",
-    "});\n\n    deleteBtn.addEventListener('click', async () => {"
+    text.includes("});\r\n\r\n    deleteBtn.addEventListener('click', async () => {")
+      ? "});\r\n\r\n    deleteBtn.addEventListener('click', async () => {"
+      : "});\n\n    deleteBtn.addEventListener('click', async () => {"
   );
 
   assertBefore(addHandler, 'rememberUndoSnapshot();', 'ops.push({', 'reference add');

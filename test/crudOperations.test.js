@@ -4696,6 +4696,11 @@ test('Import Resource from Tides: disabled auto map-icon setting leaves resource
   });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'resource import save failed'));
   assert.equal(fs.existsSync(path.join(tmpDir, 'Art', 'resources.pcx')), false, 'disabled setting should not create scenario-local resources.pcx');
+  assert.equal(
+    fs.existsSync(path.join(tmpDir, 'Art', 'city screen', 'luxuryicons_small.pcx')),
+    false,
+    'disabled setting should not create scenario-local luxuryicons_small.pcx'
+  );
 });
 
 test('Import Unit from Tides: animation folder files are copied to scenario content root', (t) => {

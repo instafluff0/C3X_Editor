@@ -22,6 +22,9 @@ const RESOURCE_ATLAS_RELATIVE_PATH = 'Art/resources.pcx';
 const RESOURCE_ATLAS_COLS = 6;
 const RESOURCE_ATLAS_CELL_SIZE = 50;
 const RESOURCE_ATLAS_MAGENTA = { r: 255, g: 0, b: 255 };
+const LUXURY_ICONS_SMALL_ATLAS_RELATIVE_PATH = 'Art/city screen/luxuryicons_small.pcx';
+const LUXURY_ICONS_SMALL_ATLAS_COLS = 8;
+const LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE = 22;
 const UNIT_ATLAS_RELATIVE_PATH = 'Art/Units/units_32.pcx';
 const UNIT_ATLAS_SPRITE_SIZE = 32;
 const UNIT_ATLAS_GUTTER = 1;
@@ -8268,6 +8271,335 @@ function getNextResourceAtlasAssignmentSlot(targetBuffer, resourceTab, activeImp
   };
 }
 
+function getIndexedLuxuryIconsSmallAtlas(buffer, label = 'luxuryicons_small.pcx') {
+  const decoded = decodePcx(buffer, { returnIndexed: true, transparentIndexes: [] });
+  if (!decoded || !decoded.indices || !decoded.palette) {
+    throw new Error(`${label} must be an indexed 256-color PCX file.`);
+  }
+  const gridWidth = LUXURY_ICONS_SMALL_ATLAS_COLS * LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE;
+  if (decoded.width < gridWidth) {
+    throw new Error(`${label} is too narrow for a Civ3 luxuryicons_small.pcx atlas.`);
+  }
+  const magentaIndex = findPaletteColorIndex(decoded.palette, RESOURCE_ATLAS_MAGENTA, 255);
+  if (magentaIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
+  }
+  const guideIndex = decoded.indices[0];
+  const rows = detectLuxuryIconsSmallAtlasGridRows(decoded, guideIndex, gridWidth);
+  if (rows < 1) {
+    throw new Error(`${label} does not contain any full luxury icon rows.`);
+  }
+  const gridHeight = rows * LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE;
+  return {
+    ...decoded,
+    cols: LUXURY_ICONS_SMALL_ATLAS_COLS,
+    rows,
+    cellSize: LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE,
+    gridWidth,
+    footerHeight: Math.max(0, decoded.height - gridHeight),
+    magentaIndex,
+    guideIndex
+  };
+}
+
+function detectLuxuryIconsSmallAtlasGridRows(decoded, guideIndex, gridWidth) {
+  if (!decoded || !decoded.indices || !decoded.width || !decoded.height) return 0;
+  const cols = LUXURY_ICONS_SMALL_ATLAS_COLS;
+  const cellSize = LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE;
+  const guideXs = [];
+  for (let col = 0; col <= cols; col += 1) {
+    const x = col * cellSize;
+    if (x >= 0 && x < decoded.width && x <= gridWidth) guideXs.push(x);
+  }
+  if (guideXs.length === 0) return 0;
+  let rows = 0;
+  const maxRows = Math.floor(decoded.height / cellSize);
+  for (let row = 0; row < maxRows; row += 1) {
+    const startY = row * cellSize;
+    let samples = 0;
+    let matches = 0;
+    for (let y = startY; y < startY + cellSize && y < decoded.height; y += 1) {
+      for (const x of guideXs) {
+        samples += 1;
+        if (decoded.indices[y * decoded.width + x] === guideIndex) matches += 1;
+      }
+    }
+    if (samples > 0 && matches / samples >= 0.65) {
+      rows += 1;
+      continue;
+    }
+    break;
+  }
+  return rows;
+}
+
+function isLuxuryIconsSmallAtlasGuideOrBackground(atlas, index) {
+  if (!atlas) return false;
+  return index === atlas.magentaIndex
+    || index === atlas.guideIndex
+    || isPaletteIndexMagenta(atlas.palette, index, atlas.magentaIndex);
+}
+
+function isLuxuryIconsSmallAtlasCellEmpty(atlas, cellIndex) {
+  const idx = Number(cellIndex) | 0;
+  if (!atlas || idx < 0) return false;
+  const row = Math.floor(idx / atlas.cols);
+  const col = idx % atlas.cols;
+  if (row < 0 || row >= atlas.rows) return false;
+  const startX = col * atlas.cellSize;
+  const startY = row * atlas.cellSize;
+  for (let y = 1; y < atlas.cellSize; y += 1) {
+    const rowOff = (startY + y) * atlas.width + startX;
+    for (let x = 1; x < atlas.cellSize; x += 1) {
+      if (!isLuxuryIconsSmallAtlasGuideOrBackground(atlas, atlas.indices[rowOff + x])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function findNextLuxuryIconsSmallAtlasSlot(targetBuffer) {
+  const atlas = getIndexedLuxuryIconsSmallAtlas(targetBuffer, 'target luxuryicons_small.pcx');
+  const slotCount = atlas.rows * atlas.cols;
+  let lastOccupied = -1;
+  for (let idx = 0; idx < slotCount; idx += 1) {
+    if (!isLuxuryIconsSmallAtlasCellEmpty(atlas, idx)) lastOccupied = idx;
+  }
+  return {
+    index: lastOccupied + 1,
+    lastOccupied,
+    rows: atlas.rows,
+    cols: atlas.cols,
+    capacity: slotCount
+  };
+}
+
+function getResourceTypeValue(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'type');
+  const raw = field ? (field.value == null ? field.originalValue : field.value) : '';
+  const parsed = parseIntLoose(cleanDisplayText(raw), NaN);
+  if (Number.isFinite(parsed)) return parsed;
+  const text = String(raw || '').trim().toLowerCase();
+  if (text.includes('luxury')) return 1;
+  if (text.includes('strategic')) return 2;
+  if (text.includes('bonus')) return 0;
+  return NaN;
+}
+
+function isLuxuryResourceEntry(entry) {
+  return getResourceTypeValue(entry) === 1;
+}
+
+function getResourceLuxuryOrdinal(resourceTab, entryOrRef) {
+  const entries = Array.isArray(resourceTab && resourceTab.entries) ? resourceTab.entries : [];
+  const targetRef = typeof entryOrRef === 'string'
+    ? String(entryOrRef || '').trim().toUpperCase()
+    : String(entryOrRef && entryOrRef.civilopediaKey || '').trim().toUpperCase();
+  let ordinal = 0;
+  for (const entry of entries) {
+    if (!isLuxuryResourceEntry(entry)) continue;
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (entry === entryOrRef || (targetRef && ref === targetRef)) return ordinal;
+    ordinal += 1;
+  }
+  return -1;
+}
+
+function drawLuxuryIconsSmallAtlasGuideLines(indices, atlas, gridRows) {
+  const maxX = Math.min(atlas.gridWidth, atlas.width - 1);
+  const gridHeight = gridRows * atlas.cellSize;
+  for (let row = 0; row <= gridRows; row += 1) {
+    const y = row * atlas.cellSize;
+    if (y < 0 || y >= gridHeight) continue;
+    const rowOff = y * atlas.width;
+    for (let x = 0; x <= maxX; x += 1) {
+      indices[rowOff + x] = atlas.guideIndex;
+    }
+  }
+  for (let col = 0; col <= atlas.cols; col += 1) {
+    const x = col * atlas.cellSize;
+    if (x < 0 || x >= atlas.width) continue;
+    for (let y = 0; y < gridHeight; y += 1) {
+      indices[y * atlas.width + x] = atlas.guideIndex;
+    }
+  }
+}
+
+function appendLuxuryIconToLuxuryIconsSmallPcx({ targetBuffer, sourceBuffer, sourceIconIndex, targetIconIndex = null }) {
+  const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
+    throw new Error(`Invalid source luxury icon index: ${sourceIconIndex}`);
+  }
+  const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
+  const target = getIndexedLuxuryIconsSmallAtlas(targetBuffer, 'target luxuryicons_small.pcx');
+  const source = getIndexedLuxuryIconsSmallAtlas(sourceBuffer, 'source luxuryicons_small.pcx');
+  if (sourceIndex >= source.rows * source.cols) {
+    throw new Error(`Source luxury icon index ${sourceIndex} is outside source luxuryicons_small.pcx.`);
+  }
+
+  const slot = findNextLuxuryIconsSmallAtlasSlot(targetBuffer);
+  const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
+    ? explicitTargetIndex
+    : slot.index;
+  const requiredRows = Math.floor(targetIndex / target.cols) + 1;
+  const newGridRows = Math.max(target.rows, requiredRows);
+  const oldGridHeight = target.rows * target.cellSize;
+  const newGridHeight = newGridRows * target.cellSize;
+  const newHeight = Math.max(target.height, newGridHeight + target.footerHeight);
+  const nextIndices = new Uint8Array(target.width * newHeight);
+  nextIndices.fill(target.magentaIndex);
+  for (let y = 0; y < oldGridHeight; y += 1) {
+    nextIndices.set(
+      target.indices.subarray(y * target.width, (y + 1) * target.width),
+      y * target.width
+    );
+  }
+  if (target.footerHeight > 0) {
+    for (let y = 0; y < target.footerHeight; y += 1) {
+      const sourceY = oldGridHeight + y;
+      const targetY = newGridHeight + y;
+      if (sourceY >= target.height || targetY >= newHeight) continue;
+      nextIndices.set(
+        target.indices.subarray(sourceY * target.width, (sourceY + 1) * target.width),
+        targetY * target.width
+      );
+    }
+  }
+  drawLuxuryIconsSmallAtlasGuideLines(nextIndices, target, newGridRows);
+
+  const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
+  const srcCol = sourceIndex % source.cols;
+  const srcRow = Math.floor(sourceIndex / source.cols);
+  const dstCol = targetIndex % target.cols;
+  const dstRow = Math.floor(targetIndex / target.cols);
+  const srcX = srcCol * source.cellSize;
+  const srcY = srcRow * source.cellSize;
+  const dstX = dstCol * target.cellSize;
+  const dstY = dstRow * target.cellSize;
+
+  for (let y = 1; y < target.cellSize; y += 1) {
+    const sourceRow = (srcY + y) * source.width + srcX;
+    const targetRow = (dstY + y) * target.width + dstX;
+    for (let x = 1; x < target.cellSize; x += 1) {
+      nextIndices[targetRow + x] = remap[source.indices[sourceRow + x]];
+    }
+  }
+
+  return {
+    buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
+    index: targetIndex,
+    lastOccupied: slot.lastOccupied,
+    scanIndex: slot.index,
+    oldRows: target.rows,
+    newRows: newGridRows,
+    appendedRow: newGridRows > target.rows
+  };
+}
+
+function applyImportedLuxuryIconAtlasAssignments({ resourceTab, targetAtlasBuffer, loadSourceAtlasBuffer, loadSourceResourceTab }) {
+  if (!resourceTab || !Array.isArray(resourceTab.recordOps) || !Array.isArray(resourceTab.entries)) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [], warnings: [] };
+  }
+  const importOps = getActiveImportedAtlasOps(resourceTab).filter((item) => isLuxuryResourceEntry(item && item.entry));
+  if (importOps.length === 0) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [], warnings: [] };
+  }
+  const warnings = [];
+  if (!Buffer.isBuffer(targetAtlasBuffer)) {
+    return {
+      ok: true,
+      changed: false,
+      buffer: targetAtlasBuffer,
+      assignments: [],
+      warnings: ['Could not load target luxuryicons_small.pcx for imported Luxury resource city icons.']
+    };
+  }
+  let workingBuffer = targetAtlasBuffer;
+  const assignments = [];
+  const sourceBufferCache = new Map();
+  const sourceResourceTabCache = new Map();
+
+  for (const importItem of importOps) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
+    const sourceBiqPath = String(op && op.importArtFrom || '').trim();
+    if (!newRef || !sourceBiqPath) continue;
+    const entry = importItem.entry;
+    const targetIconIndex = getResourceLuxuryOrdinal(resourceTab, entry);
+    if (!Number.isFinite(targetIconIndex) || targetIconIndex < 0) {
+      warnings.push(`Could not determine target Luxury order for imported resource ${newRef}; luxuryicons_small.pcx was not updated for it.`);
+      continue;
+    }
+    const pendingIcon = entry && entry._pendingImportedLuxuryIcon && typeof entry._pendingImportedLuxuryIcon === 'object'
+      ? entry._pendingImportedLuxuryIcon
+      : null;
+    let sourceIconIndex = Number.parseInt(String(pendingIcon && pendingIcon.sourceIconIndex), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      if (!sourceResourceTabCache.has(sourceBiqPath)) {
+        let sourceResourceTab = null;
+        try {
+          sourceResourceTab = typeof loadSourceResourceTab === 'function' ? loadSourceResourceTab(sourceBiqPath) : null;
+        } catch (_err) {
+          sourceResourceTab = null;
+        }
+        sourceResourceTabCache.set(sourceBiqPath, sourceResourceTab);
+      }
+      const sourceResourceTab = sourceResourceTabCache.get(sourceBiqPath);
+      const sourceRef = String(op && op.sourceRef || '').trim().toUpperCase();
+      sourceIconIndex = getResourceLuxuryOrdinal(sourceResourceTab, sourceRef);
+    }
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      warnings.push(`Could not determine source Luxury order for imported resource ${newRef}; luxuryicons_small.pcx was not updated for it.`);
+      continue;
+    }
+    if (!sourceBufferCache.has(sourceBiqPath)) {
+      let sourceBuffer = null;
+      try {
+        sourceBuffer = typeof loadSourceAtlasBuffer === 'function' ? loadSourceAtlasBuffer(sourceBiqPath) : null;
+      } catch (_err) {
+        sourceBuffer = null;
+      }
+      sourceBufferCache.set(sourceBiqPath, sourceBuffer);
+    }
+    const sourceBuffer = sourceBufferCache.get(sourceBiqPath);
+    if (!Buffer.isBuffer(sourceBuffer)) {
+      warnings.push(`Could not load source luxuryicons_small.pcx for imported resource ${newRef}; its city luxury icon was not copied.`);
+      continue;
+    }
+    try {
+      const result = appendLuxuryIconToLuxuryIconsSmallPcx({
+        targetBuffer: workingBuffer,
+        sourceBuffer,
+        sourceIconIndex,
+        targetIconIndex
+      });
+      workingBuffer = result.buffer;
+      entry._pendingImportedLuxuryIcon = {
+        sourceIconIndex,
+        targetIconIndex,
+        importScenarioPath: sourceBiqPath
+      };
+      assignments.push({
+        civilopediaKey: newRef,
+        sourceIconIndex,
+        targetIconIndex: result.index,
+        appendedRow: result.appendedRow
+      });
+    } catch (err) {
+      warnings.push(`Could not copy luxuryicons_small.pcx icon for ${newRef}: ${err.message}`);
+    }
+  }
+
+  return {
+    ok: true,
+    changed: assignments.length > 0,
+    buffer: workingBuffer,
+    assignments,
+    warnings
+  };
+}
+
 function getIndexedUnitAtlas(buffer, label = 'units_32.pcx') {
   const decoded = decodePcx(buffer, { returnIndexed: true, transparentIndexes: [] });
   if (!decoded || !decoded.indices || !decoded.palette) {
@@ -9742,6 +10074,33 @@ function resolveResourcesAtlasPath({ civ3Path, targetContentRoot, scenarioRoots 
   return '';
 }
 
+function resolveLuxuryIconsSmallAtlasPath({ civ3Path, targetContentRoot, scenarioRoots }) {
+  const rel = LUXURY_ICONS_SMALL_ATLAS_RELATIVE_PATH;
+  const candidates = [];
+  const add = (candidate) => {
+    if (!candidate) return;
+    const resolved = path.resolve(candidate);
+    if (candidates.some((entry) => normalizePathForCompare(entry) === normalizePathForCompare(resolved))) return;
+    candidates.push(resolved);
+  };
+  add(targetContentRoot ? path.join(targetContentRoot, ...rel.split('/')) : '');
+  (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => add(path.join(root, ...rel.split('/'))));
+  const civ3Root = resolveCiv3RootPath(civ3Path);
+  if (civ3Root) {
+    add(path.join(civ3Root, 'Conquests', ...rel.split('/')));
+    add(path.join(civ3Root, 'civ3PTW', ...rel.split('/')));
+    add(path.join(civ3Root, ...rel.split('/')));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch (_err) {
+      // skip unreadable candidates
+    }
+  }
+  return '';
+}
+
 function resolveUnits32AtlasPath({ civ3Path, targetContentRoot, scenarioRoots }) {
   const rel = UNIT_ATLAS_RELATIVE_PATH;
   const candidates = [];
@@ -9874,6 +10233,95 @@ function prepareImportedResourceIconAtlasWrite({ tabs, targetContentRoot, scenar
     sourcePath: targetSourcePath,
     data: update.buffer,
     assignments: update.assignments
+  };
+}
+
+function prepareImportedLuxuryIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path, textFileEncoding = 'windows-1252' }) {
+  const resourceTab = tabs && tabs.resources;
+  if (!resourceTab || !Array.isArray(resourceTab.recordOps)) return { ok: true, changed: false, warnings: [] };
+  const activeLuxuryImports = getActiveImportedAtlasOps(resourceTab).filter((item) => isLuxuryResourceEntry(item && item.entry));
+  if (activeLuxuryImports.length === 0) return { ok: true, changed: false, warnings: [] };
+
+  const targetRoot = String(targetContentRoot || '').trim();
+  if (!targetRoot) {
+    return { ok: true, changed: false, warnings: ['Could not determine target scenario folder for luxuryicons_small.pcx.'] };
+  }
+  const targetPath = path.join(targetRoot, ...LUXURY_ICONS_SMALL_ATLAS_RELATIVE_PATH.split('/'));
+  const targetSourcePath = resolveLuxuryIconsSmallAtlasPath({
+    civ3Path,
+    targetContentRoot: targetRoot,
+    scenarioRoots
+  });
+  if (!targetSourcePath) {
+    return { ok: true, changed: false, warnings: ['Could not find target luxuryicons_small.pcx to copy before importing Luxury resource city icons.'] };
+  }
+
+  let targetAtlasBuffer;
+  try {
+    targetAtlasBuffer = fs.readFileSync(targetSourcePath);
+  } catch (err) {
+    return { ok: true, changed: false, warnings: [`Could not read target luxuryicons_small.pcx: ${targetSourcePath} (${err.message})`] };
+  }
+
+  const sourceRootsCache = new Map();
+  const sourceResourceTabCache = new Map();
+  const getSourceRoots = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceRootsCache.has(cacheKey)) return sourceRootsCache.get(cacheKey);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath, textEncoding: textFileEncoding });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots]);
+    } catch (_err) {
+      roots = dedupePathList([resolveScenarioDir(sourceBiqPath)]);
+    }
+    sourceRootsCache.set(cacheKey, roots);
+    return roots;
+  };
+  const loadSourceResourceTab = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceResourceTabCache.has(cacheKey)) return sourceResourceTabCache.get(cacheKey);
+    let sourceTab = null;
+    try {
+      const loaded = loadBundle({
+        mode: 'scenario',
+        civ3Path,
+        scenarioPath: sourceBiqPath,
+        textFileEncoding,
+        deferMapTab: true
+      });
+      sourceTab = loaded && loaded.tabs && loaded.tabs.resources ? loaded.tabs.resources : null;
+    } catch (_err) {
+      sourceTab = null;
+    }
+    sourceResourceTabCache.set(cacheKey, sourceTab);
+    return sourceTab;
+  };
+
+  const update = applyImportedLuxuryIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer,
+    loadSourceAtlasBuffer: (sourceBiqPath) => {
+      const sourcePath = resolveLuxuryIconsSmallAtlasPath({
+        civ3Path,
+        targetContentRoot: '',
+        scenarioRoots: getSourceRoots(sourceBiqPath)
+      });
+      return sourcePath ? fs.readFileSync(sourcePath) : null;
+    },
+    loadSourceResourceTab
+  });
+  if (!update.ok) return update;
+  if (!update.changed) return { ok: true, changed: false, warnings: update.warnings || [] };
+  return {
+    ok: true,
+    changed: true,
+    path: targetPath,
+    sourcePath: targetSourcePath,
+    data: update.buffer,
+    assignments: update.assignments,
+    warnings: update.warnings || []
   };
 }
 
@@ -10248,6 +10696,7 @@ function buildSavePlan(payload) {
   const saveReport = [];
   const plannedWrites = [];
   let importedResourceAtlasWrite = null;
+  let importedLuxuryIconAtlasWrite = null;
   let importedUnitAtlasWrite = null;
   let importedBuildingCityAtlasWrite = null;
   const dirtyTabs = new Set(
@@ -10387,6 +10836,13 @@ function buildSavePlan(payload) {
         if (importedResourceAtlasWrite && !importedResourceAtlasWrite.ok) {
           return { ok: false, error: importedResourceAtlasWrite.error || 'Failed to update resources.pcx for imported resource icons.' };
         }
+        importedLuxuryIconAtlasWrite = prepareImportedLuxuryIconAtlasWrite({
+          tabs: payload.tabs || {},
+          targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+          scenarioRoots: scenarioContext.searchRoots,
+          civ3Path,
+          textFileEncoding
+        });
       }
       if (payload.autoAddImportedBuildingCityIcons !== false) {
         importedBuildingCityAtlasWrite = prepareImportedBuildingCityIconAtlasWrite({
@@ -10780,6 +11236,9 @@ function buildSavePlan(payload) {
       if (importedResourceAtlasWrite && importedResourceAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedResourceAtlasWrite.path)) {
         continue;
       }
+      if (importedLuxuryIconAtlasWrite && importedLuxuryIconAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedLuxuryIconAtlasWrite.path)) {
+        continue;
+      }
       if (importedUnitAtlasWrite && importedUnitAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedUnitAtlasWrite.path)) {
         continue;
       }
@@ -10823,6 +11282,32 @@ function buildSavePlan(payload) {
         applied: importedResourceAtlasWrite.assignments.length,
         detail: `Added ${importedResourceAtlasWrite.assignments.length} imported resource icon${importedResourceAtlasWrite.assignments.length === 1 ? '' : 's'}`
       });
+    }
+
+    if (importedLuxuryIconAtlasWrite && importedLuxuryIconAtlasWrite.changed) {
+      const protectErr = failIfProtected(importedLuxuryIconAtlasWrite.path, 'scenario luxuryicons_small.pcx target');
+      if (protectErr) return { ok: false, error: protectErr };
+      if (isProtectedBaseCiv3Path(civ3Path, importedLuxuryIconAtlasWrite.path)) {
+        return { ok: false, error: `Refusing to modify base Civilization III file (scenario luxuryicons_small.pcx target): ${importedLuxuryIconAtlasWrite.path}` };
+      }
+      plannedWrites.push({
+        kind: 'atlas',
+        path: importedLuxuryIconAtlasWrite.path,
+        sourcePath: importedLuxuryIconAtlasWrite.sourcePath,
+        data: importedLuxuryIconAtlasWrite.data
+      });
+      saveReport.push({
+        kind: 'atlas',
+        path: importedLuxuryIconAtlasWrite.path,
+        applied: importedLuxuryIconAtlasWrite.assignments.length,
+        detail: `Added ${importedLuxuryIconAtlasWrite.assignments.length} imported Luxury city icon${importedLuxuryIconAtlasWrite.assignments.length === 1 ? '' : 's'}`,
+        warningNote: (importedLuxuryIconAtlasWrite.warnings || []).join(' ')
+      });
+    } else if (importedLuxuryIconAtlasWrite && Array.isArray(importedLuxuryIconAtlasWrite.warnings) && importedLuxuryIconAtlasWrite.warnings.length > 0) {
+      const biqReport = saveReport.find((entry) => String(entry && entry.kind || '').trim().toLowerCase() === 'biq');
+      if (biqReport) {
+        biqReport.warningNote = [biqReport.warningNote, importedLuxuryIconAtlasWrite.warnings.join(' ')].filter(Boolean).join(' ');
+      }
     }
 
     if (importedUnitAtlasWrite && importedUnitAtlasWrite.changed) {
@@ -14106,6 +14591,11 @@ module.exports = {
   getNextResourceAtlasAssignmentSlot,
   appendResourceIconToResourcesPcx,
   applyImportedResourceIconAtlasAssignments,
+  getIndexedLuxuryIconsSmallAtlas,
+  findNextLuxuryIconsSmallAtlasSlot,
+  getResourceLuxuryOrdinal,
+  appendLuxuryIconToLuxuryIconsSmallPcx,
+  applyImportedLuxuryIconAtlasAssignments,
   findNextUnitAtlasSlot,
   getNextUnitAtlasAssignmentSlot,
   appendUnitIconToUnits32Pcx,

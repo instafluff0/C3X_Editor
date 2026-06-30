@@ -1,5 +1,8 @@
 * RELEASE 27.19.1
-- Added a Resources-tab sort dropdown for switching between in-game order and resource type grouping.
+- Fixed a Resources-tab blank-pane crash caused by Luxury city-icon preview type detection calling a config-only helper.
+- Renamed the Resource import setting to cover all imported Resource art, including `resources.pcx` and Luxury city icons.
+- Added scenario-aware Luxury resource city-icon import support for `luxuryicons_small.pcx`, including BIQ-order previews and non-fatal missing-art warnings.
+- Added a Resources-tab type filter with Bonus, Luxury, and Strategic chips selected by default.
 - Fixed Unit Table no-reload saves so successful saves clear stale row dirty badges in the open modal.
 - Added async QA warnings for Civ3-long Civilopedia/PediaIcons art paths, with a staged repair action that shortens paths and keeps uploaded tech icons under the inferred 63-character runtime limit.
 - Added the era-specific Science Advisor face and dialog art overlay to the Tech Tree screen, using scenario-aware `popupSCIENCE.pcx` and `dialogbox.pcx` assets.

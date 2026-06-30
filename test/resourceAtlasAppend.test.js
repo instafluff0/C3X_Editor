@@ -8,6 +8,11 @@ const {
   getNextResourceAtlasAssignmentSlot,
   appendResourceIconToResourcesPcx,
   applyImportedResourceIconAtlasAssignments,
+  getIndexedLuxuryIconsSmallAtlas,
+  findNextLuxuryIconsSmallAtlasSlot,
+  getResourceLuxuryOrdinal,
+  appendLuxuryIconToLuxuryIconsSmallPcx,
+  applyImportedLuxuryIconAtlasAssignments,
   findNextUnitAtlasSlot,
   getNextUnitAtlasAssignmentSlot,
   appendUnitIconToUnits32Pcx,
@@ -23,6 +28,9 @@ const { decodePcx, encodePcx } = require('../src/artPreview');
 const CELL = 50;
 const COLS = 6;
 const WIDTH = CELL * COLS;
+const LUXURY_CELL = 22;
+const LUXURY_COLS = 8;
+const LUXURY_WIDTH = 200;
 const UNIT_SIZE = 32;
 const UNIT_GUTTER = 1;
 const UNIT_STRIDE = UNIT_SIZE + UNIT_GUTTER;
@@ -128,6 +136,88 @@ function cellHasOnlyIndex(decoded, slot, expectedIndex) {
   for (let y = 0; y < CELL; y += 1) {
     const rowOff = (startY + y) * decoded.width + startX;
     for (let x = 0; x < CELL; x += 1) {
+      if (decoded.indices[rowOff + x] !== expectedIndex) return false;
+    }
+  }
+  return true;
+}
+
+function paintLuxuryGuides(indices, rows, width = LUXURY_WIDTH, guideIndex = GUIDE) {
+  const gridHeight = rows * LUXURY_CELL;
+  for (let row = 0; row <= rows; row += 1) {
+    const y = row * LUXURY_CELL;
+    if (y >= gridHeight) continue;
+    for (let x = 0; x <= LUXURY_COLS * LUXURY_CELL && x < width; x += 1) {
+      indices[y * width + x] = guideIndex;
+    }
+  }
+  for (let col = 0; col <= LUXURY_COLS; col += 1) {
+    const x = col * LUXURY_CELL;
+    if (x >= width) continue;
+    for (let y = 0; y < gridHeight; y += 1) {
+      indices[y * width + x] = guideIndex;
+    }
+  }
+}
+
+function paintLuxuryIconInterior(indices, slot, colorIndex, width = LUXURY_WIDTH) {
+  const col = slot % LUXURY_COLS;
+  const row = Math.floor(slot / LUXURY_COLS);
+  const startX = col * LUXURY_CELL;
+  const startY = row * LUXURY_CELL;
+  for (let y = 5; y < 17; y += 1) {
+    const rowOff = (startY + y) * width + startX;
+    for (let x = 5; x < 17; x += 1) {
+      indices[rowOff + x] = colorIndex;
+    }
+  }
+}
+
+function makeLuxuryAtlas(rows, occupied = {}, palette = makePalette(), { footerHeight = 12, rightAnnotationIndex = 77, footerIndex = 78 } = {}) {
+  const height = rows * LUXURY_CELL + footerHeight;
+  const indices = new Uint8Array(LUXURY_WIDTH * height);
+  indices.fill(MAGENTA);
+  paintLuxuryGuides(indices, rows);
+  for (let y = 0; y < rows * LUXURY_CELL; y += 1) {
+    const rowOff = y * LUXURY_WIDTH;
+    for (let x = LUXURY_COLS * LUXURY_CELL; x < LUXURY_WIDTH; x += 1) {
+      indices[rowOff + x] = rightAnnotationIndex;
+    }
+  }
+  for (let y = rows * LUXURY_CELL; y < height; y += 1) {
+    const rowOff = y * LUXURY_WIDTH;
+    for (let x = 0; x < LUXURY_WIDTH; x += 1) {
+      indices[rowOff + x] = footerIndex;
+    }
+  }
+  Object.entries(occupied).forEach(([slot, colorIndex]) => {
+    paintLuxuryIconInterior(indices, Number(slot), Number(colorIndex));
+  });
+  return encodePcx(indices, palette, LUXURY_WIDTH, height);
+}
+
+function luxuryCellInteriorHasOnlyIndex(decoded, slot, expectedIndex) {
+  const col = slot % LUXURY_COLS;
+  const row = Math.floor(slot / LUXURY_COLS);
+  const startX = col * LUXURY_CELL;
+  const startY = row * LUXURY_CELL;
+  for (let y = 1; y < LUXURY_CELL; y += 1) {
+    const rowOff = (startY + y) * decoded.width + startX;
+    for (let x = 1; x < LUXURY_CELL; x += 1) {
+      if (decoded.indices[rowOff + x] !== expectedIndex) return false;
+    }
+  }
+  return true;
+}
+
+function luxuryIconPaintedRegionHasIndex(decoded, slot, expectedIndex) {
+  const col = slot % LUXURY_COLS;
+  const row = Math.floor(slot / LUXURY_COLS);
+  const startX = col * LUXURY_CELL;
+  const startY = row * LUXURY_CELL;
+  for (let y = 5; y < 17; y += 1) {
+    const rowOff = (startY + y) * decoded.width + startX;
+    for (let x = 5; x < 17; x += 1) {
       if (decoded.indices[rowOff + x] !== expectedIndex) return false;
     }
   }
@@ -505,6 +595,214 @@ test('applyImportedResourceIconAtlasAssignments keeps a same-key import active w
   assert.equal(result.assignments[0].targetIconIndex, 1);
   assert.equal(resourceTab.entries[0].biqFields[0].value, '1');
   assert.equal(cellHasOnlyIndex(decoded, 1, 42), true);
+});
+
+test('luxuryicons_small.pcx geometry uses 22px cells, 8 icon columns, and ignores annotation margins', () => {
+  const atlas = makeLuxuryAtlas(4, {
+    0: 10,
+    9: 11
+  });
+  const decoded = getIndexedLuxuryIconsSmallAtlas(atlas);
+  const slot = findNextLuxuryIconsSmallAtlasSlot(atlas);
+
+  assert.equal(decoded.width, LUXURY_WIDTH);
+  assert.equal(decoded.rows, 4);
+  assert.equal(decoded.cols, 8);
+  assert.equal(decoded.footerHeight, 12);
+  assert.equal(slot.lastOccupied, 9);
+  assert.equal(slot.index, 10);
+  assert.equal(slot.capacity, 32);
+});
+
+test('getResourceLuxuryOrdinal counts only BIQ Luxury resources in order', () => {
+  const makeResource = (key, type) => ({
+    civilopediaKey: key,
+    biqFields: [{ baseKey: 'type', value: type, originalValue: type }]
+  });
+  const resourceTab = {
+    entries: [
+      makeResource('GOOD_CATTLE', 'Bonus (0)'),
+      makeResource('GOOD_DYES', 'Luxury (1)'),
+      makeResource('GOOD_IRON', 'Strategic (2)'),
+      makeResource('GOOD_INCENSE', '1'),
+      makeResource('GOOD_WHEAT', '0')
+    ]
+  };
+
+  assert.equal(getResourceLuxuryOrdinal(resourceTab, 'GOOD_DYES'), 0);
+  assert.equal(getResourceLuxuryOrdinal(resourceTab, 'GOOD_INCENSE'), 1);
+  assert.equal(getResourceLuxuryOrdinal(resourceTab, 'GOOD_IRON'), -1);
+});
+
+test('appendLuxuryIconToLuxuryIconsSmallPcx copies a source Luxury slot to the target BIQ Luxury slot', () => {
+  const target = makeLuxuryAtlas(2, {
+    0: 20
+  });
+  const source = makeLuxuryAtlas(2, {
+    9: 40
+  });
+
+  const result = appendLuxuryIconToLuxuryIconsSmallPcx({
+    targetBuffer: target,
+    sourceBuffer: source,
+    sourceIconIndex: 9,
+    targetIconIndex: 2
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.index, 2);
+  assert.equal(result.appendedRow, false);
+  assert.equal(decoded.width, LUXURY_WIDTH);
+  assert.equal(decoded.height, 2 * LUXURY_CELL + 12);
+  assert.equal(luxuryIconPaintedRegionHasIndex(decoded, 0, 20), true, 'existing target luxury icon should be unchanged');
+  assert.equal(luxuryIconPaintedRegionHasIndex(decoded, 2, 40), true, 'target Luxury slot should receive source icon');
+});
+
+test('appendLuxuryIconToLuxuryIconsSmallPcx remaps source palette indexes and preserves bottom annotation when adding a row', () => {
+  const targetPalette = makePalette({
+    44: [21, 45, 89]
+  });
+  const sourcePalette = makePalette({
+    9: [21, 45, 89]
+  });
+  const target = makeLuxuryAtlas(1, { 0: 20 }, targetPalette, { footerHeight: 12, footerIndex: 70 });
+  const source = makeLuxuryAtlas(1, { 1: 9 }, sourcePalette);
+
+  const result = appendLuxuryIconToLuxuryIconsSmallPcx({
+    targetBuffer: target,
+    sourceBuffer: source,
+    sourceIconIndex: 1,
+    targetIconIndex: 8
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.appendedRow, true);
+  assert.equal(decoded.height, 2 * LUXURY_CELL + 12);
+  assert.equal(luxuryIconPaintedRegionHasIndex(decoded, 8, 44), true, 'source color should use matching target palette index');
+  const footerY = 2 * LUXURY_CELL;
+  assert.equal(decoded.indices[footerY * decoded.width], 70, 'bottom annotation should move below the inserted grid row');
+});
+
+test('applyImportedLuxuryIconAtlasAssignments copies only imported Luxury resources', () => {
+  const makeResource = (key, type, sourceLuxuryIndex = null) => ({
+    civilopediaKey: key,
+    _pendingImportedLuxuryIcon: sourceLuxuryIndex == null ? undefined : { sourceIconIndex: sourceLuxuryIndex, targetIconIndex: null },
+    biqFields: [{ baseKey: 'type', value: type, originalValue: type }]
+  });
+  const target = makeLuxuryAtlas(1, { 0: 20 });
+  const source = makeLuxuryAtlas(1, {
+    1: 41,
+    2: 42
+  });
+  const resourceTab = {
+    entries: [
+      makeResource('GOOD_EXISTING_LUX', 'Luxury (1)'),
+      makeResource('GOOD_IMPORT_BONUS', 'Bonus (0)'),
+      makeResource('GOOD_IMPORT_LUXURY', 'Luxury (1)', 2)
+    ],
+    recordOps: [
+      { op: 'add', newRecordRef: 'GOOD_IMPORT_BONUS', importArtFrom: '/source/scenario.biq', sourceRef: 'GOOD_SOURCE_BONUS' },
+      { op: 'add', newRecordRef: 'GOOD_IMPORT_LUXURY', importArtFrom: '/source/scenario.biq', sourceRef: 'GOOD_SOURCE_LUXURY' }
+    ]
+  };
+
+  const result = applyImportedLuxuryIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer: target,
+    loadSourceAtlasBuffer: () => source
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.assignments.map((item) => item.civilopediaKey), ['GOOD_IMPORT_LUXURY']);
+  assert.equal(result.assignments[0].targetIconIndex, 1);
+  assert.equal(luxuryIconPaintedRegionHasIndex(decoded, 1, 42), true);
+});
+
+test('imported Luxury resources update both resources.pcx and luxuryicons_small.pcx assignments', () => {
+  const targetResourceAtlas = makeAtlas(1, {
+    0: 20
+  });
+  const sourceResourceAtlas = makeAtlas(1, {
+    4: 40
+  });
+  const targetLuxuryAtlas = makeLuxuryAtlas(1, {
+    0: 21
+  });
+  const sourceLuxuryAtlas = makeLuxuryAtlas(1, {
+    2: 42
+  });
+  const iconField = { baseKey: 'icon', value: '0', originalValue: '0' };
+  const resourceTab = {
+    entries: [
+      {
+        civilopediaKey: 'GOOD_EXISTING_LUXURY',
+        biqFields: [{ baseKey: 'type', value: 'Luxury (1)', originalValue: 'Luxury (1)' }]
+      },
+      {
+        civilopediaKey: 'GOOD_IMPORTED_LUXURY',
+        _pendingImportedResourceIcon: { sourceIconIndex: 4, targetIconIndex: null },
+        _pendingImportedLuxuryIcon: { sourceIconIndex: 2, targetIconIndex: null },
+        biqFields: [
+          iconField,
+          { baseKey: 'type', value: 'Luxury (1)', originalValue: 'Luxury (1)' }
+        ]
+      }
+    ],
+    recordOps: [{
+      op: 'add',
+      newRecordRef: 'GOOD_IMPORTED_LUXURY',
+      importArtFrom: '/source/scenario.biq',
+      sourceRef: 'GOOD_SOURCE_LUXURY'
+    }]
+  };
+
+  const resourceResult = applyImportedResourceIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer: targetResourceAtlas,
+    loadSourceAtlasBuffer: () => sourceResourceAtlas
+  });
+  const luxuryResult = applyImportedLuxuryIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer: targetLuxuryAtlas,
+    loadSourceAtlasBuffer: () => sourceLuxuryAtlas
+  });
+  const resourceDecoded = decodeIndexed(resourceResult.buffer);
+  const luxuryDecoded = decodeIndexed(luxuryResult.buffer);
+
+  assert.equal(resourceResult.changed, true);
+  assert.equal(luxuryResult.changed, true);
+  assert.equal(iconField.value, '1', 'resources.pcx icon field should point at appended map icon slot');
+  assert.equal(cellHasOnlyIndex(resourceDecoded, 1, 40), true, 'resources.pcx should receive the source map icon');
+  assert.equal(luxuryResult.assignments[0].targetIconIndex, 1);
+  assert.equal(luxuryIconPaintedRegionHasIndex(luxuryDecoded, 1, 42), true, 'luxuryicons_small.pcx should receive the source city icon');
+});
+
+test('applyImportedLuxuryIconAtlasAssignments warns but still succeeds when luxuryicons_small.pcx is missing', () => {
+  const resourceTab = {
+    entries: [{
+      civilopediaKey: 'GOOD_IMPORT_LUXURY',
+      _pendingImportedLuxuryIcon: { sourceIconIndex: 0, targetIconIndex: null },
+      biqFields: [{ baseKey: 'type', value: 'Luxury (1)', originalValue: 'Luxury (1)' }]
+    }],
+    recordOps: [{
+      op: 'add',
+      newRecordRef: 'GOOD_IMPORT_LUXURY',
+      importArtFrom: '/source/scenario.biq',
+      sourceRef: 'GOOD_SOURCE_LUXURY'
+    }]
+  };
+
+  const result = applyImportedLuxuryIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer: null,
+    loadSourceAtlasBuffer: () => null
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, false);
+  assert.match(result.warnings.join(' '), /target luxuryicons_small\.pcx/i);
 });
 
 test('findNextUnitAtlasSlot appends after the last occupied units_32 cell and ignores earlier holes', () => {

@@ -257,6 +257,21 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /function renderResourceLuxuryIconPreview\(entry\) \{[\s\S]*?if \(!isLuxuryResourceEntry\(entry\)\) return null;[\s\S]*?const luxuryIndex = getResourceLuxuryOrdinal\(resourceTab, entry\);[\s\S]*?label\.textContent = 'City Luxury Icon';[\s\S]*?getLuxuryIconsSmallAtlasPreview\(\)\.then\(\(preview\) => drawLuxuryIconToCanvas\(preview, luxuryIndex, canvas\)\)/,
+    'Luxury resources should render a read-only city luxury icon preview from luxuryicons_small.pcx'
+  );
+  assert.doesNotMatch(
+    rendererText.match(/function getResourceTypeValue\(entry\) \{[\s\S]*?\n\}/)[0],
+    /cleanDisplayText/,
+    'renderer Resource type detection should not call config-only cleanDisplayText'
+  );
+  assert.match(
+    rendererText,
+    /if \(isLuxuryResourceEntry\(result\.importedEntry\) && Number\.isFinite\(sourceLuxuryIndex\) && sourceLuxuryIndex >= 0\) \{[\s\S]*?newEntry\._pendingImportedLuxuryIcon = \{[\s\S]*?sourceIconIndex: sourceLuxuryIndex,[\s\S]*?targetIconIndex: null,[\s\S]*?importScenarioPath: String\(result\.importFilePath \|\| ''\)[\s\S]*?\};/,
+    'pending imported Luxury resources should keep source luxury slot metadata for pre-save preview'
+  );
+  assert.match(
+    rendererText,
     /function createResourceIconIndexPicker\(currentValue, onSelect, entry = null\) \{[\s\S]*?let pendingIconsByTarget = new Map\(\);[\s\S]*?pendingIconsByTarget = getPendingImportedIconItemsByTarget\('resources'\);[\s\S]*?getPendingImportedIconItemForTarget\(pendingIconsByTarget, 'resources', entry, idx\)[\s\S]*?drawPendingImportedResourceIconItemToCanvas\(pendingItem, canvas\)[\s\S]*?getMaxPendingImportedIconTarget\(refreshPendingIconsByTarget\(\), 'resources', entry\)/,
     'resource icon picker should render all pending imported icons in predicted target slots even before resources.pcx is saved'
   );
@@ -437,6 +452,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     mainText,
     /label: 'Units',[\s\S]*?label: 'Automatically Add Imported Unit Icons to units_32\.pcx',[\s\S]*?checked: currentAutoAddImportedUnitIcons,[\s\S]*?sendAutoAddImportedUnitIconsSelection\(item && item\.checked\)/,
     'File -> Settings should expose a default-on Units toggle for units_32 import updates'
+  );
+  assert.match(
+    mainText,
+    /label: 'Resources',[\s\S]*?label: 'Automatically Add Imported Resource Art',[\s\S]*?checked: currentAutoAddImportedResourceIcons,[\s\S]*?sendAutoAddImportedResourceIconsSelection\(item && item\.checked\)/,
+    'File -> Settings should describe the Resource import-art toggle broadly because it updates resources.pcx and luxuryicons_small.pcx'
   );
   assert.match(
     rendererText,

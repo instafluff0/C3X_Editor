@@ -80,9 +80,9 @@ test('Governments usage UI is mounted in the Governments detail pane and styled'
     'Expected deferred Government Required By cards to expose the same downstream source tooltip'
   );
 
-  assert.match(styles, /\.resource-identity-stack,\n\.government-identity-stack \{/);
-  assert.match(styles, /\.resource-identity-tech-stack,\n\.government-identity-tech-stack \{/);
+  assert.match(styles, /\.resource-identity-stack,\r?\n\.government-identity-stack \{/);
+  assert.match(styles, /\.resource-identity-tech-stack,\r?\n\.government-identity-tech-stack \{/);
   assert.match(styles, /\.government-usage-boards \{/);
-  assert.match(styles, /\.technology-unlocks-board,\n\.resource-usage-board,\n\.government-usage-board \{/);
-  assert.match(styles, /\.technology-unlock-cell,\n\.resource-usage-cell,\n\.government-usage-cell \{/);
+  assert.match(styles, /\.technology-unlocks-board,\r?\n\.resource-usage-board,\r?\n\.government-usage-board \{/);
+  assert.match(styles, /\.technology-unlock-cell,\r?\n\.resource-usage-cell,\r?\n\.government-usage-cell \{/);
 });

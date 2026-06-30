@@ -112,9 +112,49 @@ test('Resources usage UI is mounted in the Resources detail pane and styled', ()
     'Expected Resource relationship tooltips to keep C3X base rows, C3X sections, and BIQ records on separate source paths'
   );
 
-  assert.match(styles, /\.resource-identity-stack,\n\.government-identity-stack \{/);
-  assert.match(styles, /\.resource-identity-tech-stack,\n\.government-identity-tech-stack \{/);
-  assert.match(styles, /\.resource-usage-boards,\n\.government-usage-boards \{/);
-  assert.match(styles, /\.technology-unlocks-board,\n\.resource-usage-board,\n\.government-usage-board \{/);
-  assert.match(styles, /\.technology-unlock-cell,\n\.resource-usage-cell,\n\.government-usage-cell \{/);
+  assert.match(styles, /\.resource-identity-stack,\r?\n\.government-identity-stack \{/);
+  assert.match(styles, /\.resource-identity-tech-stack,\r?\n\.government-identity-tech-stack \{/);
+  assert.match(styles, /\.resource-usage-boards,\r?\n\.government-usage-boards \{/);
+  assert.match(styles, /\.technology-unlocks-board,\r?\n\.resource-usage-board,\r?\n\.government-usage-board \{/);
+  assert.match(styles, /\.technology-unlock-cell,\r?\n\.resource-usage-cell,\r?\n\.government-usage-cell \{/);
+});
+
+test('Resources top filter uses multi-select type chips instead of a sort dropdown', () => {
+  const source = fs.readFileSync(RENDERER_PATH, 'utf8');
+
+  assert.match(
+    source,
+    /function getResourceReferenceTypeFilterOptions\(\) \{[\s\S]*?value: 'bonus'[\s\S]*?value: 'luxury'[\s\S]*?value: 'strategic'/,
+    'Expected Resource type filter options for Bonus, Luxury, and Strategic'
+  );
+  assert.doesNotMatch(
+    source.match(/function getResourceReferenceTypeFilterOptions\(\) \{[\s\S]*?\n\}/)[0],
+    /value: 'other'/,
+    'Resource type filter should not include an Other category'
+  );
+  assert.match(
+    source,
+    /function getResourceReferenceTypeFilterValuesForTab\(tabKey\) \{[\s\S]*?defaultToAll: !hasValue[\s\S]*?state\.referenceResourceTypeFilter\[key\] = selected;/,
+    'Expected missing Resource filter state to initialize with all three categories selected'
+  );
+  assert.match(
+    source,
+    /resourceTypeFilterControl = document\.createElement\('div'\);[\s\S]*?resourceTypeFilterControl\.className = 'resource-type-filter segmented-multi-list';[\s\S]*?btn\.className = 'segmented-multi-btn resource-type-filter-btn'/,
+    'Expected Resources toolbar to render multi-select filter chips'
+  );
+  assert.match(
+    source,
+    /const selectedTypes = getResourceReferenceTypeFilterValuesForTab\(tabKey\);[\s\S]*?if \(!selectedTypes\.includes\(getResourceReferenceTypeFilterKey\(entry\)\)\) return false;/,
+    'Expected Resource list filtering to show only checked type chips, with zero checked chips showing no resources'
+  );
+  assert.match(
+    source,
+    /function getResourceReferenceTypeFilterKey\(entry\) \{[\s\S]*?if \(order === 2\) return 'strategic';\s*return '';/,
+    'Expected unsupported Resource types to have no visible filter category'
+  );
+  assert.doesNotMatch(
+    source,
+    /resourceSortSelect|getResourceReferenceSortOptions|referenceResourceSort/,
+    'Resources should no longer use the old sort dropdown state'
+  );
 });
