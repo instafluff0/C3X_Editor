@@ -92,6 +92,7 @@ const state = {
   referenceFilter: {},
   referenceEraFilter: {},
   referenceImprovementKind: {},
+  referenceResourceSort: {},
   referenceUnitSort: {},
   unitTableView: {
     isOpen: false,
@@ -7301,6 +7302,19 @@ function normalizeMainUnitReferenceSort(value) {
   return mode === 'az' || mode === 'za' ? mode : 'ingame';
 }
 
+function normalizeMainResourceReferenceSort(value) {
+  const mode = String(value || 'ingame').trim().toLowerCase();
+  return mode === 'type' ? mode : 'ingame';
+}
+
+function sanitizeReferenceResourceSortMap(mapLike) {
+  const next = cloneStateMap(mapLike);
+  if (Object.prototype.hasOwnProperty.call(next, 'resources')) {
+    next.resources = normalizeMainResourceReferenceSort(next.resources);
+  }
+  return next;
+}
+
 function sanitizeReferenceUnitSortMap(mapLike) {
   const next = cloneStateMap(mapLike);
   if (Object.prototype.hasOwnProperty.call(next, 'units')) {
@@ -7374,6 +7388,7 @@ function captureViewSnapshot() {
     referenceFilter: cloneStateMap(state.referenceFilter),
     referenceEraFilter: cloneStateMap(state.referenceEraFilter),
     referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
+    referenceResourceSort: sanitizeReferenceResourceSortMap(state.referenceResourceSort),
     referenceUnitSort: sanitizeReferenceUnitSortMap(state.referenceUnitSort),
     unitTableView: sanitizeUnitTableView(state.unitTableView),
     unitAvailabilityView: sanitizeUnitAvailabilityView(state.unitAvailabilityView),
@@ -7577,6 +7592,7 @@ function applyViewSnapshot(snapshot) {
   state.referenceFilter = cloneStateMap(snapshot.referenceFilter);
   state.referenceEraFilter = cloneStateMap(snapshot.referenceEraFilter);
   state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
+  state.referenceResourceSort = sanitizeReferenceResourceSortMap(snapshot.referenceResourceSort);
   state.referenceUnitSort = sanitizeReferenceUnitSortMap(snapshot.referenceUnitSort);
   state.unitTableView = sanitizeUnitTableView(snapshot.unitTableView);
   state.unitAvailabilityView = sanitizeUnitAvailabilityView(snapshot.unitAvailabilityView);
@@ -33160,6 +33176,52 @@ function getUnitReferenceSortOptions(options = {}) {
   return out;
 }
 
+function getResourceReferenceSortOptions() {
+  return [
+    { value: 'ingame', label: 'In-game order' },
+    { value: 'type', label: 'Type' }
+  ];
+}
+
+function getResourceReferenceInGameSortIndex(entry) {
+  const pendingRaw = entry && entry.pendingBiqIndex;
+  const raw = pendingRaw == null || pendingRaw === ''
+    ? entry && entry.biqIndex
+    : pendingRaw;
+  if (raw == null || raw === '') return null;
+  const idx = Number(raw);
+  return Number.isFinite(idx) && idx >= 0 ? idx : null;
+}
+
+function compareResourceReferenceInGameOrder(a, b, options = {}) {
+  if (options && options.preferUnsavedNew) {
+    const aNew = !!(a && a.isNew);
+    const bNew = !!(b && b.isNew);
+    if (aNew !== bNew) return aNew ? -1 : 1;
+  }
+  const ai = getResourceReferenceInGameSortIndex(a);
+  const bi = getResourceReferenceInGameSortIndex(b);
+  if (ai != null && bi != null && ai !== bi) return ai - bi;
+  if ((ai != null) !== (bi != null)) return ai != null ? -1 : 1;
+  return 0;
+}
+
+function getResourceReferenceTypeSortOrder(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'type');
+  const raw = String(field && field.value || '').trim().toLowerCase();
+  if (raw === '0' || raw.startsWith('bonus')) return 0;
+  if (raw === '1' || raw.startsWith('luxury')) return 1;
+  if (raw === '2' || raw.startsWith('strategic')) return 2;
+  return 99;
+}
+
+function compareResourceReferenceTypeOrder(a, b) {
+  const typeOrder = getResourceReferenceTypeSortOrder(a) - getResourceReferenceTypeSortOrder(b);
+  if (typeOrder) return typeOrder;
+  return compareResourceReferenceInGameOrder(a, b)
+    || String(a && a.name || '').localeCompare(String(b && b.name || ''), 'en', { sensitivity: 'base' });
+}
+
 function normalizeUnitPrimaryReorderOrder(order) {
   if (!Array.isArray(order)) return [];
   return order
@@ -41813,9 +41875,23 @@ function renderReferenceTab(tab, tabKey) {
     kindFilter.value = state.referenceImprovementKind[tabKey] || 'all';
     controlsRight.appendChild(kindFilter);
   }
+  let resourceSortSelect = null;
   let unitSortSelect = null;
   let unitAvailabilityBtn = null;
   let unitTableBtn = null;
+  if (tabKey === 'resources') {
+    resourceSortSelect = document.createElement('select');
+    getResourceReferenceSortOptions().forEach((opt) => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      resourceSortSelect.appendChild(o);
+    });
+    const mainResourceSort = normalizeMainResourceReferenceSort(state.referenceResourceSort[tabKey]);
+    state.referenceResourceSort[tabKey] = mainResourceSort;
+    resourceSortSelect.value = mainResourceSort;
+    controlsRight.appendChild(resourceSortSelect);
+  }
   if (tabKey === 'units') {
     unitSortSelect = document.createElement('select');
     getUnitReferenceSortOptions().forEach((opt) => {
@@ -42907,6 +42983,19 @@ function renderReferenceTab(tab, tabKey) {
       return true;
     });
 
+  if (tabKey === 'resources') {
+    const resourceSort = normalizeMainResourceReferenceSort(state.referenceResourceSort[tabKey]);
+    state.referenceResourceSort[tabKey] = resourceSort;
+    if (resourceSort === 'ingame') {
+      filteredEntries.sort((a, b) => {
+        const order = compareResourceReferenceInGameOrder(a.entry, b.entry, { preferUnsavedNew: true });
+        return order || (a.baseIndex - b.baseIndex);
+      });
+    } else if (resourceSort === 'type') {
+      filteredEntries.sort((a, b) => compareResourceReferenceTypeOrder(a.entry, b.entry) || (a.baseIndex - b.baseIndex));
+    }
+  }
+
   if (tabKey === 'units') {
     const unitSort = normalizeMainUnitReferenceSort(state.referenceUnitSort[tabKey]);
     state.referenceUnitSort[tabKey] = unitSort;
@@ -43260,6 +43349,7 @@ function renderReferenceTab(tab, tabKey) {
     const hasFilter = !!String(state.referenceFilter[tabKey] || '').trim()
       || ((tabKey === 'technologies' || tabKey === 'units') && (state.referenceEraFilter[tabKey] || 'all') !== 'all')
       || (tabKey === 'improvements' && (state.referenceImprovementKind[tabKey] || 'all') !== 'all')
+      || (tabKey === 'resources' && normalizeMainResourceReferenceSort(state.referenceResourceSort[tabKey]) !== 'ingame')
       || (tabKey === 'units' && normalizeMainUnitReferenceSort(state.referenceUnitSort[tabKey]) !== 'ingame');
     empty.innerHTML = hasFilter
       ? '<p class="hint">No entries match the current filters.</p>'
@@ -44258,6 +44348,14 @@ function renderReferenceTab(tab, tabKey) {
   if (eraFilterSelect) {
     eraFilterSelect.addEventListener('change', () => {
       state.referenceEraFilter[tabKey] = eraFilterSelect.value || 'all';
+      state.referenceListScrollTop[tabKey] = 0;
+      renderReferenceBody({ preserveDetailIfSameSelection: true });
+    });
+  }
+  if (resourceSortSelect) {
+    resourceSortSelect.addEventListener('change', () => {
+      state.referenceResourceSort[tabKey] = normalizeMainResourceReferenceSort(resourceSortSelect.value);
+      resourceSortSelect.value = state.referenceResourceSort[tabKey];
       state.referenceListScrollTop[tabKey] = 0;
       renderReferenceBody({ preserveDetailIfSameSelection: true });
     });
@@ -65281,6 +65379,7 @@ async function loadBundleAndRender(options = {}) {
       state.referenceFilter = cloneStateMap(persistedView.referenceFilter);
       state.referenceEraFilter = cloneStateMap(persistedView.referenceEraFilter);
       state.referenceImprovementKind = cloneStateMap(persistedView.referenceImprovementKind);
+      state.referenceResourceSort = sanitizeReferenceResourceSortMap(persistedView.referenceResourceSort);
       state.referenceUnitSort = sanitizeReferenceUnitSortMap(persistedView.referenceUnitSort);
       state.referenceContextPaneVisible = cloneStateMap(persistedView.referenceContextPaneVisible);
       state.biqSectionSelectionByTab = cloneStateMap(persistedView.biqSectionSelectionByTab);

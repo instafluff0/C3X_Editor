@@ -1,4 +1,5 @@
 * RELEASE 27.19.1
+- Added a Resources-tab sort dropdown for switching between in-game order and resource type grouping.
 - Fixed Unit Table no-reload saves so successful saves clear stale row dirty badges in the open modal.
 - Added async QA warnings for Civ3-long Civilopedia/PediaIcons art paths, with a staged repair action that shortens paths and keeps uploaded tech icons under the inferred 63-character runtime limit.
 - Added the era-specific Science Advisor face and dialog art overlay to the Tech Tree screen, using scenario-aware `popupSCIENCE.pcx` and `dialogbox.pcx` assets.
