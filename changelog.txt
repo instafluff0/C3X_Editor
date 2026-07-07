@@ -1,4 +1,5 @@
 * RELEASE 27.19.1
+- Fixed large BIQ scenario opens so deferred Map loads no longer send the full parsed BIQ, including every TILE record, to the renderer during initial load, and the Map tab no longer materializes the full map until Open Map is clicked.
 - Fixed a Resources-tab blank-pane crash caused by Luxury city-icon preview type detection calling a config-only helper.
 - Renamed the Resource import setting to cover all imported Resource art, including `resources.pcx` and Luxury city icons.
 - Added scenario-aware Luxury resource city-icon import support for `luxuryicons_small.pcx`, including BIQ-order previews and non-fatal missing-art warnings.

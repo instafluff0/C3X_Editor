@@ -1371,10 +1371,16 @@ const BIQ_REFERENCE_FIELD_RULES = {
 function getBiqSectionByCode(bundle, sectionCode) {
   const target = String(sectionCode || '').trim().toUpperCase();
   if (!target) return null;
+  let summaryMatch = null;
   const directSections = ((bundle || {}).biq || {}).sections;
   if (Array.isArray(directSections)) {
     const match = directSections.find((section) => String(section && section.code || '').trim().toUpperCase() === target);
-    if (match) return match;
+    if (match && (
+      (Array.isArray(match.fullRecords) && match.fullRecords.length > 0) ||
+      (Array.isArray(match.records) && match.records.length > 0) ||
+      !match.summarized
+    )) return match;
+    if (match) summaryMatch = match;
   }
   const tabs = ((bundle || {}).tabs) || {};
   for (const tab of Object.values(tabs)) {
@@ -1382,7 +1388,7 @@ function getBiqSectionByCode(bundle, sectionCode) {
     const match = sections.find((section) => String(section && section.code || '').trim().toUpperCase() === target);
     if (match) return match;
   }
-  return null;
+  return summaryMatch;
 }
 
 function getReferenceTargetIndexSet(bundle, targetKey) {
@@ -1403,10 +1409,14 @@ function getReferenceTargetIndexSet(bundle, targetKey) {
   const records = Array.isArray(section && section.fullRecords) && section.fullRecords.length > 0
     ? section.fullRecords
     : (Array.isArray(section && section.records) ? section.records : []);
-  records.forEach((record, fallbackIndex) => {
-    const parsed = Number.parseInt(String(record && record.index != null ? record.index : fallbackIndex), 10);
-    if (Number.isFinite(parsed) && parsed >= 0) out.add(parsed);
-  });
+  if (records.length > 0) {
+    records.forEach((record, fallbackIndex) => {
+      const parsed = Number.parseInt(String(record && record.index != null ? record.index : fallbackIndex), 10);
+      if (Number.isFinite(parsed) && parsed >= 0) out.add(parsed);
+    });
+  } else if (section && Number.isFinite(Number(section.count)) && Number(section.count) > 0) {
+    for (let i = 0; i < Number(section.count); i += 1) out.add(i);
+  }
   return out;
 }
 
@@ -2340,7 +2350,7 @@ function auditLoadedBundle(bundle, options = {}) {
 function auditBundle(payload) {
   const bundle = payload && payload.bundleSnapshot && typeof payload.bundleSnapshot === 'object'
     ? payload.bundleSnapshot
-    : loadBundle(payload || {});
+    : loadBundle({ ...(payload || {}), deferMapTab: false });
   const options = payload && payload.auditOptions && typeof payload.auditOptions === 'object'
     ? payload.auditOptions
     : {};

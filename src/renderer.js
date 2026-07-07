@@ -4253,6 +4253,7 @@ async function ensureMapTabLoaded(options = {}) {
     mode: state.settings && state.settings.mode || 'global',
     civ3Path: state.settings && state.settings.civ3Path || '',
     scenarioPath: state.settings && state.settings.scenarioPath || '',
+    textFileEncoding: state.settings && state.settings.textFileEncoding || '',
     biq: state.bundle.biq,
     mapTab: current,
     tabs: {
@@ -4264,7 +4265,9 @@ async function ensureMapTabLoaded(options = {}) {
       return materializedTab;
     }
     state.bundle.tabs.map = materializedTab;
-    reconcileMaterializedMapTabSnapshots(materializedTab);
+    if (options && options.reconcileCleanSnapshot === true) {
+      reconcileMaterializedMapTabSnapshots(materializedTab);
+    }
     if (rerender && state.activeTab === 'map') {
       renderTabs();
       renderActiveTab({ preserveTabScroll: true });
@@ -7663,8 +7666,6 @@ function applyViewSnapshot(snapshot) {
       window.requestAnimationFrame(() => {
         if (state.activeTab === 'map') reopenMapModalForTab(state.bundle.tabs.map);
       });
-    } else {
-      void ensureMapTabLoaded({ rerender: true, openModal: true });
     }
   }
   if (state.unitTableView.isOpen && state.activeTab === 'units') {
@@ -35258,7 +35259,6 @@ function renderMapModalBody() {
   mapModal.body.innerHTML = '';
   try {
     mapModal.body.appendChild(renderBiqMapSection(mapModal.tab, mapModal.tileSection, { inModal: true }));
-    reconcilePassiveMapRenderWithCleanSnapshot(mapModal.tab);
     appendDebugLog('biq-map:modal-render-done', {
       durationMs: Number((debugNowMs() - renderStartedAt).toFixed(2))
     });
@@ -46936,9 +46936,6 @@ function renderMapTab(tab) {
     wrap.appendChild(error);
     return wrap;
   }
-  if (tab.deferred) {
-    return wrap;
-  }
   const sections = Array.isArray(tab.sections) ? tab.sections : [];
   const tileSection = sections.find((s) => s.code === 'TILE');
   const card = document.createElement('div');
@@ -46971,13 +46968,16 @@ function renderMapTab(tab) {
     });
     actions.appendChild(addCustomBtn);
   }
-  if (hasMapData(tab) && tileSection) {
+  if (hasMapData(tab)) {
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
     openBtn.className = 'ghost action-open';
     openBtn.textContent = '🗺 Open Map';
-    openBtn.addEventListener('click', () => {
-      const liveTab = getLiveMapTabForAction(tab);
+    openBtn.addEventListener('click', async () => {
+      let liveTab = getLiveMapTabForAction(tab);
+      if (liveTab && liveTab.deferred) {
+        liveTab = await ensureMapTabLoaded({ rerender: false, openModal: false });
+      }
       const liveTileSection = getMapTileSection(liveTab) || tileSection;
       if (!liveTab || !liveTileSection) {
         setStatus('Map data is not available.', true);
@@ -47052,7 +47052,7 @@ function renderMapTab(tab) {
     });
     actions.appendChild(editBtn);
   }
-  if (isScenarioMode() && hasMapData(tab)) {
+  if (isScenarioMode() && hasMapData(tab) && tileSection) {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'ghost action-delete';
@@ -47154,6 +47154,7 @@ function isMapSectionCode(code) {
 }
 
 function hasMapData(tab) {
+  if (tab && tab.deferred) return tab.hasMapData === true;
   if (!tab || !Array.isArray(tab.sections)) return false;
   const wmapSection = tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP');
   const tileSection = tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE');
@@ -47169,8 +47170,9 @@ function hasMapData(tab) {
 
 async function maybeOpenMapModalForTabClick(tabKey) {
   if (String(tabKey || '') !== 'map' || !isScenarioMode() || !state.bundle || !state.bundle.tabs) return false;
-  const tab = await ensureMapTabLoaded({ rerender: true, openModal: false });
+  const tab = getLiveMapTabForAction();
   if (!tab || !hasMapData(tab)) return false;
+  if (tab.deferred) return false;
   const tileSection = Array.isArray(tab.sections)
     ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
     : null;
@@ -65354,7 +65356,6 @@ function renderTabs() {
         navigateWithHistory(() => {
           state.activeTab = key;
         }, { preserveTabScroll: false });
-        maybeOpenMapModalForTabClick(key);
       });
       row.appendChild(button);
     });
@@ -65534,9 +65535,6 @@ function renderActiveTab(options = {}) {
   if (tab.type === 'reference') {
     el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
   } else if (tab.type === 'map') {
-    if (tab.deferred) {
-      void ensureMapTabLoaded({ rerender: true });
-    }
     el.tabContent.appendChild(renderMapTab(tab));
   } else if (tab.type === 'biqStructure') {
     el.tabContent.appendChild(renderBiqTab(tab));
@@ -65751,9 +65749,6 @@ async function loadBundleAndRender(options = {}) {
     state.biqMapZoomAnchor = null;
     state.biqMapSuppressClickUntilTs = 0;
     el.workspace.classList.remove('hidden');
-    if (state.activeTab === 'map') {
-      await ensureMapTabLoaded({ rerender: false, openModal: false });
-    }
     const cleanSnapshotForLoadedBundle = snapshotEditableTabsFromBundle(state.bundle);
     if (!preserveDirtyState) {
       state.cleanSnapshot = cleanSnapshotForLoadedBundle;
@@ -65771,7 +65766,8 @@ async function loadBundleAndRender(options = {}) {
     } else if (techTreeModal.node && !techTreeModal.node.classList.contains('hidden')) {
       closeTechTreeModal({ skipActiveTabRefresh: true });
     }
-    if (persistedView && persistedView.mapModalOpen && state.activeTab === 'map') {
+    const loadedMapTab = state.bundle && state.bundle.tabs ? state.bundle.tabs.map : null;
+    if (persistedView && persistedView.mapModalOpen && state.activeTab === 'map' && loadedMapTab && !loadedMapTab.deferred) {
       reopenMapModalForTab(state.bundle.tabs.map);
     } else {
       closeMapModal();
@@ -66204,9 +66200,12 @@ function buildAuditPayloadFromState(overrides = {}) {
   const overrideAuditOptions = overrides && overrides.auditOptions && typeof overrides.auditOptions === 'object'
     ? overrides.auditOptions
     : {};
+  const includeBundleSnapshot = overrides && Object.prototype.hasOwnProperty.call(overrides, 'includeBundleSnapshot')
+    ? overrides.includeBundleSnapshot !== false
+    : hasEffectiveUnsavedChanges();
   return {
     ...buildLoadBundlePayload(overrides),
-    bundleSnapshot: state.bundle ? deepCloneUiValue(state.bundle) : null,
+    bundleSnapshot: includeBundleSnapshot && state.bundle ? deepCloneUiValue(state.bundle) : null,
     auditOptions: {
       ...overrideAuditOptions
     }
@@ -68687,10 +68686,11 @@ async function init() {
         return;
       }
       const scenarioSearchFolderOverride = normalizeScenarioSearchFolderFieldValue('');
-      const auditPayload = buildAuditPayloadFromState({
-        scenarioPath: state.settings.scenarioPath,
-        scenarioSearchFolderOverride
-      });
+    const auditPayload = buildAuditPayloadFromState({
+      scenarioPath: state.settings.scenarioPath,
+      scenarioSearchFolderOverride,
+      includeBundleSnapshot: false
+    });
       void runBundleAudit(auditPayload);
     });
     window.addEventListener('beforeunload', () => {

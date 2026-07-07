@@ -876,8 +876,8 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const liveTab = getLiveMapTabForAction\(tab\);[\s\S]*?const liveTileSection = getMapTileSection\(liveTab\) \|\| tileSection;[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: liveTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
-    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map; Open Map should resolve the live map tab before opening, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
+    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?let liveTab = getLiveMapTabForAction\(tab\);[\s\S]*?if \(liveTab && liveTab\.deferred\) \{[\s\S]*?liveTab = await ensureMapTabLoaded\(\{ rerender: false, openModal: false \}\);[\s\S]*?\}[\s\S]*?const liveTileSection = getMapTileSection\(liveTab\) \|\| tileSection;[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: liveTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map; Open Map should materialize deferred maps only when explicitly clicked, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
   );
   assert.match(
     rendererText,
@@ -1350,9 +1350,9 @@ test('map modal undo all follows tracked map dirty state', () => {
     /function hasActiveChangedMapCityEditSession\(\) \{[\s\S]*?state\.activeMapCityEditSessionKey[\s\S]*?state\.activeMapCityEditSessionGetValue[\s\S]*?\}[\s\S]*?function hasMapModalUndoableChanges\(\) \{[\s\S]*?return hasTrackedUnsavedMapChanges\(\)[\s\S]*?getLatestScopedUndoSnapshot\('map'\)[\s\S]*?hasActiveChangedMapCityEditSession\(\)[\s\S]*?\}[\s\S]*?setModalUndoSaveButtonState\(mapModal, \{[\s\S]*?canEdit: isScenarioMode\(\),[\s\S]*?hasUndoable,[\s\S]*?hasSaveable: hasUndoable && hasTrackedUnsavedMapChanges\(\)/,
     'map modal Undo and Undo All should enable for tracked map changes with a committed map snapshot or an active changed city session'
   );
-  assert.match(
+  assert.doesNotMatch(
     rendererText,
     /mapModal\.body\.appendChild\(renderBiqMapSection\(mapModal\.tab, mapModal\.tileSection, \{ inModal: true \}\)\);\s*reconcilePassiveMapRenderWithCleanSnapshot\(mapModal\.tab\);/,
-    'opening the map modal should reconcile passive render-only map fields into the clean snapshot'
+    'opening the map modal should not rewrite the clean snapshot for passive render-only map fields'
   );
 });

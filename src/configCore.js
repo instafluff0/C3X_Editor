@@ -5672,13 +5672,27 @@ function buildReferenceTabs(civ3Path, options = {}) {
   return tabs;
 }
 
+const BIQ_MAP_TAB_SECTION_CODES = new Set(['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+
+function isBiqMapTabSectionCode(code) {
+  return BIQ_MAP_TAB_SECTION_CODES.has(String(code || '').trim().toUpperCase());
+}
+
 function buildMapTabFromBiq(biqTab, mode, options = {}) {
-  const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections.map((section) => ({
-    ...section,
-    records: Array.isArray(section && section.records)
-      ? section.records.map((record, index) => {
+  const sourceSections = biqTab && Array.isArray(biqTab.sections) ? biqTab.sections : [];
+  const selectedSections = options.mapOnly
+    ? sourceSections.filter((section) => isBiqMapTabSectionCode(section && section.code))
+    : sourceSections;
+  const sections = selectedSections.map((section) => {
+    const { fullRecords: _fullRecords, ...sectionForMap } = section || {};
+    return {
+      ...sectionForMap,
+      records: Array.isArray(section && section.records)
+        ? section.records.map((record, index) => {
         const rawRecord = Array.isArray(section && section.fullRecords) ? section.fullRecords[index] : null;
         const recordClone = { ...(rawRecord || {}), ...record };
+        delete recordClone.english;
+        delete recordClone.writableBaseKeys;
         const rawFields = Array.isArray(rawRecord && rawRecord.fields)
           ? rawRecord.fields
           : (Array.isArray(record && record.fields)
@@ -5717,7 +5731,8 @@ function buildMapTabFromBiq(biqTab, mode, options = {}) {
         return recordClone;
       })
       : []
-  })) : [];
+    };
+  });
   const hasMapData = sections.some((s) => s.code === 'TILE') && sections.some((s) => s.code === 'WMAP');
   return {
     title: 'Map',
@@ -5898,6 +5913,29 @@ function detectBiqHasMapData(biqTab) {
   return !!(wmapSection && tileSection && wmapCount > 0 && tileCount > 0);
 }
 
+function summarizeBiqTabForBundle(biqTab) {
+  if (!biqTab || typeof biqTab !== 'object') return biqTab;
+  const summary = { ...biqTab };
+  if (Array.isArray(biqTab.sections)) {
+    summary.sections = biqTab.sections.map((section) => ({
+      id: section && section.id,
+      code: section && section.code,
+      title: section && section.title,
+      count: Number(section && section.count) || (Array.isArray(section && section.records) ? section.records.length : 0),
+      startOffset: section && section.startOffset,
+      endOffset: section && section.endOffset,
+      byteLength: section && section.byteLength,
+      parseMode: section && section.parseMode,
+      textEncoding: section && section.textEncoding,
+      recordsTruncated: section && section.recordsTruncated,
+      records: [],
+      summarized: true
+    }));
+  }
+  summary.summarized = true;
+  return summary;
+}
+
 function buildDeferredMapTab(biqTab, mode, options = {}) {
   const hasMapData = detectBiqHasMapData(biqTab);
   return {
@@ -5919,13 +5957,21 @@ function buildDeferredMapTab(biqTab, mode, options = {}) {
 
 function materializeMapTab(payload = {}) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
-  const biqTab = payload.biqTab || payload.biq || null;
+  let biqTab = payload.biqTab || payload.biq || null;
+  if (!biqTab || !Array.isArray(biqTab.sections) || (biqTab && biqTab.summarized)) {
+    biqTab = loadBiqTab({
+      mode,
+      civ3Path: payload.civ3Path || '',
+      scenarioPath: payload.scenarioPath || '',
+      textEncoding: payload.textFileEncoding || payload.textEncoding || (biqTab && biqTab.textEncoding) || 'windows-1252'
+    });
+  }
   const existingMapTab = payload.mapTab && typeof payload.mapTab === 'object' ? payload.mapTab : null;
   const supportingTabs = payload.tabs && typeof payload.tabs === 'object' ? payload.tabs : {};
   const scenarioDistricts = Object.prototype.hasOwnProperty.call(payload, 'scenarioDistricts')
     ? payload.scenarioDistricts
     : (existingMapTab && existingMapTab.scenarioDistricts) || null;
-  const mapTab = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts });
+  const mapTab = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts, mapOnly: true });
   mapTab.recordOps = Array.isArray(existingMapTab && existingMapTab.recordOps) ? existingMapTab.recordOps : [];
   mapTab.mapMutation = existingMapTab && existingMapTab.mapMutation ? existingMapTab.mapMutation : null;
   mapTab.mapMutationSource = existingMapTab && existingMapTab.mapMutationSource ? existingMapTab.mapMutationSource : null;
@@ -7313,7 +7359,7 @@ function loadBundle(payload) {
       ? loadScienceAdvisorArrowMetadata(scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioDir)
       : loadScienceAdvisorArrowMetadata('');
 
-    bundle.biq = biqTab;
+    bundle.biq = deferMapTab ? summarizeBiqTabForBundle(biqTab) : biqTab;
     if (mode === 'scenario' && scenarioSearchFolderOverride.length > 0 && biqTab && Array.isArray(biqTab.sections)) {
       const game = biqTab.sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'GAME');
       const record = game && Array.isArray(game.records) ? game.records[0] : null;
