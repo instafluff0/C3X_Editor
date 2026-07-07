@@ -107,6 +107,28 @@ test('TECH parser produces human-readable fields', () => {
   assertNameNotFallback({ index: 0, ...rec }, 'TECH');
 });
 
+test('GAME Scenario Search Folders is writable and serialized', () => {
+  const io = makeIo();
+  const rec = {
+    useDefaultRules: 1,
+    defaultVictoryConditions: 0,
+    numPlayableCivs: 1,
+    playableCivIds: [0],
+    victoryConditionsAndRules: 0,
+    turnsPerTimescale: Array(7).fill(0),
+    timeUnitsPerTurn: Array(7).fill(0),
+    scenarioSearchFolders: 'OldFolder',
+    civPartOfWhichAlliance: [0]
+  };
+
+  assert.equal(sectionWritableKeys('GAME').includes('scenario_search_folders'), true);
+  assert.equal(applySetToRecord(rec, 'scenarioSearchFolders', 'CCM3-Worldmap;CCM3', 'GAME', io), true);
+
+  const serialized = serializeSection({ code: 'GAME', records: [rec] }, io);
+  const reparsed = SECTION_REGISTRY.GAME.parse(serialized.subarray(12), io);
+  assert.equal(reparsed.scenarioSearchFolders, 'CCM3-Worldmap;CCM3');
+});
+
 test('PRTO serializer preserves Conquests record layout when clearing requirement fields', () => {
   const reg = SECTION_REGISTRY.PRTO;
   const io = makeIo();

@@ -18,6 +18,7 @@ const {
   collectBiqMapEdits,
   collectBiqMapStructureOps,
   loadMapImport,
+  buildReferenceTabs,
   loadBundle,
   saveBundle,
   previewSavePlan
@@ -73,6 +74,28 @@ test('loadBundle preserves GAME locked-alliance war flags for Pacific scenario',
 
   assert.equal(getRecordValue(record, 'alliance1_is_at_war_with_alliance2_0'), 'true');
   assert.equal(getRecordValue(record, 'alliance2_is_at_war_with_alliance1_0'), 'true');
+});
+
+test('buildReferenceTabs reads scenario text from BIQ search folders before BIQ directory fallback', () => {
+  const civ3Root = mkTmpDir();
+  const biqRoot = mkTmpDir();
+  const firstSearchRoot = mkTmpDir();
+  const secondSearchRoot = mkTmpDir();
+  fs.mkdirSync(path.join(civ3Root, 'Conquests', 'Text'), { recursive: true });
+  fs.writeFileSync(path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt'), '', 'latin1');
+  fs.writeFileSync(path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt'), '', 'latin1');
+  fs.writeFileSync(path.join(biqRoot, 'PediaIcons.txt'), '#ICON_BLDG_WRONG\nwrong.pcx\n', 'latin1');
+  fs.mkdirSync(path.join(secondSearchRoot, 'Text'), { recursive: true });
+  fs.writeFileSync(path.join(secondSearchRoot, 'Text', 'PediaIcons.txt'), '#ICON_BLDG_RIGHT\nright.pcx\n', 'latin1');
+
+  const tabs = buildReferenceTabs(civ3Root, {
+    mode: 'scenario',
+    scenarioPath: biqRoot,
+    scenarioPaths: [firstSearchRoot, secondSearchRoot]
+  });
+
+  const details = tabs.civilizations.sourceDetails;
+  assert.equal(path.normalize(details.pediaIconsScenario), path.normalize(path.join(secondSearchRoot, 'Text', 'PediaIcons.txt')));
 });
 
 test('base config precedence is default -> scenario -> custom', () => {

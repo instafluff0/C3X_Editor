@@ -470,6 +470,74 @@ LARGE_MAP_FIXTURES.forEach(({ label, fileName }) => {
   });
 });
 
+test('deferred map materialization reuses the cached BIQ parse without sharing editor state', (t) => {
+  if (!fs.existsSync(AGE_OF_DISCOVERY_BIQ)) {
+    t.skip(`Missing BIQ fixture: ${AGE_OF_DISCOVERY_BIQ}`);
+    return;
+  }
+  const scenarioPath = copyFixtureBiq(AGE_OF_DISCOVERY_BIQ, 'deferred-map-cache-biq');
+  const bundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    c3xPath: C3X_ROOT,
+    scenarioPath,
+    deferMapTab: true
+  });
+  assert.equal(bundle && bundle.biq && bundle.biq.summarized, true, 'expected deferred load to summarize BIQ records');
+  assert.ok(bundle.biq.mapMaterializationCacheKey, 'expected deferred BIQ summary to carry an opaque map cache key');
+  assert.ok(bundle.tabs && bundle.tabs.map && bundle.tabs.map.deferred, 'expected deferred map tab');
+
+  const originalReadFileSync = fs.readFileSync;
+  fs.readFileSync = function patchedReadFileSync(filePath, ...args) {
+    if (path.resolve(String(filePath || '')) === path.resolve(scenarioPath)) {
+      throw new Error('unexpected BIQ re-read during cached map materialization');
+    }
+    return originalReadFileSync.call(fs, filePath, ...args);
+  };
+  t.after(() => {
+    fs.readFileSync = originalReadFileSync;
+  });
+
+  const firstMap = materializeMapTab({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath,
+    biq: bundle.biq,
+    mapTab: bundle.tabs.map,
+    tabs: {
+      districts: bundle.tabs.districts,
+      naturalWonders: bundle.tabs.naturalWonders
+    }
+  });
+  const firstTile = getSection(firstMap, 'TILE');
+  const firstRecord = firstTile && Array.isArray(firstTile.records) ? firstTile.records[0] : null;
+  const firstField = firstRecord && Array.isArray(firstRecord.fields) ? firstRecord.fields[0] : null;
+  assert.ok(firstField, 'expected materialized map record fields');
+  const originalValue = String(firstField.value == null ? '' : firstField.value);
+  firstField.value = 'codex-mutated-map-field';
+
+  const secondMap = materializeMapTab({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath,
+    biq: bundle.biq,
+    mapTab: bundle.tabs.map,
+    tabs: {
+      districts: bundle.tabs.districts,
+      naturalWonders: bundle.tabs.naturalWonders
+    }
+  });
+  const secondTile = getSection(secondMap, 'TILE');
+  const secondRecord = secondTile && Array.isArray(secondTile.records) ? secondTile.records[0] : null;
+  const secondField = secondRecord && Array.isArray(secondRecord.fields) ? secondRecord.fields[0] : null;
+  assert.ok(secondField, 'expected second materialized map record fields');
+  assert.equal(
+    String(secondField.value == null ? '' : secondField.value),
+    originalValue,
+    'editing the materialized map tab must not mutate the cached BIQ parse'
+  );
+});
+
 test('fixture-backed BIQ semantic matrix: stock map references and booleans parse from projected labels', (t) => {
   const existing = STOCK_MAP_SCENARIOS
     .map((fileName) => path.join(SCENARIOS_DIR, fileName))

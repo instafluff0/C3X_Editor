@@ -42,6 +42,14 @@ test('large map can still keep native scroll dimensions without allocating one h
   );
 });
 
+test('Fuji-sized world map uses chunks at the default map zoom', () => {
+  const metrics = planner.computeWorldMetrics(360, 306, 5);
+
+  assert.equal(metrics.expectedTileCount, 55080);
+  assert.equal(Math.round(metrics.rgbaBytes / 1024 / 1024), 89);
+  assert.equal(planner.shouldUseChunkedRenderer(metrics), true);
+});
+
 test('large-map prefetch overscan keeps a nearby chunk ring beyond the visible viewport', () => {
   const metrics = planner.computeWorldMetrics(362, 306, 16);
   const visible = planner.buildChunksForRect(

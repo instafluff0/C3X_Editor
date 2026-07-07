@@ -546,9 +546,9 @@ function getAssetRoots(bundle) {
     seen.add(resolved);
     roots.push(resolved);
   };
-  add(bundle && bundle.scenarioInputPath);
-  add(bundle && bundle.scenarioPath);
   (Array.isArray(bundle && bundle.scenarioSearchPaths) ? bundle.scenarioSearchPaths : []).forEach(add);
+  add(bundle && bundle.scenarioPath);
+  add(bundle && bundle.scenarioInputPath);
   return roots;
 }
 
@@ -2325,6 +2325,7 @@ function auditMusic(bundle, result) {
 
 function auditLoadedBundle(bundle, options = {}) {
   const result = createAuditAccumulator();
+  const skipReferenceArt = !!(options && options.skipReferenceArt);
   if (!bundle || !bundle.tabs) return result;
   lintBaseConfig(bundle, result);
   auditBaseReferenceCompatibility(bundle, result);
@@ -2338,7 +2339,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditDayNightAssets(bundle, result);
   auditBiqReferenceIndexIntegrity(bundle, result);
   auditTechnologyPrerequisiteCycles(bundle, result);
-  auditReferenceArt(bundle, result);
+  if (!skipReferenceArt) auditReferenceArt(bundle, result);
   auditScenarioTextCoverage(bundle, result);
   auditScenarioTextHealth(bundle, result);
   auditCivilopediaLinks(bundle, result);

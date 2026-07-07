@@ -339,6 +339,8 @@ const state = {
     totalWarnings: 0,
     tabs: {}
   },
+  pendingMapOpenAuditPayload: null,
+  pendingMapOpenAuditTimer: null,
   filesReadFilters: {
     locationCore: false,
     locationScenario: false,
@@ -4284,6 +4286,7 @@ async function ensureMapTabLoaded(options = {}) {
       setLoadingUi(false);
     }
     state.mapTabLoadPromise = null;
+    scheduleDeferredMapOpenAuditFlush({ delayMs: 1000 });
   });
   return state.mapTabLoadPromise;
 }
@@ -5192,6 +5195,36 @@ function appendWarningCountBadge(target, label = 'Warnings', count = 0) {
   badge.textContent = String(n);
   badge.title = label;
   target.appendChild(badge);
+}
+
+function shouldDeferReferenceArtAuditForMapOpen() {
+  if (!isScenarioMode() || !state.bundle || !state.bundle.tabs) return false;
+  const mapTab = state.bundle.tabs.map;
+  return !!(mapTab && mapTab.deferred && hasMapData(mapTab));
+}
+
+function cloneAuditPayload(payload) {
+  return payload && typeof payload === 'object' ? { ...payload } : null;
+}
+
+function withReferenceArtAuditOption(payload, skipReferenceArt) {
+  const cloned = cloneAuditPayload(payload) || {};
+  const auditOptions = cloned.auditOptions && typeof cloned.auditOptions === 'object'
+    ? cloned.auditOptions
+    : {};
+  cloned.auditOptions = {
+    ...auditOptions,
+    skipReferenceArt: !!skipReferenceArt
+  };
+  return cloned;
+}
+
+function clearDeferredMapOpenAudit() {
+  if (state.pendingMapOpenAuditTimer) {
+    window.clearTimeout(state.pendingMapOpenAuditTimer);
+    state.pendingMapOpenAuditTimer = null;
+  }
+  state.pendingMapOpenAuditPayload = null;
 }
 
 function getLoadAuditTabState(tabKey) {
@@ -7215,6 +7248,7 @@ function clearBundleView() {
     totalWarnings: 0,
     tabs: {}
   };
+  clearDeferredMapOpenAudit();
   updateFilesReadIssueBadge();
   renderFilesReadModal();
   updateNavButtons();
@@ -7379,6 +7413,7 @@ function sanitizeUnitAvailabilityView(view) {
 }
 
 function clearLoadAuditState(options = {}) {
+  clearDeferredMapOpenAudit();
   state.loadAudit = {
     requestId: (state.loadAudit && Number(state.loadAudit.requestId)) || 0,
     pending: false,
@@ -26465,9 +26500,9 @@ function drawUnits32IconToCanvas(preview, spriteIndex, canvas, spriteSize = 32) 
 function getResourceAtlasMetrics(preview) {
   const atlas = rgbaToCanvas(preview);
   if (!atlas || !atlas.width || !atlas.height) return null;
-  const cols = 6;
   const cellW = 50;
   const cellH = 50;
+  const cols = Math.max(1, Math.floor(atlas.width / cellW));
   const rows = Math.max(1, Math.floor(atlas.height / cellH));
   return { atlas, cols, rows, cellW, cellH };
 }
@@ -47020,17 +47055,26 @@ function renderMapTab(tab) {
     });
     actions.appendChild(importBtn);
   }
-  if (hasMapData(tab) && tileSection) {
+  if (hasMapData(tab)) {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'ghost action-edit';
     editBtn.textContent = '↔ Resize Map';
     editBtn.addEventListener('click', async () => {
-      const result = await promptEditMapAction(tab);
+      let liveTab = getLiveMapTabForAction(tab);
+      if (liveTab && liveTab.deferred) {
+        liveTab = await ensureMapTabLoaded({ rerender: false, openModal: false });
+      }
+      if (!liveTab || !getMapTileSection(liveTab)) {
+        setStatus('Map data is not available.', true);
+        if (state.activeTab === 'map') renderActiveTab({ preserveTabScroll: true });
+        return;
+      }
+      const result = await promptEditMapAction(liveTab);
       if (!result) return;
       rememberMapUndoSnapshot();
       try {
-        applyMapResizePreviewToTab(tab, result.width, result.height, {
+        applyMapResizePreviewToTab(liveTab, result.width, result.height, {
           fillTerrain: result.fillTerrain,
           horizontalAnchor: result.horizontalAnchor,
           verticalAnchor: result.verticalAnchor
@@ -47042,17 +47086,15 @@ function renderMapTab(tab) {
       setDirty(true);
       renderTabs();
       renderActiveTab({ preserveTabScroll: true });
-      const resizedTileSection = Array.isArray(tab.sections)
-        ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
-        : null;
+      const resizedTileSection = getMapTileSection(liveTab);
       if (resizedTileSection) {
-        openMapModal({ tab, tileSection: resizedTileSection, title: `${tab.title || 'Map'} Editor` });
+        openMapModal({ tab: liveTab, tileSection: resizedTileSection, title: `${liveTab.title || 'Map'} Editor` });
       }
       setStatus(`Resized map preview to ${result.width}x${result.height}. Save to write the BIQ.`);
     });
     actions.appendChild(editBtn);
   }
-  if (isScenarioMode() && hasMapData(tab) && tileSection) {
+  if (isScenarioMode() && hasMapData(tab)) {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'ghost action-delete';
@@ -47507,6 +47549,8 @@ function applyWholeMapSectionsToTab(tab, mapSectionsInput, mutation = 'set', mut
   if (insertAt >= 0) nextSections.splice(insertAt, 0, ...mapSections);
   else nextSections.push(...mapSections);
   tab.sections = nextSections;
+  tab.deferred = false;
+  tab.mapMaterializationCacheKey = '';
   tab.hasMapData = hasMapData(tab);
   tab.mapMutation = mutation;
   tab.mapMutationSource = mutation === 'set' ? String(mutationSource || 'generated') : null;
@@ -48696,6 +48740,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const local = getBiqSectionFromTab(tab, code);
     if (local) return local;
     if (code === 'RACE') return getReferenceBiqSectionFromTab(civilizationReferenceTab, code);
+    if (code === 'PRTO') return getReferenceBiqSectionFromTab(unitsReferenceTab, code);
     if (code === 'TERR' || code === 'TFRM') return getBiqSectionFromTab(terrainSupportTab, code);
     if (code === 'ERAS') return getBiqSectionFromTab(worldSupportTab, code);
     if (code === 'RULE') return getBiqSectionFromTab(rulesSupportTab, code);
@@ -50061,7 +50106,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   }
 
   const goodIconById = getMapResourceIconIndexById();
-  const prtoSection = (tab.sections || []).find((s) => s.code === 'PRTO');
+  const prtoSection = getMapSupportSection('PRTO');
   const prtoIndexByName = {};
   const prtoIconById = {};
   const prtoNameById = {};
@@ -50069,13 +50114,19 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const prtoClassById = {};
   const prtoDefenseById = {};
   (prtoSection?.records || []).forEach((record, idx) => {
-    const name = String(record.name || '').trim();
-    prtoIndexByName[name.toLowerCase()] = idx;
-    prtoIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'iconindex')?.value, -1);
+    const unitId = Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx;
+    const name = String(getMapFieldValue(record, 'name', record && record.name || '') || '').trim();
+    prtoIndexByName[name.toLowerCase()] = unitId;
+    prtoIconById[unitId] = parseIntLoose(getMapFieldValue(record, 'iconindex', '-1'), -1);
+    prtoIconById[idx] = Number.isFinite(prtoIconById[idx]) && prtoIconById[idx] >= 0 ? prtoIconById[idx] : prtoIconById[unitId];
     prtoNameById[idx] = name;
-    prtoCivilopediaKeyById[idx] = String(getFieldByBaseKey(record, 'civilopediaentry')?.value || '').trim().toUpperCase();
-    prtoClassById[idx] = normalizeUnitClassValue(getFieldByBaseKey(record, 'unitclass')?.value);
-    prtoDefenseById[idx] = parseIntLoose(getFieldByBaseKey(record, 'defence')?.value, 0);
+    prtoNameById[unitId] = name;
+    prtoCivilopediaKeyById[idx] = String(getMapFieldValue(record, 'civilopediaentry', '') || '').trim().toUpperCase();
+    prtoCivilopediaKeyById[unitId] = prtoCivilopediaKeyById[idx];
+    prtoClassById[idx] = normalizeUnitClassValue(getMapFieldValue(record, 'unitclass', ''));
+    prtoClassById[unitId] = prtoClassById[idx];
+    prtoDefenseById[idx] = parseIntLoose(getMapFieldValue(record, 'defence', '0'), 0);
+    prtoDefenseById[unitId] = prtoDefenseById[idx];
   });
   const bldgSection = (tab.sections || []).find((s) => s.code === 'BLDG');
   const capitalBuildingIds = new Set();
@@ -50112,8 +50163,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   (unitSection?.records || []).forEach((record, idx) => {
     const ref = Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx;
     unitRecordById[ref] = record;
-    const ux = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
-    const uy = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+    const ux = parseIntLoose(getMapFieldValue(record, 'x', ''), NaN);
+    const uy = parseIntLoose(getMapFieldValue(record, 'y', ''), NaN);
     if (Number.isFinite(ux) && Number.isFinite(uy)) {
       const key = `${ux},${uy}`;
       if (!unitRecordsByCoord.has(key)) unitRecordsByCoord.set(key, []);
@@ -50828,6 +50879,19 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       _dbgLog('INF', 'BiqCRUD', `structure delete (map): section=${section} ref=${ref}`);
     }
   };
+  const renumberMapSectionRecords = (section) => {
+    if (!section || !Array.isArray(section.records)) return;
+    section.records.forEach((record, index) => {
+      record.index = index;
+      if (Array.isArray(record.fields)) {
+        const field = getFieldByBaseKey(record, 'index');
+        if (field) {
+          field.value = String(index);
+          field.mapEditorValueEdited = true;
+        }
+      }
+    });
+  };
   const removeCityByIndex = (cityIndex) => {
     const idx = parseIntLoose(cityIndex, NaN);
     appendDebugLog('biq-map:city-delete-start', {
@@ -50858,19 +50922,25 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (ref) pushStructureDeleteOp('CITY', ref);
     citySection.records = citySection.records.filter((record) => record !== target);
     let clearedTileCount = 0;
+    let shiftedTileCount = 0;
     tiles.forEach((candidateTile) => {
       if (!candidateTile) return;
       const candidateValue = parseIntLoose(getMapFieldValue(candidateTile, 'city', '-1'), -1);
       if (candidateValue === idx) {
         setMapFieldValue(candidateTile, 'city', '-1', 'City');
         clearedTileCount += 1;
+      } else if (candidateValue > idx) {
+        setMapFieldValue(candidateTile, 'city', String(candidateValue - 1), 'City');
+        shiftedTileCount += 1;
       }
     });
+    renumberMapSectionRecords(citySection);
     appendDebugLog('biq-map:city-delete-done', {
       requestedCityIndex: String(cityIndex || ''),
       parsedCityIndex: idx,
       recordRef: ref || '',
       clearedTileCount,
+      shiftedTileCount,
       remainingCityCount: citySection.records.length
     });
     return true;
@@ -51460,13 +51530,28 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const ref = getBiqStructureRecordRef(target);
     if (ref) pushStructureDeleteOp('CLNY', ref);
     colonySection.records = colonySection.records.filter((record) => record !== target);
+    let clearedTileCount = 0;
+    let shiftedTileCount = 0;
     tiles.forEach((candidateTile) => {
       if (!candidateTile) return;
       const candidateValue = getMapFieldRefIndex(candidateTile, 'colony', -1);
       if (candidateValue === idx) {
         setMapFieldValue(candidateTile, 'colony', '-1', 'Colony');
         syncTileColonyOverlayBits(candidateTile, -1);
+        clearedTileCount += 1;
+      } else if (candidateValue > idx) {
+        setMapFieldValue(candidateTile, 'colony', String(candidateValue - 1), 'Colony');
+        shiftedTileCount += 1;
       }
+    });
+    renumberMapSectionRecords(colonySection);
+    appendDebugLog('biq-map:colony-delete-done', {
+      requestedColonyIndex: String(colonyIndex || ''),
+      parsedColonyIndex: idx,
+      recordRef: ref || '',
+      clearedTileCount,
+      shiftedTileCount,
+      remainingColonyCount: colonySection.records.length
     });
     return true;
   };
@@ -53149,10 +53234,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (resourceId < 0) return;
     const iconIdx = goodIconById[resourceId];
     if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
-    // Quint slices resources.pcx as fixed 50x50 cells in 6 columns.
-    const cols = 6;
     const cellW = 50;
     const cellH = 50;
+    // Quint slices resources.pcx as 50x50 cells using image width to determine columns.
+    const cols = Math.max(1, Math.floor(atlas.width / cellW));
     const col = iconIdx % cols;
     const row = Math.floor(iconIdx / cols);
     if ((col * cellW + cellW) > atlas.width || (row * cellH + cellH) > atlas.height) return;
@@ -53172,10 +53257,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const visibleUnit = getMapVisibleUnitRecordForStack(stack, record);
     let unitId = NaN;
     if (visibleUnit) {
-      unitId = parseIntLoose(getFieldByBaseKey(visibleUnit, 'prtonumber')?.value, NaN);
+      unitId = parseIntLoose(getMapFieldValue(visibleUnit, 'prtonumber', '-1'), NaN);
     }
     if (!Number.isFinite(unitId)) {
-      const rawUnit = String(getFieldByBaseKey(record, 'unit_on_tile')?.value || '').trim();
+      const rawUnit = String(getMapFieldValue(record, 'unit_on_tile', '') || '').trim();
       if (!rawUnit) return;
       const unitName = rawUnit.replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
       unitId = prtoIndexByName[unitName];
@@ -55594,14 +55679,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           const resourceId = parseIntLoose(state.mapEditorTool && state.mapEditorTool.resourceType, -1);
           const iconIdx = getMapResourceIconIndexById()[resourceId];
           if (atlas && Number.isFinite(iconIdx) && iconIdx >= 0) {
-            const cols = 6;
             const cellW = 50;
             const cellH = 50;
+            const cols = Math.max(1, Math.floor(atlas.width / cellW));
             const col = iconIdx % cols;
             const row = Math.floor(iconIdx / cols);
-            const dx = Math.round(logical.cx - Math.round((cellW * scale) / 2));
-            const dy = Math.round(logical.cy - Math.round((cellH * scale) / 2));
-            hoverCtx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, Math.round(cellW * scale), Math.round(cellH * scale));
+            if ((col * cellW + cellW) <= atlas.width && (row * cellH + cellH) <= atlas.height) {
+              const dx = Math.round(logical.cx - Math.round((cellW * scale) / 2));
+              const dy = Math.round(logical.cy - Math.round((cellH * scale) / 2));
+              hoverCtx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, Math.round(cellW * scale), Math.round(cellH * scale));
+            }
           }
           hoverCtx.restore();
           return;
@@ -65391,7 +65478,42 @@ async function runBundleAudit(payload) {
   } catch (_err) {
     if (!state.loadAudit || state.loadAudit.requestId !== requestId) return;
     clearLoadAuditState();
+  } finally {
+    if (state.pendingMapOpenAuditPayload && !(state.loadAudit && state.loadAudit.pending)) {
+      scheduleDeferredMapOpenAuditFlush({ delayMs: 250 });
+    }
   }
+}
+
+function scheduleDeferredMapOpenAuditFlush(options = {}) {
+  const delayMs = Math.max(0, Number(options && options.delayMs) || 0);
+  if (!state.pendingMapOpenAuditPayload || !shouldRunQualityChecks()) return;
+  if (state.pendingMapOpenAuditTimer) {
+    window.clearTimeout(state.pendingMapOpenAuditTimer);
+    state.pendingMapOpenAuditTimer = null;
+  }
+  state.pendingMapOpenAuditTimer = window.setTimeout(() => {
+    state.pendingMapOpenAuditTimer = null;
+    if (!state.pendingMapOpenAuditPayload || !shouldRunQualityChecks()) return;
+    if (state.loadAudit && state.loadAudit.pending) {
+      scheduleDeferredMapOpenAuditFlush({ delayMs: 500 });
+      return;
+    }
+    const payload = state.pendingMapOpenAuditPayload;
+    state.pendingMapOpenAuditPayload = null;
+    void runBundleAudit(payload);
+  }, delayMs);
+}
+
+function runInitialBundleAuditAfterLoad(payload) {
+  if (!shouldRunQualityChecks()) return;
+  if (shouldDeferReferenceArtAuditForMapOpen()) {
+    state.pendingMapOpenAuditPayload = withReferenceArtAuditOption(payload, false);
+    void runBundleAudit(withReferenceArtAuditOption(payload, true));
+    return;
+  }
+  clearDeferredMapOpenAudit();
+  void runBundleAudit(payload);
 }
 
 async function handleLoadAuditAction(action) {
@@ -65805,11 +65927,10 @@ async function loadBundleAndRender(options = {}) {
     void refreshFilesReadAccess();
     const auditPayload = buildAuditPayloadFromState({
       scenarioPath: state.settings.scenarioPath,
-      scenarioSearchFolderOverride
+      scenarioSearchFolderOverride,
+      includeBundleSnapshot: true
     });
-    if (shouldRunQualityChecks()) {
-      void runBundleAudit(auditPayload);
-    }
+    runInitialBundleAuditAfterLoad(auditPayload);
     setReferenceNotice('Configs loaded.');
     setStatus('Configs loaded. Changes to mode or paths reload automatically.');
     _dbgLog('INF', 'loadBundle', 'Render complete.');
@@ -65856,10 +65977,102 @@ async function refreshCurrentBundleFromDisk() {
   return false;
 }
 
-function getTabsForSavePayload() {
+function hasScenarioDistrictsEditForSave(mapTab) {
+  const meta = mapTab && mapTab.scenarioDistricts;
+  if (!meta) return false;
+  const entries = Array.isArray(meta.entries) ? meta.entries : [];
+  const namedTiles = Array.isArray(meta.namedTiles) ? meta.namedTiles : [];
+  const originalEntries = Array.isArray(meta.originalEntries) ? meta.originalEntries : [];
+  const originalNamedTiles = Array.isArray(meta.originalNamedTiles) ? meta.originalNamedTiles : [];
+  return JSON.stringify({ entries, namedTiles }) !== JSON.stringify({ entries: originalEntries, namedTiles: originalNamedTiles });
+}
+
+function collectMapFieldEditSectionsForSave(mapTab) {
+  if (!mapTab || !Array.isArray(mapTab.sections)) return null;
+  const editableMapSections = new Set(['WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+  const displayOnlyTileKeys = new Set(['district', 'districtname', 'wondername', 'wondercity', 'naturalwonder', 'namedtile']);
+  const sections = [];
+  for (const section of mapTab.sections) {
+    const sectionCode = String(section && section.code || '').trim().toUpperCase();
+    if (!editableMapSections.has(sectionCode) || !Array.isArray(section && section.records)) continue;
+    const records = [];
+    for (const record of section.records) {
+      if (record && record.newRecordRef) return null;
+      if (!Array.isArray(record && record.fields)) continue;
+      const fields = [];
+      for (const field of record.fields) {
+        if (!field || !field.mapEditorValueEdited) continue;
+        const key = String(field.baseKey || field.key || '').trim().toLowerCase();
+        if (!key) continue;
+        if (sectionCode === 'WMAP' && (key === 'width' || key === 'height')) return null;
+        if (sectionCode === 'TILE' && displayOnlyTileKeys.has(key)) continue;
+        if (key === 'civilopediaentry' || key === 'note') continue;
+        fields.push(deepCloneUiValue(field));
+      }
+      if (fields.length > 0) {
+        records.push({
+          index: record.index,
+          fields
+        });
+      }
+    }
+    if (records.length > 0) {
+      sections.push({
+        code: sectionCode,
+        records
+      });
+    }
+  }
+  return sections;
+}
+
+function hasFullMapPayloadWork(mapTab) {
+  if (!mapTab || typeof mapTab !== 'object') return false;
+  if (String(mapTab.mapMutation || '').trim()) return true;
+  if (mapTab.pendingMapResize && typeof mapTab.pendingMapResize === 'object') return true;
+  if (Array.isArray(mapTab.recordOps) && mapTab.recordOps.length > 0) return true;
+  return false;
+}
+
+function makeMapSavePayloadTab(mapTab) {
+  if (!mapTab || typeof mapTab !== 'object') return mapTab;
+  if (hasFullMapPayloadWork(mapTab)) return mapTab;
+  const fieldEditSections = collectMapFieldEditSectionsForSave(mapTab);
+  if (fieldEditSections == null) return mapTab;
+  const hasFieldEdits = fieldEditSections.length > 0;
+  const hasSidecarEdit = hasScenarioDistrictsEditForSave(mapTab);
+  if (!hasFieldEdits && !hasSidecarEdit) return mapTab;
+  return {
+    key: mapTab.key || 'map',
+    type: mapTab.type || 'map',
+    title: mapTab.title || 'Map',
+    hasMapData: !!mapTab.hasMapData,
+    originalHasMap: !!mapTab.originalHasMap,
+    mapMutation: mapTab.mapMutation || null,
+    mapMutationSource: mapTab.mapMutationSource || null,
+    pendingMapResize: null,
+    recordOps: [],
+    sections: fieldEditSections,
+    scenarioDistricts: deepCloneUiValue(mapTab.scenarioDistricts || null)
+  };
+}
+
+function getDirtyTabSetForSave(allTabs = null) {
+  const tabs = allTabs || (state.bundle && state.bundle.tabs) || {};
+  const dirtyTabSet = new Set(Object.keys(tabs).filter((key) => getTabDirtyCount(key) > 0));
+  getPendingBiqOperationDirtyTabs(tabs).forEach((key) => dirtyTabSet.add(key));
+  return dirtyTabSet;
+}
+
+function getTabsForSavePayload(options = {}) {
+  const dirtyTabs = options && options.dirtyTabs instanceof Set ? options.dirtyTabs : null;
   const tabsToSave = {};
   ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'music', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'map'].forEach((key) => {
-    if (state.bundle && state.bundle.tabs && state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
+    if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[key]) return;
+    if (key === 'map' && dirtyTabs && dirtyTabs.size > 0 && !dirtyTabs.has('map')) return;
+    tabsToSave[key] = key === 'map'
+      ? makeMapSavePayloadTab(state.bundle.tabs[key])
+      : state.bundle.tabs[key];
   });
   return tabsToSave;
 }
@@ -66034,12 +66247,14 @@ async function openFileDiffModalForPath(targetPath) {
   el.fileDiffContent.classList.add('loading');
   el.fileDiffContent.innerHTML = '<div class="file-diff-loading"><span class="file-diff-loading-spinner" aria-hidden="true"></span><span>Computing diff preview...</span></div>';
   try {
+    const dirtyTabSet = getDirtyTabSetForSave();
     const res = await window.c3xManager.previewFileDiff({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
       civ3Path: state.settings.civ3Path,
       scenarioPath: state.settings.scenarioPath,
-      tabs: getTabsForSavePayload(),
+      dirtyTabs: Array.from(dirtyTabSet),
+      tabs: getTabsForSavePayload({ dirtyTabs: dirtyTabSet }),
       targetPath: pathValue
     });
     el.fileDiffContent.classList.remove('loading');
@@ -67402,10 +67617,9 @@ async function saveCurrentBundle() {
 
   try {
     await window.c3xManager.setSettings(state.settings);
-    const tabsToSave = getTabsForSavePayload();
+    const dirtyTabSet = getDirtyTabSetForSave((state.bundle && state.bundle.tabs) || {});
+    const tabsToSave = getTabsForSavePayload({ dirtyTabs: dirtyTabSet });
     const referenceOpsForNoReloadSave = snapshotReferenceRecordOpsForNoReloadSave(tabsToSave);
-    const dirtyTabSet = new Set(Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0));
-    getPendingBiqOperationDirtyTabs(tabsToSave).forEach((key) => dirtyTabSet.add(key));
     const dirtyTabs = Array.from(dirtyTabSet);
     _dbgLog('INF', 'saveBundle', `Saving — mode=${state.settings && state.settings.mode}, dirtyTabs=[${dirtyTabs.join(', ')}]`);
     const scenarioSearchFolderChanged = didScenarioSearchFolderChangeInTabs(tabsToSave);

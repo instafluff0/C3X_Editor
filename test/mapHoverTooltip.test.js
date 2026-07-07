@@ -485,6 +485,31 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /function shouldDeferReferenceArtAuditForMapOpen\(\) \{[\s\S]*?const mapTab = state\.bundle\.tabs\.map;[\s\S]*?return !!\(mapTab && mapTab\.deferred && hasMapData\(mapTab\)\);[\s\S]*?\}/,
+    'deferred scenario maps should be able to postpone the broad reference-art audit while Open Map is still pending'
+  );
+  assert.match(
+    rendererText,
+    /function cloneAuditPayload\(payload\) \{[\s\S]*?return payload && typeof payload === 'object' \? \{ \.\.\.payload \} : null;[\s\S]*?\}/,
+    'audit option wrappers should shallow-copy the payload so the loaded bundle snapshot is not deep-cloned again for deferred map QA passes'
+  );
+  assert.match(
+    rendererText,
+    /function runInitialBundleAuditAfterLoad\(payload\) \{[\s\S]*?if \(shouldDeferReferenceArtAuditForMapOpen\(\)\) \{[\s\S]*?state\.pendingMapOpenAuditPayload = withReferenceArtAuditOption\(payload, false\);[\s\S]*?void runBundleAudit\(withReferenceArtAuditOption\(payload, true\)\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?void runBundleAudit\(payload\);[\s\S]*?\}/,
+    'initial Quality Checks should run without reference-art resolution for deferred maps and queue the full audit for after map materialization'
+  );
+  assert.match(
+    rendererText,
+    /const auditPayload = buildAuditPayloadFromState\(\{[\s\S]*?scenarioPath: state\.settings\.scenarioPath,[\s\S]*?scenarioSearchFolderOverride,[\s\S]*?includeBundleSnapshot: true[\s\S]*?\}\);[\s\S]*?runInitialBundleAuditAfterLoad\(auditPayload\);/,
+    'initial Quality Checks should reuse the just-loaded bundle snapshot instead of making the worker load the same scenario again'
+  );
+  assert.match(
+    rendererText,
+    /state\.mapTabLoadPromise = window\.c3xManager\.materializeMapTab\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?state\.mapTabLoadPromise = null;[\s\S]*?scheduleDeferredMapOpenAuditFlush\(\{ delayMs: 1000 \}\);[\s\S]*?\}\);/,
+    'Open Map materialization should flush the deferred full Quality Checks pass after the map critical path finishes'
+  );
+  assert.match(
+    rendererText,
     /function finalizeSavedAtlasStateAfterNoReload\(saveReport\) \{[\s\S]*?const kinds = getSavedAtlasKinds\(saveReport\);[\s\S]*?clearSavedAtlasPreviewCaches\(kinds\);[\s\S]*?clearSavedImportedAtlasPendingState\(kinds\);[\s\S]*?\}/,
     'no-reload saves should clear saved Resource and Unit atlas preview caches and pending overlays'
   );
@@ -500,8 +525,28 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const dirtyTabSet = new Set\(Object\.keys\(\(state\.bundle && state\.bundle\.tabs\) \|\| \{\}\)\.filter\(\(key\) => getTabDirtyCount\(key\) > 0\)\);[\s\S]*?getPendingBiqOperationDirtyTabs\(tabsToSave\)\.forEach\(\(key\) => dirtyTabSet\.add\(key\)\);[\s\S]*?const dirtyTabs = Array\.from\(dirtyTabSet\);/,
+    /function getDirtyTabSetForSave\(allTabs = null\) \{[\s\S]*?const dirtyTabSet = new Set\(Object\.keys\(tabs\)\.filter\(\(key\) => getTabDirtyCount\(key\) > 0\)\);[\s\S]*?getPendingBiqOperationDirtyTabs\(tabs\)\.forEach\(\(key\) => dirtyTabSet\.add\(key\)\);[\s\S]*?return dirtyTabSet;[\s\S]*?\}/,
     'saveCurrentBundle should include pending BIQ operation tabs in dirtyTabs before calling saveBundle'
+  );
+  assert.match(
+    rendererText,
+    /function getTabsForSavePayload\(options = \{\}\) \{[\s\S]*?const dirtyTabs = options && options\.dirtyTabs instanceof Set \? options\.dirtyTabs : null;[\s\S]*?if \(key === 'map' && dirtyTabs && dirtyTabs\.size > 0 && !dirtyTabs\.has\('map'\)\) return;[\s\S]*?tabsToSave\[key\] = key === 'map'[\s\S]*?makeMapSavePayloadTab\(state\.bundle\.tabs\[key\]\)/,
+    'save payloads should omit a clean materialized map tab so opening a large map does not make unrelated saves clone every TILE record'
+  );
+  assert.match(
+    rendererText,
+    /function collectMapFieldEditSectionsForSave\(mapTab\) \{[\s\S]*?const editableMapSections = new Set\(\['WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'\]\);[\s\S]*?fields\.push\(deepCloneUiValue\(field\)\);[\s\S]*?sections\.push\(\{[\s\S]*?code: sectionCode,[\s\S]*?records[\s\S]*?\}\);[\s\S]*?return sections;[\s\S]*?\}/,
+    'map save payloads should be able to collect only edited existing map records for ordinary map field saves'
+  );
+  assert.match(
+    rendererText,
+    /function makeMapSavePayloadTab\(mapTab\) \{[\s\S]*?if \(hasFullMapPayloadWork\(mapTab\)\) return mapTab;[\s\S]*?const fieldEditSections = collectMapFieldEditSectionsForSave\(mapTab\);[\s\S]*?sections: fieldEditSections,[\s\S]*?scenarioDistricts: deepCloneUiValue\(mapTab\.scenarioDistricts \|\| null\)[\s\S]*?\}/,
+    'map save payloads should stay small for field-edit and C3X sidecar-only map changes while preserving full map payloads for structural map edits'
+  );
+  assert.match(
+    rendererText,
+    /const dirtyTabSet = getDirtyTabSetForSave\(\(state\.bundle && state\.bundle\.tabs\) \|\| \{\}\);[\s\S]*?const tabsToSave = getTabsForSavePayload\(\{ dirtyTabs: dirtyTabSet \}\);[\s\S]*?const dirtyTabs = Array\.from\(dirtyTabSet\);/,
+    'saveCurrentBundle should compute dirty tabs before building the pruned save payload'
   );
   assert.match(
     preloadText,
@@ -675,8 +720,33 @@ test('map unit overlay shifts sea and air units downward with zoom-scaled offset
 
   assert.match(
     rendererText,
-    /prtoClassById\[idx\]\s*=\s*normalizeUnitClassValue\(getFieldByBaseKey\(record,\s*'unitclass'\)\?\.value\);[\s\S]*?const unitClass = prtoClassById\[unitId\] \|\| 'land';[\s\S]*?const unitYOffset = unitClass === 'air'[\s\S]*?Math\.round\(45 \* tileScale\)[\s\S]*?\(unitClass === 'sea' \? Math\.round\(14 \* tileScale\) : 0\);[\s\S]*?dy = quintUnitBottom - flcH \+ unitYOffset;[\s\S]*?dy = quintUnitTop \+ unitYOffset;/,
+    /prtoClassById\[idx\]\s*=\s*normalizeUnitClassValue\(getMapFieldValue\(record,\s*'unitclass',\s*''\)\);[\s\S]*?const unitClass = prtoClassById\[unitId\] \|\| 'land';[\s\S]*?const unitYOffset = unitClass === 'air'[\s\S]*?Math\.round\(45 \* tileScale\)[\s\S]*?\(unitClass === 'sea' \? Math\.round\(14 \* tileScale\) : 0\);[\s\S]*?dy = quintUnitBottom - flcH \+ unitYOffset;[\s\S]*?dy = quintUnitTop \+ unitYOffset;/,
     'unit overlays should cache unit class and apply larger zoom-scaled offsets for air than sea units in both FLC and units32 paths'
+  );
+});
+
+test('map unit overlay resolves loaded UNIT records through direct-field-aware map values', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const unitRecordById = \{\};[\s\S]*?const unitRecordsByCoord = new Map\(\);[\s\S]*?const ux = parseIntLoose\(getMapFieldValue\(record, 'x', ''\), NaN\);[\s\S]*?const uy = parseIntLoose\(getMapFieldValue\(record, 'y', ''\), NaN\);/,
+    'unit stacks should index loaded UNIT records using the same direct-field-aware getter as the editor panel'
+  );
+  assert.match(
+    rendererText,
+    /const visibleUnit = getMapVisibleUnitRecordForStack\(stack, record\);[\s\S]*?unitId = parseIntLoose\(getMapFieldValue\(visibleUnit, 'prtonumber', '-1'\), NaN\);[\s\S]*?const rawUnit = String\(getMapFieldValue\(record, 'unit_on_tile', ''\) \|\| ''\)\.trim\(\);/,
+    'unit overlay drawing should resolve pRTONumber and unit_on_tile through direct-field-aware map values'
+  );
+  assert.match(
+    rendererText,
+    /const unitId = Number\.isFinite\(Number\(record && record\.index\)\) \? Number\(record\.index\) : idx;[\s\S]*?prtoIconById\[unitId\] = parseIntLoose\(getMapFieldValue\(record, 'iconindex', '-1'\), -1\);[\s\S]*?prtoCivilopediaKeyById\[unitId\] = prtoCivilopediaKeyById\[idx\];[\s\S]*?prtoClassById\[unitId\] = prtoClassById\[idx\];/,
+    'unit overlay metadata should read PRTO icon/class data through direct-field-aware map values and actual BIQ indexes'
+  );
+  assert.match(
+    rendererText,
+    /if \(code === 'RACE'\) return getReferenceBiqSectionFromTab\(civilizationReferenceTab, code\);[\s\S]*?if \(code === 'PRTO'\) return getReferenceBiqSectionFromTab\(unitsReferenceTab, code\);[\s\S]*?const prtoSection = getMapSupportSection\('PRTO'\);/,
+    'map-only tabs should resolve PRTO unit metadata from the Units reference tab, not only from local map sections'
   );
 });
 
@@ -876,8 +946,13 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?let liveTab = getLiveMapTabForAction\(tab\);[\s\S]*?if \(liveTab && liveTab\.deferred\) \{[\s\S]*?liveTab = await ensureMapTabLoaded\(\{ rerender: false, openModal: false \}\);[\s\S]*?\}[\s\S]*?const liveTileSection = getMapTileSection\(liveTab\) \|\| tileSection;[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: liveTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
-    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map; Open Map should materialize deferred maps only when explicitly clicked, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
+    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?let liveTab = getLiveMapTabForAction\(tab\);[\s\S]*?if \(liveTab && liveTab\.deferred\) \{[\s\S]*?liveTab = await ensureMapTabLoaded\(\{ rerender: false, openModal: false \}\);[\s\S]*?\}[\s\S]*?const liveTileSection = getMapTileSection\(liveTab\) \|\| tileSection;[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: liveTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?if \(liveTab && liveTab\.deferred\) \{[\s\S]*?liveTab = await ensureMapTabLoaded\(\{ rerender: false, openModal: false \}\);[\s\S]*?\}[\s\S]*?const result = await promptEditMapAction\(liveTab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(liveTab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: resizedTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map; Open Map and Resize Map should materialize deferred maps only when explicitly clicked, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
+  );
+  assert.doesNotMatch(
+    rendererText,
+    /if \(hasMapData\(tab\) && tileSection\) \{[\s\S]*?editBtn\.textContent = '↔ Resize Map'|if \(isScenarioMode\(\) && hasMapData\(tab\) && tileSection\) \{[\s\S]*?removeBtn\.textContent = '🗑 Remove Map'/,
+    'deferred maps have hasMapData=true with no TILE section yet, so Resize Map and Remove Map must stay visible before materialization'
   );
   assert.match(
     rendererText,
@@ -908,6 +983,11 @@ test('map tab exposes Quint-style Add Custom Map creation with even-size and til
     rendererText,
     /function finalizeGeneratedBlankMapTerrainFileImage\(tileRecords, width, height\) \{[\s\S]*?setRecordFieldValue\(tileRecords\[i\], 'file', String\(spec\.file\)\);[\s\S]*?setRecordFieldValue\(tileRecords\[i\], 'image', String\(computeBiqTerrainSpriteImageIdx\(southBase, westBase, northBase, eastBase, spec\)\)\);[\s\S]*?\}[\s\S]*?finalizeGeneratedBlankMapTerrainFileImage\(tileRecords, validation\.width, validation\.height\);/,
     'blank custom map creation should precompute stored TILE file/image sprite values once, so generated maps render like normal BIQs instead of recomputing terrain transitions every redraw'
+  );
+  assert.match(
+    rendererText,
+    /function applyWholeMapSectionsToTab\(tab, mapSectionsInput, mutation = 'set', mutationSource = 'generated'\) \{[\s\S]*?tab\.sections = nextSections;[\s\S]*?tab\.deferred = false;[\s\S]*?tab\.mapMaterializationCacheKey = '';[\s\S]*?tab\.hasMapData = hasMapData\(tab\);[\s\S]*?tab\.mapMutation = mutation;[\s\S]*?tab\.mapMutationSource = mutation === 'set' \? String\(mutationSource \|\| 'generated'\) : null;/,
+    'whole-map replacements from Create or Import should materialize the map tab before recalculating hasMapData, so Open/Resize/Remove actions remain visible after the modal closes'
   );
   assert.match(
     rendererText,
@@ -1334,6 +1414,26 @@ test('map overlay rendering offsets colony-like overlays, draws barricades, and 
     rendererText,
     /const drawRuinsOverlay = \(record, sx, sy\) => \{[\s\S]*?const drawX = sx - Math\.round\(\(drawW - tileW\) \/ 2\) - Math\.round\(20 \* scale\) \+ Math\.round\(tileW \/ 4\);[\s\S]*?const drawY = sy \+ Math\.floor\(tileH \/ 2\) - Math\.round\(15 \* scale\) - Math\.round\(\(drawH - tileH\) \/ 2\) \+ Math\.round\(tileH \/ 4\);/,
     'ruins overlay should render half a tile farther right and lower than the previous placement'
+  );
+});
+
+test('map record deletes keep visible tile references reindexed immediately', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const renumberMapSectionRecords = \(section\) => \{[\s\S]*?section\.records\.forEach\(\(record, index\) => \{[\s\S]*?record\.index = index;[\s\S]*?field\.value = String\(index\);[\s\S]*?\}\);[\s\S]*?\};/,
+    'map deletes should renumber surviving CITY/CLNY records in the visible editor state'
+  );
+  assert.match(
+    rendererText,
+    /const removeCityByIndex = \(cityIndex\) => \{[\s\S]*?if \(candidateValue === idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'city', '-1', 'City'\);[\s\S]*?\} else if \(candidateValue > idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'city', String\(candidateValue - 1\), 'City'\);[\s\S]*?renumberMapSectionRecords\(citySection\);/,
+    'city deletes should clear deleted tile refs and shift later tile city refs before rerender'
+  );
+  assert.match(
+    rendererText,
+    /const removeColonyByIndex = \(colonyIndex\) => \{[\s\S]*?if \(candidateValue === idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'colony', '-1', 'Colony'\);[\s\S]*?\} else if \(candidateValue > idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'colony', String\(candidateValue - 1\), 'Colony'\);[\s\S]*?renumberMapSectionRecords\(colonySection\);/,
+    'colony deletes should clear deleted tile refs and shift later tile colony refs before rerender'
   );
 });
 

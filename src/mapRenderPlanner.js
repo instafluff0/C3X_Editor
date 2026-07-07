@@ -7,7 +7,7 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function mapRenderPlannerInit() {
   const DEFAULT_ZOOM_LEVELS = [3, 5, 7, 9, 12, 16];
   const DEFAULT_CHUNK_SIZE = 1024;
-  const DEFAULT_PIXEL_BUDGET = 32 * 1000 * 1000;
+  const DEFAULT_PIXEL_BUDGET = 20 * 1000 * 1000;
   const DEFAULT_MAX_FULL_CANVAS_EDGE = 12000;
   const DEFAULT_VIEWPORT_OVERSCAN_PX = 512;
 

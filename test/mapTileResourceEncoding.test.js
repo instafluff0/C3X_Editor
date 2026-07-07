@@ -19,6 +19,16 @@ test('Map TILE resource display follows Quint zero-based GOOD icon mapping', () 
   );
   assert.match(
     rendererText,
+    /const cols = Math\.max\(1, Math\.floor\(atlas\.width \/ cellW\)\);[\s\S]*?const col = iconIdx % cols;[\s\S]*?const row = Math\.floor\(iconIdx \/ cols\);/,
+    'resource drawing should slice resources.pcx by atlas width, matching Quint for wide scenario sheets'
+  );
+  assert.match(
+    rendererText,
+    /function getResourceAtlasMetrics\(preview\)[\s\S]*?const cols = Math\.max\(1, Math\.floor\(atlas\.width \/ cellW\)\);/,
+    'resource icon previews should use the same width-derived resources.pcx column count'
+  );
+  assert.match(
+    rendererText,
     /function getMapGoodRecords\(bundle = state\.bundle\)[\s\S]*?section\.code \|\| ''\)\.toUpperCase\(\) === 'GOOD'/,
     'resource icon lookup should prefer BIQ map GOOD records when available'
   );

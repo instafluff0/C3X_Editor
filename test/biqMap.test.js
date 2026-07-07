@@ -1057,6 +1057,68 @@ test('BIQ map: sidecar-only district edit changes no BIQ map sections', () => {
   assert.deepEqual(getChangedSectionCodes(before, after), []);
 });
 
+test('BIQ map: slim TILE field payload saves without full map sections', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  const tileSection = getSection(mapTab, 'TILE');
+  const tile = tileSection && Array.isArray(tileSection.records) ? tileSection.records[0] : null;
+  assert.ok(tile, 'expected a TILE record');
+  const baseField = getRecordField(tile, 'baserealterrain');
+  const c3cField = getRecordField(tile, 'c3cbaserealterrain');
+  assert.ok(baseField && c3cField, 'expected terrain fields on TILE record');
+  const originalBase = String(baseField.value || '');
+  const originalC3c = String(c3cField.value || '');
+  const nextBase = String((parseIntLoose(originalBase, 0) + 1) & 0xff);
+  const nextC3c = String((parseIntLoose(originalC3c, 0) + 1) & 0xff);
+  const slimMapTab = {
+    key: 'map',
+    type: 'map',
+    hasMapData: true,
+    originalHasMap: true,
+    recordOps: [],
+    sections: [{
+      code: 'TILE',
+      records: [{
+        index: tile.index,
+        fields: [
+          { key: baseField.key, baseKey: baseField.baseKey, value: nextBase, originalValue: originalBase, mapEditorValueEdited: true },
+          { key: c3cField.key, baseKey: c3cField.baseKey, value: nextC3c, originalValue: originalC3c, mapEditorValueEdited: true }
+        ]
+      }]
+    }]
+  };
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['map'],
+    tabs: { map: slimMapTab }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE']);
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedTile = getSection(reloaded.tabs.map, 'TILE').records.find((record) => Number(record && record.index) === Number(tile.index));
+  assert.equal(String(getRecordInt(reloadedTile, 'baserealterrain', -1)), nextBase);
+  assert.equal(String(getRecordInt(reloadedTile, 'c3cbaserealterrain', -1)), nextC3c);
+});
+
 test('BIQ map: colony overlay/type mismatches are detectable', () => {
   const issues = collectColonyOverlayCoherenceIssues({
     sections: [

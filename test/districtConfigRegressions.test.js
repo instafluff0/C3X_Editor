@@ -153,6 +153,108 @@ test('resolvePaths districts effectiveSource is scenario when scenario file exis
   );
 });
 
+test('resolvePaths reads scenario config from later BIQ search roots but writes to primary root', () => {
+  const c3xPath = mkTmpDir();
+  const primaryRoot = mkTmpDir();
+  const sharedRoot = mkTmpDir();
+  seedDefaultFiles(c3xPath);
+  fs.writeFileSync(
+    path.join(sharedRoot, 'scenario.districts_config.txt'),
+    '#District\nname = Shared Search Root\n',
+    'utf8'
+  );
+
+  const paths = resolvePaths({
+    c3xPath,
+    scenarioPath: primaryRoot,
+    scenarioPaths: [primaryRoot, sharedRoot],
+    mode: 'scenario'
+  });
+
+  assert.equal(paths.districts.effectiveSource, 'scenario');
+  assert.equal(
+    path.normalize(paths.districts.scenarioPath),
+    path.normalize(path.join(sharedRoot, 'scenario.districts_config.txt')),
+    'scenario source should follow BIQ search-folder order and find later roots'
+  );
+  assert.equal(
+    path.normalize(paths.districts.targetPath),
+    path.normalize(path.join(primaryRoot, 'scenario.districts_config.txt')),
+    'scenario writes should still target the primary content root'
+  );
+});
+
+test('resolvePaths preserves BIQ search order when write root differs from first search root', () => {
+  const c3xPath = mkTmpDir();
+  const firstSearchRoot = mkTmpDir();
+  const writeRoot = mkTmpDir();
+  seedDefaultFiles(c3xPath);
+  fs.writeFileSync(
+    path.join(firstSearchRoot, 'scenario.districts_config.txt'),
+    '#District\nname = First Search Root\n',
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(writeRoot, 'scenario.districts_config.txt'),
+    '#District\nname = Write Root\n',
+    'utf8'
+  );
+
+  const paths = resolvePaths({
+    c3xPath,
+    scenarioPath: writeRoot,
+    scenarioPaths: [firstSearchRoot, writeRoot],
+    mode: 'scenario'
+  });
+
+  assert.equal(
+    path.normalize(paths.districts.scenarioPath),
+    path.normalize(path.join(firstSearchRoot, 'scenario.districts_config.txt')),
+    'read discovery should follow BIQ search order before the chosen write root'
+  );
+  assert.equal(
+    path.normalize(paths.districts.targetPath),
+    path.normalize(path.join(writeRoot, 'scenario.districts_config.txt'))
+  );
+});
+
+test('loadBundle reads scenario base and sectioned configs from later BIQ search roots', () => {
+  const c3xPath = mkTmpDir();
+  const primaryRoot = mkTmpDir();
+  const sharedRoot = mkTmpDir();
+  seedDefaultFiles(c3xPath);
+  fs.writeFileSync(path.join(sharedRoot, 'scenario.c3x_config.ini'), 'flag = shared-base\n', 'utf8');
+  fs.writeFileSync(
+    path.join(sharedRoot, 'scenario.districts_config.txt'),
+    '#District\nname = Shared Search Root\n',
+    'utf8'
+  );
+
+  const bundle = loadBundle({
+    mode: 'scenario',
+    c3xPath,
+    civ3Path: '',
+    scenarioPath: primaryRoot,
+    scenarioSearchFolderOverride: [primaryRoot, sharedRoot]
+  });
+
+  const flagRow = bundle.tabs.base.rows.find((row) => row.key === 'flag');
+  assert.equal(flagRow && flagRow.scenarioValue, 'shared-base');
+  assert.equal(
+    path.normalize(bundle.tabs.base.targetPath),
+    path.normalize(path.join(primaryRoot, 'scenario.c3x_config.ini'))
+  );
+  assert.equal(bundle.tabs.districts.model.sections[0].fields[0].value, 'Shared Search Root');
+  assert.equal(
+    path.normalize(bundle.tabs.districts.sourceDetails.effectivePath),
+    path.normalize(path.join(sharedRoot, 'scenario.districts_config.txt'))
+  );
+  assert.equal(
+    path.normalize(bundle.tabs.districts.targetPath),
+    path.normalize(path.join(primaryRoot, 'scenario.districts_config.txt'))
+  );
+});
+
 test('loadBundle districts sourceDetails.hasScenario is false when no scenario districts file exists (default source)', () => {
   // filterDistrictSectionsForScenarioFallback (renderer) uses this flag to decide whether
   // to show the "Include these Districts in Scenario" button. It must be false when no

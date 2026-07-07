@@ -2838,7 +2838,7 @@ function resourcePcxCellHasNonMagenta(pcxBuffer, slot) {
     }
   }
   const cell = 50;
-  const cols = 6;
+  const cols = Math.max(1, Math.floor(decoded.width / cell));
   const col = slot % cols;
   const row = Math.floor(slot / cols);
   const startX = col * cell;

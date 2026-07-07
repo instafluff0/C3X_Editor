@@ -142,6 +142,40 @@ function cellHasOnlyIndex(decoded, slot, expectedIndex) {
   return true;
 }
 
+function makeAtlasWithCols(cols, rows, occupied = {}, palette = makePalette()) {
+  const width = cols * CELL;
+  const indices = new Uint8Array(width * rows * CELL);
+  indices.fill(MAGENTA);
+  Object.entries(occupied).forEach(([slot, colorIndex]) => {
+    const idx = Number(slot);
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    const startX = col * CELL;
+    const startY = row * CELL;
+    for (let y = 0; y < CELL; y += 1) {
+      const rowOff = (startY + y) * width + startX;
+      for (let x = 0; x < CELL; x += 1) {
+        indices[rowOff + x] = Number(colorIndex);
+      }
+    }
+  });
+  return encodePcx(indices, palette, width, rows * CELL);
+}
+
+function cellHasOnlyIndexWithCols(decoded, slot, expectedIndex, cols) {
+  const col = slot % cols;
+  const row = Math.floor(slot / cols);
+  const startX = col * CELL;
+  const startY = row * CELL;
+  for (let y = 0; y < CELL; y += 1) {
+    const rowOff = (startY + y) * decoded.width + startX;
+    for (let x = 0; x < CELL; x += 1) {
+      if (decoded.indices[rowOff + x] !== expectedIndex) return false;
+    }
+  }
+  return true;
+}
+
 function paintLuxuryGuides(indices, rows, width = LUXURY_WIDTH, guideIndex = GUIDE) {
   const gridHeight = rows * LUXURY_CELL;
   for (let row = 0; row <= rows; row += 1) {
@@ -342,6 +376,19 @@ test('findNextResourceAtlasSlot treats resources.pcx grid-only right-most cells 
   assert.equal(slot.capacity, 6);
 });
 
+test('findNextResourceAtlasSlot derives resources.pcx columns from atlas width', () => {
+  const atlas = makeAtlasWithCols(24, 3, {
+    0: 10,
+    64: 12
+  });
+
+  const slot = findNextResourceAtlasSlot(atlas);
+  assert.equal(slot.lastOccupied, 64);
+  assert.equal(slot.index, 65);
+  assert.equal(slot.cols, 24);
+  assert.equal(slot.capacity, 72);
+});
+
 test('getNextResourceAtlasAssignmentSlot respects existing BIQ icon references beyond visible pixels', () => {
   const atlas = makeResourceGridAtlas(5, {
     0: 10
@@ -440,6 +487,38 @@ test('appendResourceIconToResourcesPcx remaps source palette indexes to the targ
 
   assert.equal(result.index, 1);
   assert.equal(cellHasOnlyIndex(decoded, 1, 40), true, 'source color should use the matching target palette index');
+});
+
+test('appendResourceIconToResourcesPcx reads source icon indexes using the source atlas width', () => {
+  const target = makeAtlas(1, { 0: 30 });
+  const source = makeAtlasWithCols(24, 3, { 64: 41 });
+
+  const result = appendResourceIconToResourcesPcx({
+    targetBuffer: target,
+    sourceBuffer: source,
+    sourceIconIndex: 64
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.index, 1);
+  assert.equal(cellHasOnlyIndex(decoded, 1, 41), true, 'source icon 64 should come from column 16 row 2 on a 24-column sheet');
+});
+
+test('appendResourceIconToResourcesPcx writes target icon indexes using the target atlas width', () => {
+  const target = makeAtlasWithCols(24, 3, { 0: 30 });
+  const source = makeAtlas(1, { 2: 42 });
+
+  const result = appendResourceIconToResourcesPcx({
+    targetBuffer: target,
+    sourceBuffer: source,
+    sourceIconIndex: 2,
+    targetIconIndex: 64
+  });
+  const decoded = decodeIndexed(result.buffer);
+
+  assert.equal(result.index, 64);
+  assert.equal(decoded.width, 24 * CELL);
+  assert.equal(cellHasOnlyIndexWithCols(decoded, 64, 42, 24), true, 'target icon 64 should land at column 16 row 2 on a 24-column sheet');
 });
 
 test('applyImportedResourceIconAtlasAssignments mutates imported GOOD icon fields to assigned PCX slots', () => {

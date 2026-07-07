@@ -105,9 +105,9 @@ Consequence: individual PRTO fields beyond the 14 scalars are not exposed as edi
 - `numPlayableCivs` + `playableCivIds[]`
 - `victoryConditionsAndRules`
 
-Then stores the remainder (timescale settings, scenario search folders) in `_tail`.
+Then stores the remainder (timescale settings, scenario search folders) as named fields.
 
-`scenarioSearchFolders` is exposed read-only in the English output. `applySetToRecord` explicitly blocks writes to it (`canonicalKey === 'scenariosearchfolders'` → returns false).
+`scenarioSearchFolders` is exposed in the English output and is writable through normal `GAME` field edits, so scenario search-root changes persist in the BIQ.
 
 ### Generic pass-through
 

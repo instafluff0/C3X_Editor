@@ -1318,8 +1318,10 @@ function toEnglishGAME(rec, io) {
   return lines(pairs);
 }
 
-  // scenarioSearchFolders is read-only; all other named fields are writable
+// GAME scenarioSearchFolders is writable so scenario save/reload can persist
+// explicit user search-root changes and auto-localized search folders.
 const WRITABLE_GAME = [
+  'scenario_search_folders',
   'use_default_rules', 'default_victory_conditions',
   'domination_enabled', 'space_race_enabled', 'diplomactic_enabled',
   'conquest_enabled', 'cultural_enabled', 'civ_specific_abilities_enabled',
@@ -4986,8 +4988,10 @@ function collectMapReferenceIntegrityIssues(parsed) {
   const cityCount = citySection && Array.isArray(citySection.records) ? citySection.records.length : 0;
   const unitCount = unitSection && Array.isArray(unitSection.records) ? unitSection.records.length : 0;
   const clnyCount = clnySection && Array.isArray(clnySection.records) ? clnySection.records.length : 0;
-  const raceCount = raceSection && Array.isArray(raceSection.records) ? raceSection.records.length : 0;
-  const playerCount = leadSection && Array.isArray(leadSection.records) ? leadSection.records.length : 0;
+  const hasRaceSection = !!(raceSection && Array.isArray(raceSection.records));
+  const hasLeadSection = !!(leadSection && Array.isArray(leadSection.records));
+  const raceCount = hasRaceSection ? raceSection.records.length : 0;
+  const playerCount = hasLeadSection ? leadSection.records.length : 0;
   const normalizeRef = (value) => {
     const parsedValue = Number.parseInt(String(value), 10);
     return Number.isFinite(parsedValue) ? parsedValue : -1;
@@ -5016,6 +5020,7 @@ function collectMapReferenceIntegrityIssues(parsed) {
     const owner = normalizeRef(record && record.owner);
     if (ownerType === 0 || ownerType === 1) return;
     if (ownerType === 2) {
+      if (!hasRaceSection) return;
       if (owner < 0 || owner >= raceCount) {
         issues.push({
           kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,
@@ -5030,6 +5035,7 @@ function collectMapReferenceIntegrityIssues(parsed) {
       return;
     }
     if (ownerType === 3) {
+      if (!hasLeadSection) return;
       if (owner < 0 || owner >= playerCount) {
         issues.push({
           kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,

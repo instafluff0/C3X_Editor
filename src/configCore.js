@@ -19,7 +19,6 @@ const { parseAllSections } = require('./biq/biqSections');
 const C3X_BASE_MANIFEST = require('./c3xBaseManifest');
 
 const RESOURCE_ATLAS_RELATIVE_PATH = 'Art/resources.pcx';
-const RESOURCE_ATLAS_COLS = 6;
 const RESOURCE_ATLAS_CELL_SIZE = 50;
 const RESOURCE_ATLAS_MAGENTA = { r: 255, g: 0, b: 255 };
 const LUXURY_ICONS_SMALL_ATLAS_RELATIVE_PATH = 'Art/city screen/luxuryicons_small.pcx';
@@ -75,6 +74,8 @@ const MUSIC_ERAS = [
   { key: 'modern', label: 'Modern Times', biqIndex: 3, shared: true }
 ];
 const MUSIC_CELL_KEYS = MUSIC_ERAS.map((era) => era.key).concat(['playlist']);
+const DEFERRED_MAP_BIQ_CACHE_LIMIT = 3;
+const deferredMapBiqCache = new Map();
 
 const FILE_SPECS = {
   base: {
@@ -3264,8 +3265,8 @@ function resolveScenarioTextPath(scenarioPath, name, scenarioPaths = []) {
     seen.add(normalized);
     roots.push(normalized);
   };
-  addRoot(resolveScenarioDir(scenarioPath));
   (scenarioPaths || []).forEach((p) => addRoot(p));
+  addRoot(resolveScenarioDir(scenarioPath));
 
   const candidates = [];
   roots.forEach((root) => {
@@ -5913,7 +5914,116 @@ function detectBiqHasMapData(biqTab) {
   return !!(wmapSection && tileSection && wmapCount > 0 && tileCount > 0);
 }
 
-function summarizeBiqTabForBundle(biqTab) {
+function getBiqFileSignature(filePath) {
+  const raw = String(filePath || '').trim();
+  if (!raw) return null;
+  try {
+    const resolved = path.resolve(raw);
+    const stat = fs.statSync(resolved);
+    if (!stat || !stat.isFile()) return null;
+    return {
+      path: resolved,
+      size: Number(stat.size) || 0,
+      mtimeMs: Number(stat.mtimeMs) || 0
+    };
+  } catch (_err) {
+    return null;
+  }
+}
+
+function normalizeDeferredMapCachePath(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    return path.resolve(raw);
+  } catch (_err) {
+    return raw;
+  }
+}
+
+function buildDeferredMapBiqCacheKey({ mode, civ3Path, scenarioPath, textEncoding, sourcePath, signature }) {
+  const keyPayload = {
+    mode: mode === 'scenario' ? 'scenario' : 'global',
+    civ3Path: normalizeDeferredMapCachePath(civ3Path),
+    scenarioPath: normalizeDeferredMapCachePath(scenarioPath),
+    textEncoding: normalizeTextFileEncoding(textEncoding),
+    sourcePath: normalizeDeferredMapCachePath(sourcePath),
+    size: Number(signature && signature.size) || 0,
+    mtimeMs: Number(signature && signature.mtimeMs) || 0
+  };
+  return crypto.createHash('sha1').update(JSON.stringify(keyPayload)).digest('hex');
+}
+
+function trimDeferredMapBiqCache() {
+  if (deferredMapBiqCache.size <= DEFERRED_MAP_BIQ_CACHE_LIMIT) return;
+  const entries = Array.from(deferredMapBiqCache.entries())
+    .sort((a, b) => Number(a[1] && a[1].lastUsedAt || 0) - Number(b[1] && b[1].lastUsedAt || 0));
+  while (deferredMapBiqCache.size > DEFERRED_MAP_BIQ_CACHE_LIMIT && entries.length > 0) {
+    const [key] = entries.shift();
+    deferredMapBiqCache.delete(key);
+  }
+}
+
+function rememberDeferredMapBiqTab(biqTab, context = {}) {
+  if (!biqTab || typeof biqTab !== 'object' || biqTab.summarized) return null;
+  if (!Array.isArray(biqTab.sections)) return null;
+  const sourcePath = String(biqTab.sourcePath || '').trim();
+  const signature = getBiqFileSignature(sourcePath);
+  if (!signature) return null;
+  const key = buildDeferredMapBiqCacheKey({
+    mode: context.mode,
+    civ3Path: context.civ3Path,
+    scenarioPath: context.scenarioPath,
+    textEncoding: context.textEncoding || biqTab.textEncoding,
+    sourcePath,
+    signature
+  });
+  const now = Date.now();
+  deferredMapBiqCache.set(key, {
+    key,
+    biqTab,
+    sourcePath: signature.path,
+    signature,
+    createdAt: now,
+    lastUsedAt: now
+  });
+  trimDeferredMapBiqCache();
+  return {
+    key,
+    sourcePath: signature.path,
+    size: signature.size,
+    mtimeMs: signature.mtimeMs
+  };
+}
+
+function getDeferredMapBiqTabFromCache(cacheKey) {
+  const key = String(cacheKey || '').trim();
+  if (!key) return null;
+  const entry = deferredMapBiqCache.get(key);
+  if (!entry || !entry.biqTab) return null;
+  const current = getBiqFileSignature(entry.sourcePath);
+  if (!current
+      || current.path !== entry.signature.path
+      || current.size !== entry.signature.size
+      || current.mtimeMs !== entry.signature.mtimeMs) {
+    deferredMapBiqCache.delete(key);
+    return null;
+  }
+  entry.lastUsedAt = Date.now();
+  return entry.biqTab;
+}
+
+function invalidateDeferredMapBiqCacheForPath(filePath) {
+  const resolved = normalizeDeferredMapCachePath(filePath);
+  if (!resolved) return;
+  Array.from(deferredMapBiqCache.entries()).forEach(([key, entry]) => {
+    if (normalizeDeferredMapCachePath(entry && entry.sourcePath) === resolved) {
+      deferredMapBiqCache.delete(key);
+    }
+  });
+}
+
+function summarizeBiqTabForBundle(biqTab, options = {}) {
   if (!biqTab || typeof biqTab !== 'object') return biqTab;
   const summary = { ...biqTab };
   if (Array.isArray(biqTab.sections)) {
@@ -5933,6 +6043,9 @@ function summarizeBiqTabForBundle(biqTab) {
     }));
   }
   summary.summarized = true;
+  if (options.mapMaterializationCacheKey) {
+    summary.mapMaterializationCacheKey = options.mapMaterializationCacheKey;
+  }
   return summary;
 }
 
@@ -5950,6 +6063,7 @@ function buildDeferredMapTab(biqTab, mode, options = {}) {
     mapMutationSource: null,
     recordOps: [],
     scenarioDistricts: options.scenarioDistricts || null,
+    mapMaterializationCacheKey: options.mapMaterializationCacheKey || '',
     sections: [],
     deferred: true
   };
@@ -5958,15 +6072,27 @@ function buildDeferredMapTab(biqTab, mode, options = {}) {
 function materializeMapTab(payload = {}) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
   let biqTab = payload.biqTab || payload.biq || null;
-  if (!biqTab || !Array.isArray(biqTab.sections) || (biqTab && biqTab.summarized)) {
-    biqTab = loadBiqTab({
-      mode,
-      civ3Path: payload.civ3Path || '',
-      scenarioPath: payload.scenarioPath || '',
-      textEncoding: payload.textFileEncoding || payload.textEncoding || (biqTab && biqTab.textEncoding) || 'windows-1252'
-    });
-  }
   const existingMapTab = payload.mapTab && typeof payload.mapTab === 'object' ? payload.mapTab : null;
+  if (!biqTab || !Array.isArray(biqTab.sections) || (biqTab && biqTab.summarized)) {
+    const cacheKey = String(
+      payload.mapMaterializationCacheKey
+      || (biqTab && biqTab.mapMaterializationCacheKey)
+      || (existingMapTab && existingMapTab.mapMaterializationCacheKey)
+      || ''
+    ).trim();
+    const cachedBiqTab = getDeferredMapBiqTabFromCache(cacheKey);
+    if (cachedBiqTab) {
+      log.info('materializeMapTab', 'Using cached BIQ parse for deferred map materialization.');
+      biqTab = cachedBiqTab;
+    } else {
+      biqTab = loadBiqTab({
+        mode,
+        civ3Path: payload.civ3Path || '',
+        scenarioPath: payload.scenarioPath || '',
+        textEncoding: payload.textFileEncoding || payload.textEncoding || (biqTab && biqTab.textEncoding) || 'windows-1252'
+      });
+    }
+  }
   const supportingTabs = payload.tabs && typeof payload.tabs === 'object' ? payload.tabs : {};
   const scenarioDistricts = Object.prototype.hasOwnProperty.call(payload, 'scenarioDistricts')
     ? payload.scenarioDistricts
@@ -6822,13 +6948,36 @@ function serializeBaseConfig(baseRows, defaultMap, mode, commentsByKey = {}) {
   return ensureTrailingNewline(lines.join('\n'));
 }
 
-function resolvePaths({ c3xPath, scenarioPath, mode }) {
+function resolveScenarioConfigFilePath(scenarioPath, scenarioPaths, fileName) {
+  const roots = [];
+  const seen = new Set();
+  const addRoot = (root) => {
+    const resolved = resolveScenarioDir(root);
+    if (!resolved) return;
+    const key = normalizePathForCompare(resolved);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    roots.push(resolved);
+  };
+  (Array.isArray(scenarioPaths) ? scenarioPaths : []).forEach(addRoot);
+  addRoot(scenarioPath);
+  for (const root of roots) {
+    const candidate = path.join(root, fileName);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '';
+}
+
+function resolvePaths({ c3xPath, scenarioPath, scenarioPaths = [], mode }) {
   const scenarioDir = resolveScenarioDir(scenarioPath);
   const paths = {};
   for (const [kind, spec] of Object.entries(FILE_SPECS)) {
     const defaultPath = c3xPath ? path.join(c3xPath, spec.defaultName) : null;
     const userPath = c3xPath ? path.join(c3xPath, spec.userName) : null;
-    const scenarioFilePath = scenarioDir ? path.join(scenarioDir, spec.scenarioName) : null;
+    const scenarioTargetPath = scenarioDir ? path.join(scenarioDir, spec.scenarioName) : null;
+    const scenarioFilePath = mode === 'scenario'
+      ? (resolveScenarioConfigFilePath(scenarioDir, scenarioPaths, spec.scenarioName) || scenarioTargetPath)
+      : scenarioTargetPath;
 
     let effectivePath = defaultPath;
     let effectiveSource = 'default';
@@ -6852,7 +7001,7 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
       }
     }
 
-    const targetPath = mode === 'scenario' ? scenarioFilePath : userPath;
+    const targetPath = mode === 'scenario' ? scenarioTargetPath : userPath;
 
     const defaultExists = !!(defaultPath && fs.existsSync(defaultPath));
     const userExists = !!(userPath && fs.existsSync(userPath));
@@ -6863,6 +7012,7 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
       defaultPath,
       userPath,
       scenarioPath: scenarioFilePath,
+      scenarioTargetPath,
       effectivePath,
       effectiveSource,
       targetPath
@@ -7342,7 +7492,12 @@ function loadBundle(payload) {
     const scenarioPathForFilePaths = mode === 'scenario'
       ? (scenarioContext.expectedContentWriteRoot || scenarioContext.contentWriteRoot || scenarioContext.biqRoot)
       : scenarioContext.biqRoot;
-    const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioPathForFilePaths, mode });
+    const filePaths = resolvePaths({
+      c3xPath,
+      scenarioPath: scenarioPathForFilePaths,
+      scenarioPaths: scenarioSearchPaths,
+      mode
+    });
     const bundle = {
       mode,
       c3xPath,
@@ -7359,7 +7514,19 @@ function loadBundle(payload) {
       ? loadScienceAdvisorArrowMetadata(scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioDir)
       : loadScienceAdvisorArrowMetadata('');
 
-    bundle.biq = deferMapTab ? summarizeBiqTabForBundle(biqTab) : biqTab;
+    const deferredMapCache = deferMapTab
+      ? rememberDeferredMapBiqTab(biqTab, {
+        mode,
+        civ3Path,
+        scenarioPath,
+        textEncoding: biqTab && biqTab.textEncoding || initialBiqTextEncoding
+      })
+      : null;
+    bundle.biq = deferMapTab
+      ? summarizeBiqTabForBundle(biqTab, {
+        mapMaterializationCacheKey: deferredMapCache && deferredMapCache.key
+      })
+      : biqTab;
     if (mode === 'scenario' && scenarioSearchFolderOverride.length > 0 && biqTab && Array.isArray(biqTab.sections)) {
       const game = biqTab.sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'GAME');
       const record = game && Array.isArray(game.records) ? game.records[0] : null;
@@ -7405,7 +7572,10 @@ function loadBundle(payload) {
         preferredEncoding: textFileEncoding
       })
       : null;
-    bundle.tabs.map = buildDeferredMapTab(biqTab, mode, { scenarioDistricts: scenarioDistrictsMetadata });
+    bundle.tabs.map = buildDeferredMapTab(biqTab, mode, {
+      scenarioDistricts: scenarioDistrictsMetadata,
+      mapMaterializationCacheKey: deferredMapCache && deferredMapCache.key
+    });
     let biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
     if (shouldUseScenarioDefaultRulesFallback(mode, biqTab)) {
       globalBiqTab = globalBiqTab || loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding: bundle.biqTextEncoding || textFileEncoding });
@@ -8208,7 +8378,8 @@ function getIndexedResourceAtlas(buffer, label = 'resources.pcx') {
   if (!decoded || !decoded.indices || !decoded.palette) {
     throw new Error(`${label} must be an indexed 256-color PCX file.`);
   }
-  if (decoded.width < RESOURCE_ATLAS_COLS * RESOURCE_ATLAS_CELL_SIZE) {
+  const cols = Math.floor(decoded.width / RESOURCE_ATLAS_CELL_SIZE);
+  if (cols < 1) {
     throw new Error(`${label} is too narrow for a Civ3 resources.pcx atlas.`);
   }
   const rows = Math.floor(decoded.height / RESOURCE_ATLAS_CELL_SIZE);
@@ -8219,7 +8390,7 @@ function getIndexedResourceAtlas(buffer, label = 'resources.pcx') {
   if (magentaIndex < 0) {
     throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
   }
-  return { ...decoded, rows, magentaIndex };
+  return { ...decoded, cols, rows, cellSize: RESOURCE_ATLAS_CELL_SIZE, magentaIndex };
 }
 
 function isPaletteIndexMagenta(palette, index, magentaIndex) {
@@ -8229,17 +8400,17 @@ function isPaletteIndexMagenta(palette, index, magentaIndex) {
 function isResourceAtlasCellEmpty(atlas, cellIndex) {
   const idx = Number(cellIndex) | 0;
   if (!atlas || idx < 0) return false;
-  const row = Math.floor(idx / RESOURCE_ATLAS_COLS);
-  const col = idx % RESOURCE_ATLAS_COLS;
+  const row = Math.floor(idx / atlas.cols);
+  const col = idx % atlas.cols;
   if (row < 0 || row >= atlas.rows) return false;
-  const startX = col * RESOURCE_ATLAS_CELL_SIZE;
-  const startY = row * RESOURCE_ATLAS_CELL_SIZE;
+  const startX = col * atlas.cellSize;
+  const startY = row * atlas.cellSize;
   // Civ3 resources.pcx cells include non-magenta top/left grid lines inside each
   // 50x50 slot. Those guide pixels are not icon content and must not make an
   // otherwise empty right-most slot look occupied.
-  for (let y = 1; y < RESOURCE_ATLAS_CELL_SIZE; y += 1) {
+  for (let y = 1; y < atlas.cellSize; y += 1) {
     const rowOff = (startY + y) * atlas.width + startX;
-    for (let x = 1; x < RESOURCE_ATLAS_CELL_SIZE; x += 1) {
+    for (let x = 1; x < atlas.cellSize; x += 1) {
       const paletteIndex = atlas.indices[rowOff + x];
       if (!isPaletteIndexMagenta(atlas.palette, paletteIndex, atlas.magentaIndex)) {
         return false;
@@ -8251,7 +8422,7 @@ function isResourceAtlasCellEmpty(atlas, cellIndex) {
 
 function findNextResourceAtlasSlot(targetBuffer) {
   const atlas = getIndexedResourceAtlas(targetBuffer, 'target resources.pcx');
-  const slotCount = atlas.rows * RESOURCE_ATLAS_COLS;
+  const slotCount = atlas.rows * atlas.cols;
   let lastOccupied = -1;
   for (let idx = 0; idx < slotCount; idx += 1) {
     if (!isResourceAtlasCellEmpty(atlas, idx)) lastOccupied = idx;
@@ -8260,6 +8431,7 @@ function findNextResourceAtlasSlot(targetBuffer) {
     index: lastOccupied + 1,
     lastOccupied,
     rows: atlas.rows,
+    cols: atlas.cols,
     capacity: slotCount
   };
 }
@@ -8757,7 +8929,7 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
   const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
   const target = getIndexedResourceAtlas(targetBuffer, 'target resources.pcx');
   const source = getIndexedResourceAtlas(sourceBuffer, 'source resources.pcx');
-  if (sourceIndex >= source.rows * RESOURCE_ATLAS_COLS) {
+  if (sourceIndex >= source.rows * source.cols) {
     throw new Error(`Source resource icon index ${sourceIndex} is outside source resources.pcx.`);
   }
 
@@ -8765,7 +8937,7 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
   const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
     ? explicitTargetIndex
     : slot.index;
-  const requiredRows = Math.floor(targetIndex / RESOURCE_ATLAS_COLS) + 1;
+  const requiredRows = Math.floor(targetIndex / target.cols) + 1;
   const newHeight = Math.max(target.height, requiredRows * RESOURCE_ATLAS_CELL_SIZE);
   const nextIndices = new Uint8Array(target.width * newHeight);
   nextIndices.fill(target.magentaIndex);
@@ -8777,10 +8949,10 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
   }
 
   const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
-  const srcCol = sourceIndex % RESOURCE_ATLAS_COLS;
-  const srcRow = Math.floor(sourceIndex / RESOURCE_ATLAS_COLS);
-  const dstCol = targetIndex % RESOURCE_ATLAS_COLS;
-  const dstRow = Math.floor(targetIndex / RESOURCE_ATLAS_COLS);
+  const srcCol = sourceIndex % source.cols;
+  const srcRow = Math.floor(sourceIndex / source.cols);
+  const dstCol = targetIndex % target.cols;
+  const dstRow = Math.floor(targetIndex / target.cols);
   const srcX = srcCol * RESOURCE_ATLAS_CELL_SIZE;
   const srcY = srcRow * RESOURCE_ATLAS_CELL_SIZE;
   const dstX = dstCol * RESOURCE_ATLAS_CELL_SIZE;
@@ -10716,7 +10888,12 @@ function buildSavePlan(payload) {
     };
   const scenarioDir = scenarioContext.biqRoot;
 
-  const filePaths = resolvePaths({ c3xPath, scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot, mode });
+  const filePaths = resolvePaths({
+    c3xPath,
+    scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot,
+    scenarioPaths: mode === 'scenario' ? scenarioContext.searchRoots : [],
+    mode
+  });
   if (mode === 'scenario' && scenarioContext.autoCreatedSearchRoot && !scenarioContext.autoCreatedSearchValue) {
     return { ok: false, error: 'Could not derive a valid scenario search folder path for this BIQ.' };
   }
@@ -11471,6 +11648,12 @@ function saveBundle(payload, options = {}) {
     if (!dirPath) return;
     fs.mkdirSync(dirPath, { recursive: true });
   });
+
+  invalidateDeferredMapBiqCacheForPath(resolveBiqPath({
+    mode,
+    civ3Path: payload && payload.civ3Path || '',
+    scenarioPath: payload && payload.scenarioPath || ''
+  }));
 
   return {
     ok: true,
@@ -12498,7 +12681,9 @@ function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
     if (!tab || !Array.isArray(tab.sections)) continue;
     tab.sections.forEach((section) => {
       const sectionCode = String(section && section.code || '').trim().toUpperCase();
-      const sourceLabel = cleanDisplayText(section && section.title) || getBiqSectionTitle(sectionCode);
+      const sourceLabel = sectionCode === 'LEAD'
+        ? getBiqSectionTitle(sectionCode)
+        : (cleanDisplayText(section && section.title) || getBiqSectionTitle(sectionCode));
       (Array.isArray(section && section.records) ? section.records : []).forEach((record) => {
         pushRecord(sectionCode, sourceLabel, getBiqRecordDisplayName(record, `${sourceLabel} Record`), record && record.fields);
       });

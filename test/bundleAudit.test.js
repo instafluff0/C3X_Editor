@@ -736,6 +736,49 @@ test('auditLoadedBundle resolves scenario seasonal day-night terrain and distric
   assert.equal(result.totalWarnings, 0);
 });
 
+test('auditLoadedBundle resolves day-night and district art across multiple BIQ search folders', () => {
+  const c3xRoot = mkTmpDir();
+  const biqRoot = mkTmpDir();
+  const firstSearchRoot = mkTmpDir();
+  const secondSearchRoot = mkTmpDir();
+  touchDayNightTerrainSet(secondSearchRoot, 'Winter', '1800');
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Summer', '1200', 'MySuperDistrict.PCX'));
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Summer', '1200', 'Abandoned.PCX'));
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Winter', '1800', 'MySuperDistrict.PCX'));
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Winter', '1800', 'Abandoned.PCX'));
+
+  const bundle = makeBundle(c3xRoot, {
+    scenarioPath: biqRoot,
+    scenarioInputPath: path.join(biqRoot, 'Scenario.biq'),
+    scenarioSearchPaths: [firstSearchRoot, secondSearchRoot],
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'specified' },
+          { key: 'pinned_hour_for_day_night_cycle', value: '18' },
+          { key: 'seasonal_cycle_mode', value: 'specified' },
+          { key: 'pinned_season_for_seasonal_cycle', value: 'winter' },
+          { key: 'enable_districts', value: 'true' }
+        ]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({ name: 'My Super District', img_paths: 'MySuperDistrict.PCX' })
+          ]
+        }
+      },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.base, undefined);
+  assert.equal(result.tabs.districts, undefined);
+  assert.equal(result.totalWarnings, 0);
+});
+
 test('auditLoadedBundle reports missing reference art files for Civs, Techs, Resources, Governments, Improvements, and Units', () => {
   const civ3Root = mkTmpDir();
   const bundle = makeBundle(civ3Root, {
@@ -816,6 +859,9 @@ test('auditLoadedBundle reports missing reference art files for Civs, Techs, Res
   assert.match(result.tabs.governments.sections['0'][0].message, /Despotism: Missing art file "Art\/Civilopedia\/Icons\/Governments\/despotismlarge\.pcx"/);
   assert.match(result.tabs.improvements.sections['0'][0].message, /Granary: Missing art file "Art\/Civilopedia\/Icons\/Buildings\/granarylarge\.pcx"/);
   assert.match(result.tabs.units.sections['0'][0].message, /Warrior: Missing art file "Art\/Civilopedia\/Icons\/Units\/warriorlarge\.pcx"/);
+
+  const mapOpenResult = auditLoadedBundle(bundle, { skipReferenceArt: true });
+  assert.equal(mapOpenResult.totalWarnings, 0, 'reference-art checks should be skippable during deferred map-open critical work');
 });
 
 test('auditLoadedBundle warns and offers a staged repair for Civ3-long reference art paths', () => {

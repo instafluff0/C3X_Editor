@@ -1,4 +1,18 @@
-* RELEASE 27.19.1
+* RELEASE 27.20
+- Fixed Map-tab unit overlays so map-only BIQ tabs resolve UNIT coordinates and PRTO icon/class metadata through the same support data used by Tile Info.
+- Updated Map-tab city and colony deletes to immediately reindex surviving map references in the open editor state, matching the save cascade and avoiding stale tile pointers before save.
+- Fixed BIQ map reference validation so map-only integrity checks do not misread absent civilization/player support sections as zero-length data, and kept civilization-delete blocker messages labeled as Scenario Players.
+- Reduced large-scenario save overhead after opening the Map tab by omitting clean materialized map data from save/diff payloads and sending slim map payloads for ordinary map field edits and C3X sidecar-only map edits.
+- Fixed Map tab imports and custom map creation so replacing a deferred/no-map tab immediately materializes the map state and keeps Open Map, Resize Map, and Remove Map available after the modal closes.
+- Reused the just-loaded deferred scenario bundle for initial Quality Checks so scenario switching no longer asks the QA worker to reload the same BIQ immediately after the visible load.
+- Fixed scenario QA resolution so text and art audits check all BIQ Scenario Search Folders in BIQ order before falling back to the BIQ directory.
+- Deferred broad reference-art Quality Checks for scenarios with unopened large maps, running the rest of QA immediately and resuming the full art scan after the map materializes.
+- Fixed Scenario Search Folders BIQ saves so edited semicolon-delimited search roots persist after Save and Reload.
+- Reused the initial deferred BIQ parse when opening large maps, with file-staleness checks and fresh map-tab materialization so editor state is not shared with the cache.
+- Fixed map resource rendering and resource-icon import handling for wide scenario `resources.pcx` sheets, matching width-based 50x50 atlas slicing so CCM3's pre-placed city resources display from multi-folder scenarios.
+- Restored the Map tab Resize Map and Remove Map actions for deferred large maps, materializing map sections only when Resize is clicked.
+- Fixed scenario C3X config loading so `scenario.*` config files are discovered across all BIQ Scenario Search Folders in order, while scenario saves still write to the primary local content root.
+- Routed Fuji-sized world maps through the chunked map renderer at the default zoom, avoiding repeated whole-map canvas redraws during initial Map open.
 - Fixed large BIQ scenario opens so deferred Map loads no longer send the full parsed BIQ, including every TILE record, to the renderer during initial load, and the Map tab no longer materializes the full map until Open Map is clicked.
 - Fixed a Resources-tab blank-pane crash caused by Luxury city-icon preview type detection calling a config-only helper.
 - Renamed the Resource import setting to cover all imported Resource art, including `resources.pcx` and Luxury city icons.
