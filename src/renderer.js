@@ -142,6 +142,10 @@ const state = {
   biqMapShowLandmarks: true,
   biqMapShowOverlays: true,
   biqMapShowCityNames: true,
+  biqMapMinimapShowTerritory: true,
+  biqMapMinimapShowCities: true,
+  biqMapMinimapShowResources: false,
+  biqMapMinimapResourceFilter: null,
   biqMapStatsOpen: false,
   biqMapStatsTab: 'terrain',
   biqMapStatsDirty: false,
@@ -7266,6 +7270,22 @@ function sanitizePersistedMapEditorTool(tool) {
   return next;
 }
 
+function normalizeMinimapResourceFilter(value) {
+  if (value == null) return null;
+  const source = Array.isArray(value)
+    ? value
+    : (typeof value === 'string' ? value.split(',') : []);
+  const seen = new Set();
+  const out = [];
+  source.forEach((raw) => {
+    const id = parseIntLoose(raw, NaN);
+    if (!Number.isFinite(id) || id < 0 || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  });
+  return out.sort((a, b) => a - b);
+}
+
 function viewContextKey() {
   if (!state.settings) return '';
   return JSON.stringify({
@@ -7477,6 +7497,10 @@ function captureViewSnapshot() {
     biqMapShowLandmarks: state.biqMapShowLandmarks !== false,
     biqMapShowOverlays: state.biqMapShowOverlays !== false,
     biqMapShowCityNames: state.biqMapShowCityNames !== false,
+    biqMapMinimapShowTerritory: !!state.biqMapMinimapShowTerritory,
+    biqMapMinimapShowCities: !!state.biqMapMinimapShowCities,
+    biqMapMinimapShowResources: !!state.biqMapMinimapShowResources,
+    biqMapMinimapResourceFilter: normalizeMinimapResourceFilter(state.biqMapMinimapResourceFilter),
     mapModalOpen: isMapModalVisible,
     mapEditorTool: sanitizePersistedMapEditorTool(state.mapEditorTool)
   };
@@ -7680,6 +7704,10 @@ function applyViewSnapshot(snapshot) {
   state.biqMapShowLandmarks = snapshot.biqMapShowLandmarks !== false;
   state.biqMapShowOverlays = snapshot.biqMapShowOverlays !== false;
   state.biqMapShowCityNames = snapshot.biqMapShowCityNames !== false;
+  state.biqMapMinimapShowTerritory = snapshot.biqMapMinimapShowTerritory !== false;
+  state.biqMapMinimapShowCities = snapshot.biqMapMinimapShowCities !== false;
+  state.biqMapMinimapShowResources = snapshot.biqMapMinimapShowResources === true;
+  state.biqMapMinimapResourceFilter = normalizeMinimapResourceFilter(snapshot.biqMapMinimapResourceFilter);
   state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, sanitizePersistedMapEditorTool(snapshot.mapEditorTool));
   state.tabContentScrollTop = Number.isFinite(snapshot.tabContentScrollTop) ? snapshot.tabContentScrollTop : 0;
   if ((!snapshot.techTreeModalOpen || state.activeTab !== 'technologies') && techTreeModal.node) {
@@ -56397,13 +56425,307 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const minimapBaseCanvas = document.createElement('canvas');
   minimapBaseCanvas.width = minimapCanvas.width;
   minimapBaseCanvas.height = minimapCanvas.height;
+  const minimapOverlayCanvas = document.createElement('canvas');
+  minimapOverlayCanvas.width = minimapCanvas.width;
+  minimapOverlayCanvas.height = minimapCanvas.height;
   let minimapBaseDirty = true;
+  let minimapOverlayDirty = true;
   let minimapRefreshRaf = 0;
   let minimapBaseReconcileIdleHandle = 0;
   let minimapBaseReconcileReason = '';
   let pendingMinimapTileIndexes = new Set();
   let pendingMinimapRefreshMeta = null;
+  const minimapOptionsControls = document.createElement('div');
+  minimapOptionsControls.className = 'biq-map-minimap-options';
+  const minimapOptionsToggle = document.createElement('button');
+  minimapOptionsToggle.type = 'button';
+  minimapOptionsToggle.className = 'biq-map-minimap-options-toggle';
+  minimapOptionsToggle.innerHTML = '<span class="btn-icon">▦</span>Mini-map';
+  minimapOptionsToggle.setAttribute('aria-expanded', 'false');
+  const minimapOptionsMenu = document.createElement('div');
+  minimapOptionsMenu.className = 'biq-map-minimap-options-menu section-card';
+  minimapOptionsMenu.hidden = true;
+  const getMiniMapResourceIds = () => Array.from(new Set(resourcePickerOptions
+    .map((option) => parseIntLoose(option && option.resourceId, NaN))
+    .filter((id) => Number.isFinite(id) && id >= 0)))
+    .sort((a, b) => a - b);
+  const getMiniMapResourceFilterSet = () => {
+    const normalized = normalizeMinimapResourceFilter(state.biqMapMinimapResourceFilter);
+    state.biqMapMinimapResourceFilter = normalized;
+    return Array.isArray(normalized) ? new Set(normalized) : null;
+  };
+  const getMiniMapResourceCounts = () => {
+    const counts = {};
+    for (let i = 0; i <= maxIdx; i += 1) {
+      const record = tiles[i];
+      if (!record) continue;
+      const resourceId = parseIntLoose(getMapFieldValue(record, 'resource', '-1'), -1);
+      if (resourceId < 0) continue;
+      counts[resourceId] = (counts[resourceId] || 0) + 1;
+    }
+    return counts;
+  };
+  const paintMinimapResourceFilterThumb = (holder, option) => {
+    if (!holder) return false;
+    const resourceId = option && Number.isFinite(option.resourceId)
+      ? option.resourceId
+      : parseIntLoose(option && option.value, -1);
+    prepareMapToolbarPickerThumb(holder, 'resource biq-map-minimap-resource-filter-thumb');
+    holder.dataset.minimapResourceThumb = String(resourceId);
+    const iconIdx = getMapResourceIconIndexById()[resourceId];
+    const atlas = state.biqMapArtCache.resources;
+    if (atlas && Number.isFinite(iconIdx) && iconIdx >= 0) {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'entry-thumb-canvas';
+      canvas.width = 24;
+      canvas.height = 24;
+      const cellW = 50;
+      const cellH = 50;
+      const cols = Math.max(1, Math.floor(atlas.width / cellW));
+      const col = iconIdx % cols;
+      const row = Math.floor(iconIdx / cols);
+      if ((col * cellW + cellW) <= atlas.width && (row * cellH + cellH) <= atlas.height) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, 0, 0, canvas.width, canvas.height);
+          holder.innerHTML = '';
+          holder.appendChild(canvas);
+          return true;
+        }
+      }
+    }
+    holder.appendChild(makeMapGlyphIcon('◆', `Resource ${resourceId}`, 'resource'));
+    return true;
+  };
+  const updateMiniMapResourceFilterThumbs = () => {
+    if (!state.biqMapArtCache.resources) return;
+    minimapOptionsMenu.querySelectorAll('[data-minimap-resource-thumb]').forEach((holder) => {
+      if (holder.querySelector('canvas')) return;
+      const resourceId = parseIntLoose(holder.getAttribute('data-minimap-resource-thumb'), -1);
+      const option = resourcePickerOptions.find((item) => Number(item && item.resourceId) === resourceId);
+      paintMinimapResourceFilterThumb(holder, option || { resourceId, value: String(resourceId) });
+    });
+  };
+  const updateMiniMapResourceCounts = () => {
+    const counts = getMiniMapResourceCounts();
+    updateMiniMapResourceFilterThumbs();
+    minimapOptionsMenu.querySelectorAll('[data-minimap-resource-count]').forEach((node) => {
+      const resourceId = parseIntLoose(node.getAttribute('data-minimap-resource-count'), -1);
+      const count = resourceId >= 0 ? Number(counts[resourceId] || 0) : 0;
+      node.textContent = `(${count})`;
+    });
+  };
+  const syncMinimapResourceFlyoutLayout = () => {
+    const flyout = minimapOptionsMenu.querySelector('.biq-map-minimap-resource-flyout');
+    if (!flyout || minimapOptionsMenu.hidden || !minimapOptionsMenu.isConnected || !minimapPanel.isConnected) return;
+    const menuRect = minimapOptionsMenu.getBoundingClientRect();
+    const panelRect = minimapPanel.getBoundingClientRect();
+    const targetHeight = Math.floor(panelRect.bottom - menuRect.top);
+    if (Number.isFinite(targetHeight) && targetHeight > 180) {
+      flyout.style.height = `${targetHeight}px`;
+      flyout.style.maxHeight = `${targetHeight}px`;
+    }
+  };
+  const updateMinimapOptionsUi = () => {
+    const open = !minimapOptionsMenu.hidden;
+    minimapOptionsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    minimapOptionsControls.classList.toggle('open', open);
+    minimapOptionsControls.classList.toggle(
+      'active',
+      !!state.biqMapMinimapShowTerritory || !!state.biqMapMinimapShowCities || !!state.biqMapMinimapShowResources
+    );
+    const showResourceFlyout = open && !!state.biqMapMinimapShowResources;
+    minimapOptionsControls.classList.toggle('resources-visible', showResourceFlyout);
+    if (showResourceFlyout) window.requestAnimationFrame(syncMinimapResourceFlyoutLayout);
+  };
+  const makeMinimapOptionToggle = ({ key, label }) => {
+    const wrap = document.createElement('label');
+    wrap.className = 'biq-map-minimap-option';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = !!state[key];
+    const text = document.createElement('span');
+    text.textContent = label;
+    check.addEventListener('change', () => {
+      state[key] = !!check.checked;
+      minimapOverlayDirty = true;
+      updateMinimapOptionsUi();
+      renderMiniMap();
+      appendDebugLog('biq-map:minimap-option-toggle', {
+        option: String(key),
+        enabled: !!state[key]
+      });
+    });
+    wrap.appendChild(check);
+    wrap.appendChild(text);
+    return wrap;
+  };
+  const makeMinimapResourceToggle = () => {
+    const wrap = document.createElement('div');
+    wrap.className = 'biq-map-minimap-option biq-map-minimap-option-resource';
+
+    const main = document.createElement('label');
+    main.className = 'biq-map-minimap-option-main';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = !!state.biqMapMinimapShowResources;
+    const text = document.createElement('span');
+    text.textContent = 'Resources';
+    check.addEventListener('change', () => {
+      state.biqMapMinimapShowResources = !!check.checked;
+      minimapOverlayDirty = true;
+      updateMinimapOptionsUi();
+      renderMiniMap();
+      appendDebugLog('biq-map:minimap-option-toggle', {
+        option: 'biqMapMinimapShowResources',
+        enabled: !!state.biqMapMinimapShowResources
+      });
+    });
+    main.appendChild(check);
+    main.appendChild(text);
+    wrap.appendChild(main);
+
+    const flyout = document.createElement('div');
+    flyout.className = 'biq-map-minimap-resource-flyout section-card';
+    flyout.setAttribute('role', 'group');
+    flyout.setAttribute('aria-label', 'Mini-map resource filters');
+    if (resourcePickerOptions.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'biq-map-minimap-resource-filter-empty';
+      empty.textContent = 'No resources';
+      flyout.appendChild(empty);
+    } else {
+      const filterSet = getMiniMapResourceFilterSet();
+      const applyMiniMapResourceSearch = (query) => {
+        const needle = String(query || '').trim().toLowerCase();
+        flyout.querySelectorAll('.biq-map-minimap-resource-filter-option').forEach((item) => {
+          const haystack = String(item.getAttribute('data-resource-search') || '').toLowerCase();
+          item.hidden = !!needle && !haystack.includes(needle);
+        });
+      };
+      const applyMiniMapResourceFilterSelection = (selectedIds) => {
+        const selected = Array.from(new Set((Array.isArray(selectedIds) ? selectedIds : [])
+          .map((id) => parseIntLoose(id, NaN))
+          .filter((id) => Number.isFinite(id) && id >= 0)))
+          .sort((a, b) => a - b);
+        const allResourceIds = getMiniMapResourceIds();
+        state.biqMapMinimapResourceFilter = selected.length === allResourceIds.length
+          ? null
+          : selected;
+        flyout.querySelectorAll('input[type="checkbox"]').forEach((node) => {
+          const id = parseIntLoose(node.value, NaN);
+          node.checked = state.biqMapMinimapResourceFilter == null
+            ? true
+            : state.biqMapMinimapResourceFilter.includes(id);
+        });
+        minimapOverlayDirty = true;
+        renderMiniMap();
+      };
+      const header = document.createElement('div');
+      header.className = 'biq-map-minimap-resource-filter-header';
+      const search = document.createElement('input');
+      search.type = 'text';
+      search.className = 'biq-map-minimap-resource-search';
+      search.placeholder = 'Search resources';
+      search.setAttribute('aria-label', 'Search mini-map resources');
+      search.addEventListener('input', () => {
+        applyMiniMapResourceSearch(search.value);
+      });
+      const actions = document.createElement('div');
+      actions.className = 'biq-map-minimap-resource-filter-actions';
+      const checkAllBtn = document.createElement('button');
+      checkAllBtn.type = 'button';
+      checkAllBtn.textContent = 'Check All';
+      checkAllBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        applyMiniMapResourceFilterSelection(getMiniMapResourceIds());
+        appendDebugLog('biq-map:minimap-resource-filter-bulk', {
+          action: 'check-all',
+          selectedCount: getMiniMapResourceIds().length
+        });
+      });
+      const uncheckAllBtn = document.createElement('button');
+      uncheckAllBtn.type = 'button';
+      uncheckAllBtn.textContent = 'Uncheck All';
+      uncheckAllBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        applyMiniMapResourceFilterSelection([]);
+        appendDebugLog('biq-map:minimap-resource-filter-bulk', {
+          action: 'uncheck-all',
+          selectedCount: 0
+        });
+      });
+      actions.appendChild(checkAllBtn);
+      actions.appendChild(uncheckAllBtn);
+      header.appendChild(actions);
+      header.appendChild(search);
+      flyout.appendChild(header);
+      const list = document.createElement('div');
+      list.className = 'biq-map-minimap-resource-filter-list';
+      flyout.appendChild(list);
+      resourcePickerOptions.forEach((option) => {
+        const resourceId = parseIntLoose(option && option.resourceId, NaN);
+        if (!Number.isFinite(resourceId) || resourceId < 0) return;
+        const resourceLabel = String(option && option.label || `Resource ${resourceId}`);
+        const item = document.createElement('label');
+        item.className = 'biq-map-minimap-resource-filter-option';
+        item.setAttribute('data-resource-search', `${resourceLabel} ${resourceId}`);
+        const resourceCheck = document.createElement('input');
+        resourceCheck.type = 'checkbox';
+        resourceCheck.value = String(resourceId);
+        resourceCheck.checked = !filterSet || filterSet.has(resourceId);
+        const thumb = document.createElement('span');
+        thumb.className = 'biq-map-minimap-resource-filter-thumb-host';
+        paintMinimapResourceFilterThumb(thumb, option);
+        const resourceText = document.createElement('span');
+        resourceText.className = 'biq-map-minimap-resource-filter-label';
+        resourceText.textContent = resourceLabel;
+        const resourceCount = document.createElement('span');
+        resourceCount.className = 'biq-map-minimap-resource-filter-count';
+        resourceCount.dataset.minimapResourceCount = String(resourceId);
+        resourceCount.textContent = '(0)';
+        resourceCheck.addEventListener('change', () => {
+          const selected = Array.from(flyout.querySelectorAll('input[type="checkbox"]'))
+            .filter((node) => node.checked)
+            .map((node) => parseIntLoose(node.value, NaN))
+            .filter((id) => Number.isFinite(id) && id >= 0)
+            .sort((a, b) => a - b);
+          applyMiniMapResourceFilterSelection(selected);
+          appendDebugLog('biq-map:minimap-resource-filter-toggle', {
+            resourceId,
+            checked: !!resourceCheck.checked,
+            selectedCount: selected.length,
+            allSelected: state.biqMapMinimapResourceFilter == null
+          });
+        });
+        item.appendChild(resourceCheck);
+        item.appendChild(thumb);
+        item.appendChild(resourceText);
+        item.appendChild(resourceCount);
+        list.appendChild(item);
+      });
+    }
+    wrap.appendChild(flyout);
+    return wrap;
+  };
+  minimapOptionsMenu.appendChild(makeMinimapOptionToggle({ key: 'biqMapMinimapShowTerritory', label: 'Territory' }));
+  minimapOptionsMenu.appendChild(makeMinimapOptionToggle({ key: 'biqMapMinimapShowCities', label: 'Cities' }));
+  minimapOptionsMenu.appendChild(makeMinimapResourceToggle());
+  minimapOptionsToggle.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    minimapOptionsMenu.hidden = !minimapOptionsMenu.hidden;
+    updateMinimapOptionsUi();
+  });
+  minimapOptionsControls.appendChild(minimapOptionsMenu);
+  minimapOptionsControls.appendChild(minimapOptionsToggle);
+  updateMiniMapResourceCounts();
+  updateMinimapOptionsUi();
   minimapPanel.appendChild(statsControls);
+  minimapPanel.appendChild(minimapOptionsControls);
   minimapPanel.appendChild(minimapCanvas);
   mapFrame.appendChild(minimapPanel);
   container.appendChild(mapFrame);
@@ -56576,6 +56898,148 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
     return true;
   };
+  const shouldDrawMiniMapOverlay = () => !!state.biqMapMinimapShowTerritory || !!state.biqMapMinimapShowCities || !!state.biqMapMinimapShowResources;
+  const syncMiniMapOverlaySize = () => {
+    if (minimapOverlayCanvas.width !== minimapCanvas.width) minimapOverlayCanvas.width = minimapCanvas.width;
+    if (minimapOverlayCanvas.height !== minimapCanvas.height) minimapOverlayCanvas.height = minimapCanvas.height;
+  };
+  const getMiniMapTileCenter = (geom, metrics) => {
+    if (!geom || !metrics) return null;
+    const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+    const sx = (basePosRaw.sx + originX - baseWorldLeftPx) * metrics.scaleX;
+    const sy = (basePosRaw.sy + originY - baseWorldTopPx) * metrics.scaleY;
+    return {
+      x: sx + (metrics.miniTileW / 2),
+      y: sy + (metrics.miniTileH / 2),
+      sx,
+      sy
+    };
+  };
+  const drawMiniMapDiamond = (drawCtx, geom, metrics, fillStyle) => {
+    const pos = getMiniMapTileCenter(geom, metrics);
+    if (!drawCtx || !pos) return false;
+    drawCtx.fillStyle = fillStyle;
+    drawCtx.beginPath();
+    drawCtx.moveTo(pos.x, pos.sy);
+    drawCtx.lineTo(pos.sx + metrics.miniTileW, pos.y);
+    drawCtx.lineTo(pos.x, pos.sy + metrics.miniTileH);
+    drawCtx.lineTo(pos.sx, pos.y);
+    drawCtx.closePath();
+    drawCtx.fill();
+    return true;
+  };
+  const getMiniMapTerritoryColor = (territoryInfo) => {
+    if (!territoryInfo || !territoryInfo.hasOwner) return '';
+    let colorSlot = parseIntLoose(territoryInfo.borderColorId, NaN);
+    if (!Number.isFinite(colorSlot) && territoryInfo.civId >= 0) {
+      colorSlot = getMapCivilizationColorSlot(territoryInfo.civId);
+    }
+    if (!Number.isFinite(colorSlot) && Number.isFinite(territoryInfo.borderTag) && territoryInfo.borderTag > 0) {
+      colorSlot = territoryInfo.borderTag % 32;
+    }
+    if (!Number.isFinite(colorSlot)) return '';
+    const rgb = parseRgbCss(colorFromCivSlot(colorSlot)) || parseRgbCss(colorFromNumber(colorSlot));
+    if (!rgb) return '';
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.44)`;
+  };
+  const drawMiniMapTerritoryOverlay = (overlayCtx, metrics) => {
+    if (!state.biqMapMinimapShowTerritory) return 0;
+    let drawn = 0;
+    for (let i = 0; i <= maxIdx; i += 1) {
+      const record = tiles[i];
+      const geom = tileGeom[i];
+      if (!record || !geom) continue;
+      const fillStyle = getMiniMapTerritoryColor(resolveTileTerritoryInfo(record, geom));
+      if (!fillStyle) continue;
+      if (drawMiniMapDiamond(overlayCtx, geom, metrics, fillStyle)) drawn += 1;
+    }
+    return drawn;
+  };
+  const drawMiniMapCityOverlay = (overlayCtx, metrics) => {
+    if (!state.biqMapMinimapShowCities) return 0;
+    let drawn = 0;
+    cityMetaList.forEach((cityMeta) => {
+      if (!cityMeta || !Number.isFinite(cityMeta.x) || !Number.isFinite(cityMeta.y)) return;
+      const idx = calculateTileIndexForParity(cityMeta.x, cityMeta.y);
+      if (idx < 0) return;
+      const geom = tileGeom[idx] || { xPos: cityMeta.x, yPos: cityMeta.y };
+      const pos = getMiniMapTileCenter(geom, metrics);
+      if (!pos) return;
+      const dotRadius = Math.max(1, Math.min(3, Math.round(Math.min(metrics.miniTileW, metrics.miniTileH) * 0.55)));
+      const dotSize = (dotRadius * 2) + 1;
+      const x = Math.round(pos.x) - dotRadius;
+      const y = Math.round(pos.y) - dotRadius;
+      overlayCtx.fillStyle = 'rgba(0, 0, 0, 0.58)';
+      overlayCtx.fillRect(x, y + 1, dotSize, dotSize);
+      overlayCtx.fillStyle = '#ffffff';
+      overlayCtx.fillRect(x, y, dotSize, dotSize);
+      drawn += 1;
+    });
+    return drawn;
+  };
+  const drawMiniMapResourceOverlay = (overlayCtx, metrics) => {
+    if (!state.biqMapMinimapShowResources) return 0;
+    const resourceFilterSet = getMiniMapResourceFilterSet();
+    let drawn = 0;
+    for (let i = 0; i <= maxIdx; i += 1) {
+      const record = tiles[i];
+      const geom = tileGeom[i];
+      if (!record || !geom) continue;
+      const resourceId = parseIntLoose(getMapFieldValue(record, 'resource', '-1'), -1);
+      if (resourceId < 0) continue;
+      if (resourceFilterSet && !resourceFilterSet.has(resourceId)) continue;
+      const pos = getMiniMapTileCenter(geom, metrics);
+      if (!pos) continue;
+      const radius = Math.max(1, Math.min(3, Math.round(Math.min(metrics.miniTileW, metrics.miniTileH) * 0.48)));
+      const rgb = parseRgbCss(colorFromNumber((resourceId + 1) * 17)) || { r: 232, g: 196, b: 47 };
+      const cx = Math.round(pos.x);
+      const cy = Math.round(pos.y);
+      overlayCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(cx, cy - radius - 1);
+      overlayCtx.lineTo(cx + radius + 1, cy);
+      overlayCtx.lineTo(cx, cy + radius + 1);
+      overlayCtx.lineTo(cx - radius - 1, cy);
+      overlayCtx.closePath();
+      overlayCtx.fill();
+      overlayCtx.fillStyle = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(cx, cy - radius);
+      overlayCtx.lineTo(cx + radius, cy);
+      overlayCtx.lineTo(cx, cy + radius);
+      overlayCtx.lineTo(cx - radius, cy);
+      overlayCtx.closePath();
+      overlayCtx.fill();
+      drawn += 1;
+    }
+    return drawn;
+  };
+  const rebuildMiniMapOverlay = () => {
+    syncMiniMapOverlaySize();
+    const overlayStartedAt = mapToolNowMs();
+    const overlayCtx = minimapOverlayCanvas.getContext('2d');
+    if (!overlayCtx) return false;
+    overlayCtx.clearRect(0, 0, minimapOverlayCanvas.width, minimapOverlayCanvas.height);
+    const enabled = shouldDrawMiniMapOverlay();
+    let territoryTiles = 0;
+    let resourceMarkers = 0;
+    let cityDots = 0;
+    if (enabled) {
+      const metrics = getMiniMapDrawMetrics();
+      territoryTiles = drawMiniMapTerritoryOverlay(overlayCtx, metrics);
+      resourceMarkers = drawMiniMapResourceOverlay(overlayCtx, metrics);
+      cityDots = drawMiniMapCityOverlay(overlayCtx, metrics);
+    }
+    minimapOverlayDirty = false;
+    appendDebugLog('biq-map:minimap-overlay-rebuild', {
+      durationMs: Number((mapToolNowMs() - overlayStartedAt).toFixed(2)),
+      enabled,
+      territoryTiles,
+      resourceMarkers,
+      cityDots
+    });
+    return true;
+  };
   const scheduleMiniMapBaseReconcile = (reason = 'patch') => {
     minimapBaseReconcileReason = String(reason || 'patch');
     if (minimapBaseDirty || minimapBaseReconcileIdleHandle) return;
@@ -56603,10 +57067,21 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const minimapStartedAt = mapToolNowMs();
     const mmCtx = minimapCanvas.getContext('2d');
     if (!mmCtx) return;
+    updateMiniMapResourceCounts();
     const rebuiltBase = !!minimapBaseDirty;
     if (rebuiltBase) rebuildMiniMapBase();
     mmCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
     mmCtx.drawImage(minimapBaseCanvas, 0, 0, minimapCanvas.width, minimapCanvas.height);
+    if (shouldDrawMiniMapOverlay()) {
+      if (
+        minimapOverlayDirty
+        || minimapOverlayCanvas.width !== minimapCanvas.width
+        || minimapOverlayCanvas.height !== minimapCanvas.height
+      ) {
+        rebuildMiniMapOverlay();
+      }
+      mmCtx.drawImage(minimapOverlayCanvas, 0, 0, minimapCanvas.width, minimapCanvas.height);
+    }
     const metrics = getPaneMetrics();
     const viewWidth = Math.max(12, (metrics.clientWidth / Math.max(1, baseWorldWidthPx)) * minimapCanvas.width);
     const viewHeight = Math.max(10, (metrics.clientHeight / Math.max(1, baseWorldHeightPx)) * minimapCanvas.height);
@@ -56628,11 +57103,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       durationMs: Number((mapToolNowMs() - minimapStartedAt).toFixed(2)),
       width: minimapCanvas.width,
       height: minimapCanvas.height,
-      rebuiltBase
+      rebuiltBase,
+      overlay: shouldDrawMiniMapOverlay()
     });
   };
   const scheduleDeferredMiniMapRefresh = (meta = {}) => {
     const tileIndexes = Array.isArray(meta && meta.minimapTileIndexes) ? meta.minimapTileIndexes : [];
+    if (state.biqMapMinimapShowResources) minimapOverlayDirty = true;
     if (tileIndexes.length > 0) {
       tileIndexes.forEach((idx) => {
         const n = parseIntLoose(idx, NaN);
@@ -60445,6 +60922,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       });
       refreshPendingMapOverlayThumbs(container);
       minimapBaseDirty = true;
+      minimapOverlayDirty = true;
       redrawMapCanvasInPlace();
       if (typeof renderTileInfoPanel === 'function') renderTileInfoPanel();
       if (typeof renderMiniMap === 'function') renderMiniMap();
@@ -61176,6 +61654,20 @@ function normalizeDistrictRepresentativeBuildingSelection({
   };
 }
 
+function getDistrictPreviewEraNames() {
+  const fallback = ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
+  const namesByIndex = [];
+  const eraOptions = makeBiqSectionIndexOptions('ERAS', false);
+  (Array.isArray(eraOptions) ? eraOptions : []).forEach((opt) => {
+    const idx = Number.parseInt(String(opt && opt.value), 10);
+    const label = String(opt && (opt.displayLabel || opt.label) || '').trim();
+    if (!Number.isFinite(idx) || idx < 0 || !label) return;
+    namesByIndex[idx] = label;
+  });
+  const count = Math.max(fallback.length, namesByIndex.length);
+  return Array.from({ length: count }, (_v, idx) => namesByIndex[idx] || fallback[idx] || `Era ${idx + 1}`);
+}
+
 function findLastNonTransparentDistrictRow(preview, spec) {
   if (!preview || !preview.ok || !preview.rgbaBase64 || !spec) return 0;
   const rgba = fromBase64ToUint8(preview.rgbaBase64);
@@ -61554,11 +62046,7 @@ function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForF
     .filter(Boolean);
   const numBuildings = depImprovs.length;
 
-  const erasSection = isScenarioMode() ? getBiqSectionByCode('ERAS') : null;
-  const dynamicEraNames = erasSection
-    ? (erasSection.records || []).map((r, i) => String(r && (r.name || r.eraName) || '').trim() || `Era ${i + 1}`)
-    : null;
-  const ERA_NAMES = dynamicEraNames || ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
+  const ERA_NAMES = getDistrictPreviewEraNames();
   const CULTURE_NAMES = ['American', 'European', 'Roman', 'Mideast', 'Asian'];
   const renderStrategy = getDistrictRenderStrategy(section);
   const isByBuildingRender = renderStrategy === 'by-building';
@@ -61696,7 +62184,7 @@ function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForF
       return;
     }
     if (previewContextVersion !== state.previewContextVersion || !canvas.isConnected) return;
-    const detectedRow = Math.max(0, Number(representative.representativeEraIndex) || 0);
+    const detectedRow = Math.max(0, Math.min(ERA_NAMES.length - 1, Number(representative.representativeEraIndex) || 0));
     const detectedCol = Math.max(0, Number(representative.representativeBuildingCol) || 0);
     const detectedCols = Array.isArray(representative.representativeBuildingCols)
       ? representative.representativeBuildingCols.slice().sort((a, b) => a - b)
@@ -65813,6 +66301,10 @@ async function loadBundleAndRender(options = {}) {
       state.biqMapShowLandmarks = persistedView.biqMapShowLandmarks !== false;
       state.biqMapShowOverlays = persistedView.biqMapShowOverlays !== false;
       state.biqMapShowCityNames = persistedView.biqMapShowCityNames !== false;
+      state.biqMapMinimapShowTerritory = persistedView.biqMapMinimapShowTerritory !== false;
+      state.biqMapMinimapShowCities = persistedView.biqMapMinimapShowCities !== false;
+      state.biqMapMinimapShowResources = persistedView.biqMapMinimapShowResources === true;
+      state.biqMapMinimapResourceFilter = normalizeMinimapResourceFilter(persistedView.biqMapMinimapResourceFilter);
       state.mapEditorTool = Object.assign({}, state.mapEditorTool || {}, sanitizePersistedMapEditorTool(persistedView.mapEditorTool));
       state.tabContentScrollTop = Number.isFinite(persistedView.tabContentScrollTop) ? persistedView.tabContentScrollTop : 0;
     } else {

@@ -57,7 +57,7 @@ body {
 }
 
 body {
-  padding: 10px;
+  padding: 0 10px 10px;
   background: #f8f8fb;
   position: relative;
   height: 100dvh;
@@ -4183,7 +4183,9 @@ button.danger:hover {
   z-index: 8;
 }
 
-.biq-map-stats-toggle {
+.biq-map-stats-toggle,
+.biq-map-minimap-options-toggle {
+  outline: none;
   position: relative;
   min-width: 56px;
   height: 34px;
@@ -4203,7 +4205,22 @@ button.danger:hover {
   transition: background-color 150ms ease, border-color 150ms ease, box-shadow 170ms ease, transform 170ms ease, color 150ms ease;
 }
 
-.biq-map-stats-toggle::after {
+.biq-map-stats-toggle:hover,
+.biq-map-minimap-options-toggle:hover {
+  background: rgba(232, 255, 252, 0.96);
+}
+
+.biq-map-stats-toggle:focus,
+.biq-map-stats-toggle:focus-visible,
+.biq-map-minimap-options-toggle:focus,
+.biq-map-minimap-options-toggle:focus-visible {
+  outline: none;
+  border-color: rgba(28, 34, 56, 0.2);
+  box-shadow: 0 6px 16px rgba(18, 31, 50, 0.08);
+}
+
+.biq-map-stats-toggle::after,
+.biq-map-minimap-options-toggle::after {
   content: '';
   width: 7px;
   height: 7px;
@@ -4214,29 +4231,275 @@ button.danger:hover {
   transition: background-color 150ms ease, box-shadow 220ms ease, transform 220ms ease;
 }
 
-.biq-map-stats-toggle .btn-icon {
+.biq-map-stats-toggle .btn-icon,
+.biq-map-minimap-options-toggle .btn-icon {
   font-size: 0.9rem;
   line-height: 1;
   transition: transform 170ms ease, filter 170ms ease;
 }
 
-.biq-map-stats-controls.open .biq-map-stats-toggle {
-  border-color: rgba(217, 130, 40, 0.42);
-  background: linear-gradient(180deg, rgba(255, 251, 245, 0.98), rgba(255, 242, 227, 0.96));
-  color: #8a4b0f;
-  box-shadow: 0 10px 24px rgba(18, 31, 50, 0.12), 0 0 0 1px rgba(232, 169, 84, 0.12);
+.biq-map-stats-controls.open .biq-map-stats-toggle,
+.biq-map-minimap-options.open .biq-map-minimap-options-toggle,
+.biq-map-minimap-options.active .biq-map-minimap-options-toggle {
+  border-color: rgba(28, 34, 56, 0.2);
+  background: rgba(255, 255, 255, 0.94);
+  color: #1a2238;
+  box-shadow: 0 6px 16px rgba(18, 31, 50, 0.08);
   transform: translateY(-1px);
 }
 
-.biq-map-stats-controls.open .biq-map-stats-toggle::after {
-  background: #d98228;
-  box-shadow: 0 0 0 4px rgba(217, 130, 40, 0.14);
+.biq-map-stats-controls.open .biq-map-stats-toggle:hover,
+.biq-map-minimap-options.open .biq-map-minimap-options-toggle:hover,
+.biq-map-minimap-options.active .biq-map-minimap-options-toggle:hover {
+  background: rgba(232, 255, 252, 0.96);
+}
+
+.biq-map-stats-controls.open .biq-map-stats-toggle::after,
+.biq-map-minimap-options.open .biq-map-minimap-options-toggle::after,
+.biq-map-minimap-options.active .biq-map-minimap-options-toggle::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(11, 127, 120, 0.16);
   transform: scale(1.08);
 }
 
-.biq-map-stats-controls.open .biq-map-stats-toggle .btn-icon {
+.biq-map-stats-controls.open .biq-map-stats-toggle .btn-icon,
+.biq-map-minimap-options.open .biq-map-minimap-options-toggle .btn-icon,
+.biq-map-minimap-options.active .biq-map-minimap-options-toggle .btn-icon {
   filter: saturate(1.1);
   transform: translateY(-0.5px);
+}
+
+.biq-map-minimap-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  z-index: 8;
+}
+
+.biq-map-minimap-options-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 156px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 44px rgba(18, 31, 50, 0.2);
+  z-index: 8;
+}
+
+.biq-map-minimap-options-menu[hidden] {
+  display: none;
+}
+
+.biq-map-minimap-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 30px;
+  margin: 0 -4px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #1a2238;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.biq-map-minimap-option:hover,
+.biq-map-minimap-option:focus-within{
+  background: rgba(232, 255, 252, 0.82);
+}
+
+.biq-map-minimap-option-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  cursor: pointer;
+}
+
+.biq-map-minimap-option input,
+.biq-map-minimap-resource-filter-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.biq-map-minimap-option-resource {
+  position: static;
+  overflow: visible;
+}
+
+.biq-map-minimap-option-resource::after {
+  content: '';
+  position: absolute;
+  top: -10px;
+  bottom: -10px;
+  left: 100%;
+  width: 12px;
+}
+
+.biq-map-minimap-resource-flyout.section-card {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 10px);
+  min-width: 300px;
+  max-width: min(360px, calc(100vw - 40px));
+  max-height: min(420px, calc(100vh - 40px));
+  display: none;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 44px rgba(18, 31, 50, 0.2);
+  z-index: 9;
+  cursor: default;
+}
+
+.biq-map-minimap-options.resources-visible .biq-map-minimap-resource-flyout {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.biq-map-minimap-resource-flyout .biq-map-minimap-resource-filter-header {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(11, 127, 120, 0.18);
+  background: #ffffff;
+  backdrop-filter: blur(10px);
+  z-index: 2;
+}
+
+.biq-map-minimap-resource-filter-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 7px 10px 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.biq-map-minimap-resource-flyout .biq-map-minimap-resource-search {
+  display: block;
+  grid-column: 1 / -1;
+  justify-self: stretch;
+  inline-size: 100%;
+  min-inline-size: 100%;
+  max-inline-size: 100%;
+  width: auto;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: 1px solid rgba(28, 34, 56, 0.18);
+  background: rgba(255, 255, 255, 0.98);
+  color: #1a2238;
+  font-size: 0.82rem;
+  font-weight: 700;
+  outline: none;
+}
+
+.biq-map-minimap-resource-flyout .biq-map-minimap-resource-search:focus {
+  border-color: rgba(11, 127, 120, 0.48);
+  box-shadow: 0 0 0 3px rgba(11, 127, 120, 0.12);
+}
+
+.biq-map-minimap-resource-filter-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.biq-map-minimap-resource-filter-actions button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(28, 34, 56, 0.18);
+  background: rgba(255, 255, 255, 0.98);
+  color: #1a2238;
+  font-size: 0.72rem;
+  font-weight: 800;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.biq-map-minimap-resource-filter-actions button:hover {
+  border-color: rgba(11, 127, 120, 0.38);
+  background: rgba(232, 255, 252, 0.9);
+}
+
+.biq-map-minimap-resource-filter-option {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 16px 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin: 0 -4px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  color: #1a2238;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.biq-map-minimap-resource-filter-option[hidden] {
+  display: none;
+}
+
+.biq-map-minimap-resource-filter-option:hover,
+.biq-map-minimap-resource-filter-option:focus-within {
+  background: rgba(232, 255, 252, 0.82);
+}
+
+.biq-map-minimap-resource-filter-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.biq-map-minimap-resource-filter-thumb .entry-thumb-canvas,
+.biq-map-minimap-resource-filter-thumb canvas,
+.biq-map-minimap-resource-filter-thumb .map-select-icon {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.biq-map-minimap-resource-filter-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.biq-map-minimap-resource-filter-count {
+  color: rgba(26, 34, 56, 0.62);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.biq-map-minimap-resource-filter-empty {
+  color: rgba(26, 34, 56, 0.65);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .biq-map-stats-panel {
@@ -4451,7 +4714,7 @@ button.danger:hover {
   left: 14px;
   bottom: 14px;
   width: min(260px, calc(100% - 120px));
-  z-index: 3;
+  z-index: 10;
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(8px);
 }

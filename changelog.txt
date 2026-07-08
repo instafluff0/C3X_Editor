@@ -1,3 +1,7 @@
+* RELEASE 27.20.1
+- Fixed Scenario-mode Districts image previews so the era picker uses scenario BIQ era names when available, falls back to standard era buttons only when needed, and keeps detected art rows selectable.
+- Added Map minimap dropup toggles for territory tinting, city dots, and resource markers with searchable per-resource filters, Check All/Uncheck All controls, map-icon thumbnails, and live resource counts while keeping the overlays separate from the cached terrain minimap.
+
 * RELEASE 27.20
 - Fixed Map-tab unit overlays so map-only BIQ tabs resolve UNIT coordinates and PRTO icon/class metadata through the same support data used by Tile Info.
 - Updated Map-tab city and colony deletes to immediately reindex surviving map references in the open editor state, matching the save cascade and avoiding stale tile pointers before save.

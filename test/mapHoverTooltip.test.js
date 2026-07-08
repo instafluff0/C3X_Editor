@@ -1345,8 +1345,33 @@ test('large wrapped BIQ maps keep panning smooth with native scroll and bounded 
   );
   assert.match(
     rendererText,
-    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?let minimapBaseReconcileIdleHandle = 0;[\s\S]*?let pendingMinimapTileIndexes = new Set\(\);/,
-    'minimap redraws should keep a cached base canvas with a coalesced idle reconciliation handle'
+    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?const minimapOverlayCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?let minimapOverlayDirty = true;[\s\S]*?let minimapBaseReconcileIdleHandle = 0;[\s\S]*?let pendingMinimapTileIndexes = new Set\(\);/,
+    'minimap redraws should keep cached base and overlay canvases with a coalesced idle reconciliation handle'
+  );
+  assert.match(
+    rendererText,
+    /const paintMinimapResourceFilterThumb = \(holder, option\) => \{[\s\S]*?holder\.dataset\.minimapResourceThumb = String\(resourceId\);[\s\S]*?const atlas = state\.biqMapArtCache\.resources;[\s\S]*?ctx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, 0, 0, canvas\.width, canvas\.height\);[\s\S]*?const updateMiniMapResourceCounts = \(\) => \{[\s\S]*?updateMiniMapResourceFilterThumbs\(\);[\s\S]*?node\.textContent = `\(\$\{count\}\)`;[\s\S]*?const syncMinimapResourceFlyoutLayout = \(\) => \{[\s\S]*?flyout\.style\.height = `\$\{targetHeight\}px`;[\s\S]*?const showResourceFlyout = open && !!state\.biqMapMinimapShowResources;[\s\S]*?minimapOptionsControls\.classList\.toggle\('resources-visible', showResourceFlyout\);[\s\S]*?const makeMinimapResourceToggle = \(\) => \{[\s\S]*?flyout\.className = 'biq-map-minimap-resource-flyout section-card';[\s\S]*?const applyMiniMapResourceSearch = \(query\) => \{[\s\S]*?item\.hidden = !!needle && !haystack\.includes\(needle\);[\s\S]*?const applyMiniMapResourceFilterSelection = \(selectedIds\) => \{[\s\S]*?search\.placeholder = 'Search resources';[\s\S]*?const actions = document\.createElement\('div'\);[\s\S]*?checkAllBtn\.textContent = 'Check All';[\s\S]*?uncheckAllBtn\.textContent = 'Uncheck All';[\s\S]*?resourcePickerOptions\.forEach\(\(option\) => \{[\s\S]*?resourceCount\.dataset\.minimapResourceCount = String\(resourceId\);[\s\S]*?minimapOptionsMenu\.appendChild\(makeMinimapOptionToggle\(\{ key: 'biqMapMinimapShowTerritory', label: 'Territory' \}\)\);[\s\S]*?minimapOptionsMenu\.appendChild\(makeMinimapOptionToggle\(\{ key: 'biqMapMinimapShowCities', label: 'Cities' \}\)\);[\s\S]*?minimapOptionsMenu\.appendChild\(makeMinimapResourceToggle\(\)\);/,
+    'minimap options should expose Territory, Cities, and searchable per-resource filters with bulk controls, map-icon thumbnails, live counts, and bottom-aligned flyout sizing'
+  );
+  assert.match(
+    rendererText,
+    /biqMapMinimapShowTerritory: true,[\s\S]*?biqMapMinimapShowCities: true,[\s\S]*?biqMapMinimapShowResources: false,[\s\S]*?biqMapMinimapResourceFilter: null,[\s\S]*?biqMapMinimapResourceFilter: normalizeMinimapResourceFilter\(state\.biqMapMinimapResourceFilter\),[\s\S]*?state\.biqMapMinimapShowTerritory = snapshot\.biqMapMinimapShowTerritory !== false;[\s\S]*?state\.biqMapMinimapShowCities = snapshot\.biqMapMinimapShowCities !== false;[\s\S]*?state\.biqMapMinimapShowResources = snapshot\.biqMapMinimapShowResources === true;[\s\S]*?state\.biqMapMinimapResourceFilter = normalizeMinimapResourceFilter\(snapshot\.biqMapMinimapResourceFilter\);/,
+    'minimap Territory and Cities overlays should default on while Resources defaults off and preserves explicit resource filters'
+  );
+  assert.match(
+    rendererText,
+    /const rebuildMiniMapOverlay = \(\) => \{[\s\S]*?territoryTiles = drawMiniMapTerritoryOverlay\(overlayCtx, metrics\);[\s\S]*?resourceMarkers = drawMiniMapResourceOverlay\(overlayCtx, metrics\);[\s\S]*?cityDots = drawMiniMapCityOverlay\(overlayCtx, metrics\);[\s\S]*?appendDebugLog\('biq-map:minimap-overlay-rebuild'/,
+    'minimap political overlays should rebuild through a separate overlay canvas instead of changing the terrain base'
+  );
+  assert.match(
+    rendererText,
+    /renderMiniMap = \(\) => \{[\s\S]*?updateMiniMapResourceCounts\(\);[\s\S]*?const rebuiltBase = !!minimapBaseDirty;/,
+    'minimap redraws should refresh the resource flyout counts from the current TILE resources'
+  );
+  assert.match(
+    rendererText,
+    /const drawMiniMapResourceOverlay = \(overlayCtx, metrics\) => \{[\s\S]*?const resourceFilterSet = getMiniMapResourceFilterSet\(\);[\s\S]*?getMapFieldValue\(record, 'resource', '-1'\)[\s\S]*?if \(resourceFilterSet && !resourceFilterSet\.has\(resourceId\)\) continue;[\s\S]*?colorFromNumber\(\(resourceId \+ 1\) \* 17\)[\s\S]*?overlayCtx\.lineTo\(cx \+ radius, cy\)/,
+    'minimap resource overlay should draw compact resource-id-colored diamond markers from TILE.resource filtered by the selected resources'
   );
   assert.match(
     rendererText,

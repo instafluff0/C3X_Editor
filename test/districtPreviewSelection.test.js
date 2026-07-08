@@ -36,6 +36,24 @@ test('district representative preview normalizes detected building columns to av
     /if \(canUseRepresentativeDirectly\) \{\s*loadedPreview = representative;/,
     'preview card should only reuse the representative image when it still matches a valid picker state'
   );
+
+  assert.match(
+    text,
+    /function getDistrictPreviewEraNames\(\) \{[\s\S]*?makeBiqSectionIndexOptions\('ERAS', false\)[\s\S]*?namesByIndex\[idx\] = label;[\s\S]*?namesByIndex\[idx\] \|\| fallback\[idx\]/,
+    'district preview era buttons should use shared BIQ era labels, with stock labels only as fallback'
+  );
+
+  assert.match(
+    text,
+    /const ERA_NAMES = getDistrictPreviewEraNames\(\);/,
+    'district representative preview should use the shared scenario-aware era-label helper'
+  );
+
+  assert.match(
+    text,
+    /Math\.min\(ERA_NAMES\.length - 1, Number\(representative\.representativeEraIndex\) \|\| 0\)/,
+    'detected representative era rows should clamp to a visible picker button'
+  );
 });
 
 test('section tab empty state uses the defined compact action flag', () => {
