@@ -928,6 +928,42 @@ test('auditLoadedBundle checks unit INI FLC, AMB, and WAV references across scen
   assert.ok(messages.some((message) => /"Art\\Units\\Samurai\\SamuraiDeath\.wav"/.test(message)), messages.join('\n'));
 });
 
+test('auditLoadedBundle warns when unit Sound Effects references are not AMB or WAV files', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  writeFile(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'Samurai.ini'), [
+    '[Animations]',
+    'DEFAULT=SamuraiDefault.flc',
+    '[Sound Effects]',
+    'RUN=SamuraiRun.flc',
+    ''
+  ].join('\r\n'));
+  touch(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'SamuraiDefault.flc'));
+  touch(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'SamuraiRun.flc'));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'RuntimeCheck.biq'),
+    tabs: {
+      ...makeBundle(civ3Root).tabs,
+      units: {
+        entries: [
+          {
+            name: 'Samurai',
+            civilopediaKey: 'PRTO_SAMURAI',
+            animationName: 'Samurai'
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.units.sections['0'] || [];
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, 'unit-runtime-sound-file-unsupported');
+  assert.match(issues[0].message, /Samurai: Unit sound file "Art\\Units\\Samurai\\SamuraiRun\.flc" is not a \.amb or \.wav file referenced by Sound Effects RUN/);
+});
+
 test('auditLoadedBundle warns and offers a staged repair for Civ3-long reference art paths', () => {
   const civ3Root = mkTmpDir();
   const scenarioRoot = mkTmpDir();

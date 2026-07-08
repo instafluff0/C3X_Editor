@@ -1,4 +1,15 @@
+* RELEASE 27.21.1
+- Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
+- Refined the FLC Workshop preview UI with a shorter modal, map-mode-style tabs, a frame-delay slider, and civilization thumbnail color selection based on each civ's default color.
+- Fixed the FLC Workshop modal shell so its background stays opaque and its size remains stable when switching tabs.
+- Tightened the FLC Workshop layout with a narrower preview modal, in-modal animation switching, and civ-color-aware palette previews with smaller swatches.
+- Added simple FLC Workshop preview controls for indexed zoom and hour-based palette darkening, with Current Viewer Palette export using the same displayed palette.
+- Organized FLC Workshop preview controls into display, playback, and transform groups, and let zoomed previews grow their display frame instead of clipping scaled-up units.
+- Expanded FLC Workshop export options for current/custom/maximum frame size, current/custom/maximum frame count, original/viewer/selected palettes, and original/viewer/custom delay.
+
 * RELEASE 27.21
+- Added async QA warnings for unit `[Sound Effects]` entries that reference files other than `.amb` or `.wav`, matching vanilla unit sound-file conventions.
+- Added approximate Units-tab AMB sound previews by parsing AMB KMAP WAV references, resolving component samples through scenario and vanilla unit-art roots, and playing them from the existing sound Preview controls.
 - Fixed the Units list-panel header actions so Add All/Remove All buttons wrap inside their cards instead of overlapping neighboring panels.
 - Fixed unit imports so direct runtime `.flc`, `.amb`, and `.wav` references in imported unit INI files can bring along sibling unit-folder dependencies, preventing imports like Gravity Armor from dropping reused Hover Tank sounds.
 - Added async QA warnings for missing unit runtime INI, FLC, AMB, and WAV files, reporting the Civ3-style `Art\Units\...` path that would trigger FILE NOT FOUND.

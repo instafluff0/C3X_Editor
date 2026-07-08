@@ -14493,3 +14493,432 @@ button.unit-ini-delete-btn:disabled {
 .district-representative-preview-card:not(:has(.district-preview-picker)) .section-art-soft-frame {
   border-radius: 10px;
 }
+
+.flic-workshop-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(20, 20, 28, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.flic-workshop-modal-overlay.hidden {
+  display: none;
+}
+
+.flic-workshop-modal-panel {
+  width: min(780px, calc(100vw - 48px));
+  height: min(560px, calc(100vh - 48px));
+  min-height: min(440px, calc(100vh - 48px));
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid rgba(36, 25, 64, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(20, 20, 28, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flic-workshop-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(36, 25, 64, 0.12);
+  flex: 0 0 auto;
+}
+
+.flic-workshop-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100% - 28px);
+  margin: 10px 14px;
+  padding: 3px;
+  border: 1px solid rgba(73, 69, 98, 0.14);
+  border-radius: 10px;
+  background: #ffffff;
+  flex: 0 0 auto;
+  box-shadow: 0 1px 2px rgba(31, 35, 58, 0.06);
+}
+
+.flic-workshop-actionbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 10px;
+  background: #ffffff;
+  flex: 0 0 auto;
+}
+
+.flic-workshop-actionbar.hidden {
+  display: none;
+}
+
+.flic-workshop-action-field {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 240px);
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-dim);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.flic-workshop-action-field select {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  border-radius: 8px;
+}
+
+.flic-workshop-tab {
+  --mode-color: #2f6f73;
+  --mode-grad: linear-gradient(135deg, #2b7679, #43a7a0);
+  min-height: 34px;
+  border: 1px solid #d8deed;
+  background: #ffffff;
+  color: var(--ink-dim);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(31, 35, 58, 0.06);
+}
+
+.flic-workshop-tab[data-tab="info"] {
+  --mode-color: #625ce7;
+  --mode-grad: linear-gradient(135deg, #5d66d9, #9b75ff);
+}
+
+.flic-workshop-tab[data-tab="palette"] {
+  --mode-color: #e57c32;
+  --mode-grad: linear-gradient(135deg, #df7931, #f0a04c);
+}
+
+.flic-workshop-tab[data-tab="storyboard"] {
+  --mode-color: #3469ce;
+  --mode-grad: linear-gradient(135deg, #3366d5, #65a3f1);
+}
+
+.flic-workshop-tab[data-tab="build"] {
+  --mode-color: #2f805b;
+  --mode-grad: linear-gradient(135deg, #2b895f, #5dbb77);
+}
+
+.flic-workshop-tab.active {
+  background: var(--mode-grad);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 5px 14px rgba(31, 35, 58, 0.18);
+}
+
+.flic-workshop-tab .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  margin-right: 7px;
+  border-radius: 5px;
+  background: var(--mode-grad);
+  color: #ffffff;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.flic-workshop-tab.active .btn-icon {
+  background: #ffffff;
+  color: var(--mode-color);
+}
+
+.flic-workshop-body {
+  padding: 10px 14px 14px;
+  background: #ffffff;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.flic-workshop-controls,
+.flic-workshop-actions {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(170px, 210px) minmax(240px, 1fr);
+  align-items: start;
+  gap: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.flic-workshop-actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.flic-workshop-control-group {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(36, 25, 64, 0.12);
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.flic-workshop-control-group-title {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.flic-workshop-control-group-body {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.flic-workshop-field {
+  display: grid;
+  grid-template-rows: auto 44px;
+  align-items: start;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+.flic-workshop-check {
+  user-select: none;
+}
+
+.flic-workshop-checkbox-control {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.flic-workshop-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.flic-workshop-delay-field {
+  min-width: 0;
+}
+
+.flic-workshop-delay-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flic-workshop-delay-head strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.flic-workshop-delay-field input[type="range"] {
+  width: 100%;
+  min-height: 44px;
+  accent-color: var(--accent);
+}
+
+.flic-workshop-civ-field {
+  min-width: 0;
+}
+
+.flic-workshop-civ-picker.tech-picker {
+  width: 100%;
+  min-width: 0;
+}
+
+.flic-workshop-civ-picker .tech-picker-btn {
+  min-height: 44px;
+}
+
+.flic-workshop-civ-picker .tech-picker-btn,
+.flic-workshop-civ-picker-menu .tech-picker-row-main {
+  grid-template-columns: 34px minmax(0, 1fr);
+}
+
+.flic-workshop-civ-thumb {
+  position: relative;
+}
+
+.flic-workshop-civ-color-chip {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 5px rgba(20, 24, 42, 0.25);
+  pointer-events: none;
+}
+
+.flic-workshop-preview-row {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.flic-workshop-preview .preview-card {
+  margin: 0;
+}
+
+.flic-workshop-info-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 14px;
+  align-items: baseline;
+  font-size: 0.86rem;
+}
+
+.flic-workshop-info-grid > div:nth-child(even) {
+  overflow-wrap: anywhere;
+}
+
+.flic-workshop-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(16, 13px);
+  gap: 3px;
+  width: max-content;
+  max-width: 100%;
+}
+
+.flic-workshop-palette-swatch {
+  width: 13px;
+  height: 13px;
+  border: 1px solid rgba(36, 25, 64, 0.18);
+  border-radius: 2px;
+}
+
+.flic-workshop-palette-swatch.civ {
+  outline: 2px solid rgba(47, 111, 115, 0.45);
+}
+
+.flic-workshop-palette-swatch.special {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+
+.flic-workshop-status {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(47, 111, 115, 0.1);
+  color: var(--ink);
+  font-size: 0.84rem;
+}
+
+.flic-workshop-export-form {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+}
+
+.flic-workshop-export-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.flic-workshop-export-row select,
+.flic-workshop-export-row input[type="text"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.flic-workshop-export-choice {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+
+.flic-workshop-export-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+
+.flic-workshop-export-inline.hidden {
+  display: none;
+}
+
+.flic-workshop-export-inline input[type="number"] {
+  width: 74px;
+  min-width: 0;
+}
+
+.flic-workshop-export-inline input[type="range"] {
+  width: min(180px, 100%);
+  accent-color: var(--accent);
+}
+
+.flic-workshop-export-picker {
+  min-width: min(280px, 100%);
+}
+
+.flic-workshop-export-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.flic-workshop-export-submit {
+  justify-self: end;
+  min-width: 160px;
+}
+
+@media (max-width: 760px) {
+  .flic-workshop-modal-overlay {
+    padding: 10px;
+  }
+
+  .flic-workshop-modal-panel {
+    width: calc(100vw - 20px);
+    height: calc(100vh - 20px);
+    min-height: 0;
+  }
+
+  .flic-workshop-preview-row {
+    grid-template-columns: 1fr;
+  }
+
+  .flic-workshop-tabs {
+    width: auto;
+  }
+
+  .flic-workshop-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .flic-workshop-action-field {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .flic-workshop-export-row {
+    grid-template-columns: 1fr;
+  }
+}

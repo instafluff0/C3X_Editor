@@ -18,6 +18,31 @@ function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-unit-anim-'));
 }
 
+function makeAmbBuffer(wavNames) {
+  const parts = [];
+  const header = Buffer.alloc(4 + 4 + 4, 0);
+  header.writeUInt32LE(2, 0);
+  header.writeUInt32LE(0, 4);
+  header.writeUInt32LE(0, 8);
+  parts.push(Buffer.from('sound\0', 'latin1'));
+  const itemCount = Buffer.alloc(4, 0);
+  itemCount.writeUInt32LE(wavNames.length, 0);
+  parts.push(itemCount);
+  const itemSize = Buffer.alloc(4, 0);
+  itemSize.writeUInt32LE(12, 0);
+  parts.push(itemSize);
+  wavNames.forEach((name) => {
+    parts.push(Buffer.from([0x7f, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]));
+    parts.push(Buffer.from(`${name}\0`, 'latin1'));
+  });
+  const marker = Buffer.alloc(4, 0);
+  marker.writeUInt32LE(0xfa, 0);
+  const body = Buffer.concat([header, ...parts, marker]);
+  const size = Buffer.alloc(4, 0);
+  size.writeUInt32LE(body.length, 0);
+  return Buffer.concat([Buffer.from('kmap', 'latin1'), size, body]);
+}
+
 function encodeTruecolorPcx({ width, height, rgbAt }) {
   const bytesPerLine = width % 2 === 0 ? width : width + 1;
   const header = Buffer.alloc(128, 0);
@@ -245,6 +270,33 @@ test('unitAnimationManifest returns all parsed actions and source paths', () => 
   assert.equal(missing.exists, false);
   const def = res.actions.find((a) => a.key === 'DEFAULT');
   assert.equal(def.timingSeconds, 0.5);
+});
+
+test('unitSoundPreview parses AMB KMAP WAVs and resolves fallback unit roots', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const ambDir = path.join(scenarioRoot, 'Art', 'Units', 'Test Unit');
+  const fallbackDir = path.join(civ3Root, 'Conquests', 'Art', 'Units', 'Other Unit');
+  fs.mkdirSync(ambDir, { recursive: true });
+  fs.mkdirSync(fallbackDir, { recursive: true });
+  fs.writeFileSync(path.join(ambDir, 'Local.wav'), '');
+  fs.writeFileSync(path.join(fallbackDir, 'Fallback.wav'), '');
+  const ambPath = path.join(ambDir, 'TestRun.amb');
+  fs.writeFileSync(ambPath, makeAmbBuffer(['Local.wav', 'Fallback.wav', 'Missing.wav']));
+
+  const res = getPreview({
+    kind: 'unitSoundPreview',
+    soundPath: ambPath,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioRoot
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.kind, 'amb');
+  assert.deepEqual(res.samples.map((sample) => sample.name), ['Local.wav', 'Fallback.wav']);
+  assert.equal(res.samples[0].path, path.join(ambDir, 'Local.wav'));
+  assert.equal(res.samples[1].path, path.join(fallbackDir, 'Fallback.wav'));
+  assert.deepEqual(res.missingSamples.map((sample) => sample.name), ['Missing.wav']);
 });
 
 test('unitFlcFirstFrame resolves ANIMNAME from civilopediaKey instead of display name', () => {
