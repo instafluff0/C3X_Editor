@@ -84,9 +84,9 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     'map renderer should load the full landmark terrain atlas family alongside the standard base terrain atlases'
   );
   assert.ok(
-    rendererText.includes("landmarksText.textContent = 'Label Special Terrain';")
-      && rendererText.includes("landmarksWrap.title = 'Show special terrain markers';")
-      && rendererText.includes("appendDebugLog('biq-map:special-terrain-toggle'")
+    rendererText.includes("label: 'Special Terrain Labels'")
+      && rendererText.includes("title: 'Show special terrain markers'")
+      && rendererText.includes("setMapDisplayOptionVisible('biqMapShowLandmarks', nextVisible, source, 'special-terrain-toggle');")
       && rendererText.includes("terrainVariantDeepwaterHarbor: false"),
     'map display controls should label the marker toggle as special terrain and include Deepwater Harbor paint state'
   );
@@ -112,6 +112,80 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
       && rendererText.includes('deepwaterHarbor: terrainSupportsDeepwaterHarbor(code)')
       && rendererText.includes('state.mapEditorTool.terrainVariantDeepwaterHarbor = nextState.deepwaterHarbor;'),
     'Sea terrain paint should expose Deepwater Harbor as a conditional terrain variant without storing it in c3c bonus bits'
+  );
+  assert.ok(
+    rendererText.includes('biqMapShowYields: false')
+      && rendererText.includes('biqMapShowCities: true')
+      && rendererText.includes('biqMapShowUnits: true')
+      && rendererText.includes('biqMapShowResources: true')
+      && rendererText.includes('biqMapShowDistricts: true')
+      && rendererText.includes('biqMapShowNaturalWonders: true')
+      && rendererText.includes('biqMapShowTerritoryBorders: true')
+      && rendererText.includes('biqMapShowStartingLocations: true')
+      && rendererText.includes('biqMapShowVictoryPoints: true')
+      && rendererText.includes('biqMapShowTerrainForests: true')
+      && rendererText.includes('biqMapShowTerrainHills: true')
+      && rendererText.includes('biqMapShowTerrainMountains: true')
+      && rendererText.includes('biqMapShowTerrainRivers: true')
+      && rendererText.includes('biqMapShowYields: !!state.biqMapShowYields')
+      && rendererText.includes('state.biqMapShowYields = snapshot.biqMapShowYields === true;')
+      && rendererText.includes('state.biqMapShowStartingLocations = snapshot.biqMapShowStartingLocations !== false;')
+      && rendererText.includes('state.biqMapShowVictoryPoints = snapshot.biqMapShowVictoryPoints !== false;')
+      && rendererText.includes('state.biqMapShowTerrainForests = snapshot.biqMapShowTerrainForests !== false;')
+      && rendererText.includes('state.biqMapShowTerrainHills = snapshot.biqMapShowTerrainHills !== false;')
+      && rendererText.includes('state.biqMapShowTerrainMountains = snapshot.biqMapShowTerrainMountains !== false;')
+      && rendererText.includes('state.biqMapShowTerrainRivers = snapshot.biqMapShowTerrainRivers !== false;')
+      && rendererText.includes("displayOptionsToggle.innerHTML = '<span class=\"btn-icon\">▦</span>Display';")
+      && rendererText.includes("type: 'heading', label: 'View Aids'")
+      && rendererText.includes("label: 'Grid'")
+      && rendererText.includes("label: 'Special Terrain Labels'")
+      && rendererText.includes("label: 'Base Yields'")
+      && rendererText.includes("type: 'heading', label: 'Terrain'")
+      && rendererText.includes("label: 'Forests/Jungles'")
+      && rendererText.includes("label: 'Hills'")
+      && rendererText.includes("label: 'Mountains/Volcanoes'")
+      && rendererText.includes("label: 'Rivers'")
+      && rendererText.includes("type: 'heading', label: 'Map Features'")
+      && rendererText.includes("label: 'Tile Improvements'")
+      && rendererText.includes("type: 'heading', label: 'Map Objects'")
+      && rendererText.includes("label: 'Cities'")
+      && rendererText.includes("label: 'Units'")
+      && rendererText.includes("label: 'Resources'")
+      && rendererText.includes("label: 'Districts'")
+      && rendererText.includes("label: 'Natural Wonders'")
+      && rendererText.includes("type: 'heading', label: 'Scenario Markers'")
+      && rendererText.includes("label: 'Territory/Borders'")
+      && rendererText.includes("label: 'Starting Locations'")
+      && rendererText.includes("label: 'Victory Points'"),
+    'map display controls should expose persisted display options in a compact checked Display menu'
+  );
+  assert.ok(
+    /const makeDisplayOptionToggle = \(\{ check, label, title, toggle \}\) => \{[\s\S]*?wrap\.addEventListener\('pointerdown', \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?wrap\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?toggle\(\);[\s\S]*?displayOptionsMenu\.hidden = false;/.test(rendererText)
+      && rendererText.includes("toggle: () => setMapGridVisible(!state.biqMapShowGrid, 'menu')")
+      && rendererText.includes("toggle: () => setMapYieldsVisible(!state.biqMapShowYields, 'menu')")
+      && /displayOptionsMenu\.addEventListener\('pointerdown', \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?\}\);/.test(rendererText)
+      && rendererText.includes("heading.className = 'map-display-option-heading';"),
+    'map display menu rows and panel gaps should keep the dropdown open while committing checkbox changes directly'
+  );
+  assert.match(
+    stylesText,
+    /\.biq-map-floating-top-left \{[\s\S]*?z-index: 30;[\s\S]*?\.biq-map-floating-right \{[\s\S]*?z-index: 10;[\s\S]*?\.map-display-options-menu \{[\s\S]*?z-index: 40;/,
+    'floating Display dropdown should stack above the Tile Info panel'
+  );
+  assert.match(
+    rendererText,
+    /requestBiqMapArtAsset\('cityIcons', 'Art\/city screen\/CityIcons\.pcx'\);[\s\S]*?const CITY_YIELD_ICON_CROP = Object\.freeze\(\{[\s\S]*?cellSize: 30,[\s\S]*?pitch: 31,[\s\S]*?border: 1,[\s\S]*?visibleInsetX: 8,[\s\S]*?packedAdvance: 16,[\s\S]*?food: 15,[\s\S]*?shields: 13,[\s\S]*?commerce: 14[\s\S]*?\}\);[\s\S]*?const cropX = CITY_YIELD_ICON_CROP\.border \+ \(iconIndex \* CITY_YIELD_ICON_CROP\.pitch\);[\s\S]*?CITY_YIELD_ICON_CROP\.cellSize,/,
+    'map yield overlays should load scenario-aware CityIcons.pcx and crop the 30px icons from the verified 1px-border/31px-pitch strip'
+  );
+  assert.match(
+    rendererText,
+    /const iconAdvance = Math\.max\(5, Math\.round\(iconSize \* \(CITY_YIELD_ICON_CROP\.packedAdvance \/ CITY_YIELD_ICON_CROP\.cellSize\)\)\);[\s\S]*?const visibleInsetX = Math\.round\(iconSize \* \(CITY_YIELD_ICON_CROP\.visibleInsetX \/ CITY_YIELD_ICON_CROP\.cellSize\)\);[\s\S]*?const logicalCenter = tileLogicalCenter\(sx, sy\);[\s\S]*?const totalWidth = icons\.length <= 1[\s\S]*?iconAdvance \* icons\.length;[\s\S]*?if \(totalWidth > tileW - Math\.round\(10 \* tileScale\) && icons\.length > 1\) \{[\s\S]*?step = Math\.floor\(\(fitWidth - iconAdvance\) \/ \(icons\.length - 1\)\);[\s\S]*?const startX = Math\.round\(logicalCenter\.cx - halfWidth - visibleInsetX\);[\s\S]*?const drawY = Math\.round\(logicalCenter\.cy - \(iconSize \/ 2\)\);/,
+    'map yield overlays should use C3X-style centered row math with CityIcons packed visible-width advancement'
+  );
+  assert.match(
+    rendererText,
+    /const calculateMapRuleTileYield = \(record\) => \{[\s\S]*?const terrainRecord = terrainYieldRecordsByIndex\.get\(parseIntLoose\(info\.realTerrain, -1\)\);[\s\S]*?const useLandmark = !!\(variant && variant\.landmark\);[\s\S]*?if \(hasIrrigation\) food \+= mapYieldRecordInt\(terrainRecord, useLandmark \? 'landmarkfoodbonus' : 'foodbonus', 0\);[\s\S]*?if \(hasMine\) shields \+= mapYieldRecordInt\(terrainRecord, useLandmark \? 'landmarkshieldsbonus' : 'shieldsbonus', 0\);[\s\S]*?if \(hasRoad\) commerce \+= mapYieldRecordInt\(terrainRecord, useLandmark \? 'landmarkcommercebonus' : 'commercebonus', 0\);[\s\S]*?if \(hasRailroad && hasIrrigation\) food \+= 1;[\s\S]*?if \(hasRailroad && hasMine\) shields \+= 1;[\s\S]*?if \(variant && variant\.bonusGrassland\) shields \+= 1;[\s\S]*?if \(riverMask !== 0\) commerce \+= 1;[\s\S]*?const resourceRecord = resourceYieldRecordsByIndex\.get\(resourceId\);[\s\S]*?food \+= mapYieldRecordInt\(resourceRecord, 'foodbonus', 0\);/,
+    'map-rule yield calculation should combine terrain, landmark, improvements, railroad, bonus grassland, river, and resource bonuses while ignoring player/city state'
   );
   assert.ok(
     rendererText.includes('const applyDeepwaterHarborToIndexes = (indexes, bonusMask = null) => {')
@@ -257,7 +331,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /function renderResourceLuxuryIconPreview\(entry\) \{[\s\S]*?if \(!isLuxuryResourceEntry\(entry\)\) return null;[\s\S]*?const luxuryIndex = getResourceLuxuryOrdinal\(resourceTab, entry\);[\s\S]*?label\.textContent = 'City Luxury Icon';[\s\S]*?getLuxuryIconsSmallAtlasPreview\(\)\.then\(\(preview\) => drawLuxuryIconToCanvas\(preview, luxuryIndex, canvas\)\)/,
+    /function renderResourceLuxuryIconPreview\(entry\) \{[\s\S]*?if \(!isLuxuryResourceEntry\(entry\)\) return null;[\s\S]*?const luxuryIndex = getResourceLuxuryOrdinal\(resourceTab, entry\);[\s\S]*?label\.textContent = 'Luxuryicons_small\.pcx Icon';[\s\S]*?const drawPromise = pending[\s\S]*?drawPendingImportedLuxuryIconToCanvas\(entry, canvas\)[\s\S]*?: getLuxuryIconsSmallAtlasPreview\(\)\.then\(\(preview\) => drawLuxuryIconToCanvas\(preview, luxuryIndex, canvas\)\)/,
     'Luxury resources should render a read-only city luxury icon preview from luxuryicons_small.pcx'
   );
   assert.doesNotMatch(
@@ -1337,6 +1411,11 @@ test('large wrapped BIQ maps keep panning smooth with native scroll and bounded 
     rendererText,
     /const candidateCount = candidateIndexes \? candidateIndexes\.length : maxIdx \+ 1;[\s\S]*?for \(let drawPos = 0; drawPos < candidateCount; drawPos \+= 1\) \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-progress'/,
     'chunk-internal redraws should be able to iterate bounded candidates while full-canvas redraws retain the full candidate count'
+  );
+  assert.match(
+    rendererText,
+    /if \(state\.biqMapLayer === 'terrain' && state\.biqMapShowYields && tilePx >= 4\) \{[\s\S]*?for \(let i = 0; i < overlayPassItems\.length; i \+= 1\) \{[\s\S]*?drawTileYieldOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);[\s\S]*?logRedrawPhase\('yield-overlays', phaseStartedAt,[\s\S]*?overlayPassCount: overlayPassItems\.length/,
+    'yield icons should render as a bounded overlay pass over the same visible/chunk candidate tiles as the other map overlays'
   );
   assert.match(
     rendererText,

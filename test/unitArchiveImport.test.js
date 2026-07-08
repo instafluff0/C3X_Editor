@@ -60,6 +60,38 @@ test('unit archive scanner detects unpacked unit folder and stages runtime-safe 
   assert.equal(stagedAtlas.height, 33);
 });
 
+test('unit folder import stages direct INI runtime dependencies from sibling unit folders', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-unit-folder-'));
+  const unitDir = path.join(root, 'Gravity Armor');
+  const siblingDir = path.join(root, 'Hover Tank');
+  fs.mkdirSync(unitDir, { recursive: true });
+  fs.mkdirSync(siblingDir, { recursive: true });
+  fs.writeFileSync(path.join(unitDir, 'Gravity Armor.ini'), [
+    '[Animations]',
+    'DEFAULT=GravityDefault.flc',
+    '[Timing]',
+    'DEFAULT=0.500000',
+    '[Sound Effects]',
+    'RUN=..\\Hover Tank\\HovertankRun.wav',
+    ''
+  ].join('\n'));
+  fs.writeFileSync(path.join(unitDir, 'GravityDefault.flc'), Buffer.from('not-a-real-flc'));
+  fs.writeFileSync(path.join(unitDir, 'Gravity Armor_128.pcx'), makeIndexedPcx(128, 128));
+  fs.writeFileSync(path.join(unitDir, 'Gravity Armor_32.pcx'), makeIndexedPcx(32, 32));
+  fs.writeFileSync(path.join(siblingDir, 'HoverTankRun.wav'), Buffer.from('not-a-real-wav'));
+
+  const result = await scanUnitImportSources([root]);
+  assert.equal(result.ok, true);
+  assert.equal(result.candidates.length, 1);
+  const candidate = result.candidates[0];
+  const stagedDependencyPath = path.join(candidate.stagedScenarioRoot, 'Art', 'Units', 'Hover Tank', 'HovertankRun.wav');
+  assert.equal(fs.existsSync(stagedDependencyPath), true);
+  assert.equal(fs.readFileSync(stagedDependencyPath, 'utf8'), 'not-a-real-wav');
+  assert.deepEqual(candidate.stagedRuntimeDependencies.map((dep) => dep.targetRelativePath), [
+    'Art/Units/Hover Tank/HovertankRun.wav'
+  ]);
+});
+
 test('unit archive scanner rejects traversal-style member paths', () => {
   assert.equal(isUnsafeMemberPath('../Art/Units/Evil.ini'), true);
   assert.equal(isUnsafeMemberPath('/Art/Units/Evil.ini'), true);

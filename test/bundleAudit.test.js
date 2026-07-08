@@ -864,6 +864,70 @@ test('auditLoadedBundle reports missing reference art files for Civs, Techs, Res
   assert.equal(mapOpenResult.totalWarnings, 0, 'reference-art checks should be skippable during deferred map-open critical work');
 });
 
+test('auditLoadedBundle reports missing unit runtime INI files using Civ3-style paths', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      ...makeBundle(civ3Root).tabs,
+      units: {
+        entries: [
+          {
+            name: 'Samurai',
+            civilopediaKey: 'PRTO_SAMURAI',
+            animationName: 'Samurai'
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.units.sections['0'] || [];
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, 'unit-runtime-file-missing');
+  assert.match(issues[0].message, /Samurai: Missing unit runtime file "Art\\Units\\Samurai\\Samurai\.ini"/);
+});
+
+test('auditLoadedBundle checks unit INI FLC, AMB, and WAV references across scenario and fallback roots', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  writeFile(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'Samurai.ini'), [
+    '[Animations]',
+    'DEFAULT=SamuraiDefault.flc',
+    'ATTACK1=SamuraiAttack.flc',
+    '[Sound Effects]',
+    'DEFAULT=SamuraiDefault.wav',
+    'FIDGET=SamuraiFidget.amb',
+    'DEATH=SamuraiDeath.wav',
+    ''
+  ].join('\r\n'));
+  touch(path.join(civ3Root, 'Conquests', 'Art', 'Units', 'Samurai', 'SamuraiDefault.flc'));
+  touch(path.join(civ3Root, 'Conquests', 'Art', 'Units', 'Samurai', 'SamuraiDefault.wav'));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'RuntimeCheck.biq'),
+    tabs: {
+      ...makeBundle(civ3Root).tabs,
+      units: {
+        entries: [
+          {
+            name: 'Samurai',
+            civilopediaKey: 'PRTO_SAMURAI',
+            animationName: 'Samurai'
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const messages = (result.tabs.units.sections['0'] || []).map((issue) => issue.message);
+  assert.equal(messages.length, 3);
+  assert.ok(messages.some((message) => /"Art\\Units\\Samurai\\SamuraiAttack\.flc"/.test(message)), messages.join('\n'));
+  assert.ok(messages.some((message) => /"Art\\Units\\Samurai\\SamuraiFidget\.amb"/.test(message)), messages.join('\n'));
+  assert.ok(messages.some((message) => /"Art\\Units\\Samurai\\SamuraiDeath\.wav"/.test(message)), messages.join('\n'));
+});
+
 test('auditLoadedBundle warns and offers a staged repair for Civ3-long reference art paths', () => {
   const civ3Root = mkTmpDir();
   const scenarioRoot = mkTmpDir();

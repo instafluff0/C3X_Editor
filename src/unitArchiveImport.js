@@ -20,6 +20,7 @@ const SUPPORTED_EXTENSIONS = new Set([
   '.txt',
   '.wav'
 ]);
+const UNIT_RUNTIME_IMPORT_EXTENSIONS = new Set(['.amb', '.flc', '.wav']);
 
 const UNIT_ACTION_KEYS = [
   'DEFAULT',
@@ -226,6 +227,83 @@ function findCaseInsensitiveFile(files, unitDir, relPath) {
     || '';
 }
 
+function normalizeArchiveRelativeMember(baseDir, relPath) {
+  const raw = String(relPath || '').trim().replace(/^["']|["']$/g, '');
+  if (!raw || raw.startsWith('/') || raw.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(raw)) return '';
+  const base = normalizeMemberPath(baseDir);
+  const joined = base ? `${base}/${toSlashPath(raw)}` : toSlashPath(raw);
+  const normalized = path.posix.normalize(joined).replace(/^\/+/, '');
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) return '';
+  if (isUnsafeMemberPath(normalized)) return '';
+  return normalized;
+}
+
+function findCaseInsensitiveMember(files, normalizedRelPath) {
+  const wanted = normalizeMemberPath(normalizedRelPath).toLowerCase();
+  if (!wanted) return '';
+  return (Array.isArray(files) ? files : []).find((file) => normalizeMemberPath(file).toLowerCase() === wanted) || '';
+}
+
+function buildUnitRuntimeTargetRelativePath(animationName, rawAssetPath) {
+  const anim = String(animationName || '').trim();
+  const raw = String(rawAssetPath || '').trim().replace(/^["']|["']$/g, '');
+  if (!anim || !raw || raw.startsWith('/') || raw.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(raw)) return '';
+  const ext = path.extname(raw).toLowerCase();
+  if (!UNIT_RUNTIME_IMPORT_EXTENSIONS.has(ext)) return '';
+  const normalizedRaw = toSlashPath(raw);
+  const rel = normalizedRaw.toLowerCase().startsWith('art/units/')
+    ? normalizedRaw
+    : `Art/Units/${anim}/${normalizedRaw}`;
+  const normalized = path.posix.normalize(rel).replace(/^\/+/, '');
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) return '';
+  if (!normalized.toLowerCase().startsWith('art/units/')) return '';
+  if (isUnsafeMemberPath(normalized)) return '';
+  return normalized;
+}
+
+function collectDirectUnitRuntimeRefs(sections) {
+  const refs = [];
+  const seen = new Set();
+  Object.values(sections || {}).forEach((fields) => {
+    Object.values(fields || {}).forEach((value) => {
+      const raw = String(value || '').trim();
+      if (!raw || !UNIT_RUNTIME_IMPORT_EXTENSIONS.has(path.extname(raw).toLowerCase())) return;
+      const key = raw.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      refs.push(raw);
+    });
+  });
+  return refs;
+}
+
+function collectRuntimeDependencyFiles({ files, unitDir, animationName, sections, treeFileSet, warnings }) {
+  const out = [];
+  const seen = new Set();
+  const tree = treeFileSet instanceof Set ? treeFileSet : new Set();
+  collectDirectUnitRuntimeRefs(sections).forEach((rawRef) => {
+    const memberPath = normalizeArchiveRelativeMember(unitDir, rawRef);
+    const targetRelativePath = buildUnitRuntimeTargetRelativePath(animationName, rawRef);
+    if (!memberPath || !targetRelativePath) return;
+    const sourcePath = findCaseInsensitiveMember(files, memberPath);
+    if (!sourcePath) {
+      if (memberPath.includes('/')) warnings.push(`${rawRef} is referenced by the INI, but that runtime file was not found in the import source.`);
+      return;
+    }
+    const normalizedSource = normalizeMemberPath(sourcePath);
+    if (tree.has(normalizedSource)) return;
+    const key = normalizedSource.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      sourcePath: normalizedSource,
+      targetRelativePath,
+      rawReference: rawRef
+    });
+  });
+  return out;
+}
+
 function editDistance(a, b) {
   const left = String(a || '');
   const right = String(b || '');
@@ -268,6 +346,7 @@ function buildUnitCandidate({ archivePath, archiveId, files, iniPath, iniText })
     const normalized = normalizeMemberPath(file);
     return unitDir ? (normalized === unitDir || normalized.startsWith(`${unitDir}/`)) : !normalized.includes('/');
   });
+  const treeFileSet = new Set(treeFiles.map((file) => normalizeMemberPath(file)));
   const sections = parseIniSections(iniText);
   const animationFields = sections.animations || {};
   const timingFields = sections.timing || {};
@@ -278,8 +357,14 @@ function buildUnitCandidate({ archivePath, archiveId, files, iniPath, iniText })
 	  UNIT_ACTION_KEYS.forEach((key) => {
 	    const rawFlc = String(animationFields[key] || '').trim();
 	    const rawSound = String(soundFields[key] || '').trim();
-	    const foundFile = rawFlc ? findCaseInsensitiveFile(treeFiles, unitDir, rawFlc) : '';
-	    const foundSoundFile = rawSound ? findCaseInsensitiveFile(treeFiles, unitDir, rawSound) : '';
+	    const foundFile = rawFlc
+        ? (findCaseInsensitiveFile(treeFiles, unitDir, rawFlc)
+          || findCaseInsensitiveMember(files, normalizeArchiveRelativeMember(unitDir, rawFlc)))
+        : '';
+	    const foundSoundFile = rawSound
+        ? (findCaseInsensitiveFile(treeFiles, unitDir, rawSound)
+          || findCaseInsensitiveMember(files, normalizeArchiveRelativeMember(unitDir, rawSound)))
+        : '';
 	    const exists = !!foundFile;
     if (rawFlc && !exists) {
       const near = findNearFileName(treeFiles, rawFlc);
@@ -302,6 +387,14 @@ function buildUnitCandidate({ archivePath, archiveId, files, iniPath, iniText })
 	      });
 	    }
 	  });
+  const runtimeDependencyFiles = collectRuntimeDependencyFiles({
+    files,
+    unitDir,
+    animationName: unitName,
+    sections,
+    treeFileSet,
+    warnings
+  });
   const unit32 = pickBestPcx(treeFiles, unitName, 'unit32');
   const large = pickBestPcx(treeFiles, unitName, 'large');
   const small = pickBestPcx(treeFiles, unitName, 'small');
@@ -334,6 +427,7 @@ function buildUnitCandidate({ archivePath, archiveId, files, iniPath, iniText })
     warnings,
     suggestions,
     extraFlcFiles,
+    runtimeDependencyFiles,
     treeFiles
   };
 }
@@ -534,6 +628,7 @@ function writeStagedCandidate(candidate, dataByPath, stagingBase) {
   ensureDir(stagedUnitDir);
   const unitDir = candidate.sourceUnitDir;
   const stagedBySource = new Map();
+  const stagedRuntimeDependencies = [];
   const stageFile = (sourcePath, relOverride = '') => {
     const normalized = normalizeMemberPath(sourcePath);
     const data = dataByPath.get(normalized);
@@ -548,8 +643,32 @@ function writeStagedCandidate(candidate, dataByPath, stagingBase) {
     stagedBySource.set(normalized, target);
     return target;
   };
+  const stageFileAtCandidateRelativePath = (sourcePath, relPath) => {
+    const normalized = normalizeMemberPath(sourcePath);
+    const data = dataByPath.get(normalized);
+    if (!data || !isAllowedAsset(normalized)) return '';
+    const target = safeTargetPath(candidateRoot, relPath);
+    if (!target) return '';
+    ensureDir(path.dirname(target));
+    fs.writeFileSync(target, data);
+    stagedBySource.set(normalized, target);
+    return target;
+  };
   candidate.treeFiles.forEach((sourcePath) => {
     stageFile(sourcePath);
+  });
+  (Array.isArray(candidate.runtimeDependencyFiles) ? candidate.runtimeDependencyFiles : []).forEach((dep) => {
+    const sourcePath = normalizeMemberPath(dep && dep.sourcePath);
+    const targetRelativePath = normalizeMemberPath(dep && dep.targetRelativePath);
+    if (!sourcePath || !targetRelativePath) return;
+    const stagedPath = stageFileAtCandidateRelativePath(sourcePath, targetRelativePath);
+    if (!stagedPath) return;
+    stagedRuntimeDependencies.push({
+      ...dep,
+      sourcePath,
+      targetRelativePath,
+      stagedPath
+    });
   });
   const sourceIniData = dataByPath.get(normalizeMemberPath(candidate.sourceIniPath));
   if (sourceIniData) {
@@ -600,7 +719,13 @@ function writeStagedCandidate(candidate, dataByPath, stagingBase) {
         recommendedUnit32: normalized === normalizeMemberPath(candidate.unit32Source)
       };
     });
-  const flcFiles = candidate.treeFiles
+  const flcSourceFiles = [
+    ...candidate.treeFiles,
+    ...stagedRuntimeDependencies
+      .map((dep) => dep.sourcePath)
+      .filter((file) => getExt(file) === '.flc')
+  ];
+  const flcFiles = flcSourceFiles
     .filter((file) => getExt(file) === '.flc')
     .map((file) => {
       const normalized = normalizeMemberPath(file);
@@ -611,7 +736,13 @@ function writeStagedCandidate(candidate, dataByPath, stagingBase) {
         stagedPath: stagedBySource.get(normalized) || path.join(stagedUnitDir, baseName(normalized))
       };
     });
-  const soundFiles = candidate.treeFiles
+  const soundSourceFiles = [
+    ...candidate.treeFiles,
+    ...stagedRuntimeDependencies
+      .map((dep) => dep.sourcePath)
+      .filter((file) => ['.amb', '.mp3', '.wav'].includes(getExt(file)))
+  ];
+  const soundFiles = soundSourceFiles
     .filter((file) => ['.amb', '.mp3', '.wav'].includes(getExt(file)))
     .map((file) => {
       const normalized = normalizeMemberPath(file);
@@ -650,6 +781,7 @@ function writeStagedCandidate(candidate, dataByPath, stagingBase) {
     stagedSmallPath: candidate.smallSource ? path.join(stagedUnitDir, baseName(candidate.smallSource)) : '',
     targetLargePath: candidate.largeSource ? `Art/Units/${candidate.animationName}/${baseName(candidate.largeSource)}` : '',
     targetSmallPath: candidate.smallSource ? `Art/Units/${candidate.animationName}/${baseName(candidate.smallSource)}` : '',
+    stagedRuntimeDependencies,
     pcxFiles,
     flcFiles,
     soundFiles,

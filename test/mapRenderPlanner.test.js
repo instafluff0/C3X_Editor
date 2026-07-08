@@ -192,6 +192,47 @@ test('renderer preserves interaction math while redirecting large redraws to chu
     /const processMapChunkRenderQueue = \(options = \{\}\) => \{[\s\S]*?while \(mapChunkRenderQueue\.length > 0\) \{[\s\S]*?if \(rendered > 0 && \(mapPerfNowMs\(\) - startedAt\) >= budgetMs\) break;[\s\S]*?mapChunkRenderRaf = window\.requestAnimationFrame\(\(\) => processMapChunkRenderQueue\(options\)\);/,
     'chunk queue draining should yield across frames instead of rendering every missing chunk in one pass'
   );
+  assert.ok(
+    rendererText.includes('const getMapChunkRenderSignature = () => [')
+      && rendererText.includes('`cities:${state.biqMapShowCities !== false ? 1 : 0}`')
+      && rendererText.includes('`units:${state.biqMapShowUnits !== false ? 1 : 0}`')
+      && rendererText.includes('`resources:${state.biqMapShowResources !== false ? 1 : 0}`')
+      && rendererText.includes('`districts:${state.biqMapShowDistricts !== false ? 1 : 0}`')
+      && rendererText.includes('`naturalWonders:${state.biqMapShowNaturalWonders !== false ? 1 : 0}`')
+      && rendererText.includes('`territoryBorders:${state.biqMapShowTerritoryBorders !== false ? 1 : 0}`')
+      && rendererText.includes('`startingLocations:${state.biqMapShowStartingLocations !== false ? 1 : 0}`')
+      && rendererText.includes('`victoryPoints:${state.biqMapShowVictoryPoints !== false ? 1 : 0}`')
+      && rendererText.includes('`terrainForests:${state.biqMapShowTerrainForests !== false ? 1 : 0}`')
+      && rendererText.includes('`terrainHills:${state.biqMapShowTerrainHills !== false ? 1 : 0}`')
+      && rendererText.includes('`terrainMountains:${state.biqMapShowTerrainMountains !== false ? 1 : 0}`')
+      && rendererText.includes('`terrainRivers:${state.biqMapShowTerrainRivers !== false ? 1 : 0}`')
+      && rendererText.includes('`grid:${state.biqMapShowGrid ? 1 : 0}`')
+      && rendererText.includes('`yields:${state.biqMapShowYields ? 1 : 0}`')
+      && rendererText.includes('`cityIcons:${state.biqMapArtCache.cityIcons ? 1 : 0}`')
+      && rendererText.includes('entry.renderSignature = getMapChunkRenderSignature();')
+      && rendererText.includes('if (entry && entry.renderSignature !== signature) entry.dirty = true;')
+      && rendererText.includes('invalidateMapChunkDisplayCache(`display:${key}`);')
+      && rendererText.includes("appendDebugLog('biq-map:chunk-display-cache-invalidated'")
+      && rendererText.includes('mapChunkRenderQueue.length = 0;'),
+    'chunk cache freshness should include display overlay state and yield icon atlas availability so minimap jumps cannot reuse stale overlay-free chunks'
+  );
+  assert.ok(
+    rendererText.includes('if (state.biqMapShowStartingLocations === false) return;')
+      && rendererText.includes('if (state.biqMapShowVictoryPoints === false) return;')
+      && /drawCityOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);[\s\S]*?drawSlocOverlay\(item\.geom, item\.sx, item\.sy\);[\s\S]*?drawVpOverlay\(item\.record, item\.sx, item\.sy\);[\s\S]*?if \(state\.biqMapShowOverlays !== false\) \{[\s\S]*?drawRuinsOverlay\(item\.record, item\.sx, item\.sy\);[\s\S]*?drawColonyOverlay\(item\.record, item\.sx, item\.sy\);/.test(rendererText),
+    'Starting Locations and Victory Points should be separately toggleable instead of being bundled into the generic Overlays toggle'
+  );
+  assert.ok(
+    rendererText.includes('const showTerrainForests = state.biqMapShowTerrainForests !== false;')
+      && rendererText.includes('const showTerrainHills = state.biqMapShowTerrainHills !== false;')
+      && rendererText.includes('const showTerrainMountains = state.biqMapShowTerrainMountains !== false;')
+      && rendererText.includes('const showTerrainRivers = state.biqMapShowTerrainRivers !== false;')
+      && rendererText.includes('if (realTerrain === BIQ_TERRAIN.HILLS && !showTerrainHills) return;')
+      && rendererText.includes('if (realTerrain !== BIQ_TERRAIN.HILLS && !showTerrainMountains) return;')
+      && rendererText.includes('if (!showTerrainForests) return;')
+      && rendererText.includes('if (!showTerrainRivers) return;'),
+    'terrain graphics for forests, hills, mountains, and rivers should be independently toggleable outside the generic Overlays toggle'
+  );
   assert.match(
     rendererText,
     /const scheduleMapChunkPrefetch = \(reason = 'idle'\) => \{[\s\S]*?isDraggingMap \|\| minimapPointerId != null[\s\S]*?requestIdleCallback[\s\S]*?enqueueMapChunks\(prefetchChunks, \{ visible: false, reason \}\);/,

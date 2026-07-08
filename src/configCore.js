@@ -3,7 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const iconv = require('iconv-lite');
-const { resolveConquestsAssetPath, resolveUnitIniPath, decodePcx, encodePcx, encodeRgbaToPcx, encodeRgbaToLeaderFlc } = require('./artPreview');
+const { resolveConquestsAssetPath, resolveUnitIniPath, parseUnitAnimationIni, decodePcx, encodePcx, encodeRgbaToPcx, encodeRgbaToLeaderFlc } = require('./artPreview');
 const log = require('./log');
 const techBoxLayout = require('./techBoxLayout');
 const scienceAdvisorArrows = require('./scienceAdvisorArrows');
@@ -28,6 +28,7 @@ const UNIT_ATLAS_RELATIVE_PATH = 'Art/Units/units_32.pcx';
 const UNIT_ATLAS_SPRITE_SIZE = 32;
 const UNIT_ATLAS_GUTTER = 1;
 const UNIT_ATLAS_MAGENTA = RESOURCE_ATLAS_MAGENTA;
+const UNIT_RUNTIME_IMPORT_EXTENSIONS = new Set(['.amb', '.flc', '.wav']);
 const BUILDING_CITY_ATLAS_RELATIVE_PATHS = {
   large: 'Art/city screen/buildings-large.pcx',
   small: 'Art/city screen/buildings-small.pcx'
@@ -8347,6 +8348,129 @@ function resolveArtFileFromRoots(relPath, searchRoots) {
   return null;
 }
 
+function resolveCaseInsensitivePath(root, relPath) {
+  const rootPath = String(root || '').trim();
+  const normalized = normalizeRelativePath(relPath);
+  if (!rootPath || !normalized) return '';
+  let current = rootPath;
+  for (const part of normalized.split('/').filter(Boolean)) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (_err) {
+      return '';
+    }
+    const match = entries.find((entry) => entry && entry.name.toLowerCase() === part.toLowerCase());
+    if (!match) return '';
+    current = path.join(current, match.name);
+  }
+  return current;
+}
+
+function resolveCaseInsensitiveArtFileFromRoots(relPath, searchRoots) {
+  const normalized = normalizeRelativePath(relPath);
+  if (!normalized) return '';
+  for (const root of (Array.isArray(searchRoots) ? searchRoots : [])) {
+    const resolved = resolveCaseInsensitivePath(root, normalized);
+    if (!resolved) continue;
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+    } catch (_err) {
+      // skip
+    }
+  }
+  return '';
+}
+
+function isSafeUnitRuntimeArtRelativePath(relPath) {
+  const normalized = normalizeRelativePath(relPath);
+  if (!normalized || isAbsoluteFilesystemPath(normalized)) return false;
+  const collapsed = path.posix.normalize(normalized);
+  if (!collapsed || collapsed === '.' || collapsed.startsWith('../') || collapsed === '..') return false;
+  return collapsed.toLowerCase().startsWith('art/units/');
+}
+
+function buildUnitRuntimeArtRelativePath(animationName, rawAssetPath) {
+  const anim = String(animationName || '').trim();
+  const raw = normalizeAssetReferencePath(rawAssetPath);
+  if (!anim || !raw || isAbsoluteFilesystemPath(raw)) return '';
+  const ext = path.extname(raw).toLowerCase();
+  if (!UNIT_RUNTIME_IMPORT_EXTENSIONS.has(ext)) return '';
+  const lower = raw.toLowerCase();
+  const rel = lower.startsWith('art/units/')
+    ? raw
+    : path.posix.join('Art', 'Units', anim.replace(/\\/g, '/'), raw);
+  const normalized = normalizeRelativePath(path.posix.normalize(rel));
+  return isSafeUnitRuntimeArtRelativePath(normalized) ? normalized : '';
+}
+
+function collectDirectUnitRuntimeIniRefs(manifest) {
+  const refs = [];
+  const seen = new Set();
+  for (const section of (Array.isArray(manifest && manifest.sections) ? manifest.sections : [])) {
+    for (const field of (Array.isArray(section && section.fields) ? section.fields : [])) {
+      const value = String(field && field.value || '').trim();
+      if (!value || !UNIT_RUNTIME_IMPORT_EXTENSIONS.has(path.extname(value).toLowerCase())) continue;
+      const key = value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      refs.push(value);
+    }
+  }
+  return refs;
+}
+
+function findUnitAnimationIniInFolder(unitDir, animationName) {
+  const files = listFilesRecursive(unitDir);
+  const wanted = `${String(animationName || '').trim().toLowerCase()}.ini`;
+  return files.find((file) => path.basename(file).toLowerCase() === wanted)
+    || files.find((file) => path.extname(file).toLowerCase() === '.ini')
+    || '';
+}
+
+function collectUnitRuntimeDependencyCopiesForImportedAnimation({ animationName, sourceRoots, targetContentRoot }) {
+  const targetRoot = String(targetContentRoot || '').trim();
+  const anim = String(animationName || '').trim();
+  const roots = dedupePathList(Array.isArray(sourceRoots) ? sourceRoots : []);
+  if (!targetRoot || !anim || roots.length === 0) return [];
+
+  let sourceUnitDir = '';
+  let sourceIniPath = '';
+  for (const root of roots) {
+    const candidateDir = resolveCaseInsensitivePath(root, path.join('Art', 'Units', anim));
+    if (!candidateDir) continue;
+    try {
+      if (!fs.existsSync(candidateDir) || !fs.statSync(candidateDir).isDirectory()) continue;
+    } catch (_err) {
+      continue;
+    }
+    const candidateIni = findUnitAnimationIniInFolder(candidateDir, anim);
+    if (candidateIni) {
+      sourceUnitDir = candidateDir;
+      sourceIniPath = candidateIni;
+      break;
+    }
+  }
+  if (!sourceIniPath) return [];
+
+  const manifest = parseUnitAnimationIni(sourceIniPath);
+  const copies = [];
+  const seenTargets = new Set();
+  for (const ref of collectDirectUnitRuntimeIniRefs(manifest)) {
+    const relPath = buildUnitRuntimeArtRelativePath(anim, ref);
+    if (!relPath) continue;
+    const sourcePath = resolveCaseInsensitiveArtFileFromRoots(relPath, roots);
+    if (!sourcePath) continue;
+    if (sourceUnitDir && isPathWithinAnyRoot(sourcePath, [sourceUnitDir])) continue;
+    const targetPath = path.join(targetRoot, ...relPath.split('/').filter(Boolean));
+    const targetKey = normalizePathForCompare(targetPath);
+    if (seenTargets.has(targetKey)) continue;
+    seenTargets.add(targetKey);
+    copies.push({ sourcePath, targetPath, relativePath: relPath });
+  }
+  return copies;
+}
+
 function paletteRgbAt(palette, index) {
   const idx = Number(index) | 0;
   return {
@@ -10741,17 +10865,20 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
 
   const getSourceRoots = (sourceBiqPath) => {
     if (sourceRootsCache.has(sourceBiqPath)) return sourceRootsCache.get(sourceBiqPath);
-    let roots = [];
+    let rootInfo = { roots: [], scenarioRoots: [] };
     try {
       const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
       const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
       // Prefer: source scenario dir → its search roots → civ3 base.
-      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots, civ3Path].filter(Boolean));
+      rootInfo = {
+        roots: dedupePathList([ctx.biqRoot, ...ctx.searchRoots, civ3Path].filter(Boolean)),
+        scenarioRoots: dedupePathList([ctx.biqRoot, ...ctx.searchRoots].filter(Boolean))
+      };
     } catch (_err) {
-      roots = [];
+      rootInfo = { roots: [], scenarioRoots: [] };
     }
-    sourceRootsCache.set(sourceBiqPath, roots);
-    return roots;
+    sourceRootsCache.set(sourceBiqPath, rootInfo);
+    return rootInfo;
   };
 
   const addFileCopy = (sourcePath, relPath) => {
@@ -10781,7 +10908,9 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
       const entry = importItem.entry;
       if (!entry) continue;
 
-      const sourceRoots = getSourceRoots(sourceBiqPath);
+      const sourceRootInfo = getSourceRoots(sourceBiqPath);
+      const sourceRoots = sourceRootInfo.roots || [];
+      const sourceScenarioRoots = sourceRootInfo.scenarioRoots || [];
 
       // Copy icon PCX files (used by tech, resource, improvement, government, etc.)
       for (const relPath of (Array.isArray(entry.iconPaths) ? entry.iconPaths : [])) {
@@ -10813,6 +10942,13 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
             break;
           }
         }
+        collectUnitRuntimeDependencyCopiesForImportedAnimation({
+          animationName: entry.animationName,
+          sourceRoots: sourceScenarioRoots,
+          targetContentRoot
+        }).forEach((copy) => {
+          copies.push({ sourcePath: copy.sourcePath, targetPath: copy.targetPath });
+        });
       }
 
       // Copy FLC files embedded in RACE BIQ fields (forward/reverse era filenames)
@@ -14846,5 +14982,6 @@ module.exports = {
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,
   isPrtoStrategyMapRecord,
-  buildPrtoStrategyMapAliases
+  buildPrtoStrategyMapAliases,
+  collectUnitRuntimeDependencyCopiesForImportedAnimation
 };

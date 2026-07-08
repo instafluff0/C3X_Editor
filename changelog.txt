@@ -1,6 +1,11 @@
-* RELEASE 27.20.1
+* RELEASE 27.21
+- Fixed the Units list-panel header actions so Add All/Remove All buttons wrap inside their cards instead of overlapping neighboring panels.
+- Fixed unit imports so direct runtime `.flc`, `.amb`, and `.wav` references in imported unit INI files can bring along sibling unit-folder dependencies, preventing imports like Gravity Armor from dropping reused Hover Tank sounds.
+- Added async QA warnings for missing unit runtime INI, FLC, AMB, and WAV files, reporting the Civ3-style `Art\Units\...` path that would trigger FILE NOT FOUND.
 - Fixed Scenario-mode Districts image previews so the era picker uses scenario BIQ era names when available, falls back to standard era buttons only when needed, and keeps detected art rows selectable.
 - Added Map minimap dropup toggles for territory tinting, city dots, and resource markers with searchable per-resource filters, Check All/Uncheck All controls, map-icon thumbnails, and live resource counts while keeping the overlays separate from the cached terrain minimap.
+- Added a Map editor Show Yields overlay that uses scenario-aware CityIcons.pcx crops to draw map-rule food, shield, and commerce icons from terrain, landmark, improvement, railroad, river, bonus-grassland, and resource yield data.
+- Expanded the Map editor Display menu into grouped View Aids, Terrain, Map Features, Map Objects, and Scenario Markers controls, including separate toggles for tile improvements, resources, terrain features, borders, starting locations, and victory points, with sturdier panel clicks, Tile Info stacking, and chunk-cache invalidation so toggled layers stay consistent after scrolling or minimap jumps.
 
 * RELEASE 27.20
 - Fixed Map-tab unit overlays so map-only BIQ tabs resolve UNIT coordinates and PRTO icon/class metadata through the same support data used by Tile Info.

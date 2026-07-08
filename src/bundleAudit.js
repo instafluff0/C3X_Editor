@@ -7,7 +7,7 @@ const {
   parsePediaIconsDocumentWithOrder,
   readTextFileWithEncodingInfoIfExists
 } = require('./configCore');
-const { resolveConquestsAssetPath, resolvePcxPath } = require('./artPreview');
+const { parseUnitAnimationIni, resolveConquestsAssetPath, resolvePcxPath } = require('./artPreview');
 const C3X_BASE_MANIFEST = require('./c3xBaseManifest');
 
 const DISTRICT_TRAIT_OPTIONS = [
@@ -596,6 +596,93 @@ function resolveCurrentDistrictFamilyArtFile(bundle, fileName) {
   );
   if (found) return found;
   return resolveModArtFile(bundle, districtFamilyArtRelativePath(fileName));
+}
+
+function resolveCiv3InstallRoot(civ3Path) {
+  const raw = String(civ3Path || '').trim();
+  if (!raw) return '';
+  if (/[/\\](conquests|civ3ptw)$/i.test(raw)) return path.dirname(raw);
+  return raw;
+}
+
+function getUnitRuntimeSearchRoots(bundle) {
+  const roots = [];
+  const seen = new Set();
+  const add = (candidate) => {
+    const raw = String(candidate || '').trim();
+    if (!raw) return;
+    const resolved = resolveScenarioRoot(raw);
+    const key = normalizeFsPathForCompare(resolved);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    roots.push(resolved);
+  };
+  getAssetRoots(bundle).forEach(add);
+  const civ3Root = resolveCiv3InstallRoot(bundle && bundle.civ3Path);
+  if (civ3Root) {
+    add(path.join(civ3Root, 'Conquests'));
+    add(path.join(civ3Root, 'civ3PTW'));
+    add(civ3Root);
+  }
+  return roots;
+}
+
+function normalizeRuntimeAssetValue(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\/g, '/');
+}
+
+function toCiv3DisplayPath(value) {
+  return String(value || '').replace(/\//g, '\\');
+}
+
+function unitRuntimeRelativePath(animationName, assetValue) {
+  const raw = normalizeRuntimeAssetValue(assetValue);
+  if (!raw) return '';
+  if (/^[A-Za-z]:\//.test(raw) || raw.startsWith('/')) return raw;
+  if (/^art\//i.test(raw)) return raw;
+  return `Art/Units/${String(animationName || '').trim()}/${raw}`;
+}
+
+function unitRuntimeCandidatePaths(bundle, animationName, assetValue) {
+  const raw = normalizeRuntimeAssetValue(assetValue);
+  if (!raw) return [];
+  if (/^[A-Za-z]:\//.test(raw) || raw.startsWith('/')) return [raw];
+  const rel = unitRuntimeRelativePath(animationName, raw);
+  return getUnitRuntimeSearchRoots(bundle).map((root) => path.join(root, ...rel.split('/')));
+}
+
+function resolveUnitRuntimeAssetPath(bundle, animationName, assetValue) {
+  return unitRuntimeCandidatePaths(bundle, animationName, assetValue).find((candidate) => fileExists(candidate)) || '';
+}
+
+function getRuntimeUnitIniPath(bundle, animationName) {
+  const name = String(animationName || '').trim();
+  if (!name) return '';
+  const iniValue = `${name}.ini`;
+  return unitRuntimeCandidatePaths(bundle, name, iniValue).find((candidate) => fileExists(candidate)) || '';
+}
+
+function getUnitRuntimeExpectedDisplayPath(animationName, assetValue) {
+  const raw = normalizeRuntimeAssetValue(assetValue);
+  if (!raw) return '';
+  if (/^[A-Za-z]:\//.test(raw) || raw.startsWith('/')) return toCiv3DisplayPath(raw);
+  return toCiv3DisplayPath(unitRuntimeRelativePath(animationName, raw));
+}
+
+function collectUnitIniRuntimeAssetRefs(manifest) {
+  const refs = [];
+  const sections = Array.isArray(manifest && manifest.sections) ? manifest.sections : [];
+  sections.forEach((section) => {
+    (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
+      const value = String(field && field.value || '').trim();
+      if (!/\.(flc|amb|wav)$/i.test(value)) return;
+      refs.push({ value });
+    });
+  });
+  return refs;
 }
 
 function createAuditAccumulator() {
@@ -1914,6 +2001,58 @@ function auditReferenceArt(bundle, result) {
   });
 }
 
+function auditUnitRuntimeAssets(bundle, result) {
+  const roots = getUnitRuntimeSearchRoots(bundle);
+  if (roots.length <= 0) return;
+  const tab = (((bundle || {}).tabs || {}).units) || null;
+  const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+  const unitCache = new Map();
+
+  entries.forEach((entry, index) => {
+    const animationName = String(entry && entry.animationName || '').trim();
+    if (!animationName) return;
+    const label = getReferenceEntryAuditName(entry, index);
+    let audit = unitCache.get(animationName);
+    if (!audit) {
+      const iniPath = getRuntimeUnitIniPath(bundle, animationName);
+      const missing = [];
+      if (!iniPath) {
+        missing.push({
+          displayPath: getUnitRuntimeExpectedDisplayPath(animationName, `${animationName}.ini`),
+          sourceDisplayPath: ''
+        });
+      } else {
+        const manifest = parseUnitAnimationIni(iniPath);
+        const seen = new Set();
+        collectUnitIniRuntimeAssetRefs(manifest).forEach((ref) => {
+          const displayPath = getUnitRuntimeExpectedDisplayPath(animationName, ref.value);
+          const key = displayPath.toLowerCase();
+          if (!displayPath || seen.has(key)) return;
+          seen.add(key);
+          const resolved = resolveUnitRuntimeAssetPath(bundle, animationName, ref.value);
+          if (!resolved) {
+            missing.push({ displayPath, sourceDisplayPath: '' });
+          }
+        });
+      }
+      audit = missing;
+      unitCache.set(animationName, audit);
+    }
+
+    audit.forEach((missing) => {
+      const source = String(missing && missing.sourceDisplayPath || '').trim();
+      const suffix = source ? ` referenced by "${source}"` : '';
+      addSectionIssue(
+        result,
+        'units',
+        index,
+        `${label}: Missing unit runtime file "${missing.displayPath}"${suffix}. Civ3 may exit with FILE NOT FOUND when this unit loads.`,
+        'unit-runtime-file-missing'
+      );
+    });
+  });
+}
+
 function isBiqBackedReferenceEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
   if (Number.isFinite(Number(entry.biqIndex))) return true;
@@ -2340,6 +2479,7 @@ function auditLoadedBundle(bundle, options = {}) {
   auditBiqReferenceIndexIntegrity(bundle, result);
   auditTechnologyPrerequisiteCycles(bundle, result);
   if (!skipReferenceArt) auditReferenceArt(bundle, result);
+  auditUnitRuntimeAssets(bundle, result);
   auditScenarioTextCoverage(bundle, result);
   auditScenarioTextHealth(bundle, result);
   auditCivilopediaLinks(bundle, result);

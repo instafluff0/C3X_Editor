@@ -21,7 +21,8 @@ const {
   buildReferenceTabs,
   loadBundle,
   saveBundle,
-  previewSavePlan
+  previewSavePlan,
+  collectUnitRuntimeDependencyCopiesForImportedAnimation
 } = require('../src/configCore');
 
 function mkTmpDir() {
@@ -347,6 +348,34 @@ test('loadBundle + saveBundle writes to scope targets', () => {
   assert.equal(fs.existsSync(customPath), true);
   const savedText = fs.readFileSync(customPath, 'utf8');
   assert.match(savedText, /flag = false/);
+});
+
+test('scenario unit import collects direct INI runtime dependencies from sibling unit folders', () => {
+  const sourceRoot = mkTmpDir();
+  const targetRoot = mkTmpDir();
+  const gravityDir = path.join(sourceRoot, 'Art', 'Units', 'Gravity Armor');
+  const hoverDir = path.join(sourceRoot, 'Art', 'Units', 'Hover Tank');
+  fs.mkdirSync(gravityDir, { recursive: true });
+  fs.mkdirSync(hoverDir, { recursive: true });
+  fs.writeFileSync(path.join(gravityDir, 'Gravity Armor.INI'), [
+    '[Animations]',
+    'DEFAULT=GravityDefault.flc',
+    '[Sound Effects]',
+    'RUN=..\\Hover Tank\\HovertankRun.wav',
+    ''
+  ].join('\r\n'), 'latin1');
+  fs.writeFileSync(path.join(gravityDir, 'GravityDefault.flc'), Buffer.from('flc'));
+  fs.writeFileSync(path.join(hoverDir, 'HoverTankRun.wav'), Buffer.from('wav'));
+
+  const copies = collectUnitRuntimeDependencyCopiesForImportedAnimation({
+    animationName: 'Gravity Armor',
+    sourceRoots: [sourceRoot],
+    targetContentRoot: targetRoot
+  });
+
+  assert.equal(copies.length, 1);
+  assert.equal(copies[0].sourcePath, path.join(hoverDir, 'HoverTankRun.wav'));
+  assert.equal(copies[0].targetPath, path.join(targetRoot, 'Art', 'Units', 'Hover Tank', 'HovertankRun.wav'));
 });
 
 test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips resize-managed preview fields', () => {
