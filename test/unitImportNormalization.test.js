@@ -137,7 +137,7 @@ function makeEntry(civilopediaKey, biqIndex) {
   return { civilopediaKey, biqIndex, name: civilopediaKey };
 }
 
-test('unit import remaps mutual references by civilopedia key and filters non-matches', () => {
+test('unit import clears civ availability and remaps mutual references by civilopedia key', () => {
   const targetBundle = {
     tabs: {
       civilizations: {
@@ -229,7 +229,7 @@ test('unit import remaps mutual references by civilopedia key and filters non-ma
   const byBaseKey = (key) => imported.biqFields.filter((field) => field.baseKey === key);
   const availableTo = imported.biqFields.find((field) => field.baseKey === 'availableto');
 
-  assert.deepEqual(Array.from(decodeAvailableToIndices(availableTo.value)), [5, 7]);
+  assert.deepEqual(Array.from(decodeAvailableToIndices(availableTo.value)), []);
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredtech').value, '13');
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredresource1').value, '17');
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'upgradeto').value, '10');
@@ -307,15 +307,27 @@ test('unit import clears orphaned list references and zeroes count fields when n
     imported.biqFields.filter((field) => field.baseKey === 'stealth_target').map((field) => field.value).filter(Boolean).length,
     0
   );
+  assert.deepEqual(
+    Array.from(imported.biqFields.filter((field) => field.baseKey === 'stealth_target').map((field) => field.originalValue).filter(Boolean)),
+    ['4']
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numstealthtargets').value, '0');
   assert.equal(
     imported.biqFields.filter((field) => field.baseKey === 'legal_unit_telepad').map((field) => field.value).filter(Boolean).length,
     0
   );
+  assert.deepEqual(
+    Array.from(imported.biqFields.filter((field) => field.baseKey === 'legal_unit_telepad').map((field) => field.originalValue).filter(Boolean)),
+    ['4']
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalunittelepads').value, '0');
   assert.equal(
     imported.biqFields.filter((field) => field.baseKey === 'legal_building_telepad').map((field) => field.value).filter(Boolean).length,
     0
+  );
+  assert.deepEqual(
+    Array.from(imported.biqFields.filter((field) => field.baseKey === 'legal_building_telepad').map((field) => field.originalValue).filter(Boolean)),
+    ['11']
   );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalbuildingtelepads').value, '0');
 });

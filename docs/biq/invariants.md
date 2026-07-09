@@ -14,6 +14,12 @@ Checklist for safe BIQ mutations and robust import/export behavior.
 - Any add/remove/reorder in a section requires updating all int-index links pointing to that section.
 - Preserve `-1` sentinel semantics for “none/unset” references.
 - After import or mutation, run link-repair/post-processing equivalent logic before save.
+- Pending BIQ reference entries must be referenced by stable metadata until save assigns final indices.
+  - Structured controls should store `referenceTarget` / `referenceTargets` with `{ tabKey, key }`.
+  - Final numeric indices are calculated by save planning after surviving add/copy/delete operations are known.
+  - `null`, `undefined`, empty strings, booleans, and non-finite values are not assigned BIQ indices.
+  - Do not use `Number(value)` directly for assigned-index tests.
+  - See `docs/biq/PendingReferenceSaveFlow.md`.
 
 ## Map Invariants
 - TILE, CITY, UNIT, CLNY, SLOC links must remain mutually coherent.

@@ -15,11 +15,137 @@ function touch(filePath) {
   fs.writeFileSync(filePath, '');
 }
 
+const DAY_NIGHT_TERRAIN_FIXTURE_FILES = [
+  'xtgc.pcx', 'xpgc.pcx', 'xdgc.pcx', 'xdpc.pcx', 'xdgp.pcx', 'xggc.pcx',
+  'wCSO.pcx', 'wSSS.pcx', 'wOOO.pcx',
+  'lxtgc.pcx', 'lxpgc.pcx', 'lxdgc.pcx', 'lxdpc.pcx', 'lxdgp.pcx', 'lxggc.pcx',
+  'lwCSO.pcx', 'lwSSS.pcx', 'lwOOO.pcx',
+  'polarICEcaps-final.pcx',
+  'xhills.pcx', 'hill forests.pcx', 'hill jungle.pcx', 'LMHills.pcx',
+  'floodplains.pcx',
+  'deltaRivers.pcx', 'mtnRivers.pcx',
+  'waterfalls.pcx',
+  'irrigation DESETT.pcx', 'irrigation PLAINS.pcx', 'irrigation.pcx', 'irrigation TUNDRA.pcx',
+  'Volcanos.pcx', 'Volcanos forests.pcx', 'Volcanos jungles.pcx', 'Volcanos-snow.pcx',
+  'marsh.pcx',
+  'LMMountains.pcx', 'Mountains.pcx', 'mountain forests.pcx', 'mountain jungles.pcx', 'Mountains-snow.pcx',
+  'roads.pcx', 'railroads.pcx',
+  'LMForests.pcx', 'grassland forests.pcx', 'plains forests.pcx', 'tundra forests.pcx',
+  'landmark_terrain.pcx', 'tnt.pcx', 'goodyhuts.pcx', 'TerrainBuildings.pcx',
+  'pollution.pcx', 'craters.pcx',
+  'x_airfields and detect.pcx', 'x_victory.pcx',
+  'resources.pcx',
+  'rAMER.pcx', 'rEURO.pcx', 'rROMAN.pcx', 'rMIDEAST.pcx', 'rASIAN.pcx',
+  'AMERWALL.pcx', 'EUROWALL.pcx', 'ROMANWALL.pcx', 'MIDEASTWALL.pcx', 'ASIANWALL.pcx',
+  'DESTROY.pcx'
+];
+
+function touchDayNightTerrainSet(root, season, hour) {
+  DAY_NIGHT_TERRAIN_FIXTURE_FILES.forEach((fileName) => {
+    touch(path.join(root, 'Art', 'DayNight', season, hour, fileName));
+  });
+}
+
+function writeFile(filePath, text) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, text, 'latin1');
+}
+
+function writeSafePediaIcons(filePath) {
+  writeFile(filePath, [
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'));
+}
+
+function buildFallbackPediaIconsText() {
+  const lines = [
+    '#ERA_SPLASH_ERAS_Ancient_Times',
+    'art\\erasplash\\ancient.pcx',
+    '#ERA_SPLASH_ERAS_Middle_Ages',
+    'art\\erasplash\\middle.pcx',
+    '#ICON_SS_Planetary_Party_Lounge',
+    'art\\civilopedia\\icons\\buildings\\spaceshiplarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\spaceshipsmall.pcx'
+  ];
+  for (let i = 0; i < 55; i += 1) {
+    lines.push(`#ICON_BLDG_STOCK_${i}`);
+    lines.push(`art\\civilopedia\\icons\\buildings\\stock${i}large.pcx`);
+    lines.push(`art\\civilopedia\\icons\\buildings\\stock${i}small.pcx`);
+  }
+  lines.push(
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  );
+  return lines.join('\r\n');
+}
+
+function buildFallbackCivilopediaText() {
+  const lines = [
+    '#BLDG_SS_Planetary_Party_Lounge',
+    '^Planetary Party Lounge',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    '^A spaceship component.'
+  ];
+  for (let i = 0; i < 55; i += 1) {
+    lines.push(`#BLDG_STOCK_${i}`);
+    lines.push(`^Stock article ${i}.`);
+  }
+  lines.push('');
+  return lines.join('\r\n');
+}
+
+function attachScenarioTextSourceDetails(bundle, paths) {
+  bundle.tabs.civilizations.sourceDetails = {
+    civilopediaScenario: paths.civilopediaScenario || '',
+    civilopediaConquests: paths.civilopediaFallback || '',
+    pediaIconsScenario: paths.pediaIconsScenario || '',
+    pediaIconsConquests: paths.pediaIconsFallback || ''
+  };
+  return bundle;
+}
+
 function makeSection(fields) {
   return {
     marker: '#Section',
     comments: [],
     fields: Object.entries(fields || {}).map(([key, value]) => ({ key, value }))
+  };
+}
+
+function makeBiqRecord(fields) {
+  return {
+    fields: Object.entries(fields || {}).map(([key, value]) => ({
+      key,
+      baseKey: key,
+      label: key,
+      value: String(value)
+    }))
+  };
+}
+
+function makeBiqSection(code, records) {
+  return {
+    code,
+    records: (Array.isArray(records) ? records : []).map(makeBiqRecord)
   };
 }
 
@@ -50,6 +176,263 @@ function makeBundle(c3xPath, overrides = {}) {
     ...overrides
   };
 }
+
+function makeTechEntry(name, biqIndex, prereqs = []) {
+  const fields = [
+    { key: 'name', baseKey: 'name', label: 'name', value: String(name || '') }
+  ];
+  for (let i = 0; i < 4; i += 1) {
+    fields.push({
+      key: `prerequisite${i + 1}`,
+      baseKey: `prerequisite${i + 1}`,
+      label: `Prerequisite ${i + 1}`,
+      value: prereqs[i] == null ? 'None' : String(prereqs[i])
+    });
+  }
+  return {
+    name,
+    civilopediaKey: `TECH_${String(name || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+    biqIndex,
+    biqFields: fields
+  };
+}
+
+function makeScenarioPlayersBundle(c3xPath, { playableIds, leadRows, civNames }) {
+  const bundle = makeBundle(c3xPath);
+  bundle.tabs.civilizations = {
+    entries: (Array.isArray(civNames) ? civNames : []).map((name, biqIndex) => ({ name, biqIndex }))
+  };
+  const gameFields = {
+    number_of_playable_civs: String((Array.isArray(playableIds) ? playableIds : []).length)
+  };
+  (Array.isArray(playableIds) ? playableIds : []).forEach((id, idx) => {
+    gameFields[`playable_civ_${idx}`] = `${civNames[id] || `RACE #${id}`} (${id})`;
+  });
+  bundle.tabs.scenarioSettings = {
+    sections: [makeBiqSection('GAME', [gameFields])]
+  };
+  bundle.tabs.players = {
+    sections: [makeBiqSection('LEAD', (Array.isArray(leadRows) ? leadRows : []).map((row) => ({
+      humanplayer: row.human ? 'true' : 'false',
+      civ: row.civLabel != null
+        ? row.civLabel
+        : (row.civ >= 0 ? `${civNames[row.civ] || `RACE #${row.civ}`} (${row.civ})` : (row.civ === -2 ? 'Random' : 'Any'))
+    })))]
+  };
+  return bundle;
+}
+
+test('auditLoadedBundle reports technologies that list themselves as prerequisites', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['Pottery (0)']),
+          makeTechEntry('Cultivation', 1, ['None'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.match(result.tabs.technologies.sections['0'][0].message, /Pottery lists itself as a prerequisite/);
+  assert.equal(result.tabs.technologies.sections['0'][0].code, 'tech-self-prerequisite');
+  assert.match(result.tabs.technologies.general[0].message, /self-prerequisite tech/);
+});
+
+test('auditLoadedBundle reports circular technology prerequisite chains on every affected tech', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['Barding (1)']),
+          makeTechEntry('Barding', 1, ['The Saddle (2)']),
+          makeTechEntry('The Saddle', 2, ['Spoked Wheel (3)']),
+          makeTechEntry('Spoked Wheel', 3, ['Pottery (0)']),
+          makeTechEntry('Fermentation', 4, ['Cultivation (5)']),
+          makeTechEntry('Cultivation', 5, ['None'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  ['0', '1', '2', '3'].forEach((idx) => {
+    assert.equal(result.tabs.technologies.sections[idx][0].code, 'tech-prerequisite-cycle');
+    assert.match(result.tabs.technologies.sections[idx][0].message, /Pottery -> Barding -> The Saddle -> Spoked Wheel -> Pottery/);
+  });
+  assert.equal(result.tabs.technologies.sections['4'], undefined);
+  assert.equal(result.tabs.technologies.sections['5'], undefined);
+  assert.match(result.tabs.technologies.general[0].message, /1 circular prerequisite chain/);
+});
+
+test('auditLoadedBundle accepts acyclic technology prerequisite chains', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['None']),
+          makeTechEntry('Cultivation', 1, ['Pottery (0)']),
+          makeTechEntry('Fermentation', 2, ['Cultivation (1)'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.technologies, undefined);
+});
+
+test('auditLoadedBundle accepts no-era technology sentinel but reports missing era indexes', () => {
+  const noEraTech = makeTechEntry('City-State', 0, ['None']);
+  noEraTech.biqFields.push({ key: 'era', baseKey: 'era', label: 'Era', value: '-1' });
+  const badEraTech = makeTechEntry('Bad Future', 1, ['None']);
+  badEraTech.biqFields.push({ key: 'era', baseKey: 'era', label: 'Era', value: '7' });
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    biq: {
+      sections: [
+        makeBiqSection('ERAS', [
+          { name: 'Ancient Times' },
+          { name: 'Middle Ages' },
+          { name: 'Industrial Ages' },
+          { name: 'Modern Times' }
+        ])
+      ]
+    },
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [noEraTech, badEraTech]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.technologies.sections['0'], undefined);
+  const issues = result.tabs.technologies.sections['1'] || [];
+  assert.equal(issues[0].code, 'biq-reference-out-of-range');
+  assert.equal(issues[0].fieldKey, 'era');
+  assert.equal(issues[0].target, 'eras');
+  assert.equal(issues[0].value, 7);
+  assert.match(issues[0].message, /Bad Future Era points to missing era index 7/);
+});
+
+test('auditLoadedBundle reports out-of-range technology prerequisite fields by fixed slot', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('High-Density Batteries', 0, ['None']),
+          makeTechEntry('Gravimetric Maneuver', 1, ['High-Density Batteries (0)', 'None', '100', 'None'])
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.technologies.sections['1'] || [];
+  assert.equal(issues[0].code, 'biq-reference-out-of-range');
+  assert.equal(issues[0].fieldKey, 'prerequisite3');
+  assert.equal(issues[0].target, 'technologies');
+  assert.equal(issues[0].value, 100);
+  assert.match(issues[0].message, /Gravimetric Maneuver Prerequisite 3 points to missing tech index 100/);
+  assert.match(result.tabs.base.general[0].message, /1 BIQ reference index/);
+});
+
+test('auditLoadedBundle reports out-of-range non-tech BIQ reference fields', () => {
+  const baseTabs = makeBundle('').tabs;
+  const bundle = makeBundle('', {
+    tabs: {
+      ...baseTabs,
+      technologies: {
+        entries: [
+          makeTechEntry('Pottery', 0, ['None'])
+        ]
+      },
+      resources: {
+        entries: [
+          {
+            name: 'Strategic Spice',
+            civilopediaKey: 'GOOD_STRATEGIC_SPICE',
+            biqIndex: 0,
+            biqFields: [
+              { key: 'prerequisite', baseKey: 'prerequisite', label: 'Prerequisite', value: '12' }
+            ]
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.resources.sections['0'] || [];
+  assert.equal(issues[0].code, 'biq-reference-out-of-range');
+  assert.equal(issues[0].fieldKey, 'prerequisite');
+  assert.equal(issues[0].target, 'technologies');
+  assert.match(issues[0].message, /Strategic Spice Prerequisite points to missing tech index 12/);
+});
+
+test('auditLoadedBundle reports playable civs that have no fixed Scenario Player slot', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeScenarioPlayersBundle(c3xRoot, {
+    civNames: ['Barbarians', 'Rome', 'Egypt', 'Japan'],
+    playableIds: [1, 2, 3],
+    leadRows: [
+      { human: true, civ: 3 },
+      { human: false, civ: -3 }
+    ]
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const playersMessages = ((result.tabs.players || {}).general) || [];
+  assert.equal(playersMessages.length, 1);
+  assert.equal(playersMessages[0].code, 'playable-civ-without-lead-slot');
+  assert.match(playersMessages[0].message, /Rome, Egypt/);
+  assert.match(playersMessages[0].message, /Civ3 can freeze/);
+});
+
+test('auditLoadedBundle accepts playable civs fixed to AI Scenario Player slots', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeScenarioPlayersBundle(c3xRoot, {
+    civNames: ['Barbarians', 'Rome', 'Egypt', 'Japan'],
+    playableIds: [1, 2, 3],
+    leadRows: [
+      { human: true, civ: 1 },
+      { human: false, civ: 2 },
+      { human: false, civ: 3 }
+    ]
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const playersMessages = ((result.tabs.players || {}).general) || [];
+  assert.equal(playersMessages.some((entry) => entry.code === 'playable-civ-without-lead-slot'), false);
+});
+
+test('auditLoadedBundle accepts broad playable list with an explicit human wildcard slot', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeScenarioPlayersBundle(c3xRoot, {
+    civNames: ['Barbarians', 'Rome', 'Egypt', 'Japan'],
+    playableIds: [1, 2, 3],
+    leadRows: [
+      { human: true, civ: -3 },
+      { human: false, civ: -3 }
+    ]
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const playersMessages = ((result.tabs.players || {}).general) || [];
+  assert.equal(playersMessages.some((entry) => entry.code === 'playable-civ-without-lead-slot'), false);
+});
 
 test('auditLoadedBundle reports missing current district-family art', () => {
   const c3xRoot = mkTmpDir();
@@ -209,6 +592,44 @@ test('auditLoadedBundle skips day-night checks when cycle mode is off', () => {
   assert.equal(result.tabs.base, undefined);
 });
 
+test('auditLoadedBundle reports unknown conditional district bonus improvement references', () => {
+  const c3xRoot = mkTmpDir();
+  const bundle = makeBundle(c3xRoot, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Library Place',
+          biqFields: [{ key: 'name', baseKey: 'name', value: 'Library Place' }]
+        }]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Campus',
+              culture_bonus: '1, "Library Place": 2, grassland: 1',
+              science_bonus: '1, "Missing Lab": 4, river: 1'
+            })
+          ]
+        }
+      },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const messages = ((result.tabs.districts || {}).sections || {})['0'].map((issue) => issue.message);
+  assert.ok(messages.some((message) => /Science Bonus conditional reference: Missing Lab/.test(message)), messages.join('\n'));
+  assert.equal(messages.some((message) => /Library Place|grassland|river/.test(message)), false);
+});
+
 test('auditBundle uses the provided bundle snapshot for live scenario-option previews', () => {
   const c3xRoot = mkTmpDir();
   const bundle = makeBundle(c3xRoot, {
@@ -274,6 +695,88 @@ test('auditLoadedBundle reports missing day-night terrain and district hour art'
   assert.ok(result.tabs.base.general.some((entry) => /Day\/night hour 0100 is missing terrain art/.test(entry.message)));
   assert.ok(result.tabs.districts.sections['0'].some((entry) => /Day\/night art "Market\.pcx" is missing/.test(entry.message) && /0100/.test(entry.message)));
   assert.ok(result.tabs.districts.general.some((entry) => /Day\/night art "Abandoned\.pcx" is missing/.test(entry.message) && /0100/.test(entry.message)));
+});
+
+test('auditLoadedBundle resolves scenario seasonal day-night terrain and district art', () => {
+  const c3xRoot = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  touchDayNightTerrainSet(scenarioRoot, 'Winter', '1800');
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Summer', '1200', 'MySuperDistrict.PCX'));
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Summer', '1200', 'Abandoned.PCX'));
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Winter', '1800', 'MySuperDistrict.PCX'));
+  touch(path.join(scenarioRoot, 'Art', 'Districts', 'Winter', '1800', 'Abandoned.PCX'));
+
+  const bundle = makeBundle(c3xRoot, {
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'specified' },
+          { key: 'pinned_hour_for_day_night_cycle', value: '18' },
+          { key: 'seasonal_cycle_mode', value: 'specified' },
+          { key: 'pinned_season_for_seasonal_cycle', value: 'winter' },
+          { key: 'enable_districts', value: 'true' }
+        ]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({ name: 'My Super District', img_paths: 'MySuperDistrict.PCX' })
+          ]
+        }
+      },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.base, undefined);
+  assert.equal(result.tabs.districts, undefined);
+  assert.equal(result.totalWarnings, 0);
+});
+
+test('auditLoadedBundle resolves day-night and district art across multiple BIQ search folders', () => {
+  const c3xRoot = mkTmpDir();
+  const biqRoot = mkTmpDir();
+  const firstSearchRoot = mkTmpDir();
+  const secondSearchRoot = mkTmpDir();
+  touchDayNightTerrainSet(secondSearchRoot, 'Winter', '1800');
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Summer', '1200', 'MySuperDistrict.PCX'));
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Summer', '1200', 'Abandoned.PCX'));
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Winter', '1800', 'MySuperDistrict.PCX'));
+  touch(path.join(secondSearchRoot, 'Art', 'Districts', 'Winter', '1800', 'Abandoned.PCX'));
+
+  const bundle = makeBundle(c3xRoot, {
+    scenarioPath: biqRoot,
+    scenarioInputPath: path.join(biqRoot, 'Scenario.biq'),
+    scenarioSearchPaths: [firstSearchRoot, secondSearchRoot],
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'specified' },
+          { key: 'pinned_hour_for_day_night_cycle', value: '18' },
+          { key: 'seasonal_cycle_mode', value: 'specified' },
+          { key: 'pinned_season_for_seasonal_cycle', value: 'winter' },
+          { key: 'enable_districts', value: 'true' }
+        ]
+      },
+      districts: {
+        model: {
+          sections: [
+            makeSection({ name: 'My Super District', img_paths: 'MySuperDistrict.PCX' })
+          ]
+        }
+      },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.tabs.base, undefined);
+  assert.equal(result.tabs.districts, undefined);
+  assert.equal(result.totalWarnings, 0);
 });
 
 test('auditLoadedBundle reports missing reference art files for Civs, Techs, Resources, Governments, Improvements, and Units', () => {
@@ -356,6 +859,424 @@ test('auditLoadedBundle reports missing reference art files for Civs, Techs, Res
   assert.match(result.tabs.governments.sections['0'][0].message, /Despotism: Missing art file "Art\/Civilopedia\/Icons\/Governments\/despotismlarge\.pcx"/);
   assert.match(result.tabs.improvements.sections['0'][0].message, /Granary: Missing art file "Art\/Civilopedia\/Icons\/Buildings\/granarylarge\.pcx"/);
   assert.match(result.tabs.units.sections['0'][0].message, /Warrior: Missing art file "Art\/Civilopedia\/Icons\/Units\/warriorlarge\.pcx"/);
+
+  const mapOpenResult = auditLoadedBundle(bundle, { skipReferenceArt: true });
+  assert.equal(mapOpenResult.totalWarnings, 0, 'reference-art checks should be skippable during deferred map-open critical work');
+});
+
+test('auditLoadedBundle reports missing unit runtime INI files using Civ3-style paths', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      ...makeBundle(civ3Root).tabs,
+      units: {
+        entries: [
+          {
+            name: 'Samurai',
+            civilopediaKey: 'PRTO_SAMURAI',
+            animationName: 'Samurai'
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.units.sections['0'] || [];
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, 'unit-runtime-file-missing');
+  assert.match(issues[0].message, /Samurai: Missing unit runtime file "Art\\Units\\Samurai\\Samurai\.ini"/);
+});
+
+test('auditLoadedBundle checks unit INI FLC, AMB, and WAV references across scenario and fallback roots', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  writeFile(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'Samurai.ini'), [
+    '[Animations]',
+    'DEFAULT=SamuraiDefault.flc',
+    'ATTACK1=SamuraiAttack.flc',
+    '[Sound Effects]',
+    'DEFAULT=SamuraiDefault.wav',
+    'FIDGET=SamuraiFidget.amb',
+    'DEATH=SamuraiDeath.wav',
+    ''
+  ].join('\r\n'));
+  touch(path.join(civ3Root, 'Conquests', 'Art', 'Units', 'Samurai', 'SamuraiDefault.flc'));
+  touch(path.join(civ3Root, 'Conquests', 'Art', 'Units', 'Samurai', 'SamuraiDefault.wav'));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'RuntimeCheck.biq'),
+    tabs: {
+      ...makeBundle(civ3Root).tabs,
+      units: {
+        entries: [
+          {
+            name: 'Samurai',
+            civilopediaKey: 'PRTO_SAMURAI',
+            animationName: 'Samurai'
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const messages = (result.tabs.units.sections['0'] || []).map((issue) => issue.message);
+  assert.equal(messages.length, 3);
+  assert.ok(messages.some((message) => /"Art\\Units\\Samurai\\SamuraiAttack\.flc"/.test(message)), messages.join('\n'));
+  assert.ok(messages.some((message) => /"Art\\Units\\Samurai\\SamuraiFidget\.amb"/.test(message)), messages.join('\n'));
+  assert.ok(messages.some((message) => /"Art\\Units\\Samurai\\SamuraiDeath\.wav"/.test(message)), messages.join('\n'));
+});
+
+test('auditLoadedBundle warns when unit Sound Effects references are not AMB or WAV files', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  writeFile(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'Samurai.ini'), [
+    '[Animations]',
+    'DEFAULT=SamuraiDefault.flc',
+    '[Sound Effects]',
+    'RUN=SamuraiRun.flc',
+    ''
+  ].join('\r\n'));
+  touch(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'SamuraiDefault.flc'));
+  touch(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'SamuraiRun.flc'));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'RuntimeCheck.biq'),
+    tabs: {
+      ...makeBundle(civ3Root).tabs,
+      units: {
+        entries: [
+          {
+            name: 'Samurai',
+            civilopediaKey: 'PRTO_SAMURAI',
+            animationName: 'Samurai'
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.units.sections['0'] || [];
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, 'unit-runtime-sound-file-unsupported');
+  assert.match(issues[0].message, /Samurai: Unit sound file "Art\\Units\\Samurai\\SamuraiRun\.flc" is not a \.amb or \.wav file referenced by Sound Effects RUN/);
+});
+
+test('auditLoadedBundle warns when unit animation references are not FLC files', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  writeFile(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'Samurai.ini'), [
+    '[Animations]',
+    'DEFAULT=SamuraiDefault.flc',
+    'RUN=SamuraiRun.wav',
+    'DEAD=.',
+    '[Sound Effects]',
+    'RUN=SamuraiRun.wav',
+    ''
+  ].join('\r\n'));
+  touch(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'SamuraiDefault.flc'));
+  touch(path.join(scenarioRoot, 'Art', 'Units', 'Samurai', 'SamuraiRun.wav'));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'RuntimeCheck.biq'),
+    tabs: {
+      ...makeBundle(civ3Root).tabs,
+      units: {
+        entries: [
+          {
+            name: 'Samurai',
+            civilopediaKey: 'PRTO_SAMURAI',
+            animationName: 'Samurai'
+          }
+        ]
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issues = result.tabs.units.sections['0'] || [];
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, 'unit-runtime-animation-file-unsupported');
+  assert.match(issues[0].message, /Samurai: Unit animation file "Art\\Units\\Samurai\\SamuraiRun\.wav" is not an \.flc file referenced by Animations RUN/);
+});
+
+test('auditLoadedBundle warns and offers a staged repair for Civ3-long reference art paths', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'Art/Civilopedia/Icons/Governments/algorithmic_governance_small.pcx';
+  touch(path.join(scenarioRoot, ...longPath.split('/')));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      technologies: {
+        entries: [{
+          name: 'Artificial General Intelligence',
+          civilopediaKey: 'TECH_ARTIFICIAL_GENERAL_INTELLIGENCE',
+          iconPaths: [longPath],
+          originalIconPaths: [longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      improvements: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.technologies.sections['0'][0];
+  assert.equal(warning.code, 'reference-art-path-too-long');
+  assert.match(warning.message, /is 66 characters/);
+  assert.deepEqual(warning.action, {
+    type: 'shorten-reference-art-path',
+    tabKey: 'technologies',
+    group: 'iconPaths',
+    index: 0,
+    civilopediaKey: 'TECH_ARTIFICIAL_GENERAL_INTELLIGENCE',
+    currentPath: longPath,
+    replacementPath: 'Art/tech chooser/Icons/algorithmic_governance_small.pcx',
+    sourcePath: path.join(scenarioRoot, ...longPath.split('/')),
+    label: 'Shorten to Art/tech chooser/Icons/algorithmic_governance_small.pcx',
+    description: 'Stage this art under Art/tech chooser/Icons/algorithmic_governance_small.pcx.'
+  });
+  assert.ok(warning.action.replacementPath.replace(/\//g, '\\').length <= 65);
+});
+
+test('auditLoadedBundle does not propose a shortened art path already used by sibling art', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const largePath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute.pcx';
+  const smallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute_small.pcx';
+  const shortenedSmallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_ins_small.pcx';
+  touch(path.join(scenarioRoot, ...largePath.split('/')));
+  touch(path.join(scenarioRoot, ...smallPath.split('/')));
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...shortenedSmallPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...shortenedSmallPath.split('/')), 'different art');
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'The Superintelligence Institute',
+          civilopediaKey: 'BLDG_SUPERINTELLIGENCE_INSTITUTE',
+          iconPaths: [largePath, smallPath],
+          originalIconPaths: [largePath, smallPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.improvements.sections['0'][0];
+  assert.equal(warning.code, 'reference-art-path-too-long');
+  assert.notEqual(warning.action.replacementPath, largePath);
+  assert.notEqual(warning.action.replacementPath, shortenedSmallPath);
+  assert.equal(warning.action.replacementPath, 'Art/Civilopedia/Icons/Buildings/superintelligence_insti_small.pcx');
+  assert.ok(warning.action.replacementPath.replace(/\//g, '\\').length <= 65);
+});
+
+test('auditLoadedBundle does not warn for stock 65-character standard-game art paths', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformlarge.pcx';
+  touch(path.join(scenarioRoot, ...longPath.split('/')));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          iconPaths: [longPath],
+          originalIconPaths: [longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
+test('auditLoadedBundle reuses an existing shortened art path when it already matches the source file', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitylarge.pcx';
+  const shortenedPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_large.pcx';
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...longPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...longPath.split('/')), 'same art');
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...shortenedPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...shortenedPath.split('/')), 'same art');
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          iconPaths: [longPath],
+          originalIconPaths: [longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.improvements.sections['0'][0];
+  assert.equal(warning.action.replacementPath, shortenedPath);
+});
+
+test('auditLoadedBundle suggests an already-used matching shortened art path for repeated ERA art', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitylarge.pcx';
+  const shortenedPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_large.pcx';
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...longPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...longPath.split('/')), 'same art');
+  fs.mkdirSync(path.dirname(path.join(scenarioRoot, ...shortenedPath.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(scenarioRoot, ...shortenedPath.split('/')), 'same art');
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          buildingIconKind: 'ERA',
+          buildingIconIndex: '26',
+          iconPaths: [shortenedPath, longPath],
+          originalIconPaths: [shortenedPath, longPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  const warning = result.tabs.improvements.sections['0'][0];
+  assert.equal(warning.action.replacementPath, shortenedPath);
+});
+
+test('auditLoadedBundle preserves large and small suffixes when shortening unseparated art names', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const largePath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitylarge.pcx';
+  const smallPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformfacilitysmall.pcx';
+  touch(path.join(scenarioRoot, ...largePath.split('/')));
+  touch(path.join(scenarioRoot, ...smallPath.split('/')));
+  touch(path.join(scenarioRoot, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'offshoredrillingplatformlar.pcx'));
+  touch(path.join(scenarioRoot, 'Art', 'Civilopedia', 'Icons', 'Buildings', 'offshoredrillingplatformsma.pcx'));
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      improvements: {
+        entries: [{
+          name: 'Offshore Platform',
+          civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+          iconPaths: [largePath, smallPath],
+          originalIconPaths: [largePath, smallPath]
+        }]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 2);
+  const warnings = result.tabs.improvements.sections['0'];
+  assert.equal(warnings[0].action.replacementPath, 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_large.pcx');
+  assert.equal(warnings[1].action.replacementPath, 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatfor_small.pcx');
+  assert.ok(warnings.every((warning) => warning.action.replacementPath.replace(/\//g, '\\').length <= 65));
 });
 
 test('auditLoadedBundle reports BIQ improvements missing from scenario PediaIcons files', () => {
@@ -364,7 +1285,7 @@ test('auditLoadedBundle reports BIQ improvements missing from scenario PediaIcon
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  touch(scenarioPediaIcons);
+  writeSafePediaIcons(scenarioPediaIcons);
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Instafluff_Scenario.biq'),
@@ -412,20 +1333,38 @@ test('auditLoadedBundle reports BIQ improvements missing from scenario PediaIcon
   assert.match(result.tabs.improvements.sections['0'][0].message, /Barracks: Scenario PediaIcons\.txt is missing #ICON_BLDG_Barracks/);
   assert.deepEqual(result.tabs.improvements.sections['0'][0].action, {
     type: 'copy-scenario-pediaicons-block',
+    tabKey: 'improvements',
     label: 'Add #ICON_BLDG_Barracks',
+    expectedLabel: '#ICON_BLDG_Barracks',
+    expectedKeys: ['ICON_BLDG_Barracks'],
     civilopediaKey: 'BLDG_Barracks',
     sourcePath: path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt'),
     targetPath: scenarioPediaIcons
   });
 });
 
-test('auditLoadedBundle ignores missing scenario Civilopedia entries and non-improvement PediaIcons fallbacks', () => {
+test('auditLoadedBundle warns when scenario PediaIcons is missing BIQ technology blocks', () => {
   const civ3Root = mkTmpDir();
   const scenarioRoot = mkTmpDir();
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  touch(scenarioPediaIcons);
+  writeFile(scenarioPediaIcons, [
+    '#ICON_BLDG_Barracks',
+    'art\\civilopedia\\icons\\buildings\\barrackslarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\barrackssmall.pcx',
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'));
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
@@ -489,6 +1428,68 @@ test('auditLoadedBundle ignores missing scenario Civilopedia entries and non-imp
   });
 
   const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 1);
+  assert.match(result.tabs.technologies.sections['0'][0].message, /Mysticism: Scenario PediaIcons\.txt is missing #TECH_Mysticism and #TECH_Mysticism_LARGE/);
+  assert.deepEqual(result.tabs.technologies.sections['0'][0].action, {
+    type: 'copy-scenario-pediaicons-block',
+    tabKey: 'technologies',
+    label: 'Add #TECH_Mysticism and #TECH_Mysticism_LARGE',
+    expectedLabel: '#TECH_Mysticism and #TECH_Mysticism_LARGE',
+    expectedKeys: ['TECH_Mysticism', 'TECH_Mysticism_LARGE'],
+    civilopediaKey: 'TECH_Mysticism',
+    sourcePath: path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt'),
+    targetPath: scenarioPediaIcons
+  });
+});
+
+test('auditLoadedBundle ignores BIQ technologies with blank Civilopedia keys for PediaIcons coverage', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  touch(scenarioCivilopedia);
+  writeSafePediaIcons(scenarioPediaIcons);
+
+  const bundle = makeBundle(civ3Root, {
+    scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      technologies: {
+        sourceDetails: {
+          civilopediaScenario: scenarioCivilopedia,
+          pediaIconsScenario: scenarioPediaIcons
+        },
+        entries: [
+          {
+            name: 'BLOCKER_TECH',
+            civilopediaKey: '',
+            displayCivilopediaKey: '',
+            rawBiqCivilopediaKey: '',
+            biqIndex: 84,
+            iconPaths: [],
+            sourceMeta: {
+              iconPaths: { readPath: '' }
+            }
+          }
+        ]
+      },
+      improvements: { entries: [] },
+      civilizations: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      units: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
   assert.equal(result.totalWarnings, 0);
 });
 
@@ -498,7 +1499,22 @@ test('auditLoadedBundle accepts BIQ improvements covered by scenario PediaIcons 
   const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
   const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
   touch(scenarioCivilopedia);
-  touch(scenarioPediaIcons);
+  writeFile(scenarioPediaIcons, [
+    '#ICON_BLDG_Barracks',
+    'art\\civilopedia\\icons\\buildings\\barrackslarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\barrackssmall.pcx',
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'));
 
   const bundle = makeBundle(civ3Root, {
     scenarioPath: path.join(scenarioRoot, 'Scenario.biq'),
@@ -539,6 +1555,90 @@ test('auditLoadedBundle accepts BIQ improvements covered by scenario PediaIcons 
       wonders: { model: { sections: [] } },
       naturalWonders: { model: { sections: [] } }
     }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
+});
+
+test('auditLoadedBundle warns about damaged scenario PediaIcons HomelessIcons before Firaxis editor freezes', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  writeFile(scenarioPediaIcons, [
+    '#ICON_BLDG_Temple',
+    'art\\civilopedia\\icons\\buildings\\templelarge.pcx',
+    'art\\civilopedia\\icons\\buildings\\templesmall.pcx',
+    '#HomelessIcons',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\n'));
+
+  const bundle = attachScenarioTextSourceDetails(makeBundle(civ3Root), {
+    pediaIconsScenario: scenarioPediaIcons
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const codes = result.tabs.civilizations.general.map((entry) => entry.code);
+  assert.deepEqual(codes.sort(), ['scenario-pediaicons-homeless-damaged']);
+  assert.match(result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-homeless-damaged').message, /Firaxis Conquests editor can freeze/);
+});
+
+test('auditLoadedBundle warns when scenario text overrides are missing fallback EraSplash or look suspiciously small', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const fallbackPediaIcons = path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt');
+  const fallbackCivilopedia = path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  writeFile(fallbackPediaIcons, buildFallbackPediaIconsText());
+  writeFile(fallbackCivilopedia, buildFallbackCivilopediaText());
+  writeSafePediaIcons(scenarioPediaIcons);
+  writeFile(scenarioCivilopedia, [
+    '#PRTO_Custom_Jet',
+    '^Custom jet.',
+    ''
+  ].join('\r\n'));
+
+  const bundle = attachScenarioTextSourceDetails(makeBundle(civ3Root), {
+    civilopediaScenario: scenarioCivilopedia,
+    civilopediaFallback: fallbackCivilopedia,
+    pediaIconsScenario: scenarioPediaIcons,
+    pediaIconsFallback: fallbackPediaIcons
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const codes = result.tabs.civilizations.general.map((entry) => entry.code).sort();
+  assert.deepEqual(codes, [
+    'scenario-civilopedia-suspiciously-small',
+    'scenario-pediaicons-era-splash-missing',
+    'scenario-pediaicons-suspiciously-small'
+  ]);
+  assert.match(
+    result.tabs.civilizations.general.find((entry) => entry.code === 'scenario-pediaicons-era-splash-missing').message,
+    /crash the game on era transitions/
+  );
+});
+
+test('auditLoadedBundle accepts healthy scenario-local Civilopedia and PediaIcons text', () => {
+  const civ3Root = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const fallbackPediaIcons = path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt');
+  const fallbackCivilopedia = path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt');
+  const scenarioPediaIcons = path.join(scenarioRoot, 'Text', 'PediaIcons.txt');
+  const scenarioCivilopedia = path.join(scenarioRoot, 'Text', 'Civilopedia.txt');
+  const pediaText = buildFallbackPediaIconsText();
+  const civilopediaText = buildFallbackCivilopediaText();
+  writeFile(fallbackPediaIcons, pediaText);
+  writeFile(fallbackCivilopedia, civilopediaText);
+  writeFile(scenarioPediaIcons, pediaText);
+  writeFile(scenarioCivilopedia, civilopediaText);
+
+  const bundle = attachScenarioTextSourceDetails(makeBundle(civ3Root), {
+    civilopediaScenario: scenarioCivilopedia,
+    civilopediaFallback: fallbackCivilopedia,
+    pediaIconsScenario: scenarioPediaIcons,
+    pediaIconsFallback: fallbackPediaIcons
   });
 
   const result = auditLoadedBundle(bundle);
@@ -652,6 +1752,82 @@ test('auditLoadedBundle reports Civilopedia link target case mismatches only for
     result.tabs.improvements.sections['0'][0].message,
     /Civilopedia link target "BLDG_Resin_Shop" differs in case from actual key "BLDG_RESIN_SHOP"/
   );
+});
+
+test('auditLoadedBundle reports Civilopedia links to missing entries', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      units: {
+        entries: [
+          {
+            name: 'Arctic Ape',
+            civilopediaKey: 'PRTO_ARCTIC_APE',
+            iconPaths: [],
+            civilopediaSection1: 'Available to $LINK<Trolls=RACE_Trolls> and uses $LINK<Summons=GCON_Summoning>.',
+            civilopediaSection2: ''
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      improvements: { entries: [] },
+      gameConcepts: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 2);
+  const messages = result.tabs.units.sections['0'].map((entry) => entry.message);
+  assert.match(messages[0], /Civilopedia link target "RACE_Trolls" has no matching entry/);
+  assert.match(messages[1], /Civilopedia link target "GCON_Summoning" has no matching entry/);
+});
+
+test('auditLoadedBundle ignores missing Civilopedia link targets that are not Civ3 pedia keys', () => {
+  const civ3Root = mkTmpDir();
+  const bundle = makeBundle(civ3Root, {
+    tabs: {
+      base: {
+        rows: [
+          { key: 'day_night_cycle_mode', value: 'off' },
+          { key: 'enable_districts', value: 'false' }
+        ]
+      },
+      units: {
+        entries: [
+          {
+            name: 'Arctic Ape',
+            civilopediaKey: 'PRTO_ARCTIC_APE',
+            iconPaths: [],
+            civilopediaSection1: 'Lore $LINK<Trolls=Trolls>.',
+            civilopediaSection2: ''
+          }
+        ]
+      },
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      governments: { entries: [] },
+      improvements: { entries: [] },
+      districts: { model: { sections: [] } },
+      wonders: { model: { sections: [] } },
+      naturalWonders: { model: { sections: [] } }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  assert.equal(result.totalWarnings, 0);
 });
 
 test('auditLoadedBundle accepts links matching raw mixed-case Civilopedia keys', () => {
@@ -872,7 +2048,8 @@ test('auditLoadedBundle reports C3X base references that do not match loaded rul
           { key: 'resource_perfume', value: '["Films": 20, "Missing Resource": 1]' },
           { key: 'government_perfume', value: '["Democracy": 1, "Missing Government": 2]' },
           { key: 'work_area_improvements', value: '["Aqueduct": 3, "Missing Building": 2]' },
-          { key: 'unit_limits', value: '["Settler": 1 per-city, "Missing Unit": 1]' },
+          { key: 'unit_limit_groups', value: '["Infantry Units": "Warrior" "Archer" "Missing Group Unit"]' },
+          { key: 'unit_limits', value: '["Settler": 1 per-city, "Infantry Units": 4, "Missing Unit": 1]' },
           { key: 'can_bombard_only_sea_tiles', value: '["Battleship" "Missing Boat"]' },
           { key: 'great_wall_auto_build_wonder_name', value: '"Hollywood"' }
         ]
@@ -913,7 +2090,9 @@ test('auditLoadedBundle reports C3X base references that do not match loaded rul
   assert.ok(messages.some((msg) => /resource_perfume.+Missing Resource/.test(msg)));
   assert.ok(messages.some((msg) => /government_perfume.+Missing Government/.test(msg)));
   assert.ok(messages.some((msg) => /work_area_improvements.+Missing Building/.test(msg)));
+  assert.ok(messages.some((msg) => /unit_limit_groups.+Missing Group Unit/.test(msg)));
   assert.ok(messages.some((msg) => /unit_limits.+Missing Unit/.test(msg)));
+  assert.equal(messages.some((msg) => /unit_limits.+Infantry Units/.test(msg)), false);
   assert.ok(messages.some((msg) => /can_bombard_only_sea_tiles.+Missing Boat/.test(msg)));
   assert.ok(messages.some((msg) => /great_wall_auto_build_wonder_name.+Hollywood/.test(msg)));
   assert.equal(messages.some((msg) => /buildings_generating_resources.+Films/.test(msg)), false);
@@ -1147,6 +2326,78 @@ test('auditLoadedBundle reports invalid animation frame-time syntax without reje
   const invalidSectionMessages = result.tabs.animations.sections['1'] || [];
   assert.equal(validSectionMessages.some((entry) => /frame_time_seconds/i.test(entry.message)), false);
   assert.ok(invalidSectionMessages.some((entry) => /frame_time_seconds.+invalid decimal value "fast"/i.test(entry.message)));
+});
+
+test('auditLoadedBundle stages repair action for malformed tile animation INI files', () => {
+  const c3xRoot = mkTmpDir();
+  const scenarioRoot = mkTmpDir();
+  const iniDir = path.join(c3xRoot, 'Art', 'Animations', 'Resources', 'Cow');
+  fs.mkdirSync(iniDir, { recursive: true });
+  fs.writeFileSync(path.join(iniDir, 'cow.flc'), Buffer.from('flc'));
+  fs.writeFileSync(path.join(iniDir, 'Cow.INI'), [
+    '[Animations]',
+    'DEFAULT=cow.flc',
+    'RUN=cow.flc',
+    '[Sound Effects]',
+    'DEFAULT=moo.wav',
+    ''
+  ].join('\r\n'), 'latin1');
+  const bundle = makeBundle(c3xRoot, {
+    mode: 'scenario',
+    scenarioPath: scenarioRoot,
+    tabs: {
+      animations: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Cow',
+              ini_path: 'Resources\\Cow\\Cow.INI',
+              type: 'resource'
+            })
+          ]
+        }
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const messages = result.tabs.animations.sections['0'] || [];
+  const issue = messages.find((entry) => entry.code === 'tile-animation-ini-invalid');
+  assert.ok(issue);
+  assert.match(issue.message, /ATTACK1 is blank/i);
+  assert.match(issue.message, /extra animation slots/i);
+  assert.match(issue.message, /sound effects/i);
+  assert.equal(issue.action.type, 'repair-tile-animation-ini');
+  assert.equal(issue.action.flcFileName, 'cow.flc');
+});
+
+test('auditLoadedBundle does not offer Tile Animation INI repairs in Standard Game mode', () => {
+  const c3xRoot = mkTmpDir();
+  const iniDir = path.join(c3xRoot, 'Art', 'Animations', 'Resources', 'Cow');
+  fs.mkdirSync(iniDir, { recursive: true });
+  fs.writeFileSync(path.join(iniDir, 'cow.flc'), Buffer.from('flc'));
+  fs.writeFileSync(path.join(iniDir, 'Cow.INI'), '[Animations]\nDEFAULT=cow.flc\nRUN=cow.flc\n', 'latin1');
+  const bundle = makeBundle(c3xRoot, {
+    mode: 'global',
+    tabs: {
+      animations: {
+        model: {
+          sections: [
+            makeSection({
+              name: 'Cow',
+              ini_path: 'Resources\\Cow\\Cow.INI',
+              type: 'resource'
+            })
+          ]
+        }
+      }
+    }
+  });
+
+  const result = auditLoadedBundle(bundle);
+  const issue = (result.tabs.animations.sections['0'] || []).find((entry) => entry.code === 'tile-animation-ini-invalid');
+  assert.ok(issue);
+  assert.equal(issue.action, undefined);
 });
 
 test('auditLoadedBundle allows empty bitfield-list base values', () => {

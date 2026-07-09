@@ -4,12 +4,12 @@ const path = require('node:path');
 
 const TEST_DIR = path.resolve(__dirname, '..', 'test');
 
-const MAP_CRITICAL_TESTS = new Set([
-  'biqMapCritical.test.js'
+const MAP_TESTS = new Set([
+  'biqMap.test.js'
 ]);
 
 const BIQ_TESTS = new Set([
-  'biqMapCritical.test.js',
+  'biqMap.test.js',
   'biqRoundtrip.test.js',
   'catalogParity.test.js',
   'civilizationsParity.test.js',
@@ -24,7 +24,12 @@ const BIQ_TESTS = new Set([
   'unitsParity.test.js'
 ]);
 
-const TIERS = new Set(['fast', 'map-critical', 'biq', 'full']);
+const SAV_DEBUG_TESTS = new Set([
+  'savBiqExtract.test.js',
+  'savInspect.test.js'
+]);
+
+const TIERS = new Set(['fast', 'map', 'biq', 'sav-debug', 'full']);
 
 function listTestFiles() {
   return fs.readdirSync(TEST_DIR)
@@ -38,14 +43,15 @@ function listTestFiles() {
 
 function getTierFiles(tier) {
   const files = listTestFiles();
-  if (tier === 'full') return files;
-  if (tier === 'map-critical') return files.filter((file) => MAP_CRITICAL_TESTS.has(file.name));
+  if (tier === 'full') return files.filter((file) => !SAV_DEBUG_TESTS.has(file.name));
+  if (tier === 'map') return files.filter((file) => MAP_TESTS.has(file.name));
   if (tier === 'biq') return files.filter((file) => BIQ_TESTS.has(file.name));
-  return files.filter((file) => !BIQ_TESTS.has(file.name));
+  if (tier === 'sav-debug') return files.filter((file) => SAV_DEBUG_TESTS.has(file.name));
+  return files.filter((file) => !BIQ_TESTS.has(file.name) && !SAV_DEBUG_TESTS.has(file.name));
 }
 
 function printUsage() {
-  console.error('Usage: node scripts/run-tests.js [fast|map-critical|biq|full] [-- node --test args]');
+  console.error('Usage: node scripts/run-tests.js [fast|map|biq|sav-debug|full] [-- node --test args]');
 }
 
 const separatorIndex = process.argv.indexOf('--');

@@ -12,7 +12,7 @@
 // components (e.g. /Users/johndoe/...) are never written to the log.
 //
 // In-app debug log forwarding:
-//   log.setForwarder((level, category, msg) => { ... });
+//   log.setForwarder((entry) => { ... });
 //   Call this from main.js after the BrowserWindow is ready to forward log
 //   entries to the renderer's in-app debug log panel via IPC.
 
@@ -143,8 +143,20 @@ function _dispatch(level, category, msg) {
   }
   _writeFileLine(formatted);
   if (_forwarder) {
-    try { _forwarder(level, category, msg); } catch (_) {}
+    try { _forwarder({ level, category, msg, formatted }); } catch (_) {}
   }
+}
+
+function writeFormatted(formatted, level = 'DBG') {
+  const line = String(formatted || '').trimEnd();
+  if (!line) return;
+  const normalizedLevel = String(level || '').trim().toUpperCase();
+  if (!_inTest) {
+    if (normalizedLevel === 'WRN') console.warn(line);
+    else if (normalizedLevel === 'ERR') console.error(line);
+    else console.log(line);
+  }
+  _writeFileLine(line);
 }
 
 function debug(category, msg) { _dispatch('DBG', category, msg); }
@@ -157,6 +169,7 @@ module.exports = {
   info,
   warn,
   error,
+  writeFormatted,
   rel,
   relList,
   setCiv3Root,

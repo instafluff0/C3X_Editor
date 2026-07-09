@@ -39,3 +39,24 @@ test('Map art previews prioritize BIQ scenario search roots', () => {
     'map art loader should resolve PCX assets from the active scenario roots'
   );
 });
+
+test('Map district previews do not treat fully transparent crops as drawable art', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function rgbaPreviewHasVisiblePixels\(preview\)[\s\S]*?decoded\.rgba\[i\] > 0/,
+    'map district previews should inspect alpha before accepting a crop as visible'
+  );
+  assert.match(
+    text,
+    /function rgbaPreviewToVisibleCanvas\(preview,[\s\S]*?biq-map:transparent-district-preview[\s\S]*?return null;/,
+    'transparent district crops should log and fall back instead of suppressing the marker'
+  );
+  assert.match(
+    text,
+    /requestBiqMapDistrictCanvas[\s\S]*?rgbaPreviewToVisibleCanvas\(preview, cacheKey,/,
+    'ordinary map district cells should use the visible-canvas guard'
+  );
+});

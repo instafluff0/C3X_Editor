@@ -70,6 +70,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const borderFactor = Math\.max\(1, parseFieldInt\(ruleRecord, 'borderfactor', 10\)\);[\s\S]*?cityCulture = Math\.floor\(cityCulture \/ borderFactor\);/,
+    'map border influence should use the BIQ Border Factor instead of hard-coded culture thresholds'
+  );
+  assert.match(
+    rendererText,
     /const drawHoverBorder = \(hit\) => \{[\s\S]*?shadowColor = 'rgba\(196, 149, 255, 0\.52\)'[\s\S]*?hoverGradient\.addColorStop\(1, 'rgba\(244, 158, 255, 0\.96\)'\)[\s\S]*?drawTileDiamondPath\(hoverCtx, cx, cy, Math\.max\(3, Math\.round\(tilePx \/ 3\.8\)\)\);/,
     'hover border should draw a lighter inset purple-gradient diamond around the hovered tile'
   );
@@ -78,6 +83,13 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     /const BIQ_TERRAIN_LM_ATLAS_FILES = \[[\s\S]*?'Art\/Terrain\/lxtgc\.pcx'[\s\S]*?'Art\/Terrain\/lxpgc\.pcx'[\s\S]*?'Art\/Terrain\/lxdgc\.pcx'[\s\S]*?'Art\/Terrain\/lxdpc\.pcx'[\s\S]*?'Art\/Terrain\/lxdgp\.pcx'[\s\S]*?'Art\/Terrain\/lxggc\.pcx'[\s\S]*?'Art\/Terrain\/lwCSO\.pcx'[\s\S]*?'Art\/Terrain\/lwSSS\.pcx'[\s\S]*?'Art\/Terrain\/lwOOO\.pcx'[\s\S]*?\];[\s\S]*?BIQ_TERRAIN_LM_ATLAS_FILES\.forEach\(\(assetPath, idx\) => \{[\s\S]*?requestBiqMapArtAsset\(`terrain-lm-\$\{idx\}`, assetPath\);[\s\S]*?\}\);/,
     'map renderer should load the full landmark terrain atlas family alongside the standard base terrain atlases'
   );
+  assert.ok(
+    rendererText.includes("label: 'Special Terrain Labels'")
+      && rendererText.includes("title: 'Show special terrain markers'")
+      && rendererText.includes("setMapDisplayOptionVisible('biqMapShowLandmarks', nextVisible, source, 'special-terrain-toggle');")
+      && rendererText.includes("terrainVariantDeepwaterHarbor: false"),
+    'map display controls should label the marker toggle as special terrain and include Deepwater Harbor paint state'
+  );
   assert.match(
     rendererText,
     /const canUseRecordDiffUndoForPaint = \(\) => \{[\s\S]*?mode === 'terrain'[\s\S]*?mode === 'resource'[\s\S]*?mode === 'visibility'[\s\S]*?mode === 'fog'[\s\S]*?\};[\s\S]*?const canUseRecordDiffUndoForSelectedTileEdit = \(kind, spec = null\) => \{[\s\S]*?kind === 'terrainVariants'[\s\S]*?kind === 'resource'[\s\S]*?kind === 'visibility'/,
@@ -85,13 +97,134 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /async function undoMapOneStep\(\) \{[\s\S]*?appendDebugLog\('biq-map:undo-start', \{[\s\S]*?const restorePrepareStartedAt = mapPerfNowMs\(\);[\s\S]*?const historyBuildStartedAt = mapPerfNowMs\(\);[\s\S]*?appendDebugLog\('biq-map:undo-end', \{[\s\S]*?restorePrepareMs,[\s\S]*?historyBuildMs,[\s\S]*?applyMs:[\s\S]*?totalMs:/,
+    /async function undoMapOneStep\(\) \{[\s\S]*?flushDirtyUiRefresh\(\);[\s\S]*?commitActiveMapEditSessions\(\);[\s\S]*?appendDebugLog\('biq-map:undo-start', \{[\s\S]*?const restorePrepareStartedAt = mapPerfNowMs\(\);[\s\S]*?const historyBuildStartedAt = mapPerfNowMs\(\);[\s\S]*?appendDebugLog\('biq-map:undo-end', \{[\s\S]*?restorePrepareMs,[\s\S]*?historyBuildMs,[\s\S]*?applyMs:[\s\S]*?totalMs:/,
     'map undo should log restore preparation, history rebuild, and apply timings so remaining undo stalls can be profiled directly'
   );
   assert.match(
     rendererText,
     /const getTerrainAtlasCacheKey = \(fileIdx, useLandmarkAtlas = false\) => \{[\s\S]*?if \(useLandmarkAtlas && idx < BIQ_TERRAIN_LM_ATLAS_FILES\.length\) return `terrain-lm-\$\{idx\}`;[\s\S]*?return `terrain-\$\{idx\}`;[\s\S]*?\};[\s\S]*?const drawTerrainSpriteToContext = \(drawCtx, record, geom, sx, sy, drawW = tileW, drawH = tileH\) => \{[\s\S]*?const useLandmarkAtlas = terrainVariantStateForTile\(record\)\.landmark;[\s\S]*?drawTerrainAtlasSpriteToContext\([\s\S]*?useLandmarkAtlas[\s\S]*?\);/,
     'map terrain rendering should switch flat tile atlases to the landmark sheets when the tile has the LM variant'
+  );
+  assert.ok(
+    rendererText.includes('const terrainSupportsDeepwaterHarbor = (terrainCode) => terrainCode === BIQ_TERRAIN.SEA;')
+      && rendererText.includes("key: 'terrainVariantDeepwaterHarbor'")
+      && rendererText.includes("label: 'Deepwater Harbor'")
+      && rendererText.includes('deepwaterHarbor: terrainSupportsDeepwaterHarbor(code)')
+      && rendererText.includes('state.mapEditorTool.terrainVariantDeepwaterHarbor = nextState.deepwaterHarbor;'),
+    'Sea terrain paint should expose Deepwater Harbor as a conditional terrain variant without storing it in c3c bonus bits'
+  );
+  assert.ok(
+    rendererText.includes('biqMapShowYields: false')
+      && rendererText.includes('biqMapShowCities: true')
+      && rendererText.includes('biqMapShowUnits: true')
+      && rendererText.includes('biqMapShowResources: true')
+      && rendererText.includes('biqMapShowDistricts: true')
+      && rendererText.includes('biqMapShowNaturalWonders: true')
+      && rendererText.includes('biqMapShowTerritoryBorders: true')
+      && rendererText.includes('biqMapShowStartingLocations: true')
+      && rendererText.includes('biqMapShowVictoryPoints: true')
+      && rendererText.includes('biqMapShowTerrainForests: true')
+      && rendererText.includes('biqMapShowTerrainHills: true')
+      && rendererText.includes('biqMapShowTerrainMountains: true')
+      && rendererText.includes('biqMapShowTerrainRivers: true')
+      && rendererText.includes('biqMapShowYields: !!state.biqMapShowYields')
+      && rendererText.includes('state.biqMapShowYields = snapshot.biqMapShowYields === true;')
+      && rendererText.includes('state.biqMapShowStartingLocations = snapshot.biqMapShowStartingLocations !== false;')
+      && rendererText.includes('state.biqMapShowVictoryPoints = snapshot.biqMapShowVictoryPoints !== false;')
+      && rendererText.includes('state.biqMapShowTerrainForests = snapshot.biqMapShowTerrainForests !== false;')
+      && rendererText.includes('state.biqMapShowTerrainHills = snapshot.biqMapShowTerrainHills !== false;')
+      && rendererText.includes('state.biqMapShowTerrainMountains = snapshot.biqMapShowTerrainMountains !== false;')
+      && rendererText.includes('state.biqMapShowTerrainRivers = snapshot.biqMapShowTerrainRivers !== false;')
+      && rendererText.includes("displayOptionsToggle.innerHTML = '<span class=\"btn-icon\">▦</span>Display';")
+      && rendererText.includes("type: 'heading', label: 'View Aids'")
+      && rendererText.includes("label: 'Grid'")
+      && rendererText.includes("label: 'Special Terrain Labels'")
+      && rendererText.includes("label: 'Base Yields'")
+      && rendererText.includes("type: 'heading', label: 'Terrain'")
+      && rendererText.includes("label: 'Forests/Jungles'")
+      && rendererText.includes("label: 'Hills'")
+      && rendererText.includes("label: 'Mountains/Volcanoes'")
+      && rendererText.includes("label: 'Rivers'")
+      && rendererText.includes("type: 'heading', label: 'Map Features'")
+      && rendererText.includes("label: 'Tile Improvements'")
+      && rendererText.includes("type: 'heading', label: 'Map Objects'")
+      && rendererText.includes("label: 'Cities'")
+      && rendererText.includes("label: 'Units'")
+      && rendererText.includes("label: 'Resources'")
+      && rendererText.includes("label: 'Districts'")
+      && rendererText.includes("label: 'Natural Wonders'")
+      && rendererText.includes("type: 'heading', label: 'Scenario Markers'")
+      && rendererText.includes("label: 'Territory/Borders'")
+      && rendererText.includes("label: 'Starting Locations'")
+      && rendererText.includes("label: 'Victory Points'"),
+    'map display controls should expose persisted display options in a compact checked Display menu'
+  );
+  assert.ok(
+    /const makeDisplayOptionToggle = \(\{ check, label, title, toggle \}\) => \{[\s\S]*?wrap\.addEventListener\('pointerdown', \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?wrap\.addEventListener\('click', \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?toggle\(\);[\s\S]*?displayOptionsMenu\.hidden = false;/.test(rendererText)
+      && rendererText.includes("toggle: () => setMapGridVisible(!state.biqMapShowGrid, 'menu')")
+      && rendererText.includes("toggle: () => setMapYieldsVisible(!state.biqMapShowYields, 'menu')")
+      && /displayOptionsMenu\.addEventListener\('pointerdown', \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?\}\);/.test(rendererText)
+      && rendererText.includes("heading.className = 'map-display-option-heading';"),
+    'map display menu rows and panel gaps should keep the dropdown open while committing checkbox changes directly'
+  );
+  assert.match(
+    stylesText,
+    /\.biq-map-floating-top-left \{[\s\S]*?z-index: 30;[\s\S]*?\.biq-map-floating-right \{[\s\S]*?z-index: 10;[\s\S]*?\.map-display-options-menu \{[\s\S]*?z-index: 40;/,
+    'floating Display dropdown should stack above the Tile Info panel'
+  );
+  assert.match(
+    rendererText,
+    /requestBiqMapArtAsset\('cityIcons', 'Art\/city screen\/CityIcons\.pcx'\);[\s\S]*?const CITY_YIELD_ICON_CROP = Object\.freeze\(\{[\s\S]*?cellSize: 30,[\s\S]*?pitch: 31,[\s\S]*?border: 1,[\s\S]*?visibleInsetX: 8,[\s\S]*?packedAdvance: 16,[\s\S]*?food: 15,[\s\S]*?shields: 13,[\s\S]*?commerce: 14[\s\S]*?\}\);[\s\S]*?const cropX = CITY_YIELD_ICON_CROP\.border \+ \(iconIndex \* CITY_YIELD_ICON_CROP\.pitch\);[\s\S]*?CITY_YIELD_ICON_CROP\.cellSize,/,
+    'map yield overlays should load scenario-aware CityIcons.pcx and crop the 30px icons from the verified 1px-border/31px-pitch strip'
+  );
+  assert.match(
+    rendererText,
+    /const iconAdvance = Math\.max\(5, Math\.round\(iconSize \* \(CITY_YIELD_ICON_CROP\.packedAdvance \/ CITY_YIELD_ICON_CROP\.cellSize\)\)\);[\s\S]*?const visibleInsetX = Math\.round\(iconSize \* \(CITY_YIELD_ICON_CROP\.visibleInsetX \/ CITY_YIELD_ICON_CROP\.cellSize\)\);[\s\S]*?const logicalCenter = tileLogicalCenter\(sx, sy\);[\s\S]*?const totalWidth = icons\.length <= 1[\s\S]*?iconAdvance \* icons\.length;[\s\S]*?if \(totalWidth > tileW - Math\.round\(10 \* tileScale\) && icons\.length > 1\) \{[\s\S]*?step = Math\.floor\(\(fitWidth - iconAdvance\) \/ \(icons\.length - 1\)\);[\s\S]*?const startX = Math\.round\(logicalCenter\.cx - halfWidth - visibleInsetX\);[\s\S]*?const drawY = Math\.round\(logicalCenter\.cy - \(iconSize \/ 2\)\);/,
+    'map yield overlays should use C3X-style centered row math with CityIcons packed visible-width advancement'
+  );
+  assert.match(
+    rendererText,
+    /const calculateMapRuleTileYield = \(record\) => \{[\s\S]*?const terrainRecord = terrainYieldRecordsByIndex\.get\(parseIntLoose\(info\.realTerrain, -1\)\);[\s\S]*?const useLandmark = !!\(variant && variant\.landmark\);[\s\S]*?if \(hasIrrigation\) food \+= mapYieldRecordInt\(terrainRecord, useLandmark \? 'landmarkfoodbonus' : 'foodbonus', 0\);[\s\S]*?if \(hasMine\) shields \+= mapYieldRecordInt\(terrainRecord, useLandmark \? 'landmarkshieldsbonus' : 'shieldsbonus', 0\);[\s\S]*?if \(hasRoad\) commerce \+= mapYieldRecordInt\(terrainRecord, useLandmark \? 'landmarkcommercebonus' : 'commercebonus', 0\);[\s\S]*?if \(hasRailroad && hasIrrigation\) food \+= 1;[\s\S]*?if \(hasRailroad && hasMine\) shields \+= 1;[\s\S]*?if \(variant && variant\.bonusGrassland\) shields \+= 1;[\s\S]*?if \(riverMask !== 0\) commerce \+= 1;[\s\S]*?const resourceRecord = resourceYieldRecordsByIndex\.get\(resourceId\);[\s\S]*?food \+= mapYieldRecordInt\(resourceRecord, 'foodbonus', 0\);/,
+    'map-rule yield calculation should combine terrain, landmark, improvements, railroad, bonus grassland, river, and resource bonuses while ignoring player/city state'
+  );
+  assert.ok(
+    rendererText.includes('const applyDeepwaterHarborToIndexes = (indexes, bonusMask = null) => {')
+      && rendererText.includes('mapCore.applyDeepwaterHarborTerrain(tile, BIQ_TERRAIN, BIQ_TILE_BONUS, bonusMask)')
+      && rendererText.includes("appendDebugLog('biq-map:deepwater-harbor-apply'")
+      && rendererText.includes('const deepwaterHarbor = terrainSupportsDeepwaterHarbor(terrainCode)')
+      && rendererText.includes('const changedIndexes = applyDeepwaterHarborToIndexes(indices, variantMask);')
+      && rendererText.includes("setStatus('Deepwater Harbor can only be painted onto Coast tiles.');"),
+    'Deepwater Harbor paint should use the special Coast-to-Sea path and report invalid target tiles'
+  );
+  assert.ok(
+    rendererText.includes('const tileHasPreservedDeepwaterGraphics = (tileIndex) => {')
+      && rendererText.includes('const expectedSea = computeSeaTerrainSpriteSpecAt(tileIndex);')
+      && rendererText.includes('stored.fileIdx !== expectedSea.fileIdx || stored.imageIdx !== expectedSea.imageIdx')
+      && rendererText.includes('&& tileHasPreservedDeepwaterGraphics(tileIndex);'),
+    'Deepwater Harbor detection should require preserved non-Sea graphics so normal Sea tiles are not mislabeled'
+  );
+  assert.ok(
+    rendererText.includes('const preserveDeepwaterIndexes = collectDeepwaterHarborIndexesAround(seeds);')
+      && rendererText.includes('preserveDeepwaterSummary: summarizeTileIndexes(Array.from(preserveDeepwaterIndexes))')
+      && rendererText.includes('normalizeCoastlineAround(new Set([...normalizationSeeds, ...changedIndexes]), changedIndexes, preserveDeepwaterIndexes);'),
+    'normal Sea painting should only preserve Deepwater Harbor tiles that existed before the terrain stroke'
+  );
+  assert.match(
+    rendererText,
+    /const recalculateTerrainFileAndImageAt = \(xPos, yPos\) => \{[\s\S]*?if \(isDeepwaterHarborTile\(southIdx\)\) return;[\s\S]*?const southBase = terrainInfo\(southTile\)\.baseTerrain;/,
+    'terrain sprite recalculation should preserve only tightly detected Deepwater Harbor file/image graphics during later neighboring terrain edits'
+  );
+  assert.match(
+    rendererText,
+    /const normalizeCoastlineAround = \(seedIndexes, changedIndexes, preserveDeepwaterIndexes = null\) => \{[\s\S]*?if \(!isWaterTerrain\(info\.baseTerrain\)\) return;[\s\S]*?if \(preserveDeepwaterIndexes && preserveDeepwaterIndexes\.has\(idx\)\) return;[\s\S]*?const touchesLand = mapTileNeighborIndexes\(idx\)\.some/,
+    'coastline normalization should protect only preexisting Deepwater Harbor tiles, not newly painted normal Sea'
+  );
+  assert.ok(
+    rendererText.includes("specialMarkers.push({ text: 'DH', tone: 'rgba(26, 118, 168, 0.92)' });")
+      && rendererText.includes('drawVariantBadgeCentered(marker.text, marker.tone, idx, specialMarkers.length);')
+      && rendererText.includes("drawTerrainPreviewBadge(hoverCtx, logical, 'DH');")
+      && rendererText.includes("addOptionSummary(host, 'Special Terrain: Deepwater Harbor');"),
+    'Deepwater Harbor tiles should get visible DH map markers, paint-preview badges, and selected-tile detail text'
   );
   assert.match(
     rendererText,
@@ -122,7 +255,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.ok(
     rendererText.includes("function isBridgeDistrictSection(section) {")
-      && rendererText.includes("const tileHasBridgeDistrictAt = (xPos, yPos) => {")
+      && rendererText.includes("function tileHasBridgeDistrictAt(xPos, yPos) {")
       && rendererText.includes("function getBridgeImageIndex(record, geom) {")
       && rendererText.includes("if ((c3cOverlays & 0x00000002) === 0x00000002) {")
       && rendererText.includes("if (swNeCount === 2) return swNe;")
@@ -150,7 +283,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.ok(
     rendererText.includes("function isGreatWallDistrictSection(section) {")
-      && rendererText.includes("const tileHasGreatWallDistrictAtWithOwnerId = (xPos, yPos, ownerId) => {")
+      && rendererText.includes("function tileHasGreatWallDistrictAtWithOwnerId(xPos, yPos, ownerId) {")
       && rendererText.includes("function getGreatWallDistrictConnections(record, geom) {")
       && rendererText.includes("parseIntLoose(ownerInfo.ownerId, -1) === parseIntLoose(ownerId, -1)")
       && rendererText.includes("function requestBiqMapGreatWallAtlasCanvas(section, options = {}) {")
@@ -173,8 +306,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const getMapSupportSection = \(sectionCode\) => \{[\s\S]*?if \(code === 'TERR' \|\| code === 'TFRM'\) return getBiqSectionFromTab\(terrainSupportTab, code\);[\s\S]*?if \(code === 'ERAS'\) return getBiqSectionFromTab\(worldSupportTab, code\);[\s\S]*?if \(code === 'RULE'\) return getBiqSectionFromTab\(rulesSupportTab, code\);[\s\S]*?if \(code === 'LEAD'\) return getBiqSectionFromTab\(playersSupportTab, code\);[\s\S]*?return null;[\s\S]*?\};[\s\S]*?const terrainSectionForPicker = getMapSupportSection\('TERR'\);/,
-    'map toolbar pickers should fall back to the loaded Terrain/World/Rules/Players BIQ tabs when the scenario map tab lacks those sections'
+    /const getReferenceBiqSectionFromTab = \(referenceTab, code\) => \{[\s\S]*?fields: Array\.isArray\(entry && entry\.biqFields\) \? entry\.biqFields : \[\][\s\S]*?const getMapSupportSection = \(sectionCode\) => \{[\s\S]*?if \(code === 'RACE'\) return getReferenceBiqSectionFromTab\(civilizationReferenceTab, code\);[\s\S]*?if \(code === 'TERR' \|\| code === 'TFRM'\) return getBiqSectionFromTab\(terrainSupportTab, code\);[\s\S]*?if \(code === 'ERAS'\) return getBiqSectionFromTab\(worldSupportTab, code\);[\s\S]*?if \(code === 'RULE'\) return getBiqSectionFromTab\(rulesSupportTab, code\);[\s\S]*?if \(code === 'LEAD'\) return getBiqSectionFromTab\(playersSupportTab, code\);[\s\S]*?return null;[\s\S]*?\};[\s\S]*?const terrainSectionForPicker = getMapSupportSection\('TERR'\);/,
+    'map toolbar pickers should fall back to the loaded Civs/Terrain/World/Rules/Players BIQ tabs when the scenario map tab lacks those sections'
   );
   assert.match(
     rendererText,
@@ -195,6 +328,21 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     rendererText,
     /async function refreshPendingImportedResourceIconAssignments\(tab = null\) \{[\s\S]*?const ops = getActiveImportedIconOps\(resourceTab\);[\s\S]*?const firstSlot = getNextResourcePreviewAssignmentSlot\(preview, resourceTab, ops\);[\s\S]*?const targetIconIndex = firstSlot \+ offset;[\s\S]*?entry\._pendingImportedResourceIcon = \{[\s\S]*?sourceIconIndex,[\s\S]*?targetIconIndex,[\s\S]*?\};[\s\S]*?iconField\.value = String\(targetIconIndex\);/,
     'resource imports should assign the predicted target slot to active imported entries before Save'
+  );
+  assert.match(
+    rendererText,
+    /function renderResourceLuxuryIconPreview\(entry\) \{[\s\S]*?if \(!isLuxuryResourceEntry\(entry\)\) return null;[\s\S]*?const luxuryIndex = getResourceLuxuryOrdinal\(resourceTab, entry\);[\s\S]*?label\.textContent = 'Luxuryicons_small\.pcx Icon';[\s\S]*?const drawPromise = pending[\s\S]*?drawPendingImportedLuxuryIconToCanvas\(entry, canvas\)[\s\S]*?: getLuxuryIconsSmallAtlasPreview\(\)\.then\(\(preview\) => drawLuxuryIconToCanvas\(preview, luxuryIndex, canvas\)\)/,
+    'Luxury resources should render a read-only city luxury icon preview from luxuryicons_small.pcx'
+  );
+  assert.doesNotMatch(
+    rendererText.match(/function getResourceTypeValue\(entry\) \{[\s\S]*?\n\}/)[0],
+    /cleanDisplayText/,
+    'renderer Resource type detection should not call config-only cleanDisplayText'
+  );
+  assert.match(
+    rendererText,
+    /if \(isLuxuryResourceEntry\(result\.importedEntry\) && Number\.isFinite\(sourceLuxuryIndex\) && sourceLuxuryIndex >= 0\) \{[\s\S]*?newEntry\._pendingImportedLuxuryIcon = \{[\s\S]*?sourceIconIndex: sourceLuxuryIndex,[\s\S]*?targetIconIndex: null,[\s\S]*?importScenarioPath: String\(result\.importFilePath \|\| ''\)[\s\S]*?\};/,
+    'pending imported Luxury resources should keep source luxury slot metadata for pre-save preview'
   );
   assert.match(
     rendererText,
@@ -228,8 +376,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const mapOwnerPickerValueForPlayer = \(playerId\) => `player:\$\{playerId\}`;[\s\S]*?const mapOwnerPickerValueForCivilization = \(civId\) => `civ:\$\{civId\}`;[\s\S]*?const getMapOwnerPickerOptions = \(\) => \{[\s\S]*?leadRecordsForOwner\.length > 0[\s\S]*?: civilizationEntriesForOwner[\s\S]*?ownerType:\s*2,[\s\S]*?const resolveMapOwnerSelection = \(value\) => \{[\s\S]*?const playerMatch = text\.match\(\/\^player:\(\\d\+\)\$\/\);[\s\S]*?const civMatch = text\.match\(\/\^civ:\(\\d\+\)\$\/\);[\s\S]*?return leadRecordsForOwner\.length > 0 \? \{ ownerType: 3, owner \} : \{ ownerType: 2, owner \};/,
-    'city and unit owner pickers should fall back to civilization-owned options when no LEAD player records are available'
+    /const mapOwnerPickerValueForPlayer = \(playerId\) => `player:\$\{playerId\}`;[\s\S]*?const mapOwnerPickerValueForCivilization = \(civId\) => `civ:\$\{civId\}`;[\s\S]*?const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?if \(ownerType === 1\) \{[\s\S]*?return barbarianOption \? \[barbarianOption\] : \[\];[\s\S]*?if \(ownerType === 3\) \{[\s\S]*?return leadRecordsForOwner\.map[\s\S]*?ownerType:\s*3,[\s\S]*?if \(ownerType === 2 \|\| !Number\.isFinite\(ownerType\)\) \{[\s\S]*?return civilizationEntriesForOwner[\s\S]*?civIndex: getReferenceEntryIndexForOption[\s\S]*?\.filter\(\(\{ entry, civIndex \}\) => civIndex !== 0 && !isBarbarianCivilizationEntry\(entry\)\)[\s\S]*?ownerType:\s*2,[\s\S]*?const resolveMapOwnerSelection = \(value, ownerTypeHint = null\) => \{[\s\S]*?if \(isBarbarianOwnerPickerValue\(value\)\) return \{ ownerType: 1, owner: 0 \};[\s\S]*?if \(playerMatch\) return \{ ownerType: 3, owner: parseIntLoose\(playerMatch\[1\], 0\) \};[\s\S]*?if \(civMatch\) return \{ ownerType: 2, owner: parseIntLoose\(civMatch\[1\], 0\) \};/,
+    'city and unit owner pickers should scope direct barbarians, players, and civilizations by selected owner type'
   );
   assert.match(
     rendererText,
@@ -380,6 +528,11 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
     'File -> Settings should expose a default-on Units toggle for units_32 import updates'
   );
   assert.match(
+    mainText,
+    /label: 'Resources',[\s\S]*?label: 'Automatically Add Imported Resource Art',[\s\S]*?checked: currentAutoAddImportedResourceIcons,[\s\S]*?sendAutoAddImportedResourceIconsSelection\(item && item\.checked\)/,
+    'File -> Settings should describe the Resource import-art toggle broadly because it updates resources.pcx and luxuryicons_small.pcx'
+  );
+  assert.match(
     rendererText,
     /if \(typeof state\.settings\.reloadAfterSave !== 'boolean'\) \{[\s\S]*?state\.settings\.reloadAfterSave = false;[\s\S]*?\}/,
     'older saved settings should default Reload After Save to disabled'
@@ -396,8 +549,38 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const hasBiqSkippedEdits = !!\(biqReport && Number\(biqReport\.skipped \|\| 0\) > 0\);[\s\S]*?if \(!shouldReloadBundleAfterSave\(\)\) \{[\s\S]*?if \(hasBiqSkippedEdits\) \{[\s\S]*?kept BIQ changes dirty because the BIQ save reported skipped edits[\s\S]*?return true;[\s\S]*?markCurrentBundleCleanAfterSave\(/,
+    'no-reload saves should preserve dirty state only for skipped BIQ edits, not successful BIQ warnings'
+  );
+  assert.match(
+    rendererText,
     /function rerunQualityChecksAfterNoReloadSave\(\) \{[\s\S]*?void runBundleAudit\(buildAuditPayloadFromState\(\)\);[\s\S]*?\}/,
     'no-reload saves should rerun quality checks against the current in-memory bundle so stale warnings clear'
+  );
+  assert.match(
+    rendererText,
+    /function shouldDeferReferenceArtAuditForMapOpen\(\) \{[\s\S]*?const mapTab = state\.bundle\.tabs\.map;[\s\S]*?return !!\(mapTab && mapTab\.deferred && hasMapData\(mapTab\)\);[\s\S]*?\}/,
+    'deferred scenario maps should be able to postpone the broad reference-art audit while Open Map is still pending'
+  );
+  assert.match(
+    rendererText,
+    /function cloneAuditPayload\(payload\) \{[\s\S]*?return payload && typeof payload === 'object' \? \{ \.\.\.payload \} : null;[\s\S]*?\}/,
+    'audit option wrappers should shallow-copy the payload so the loaded bundle snapshot is not deep-cloned again for deferred map QA passes'
+  );
+  assert.match(
+    rendererText,
+    /function runInitialBundleAuditAfterLoad\(payload\) \{[\s\S]*?if \(shouldDeferReferenceArtAuditForMapOpen\(\)\) \{[\s\S]*?state\.pendingMapOpenAuditPayload = withReferenceArtAuditOption\(payload, false\);[\s\S]*?void runBundleAudit\(withReferenceArtAuditOption\(payload, true\)\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?void runBundleAudit\(payload\);[\s\S]*?\}/,
+    'initial Quality Checks should run without reference-art resolution for deferred maps and queue the full audit for after map materialization'
+  );
+  assert.match(
+    rendererText,
+    /const auditPayload = buildAuditPayloadFromState\(\{[\s\S]*?scenarioPath: state\.settings\.scenarioPath,[\s\S]*?scenarioSearchFolderOverride,[\s\S]*?includeBundleSnapshot: true[\s\S]*?\}\);[\s\S]*?runInitialBundleAuditAfterLoad\(auditPayload\);/,
+    'initial Quality Checks should reuse the just-loaded bundle snapshot instead of making the worker load the same scenario again'
+  );
+  assert.match(
+    rendererText,
+    /state\.mapTabLoadPromise = window\.c3xManager\.materializeMapTab\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?state\.mapTabLoadPromise = null;[\s\S]*?scheduleDeferredMapOpenAuditFlush\(\{ delayMs: 1000 \}\);[\s\S]*?\}\);/,
+    'Open Map materialization should flush the deferred full Quality Checks pass after the map critical path finishes'
   );
   assert.match(
     rendererText,
@@ -416,8 +599,28 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const dirtyTabSet = new Set\(Object\.keys\(\(state\.bundle && state\.bundle\.tabs\) \|\| \{\}\)\.filter\(\(key\) => getTabDirtyCount\(key\) > 0\)\);[\s\S]*?getPendingBiqOperationDirtyTabs\(tabsToSave\)\.forEach\(\(key\) => dirtyTabSet\.add\(key\)\);[\s\S]*?const dirtyTabs = Array\.from\(dirtyTabSet\);/,
+    /function getDirtyTabSetForSave\(allTabs = null\) \{[\s\S]*?const dirtyTabSet = new Set\(Object\.keys\(tabs\)\.filter\(\(key\) => getTabDirtyCount\(key\) > 0\)\);[\s\S]*?getPendingBiqOperationDirtyTabs\(tabs\)\.forEach\(\(key\) => dirtyTabSet\.add\(key\)\);[\s\S]*?return dirtyTabSet;[\s\S]*?\}/,
     'saveCurrentBundle should include pending BIQ operation tabs in dirtyTabs before calling saveBundle'
+  );
+  assert.match(
+    rendererText,
+    /function getTabsForSavePayload\(options = \{\}\) \{[\s\S]*?const dirtyTabs = options && options\.dirtyTabs instanceof Set \? options\.dirtyTabs : null;[\s\S]*?if \(key === 'map' && dirtyTabs && dirtyTabs\.size > 0 && !dirtyTabs\.has\('map'\)\) return;[\s\S]*?tabsToSave\[key\] = key === 'map'[\s\S]*?makeMapSavePayloadTab\(state\.bundle\.tabs\[key\]\)/,
+    'save payloads should omit a clean materialized map tab so opening a large map does not make unrelated saves clone every TILE record'
+  );
+  assert.match(
+    rendererText,
+    /function collectMapFieldEditSectionsForSave\(mapTab\) \{[\s\S]*?const editableMapSections = new Set\(\['WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'\]\);[\s\S]*?fields\.push\(deepCloneUiValue\(field\)\);[\s\S]*?sections\.push\(\{[\s\S]*?code: sectionCode,[\s\S]*?records[\s\S]*?\}\);[\s\S]*?return sections;[\s\S]*?\}/,
+    'map save payloads should be able to collect only edited existing map records for ordinary map field saves'
+  );
+  assert.match(
+    rendererText,
+    /function makeMapSavePayloadTab\(mapTab\) \{[\s\S]*?if \(hasFullMapPayloadWork\(mapTab\)\) return mapTab;[\s\S]*?const fieldEditSections = collectMapFieldEditSectionsForSave\(mapTab\);[\s\S]*?sections: fieldEditSections,[\s\S]*?scenarioDistricts: deepCloneUiValue\(mapTab\.scenarioDistricts \|\| null\)[\s\S]*?\}/,
+    'map save payloads should stay small for field-edit and C3X sidecar-only map changes while preserving full map payloads for structural map edits'
+  );
+  assert.match(
+    rendererText,
+    /const dirtyTabSet = getDirtyTabSetForSave\(\(state\.bundle && state\.bundle\.tabs\) \|\| \{\}\);[\s\S]*?const tabsToSave = getTabsForSavePayload\(\{ dirtyTabs: dirtyTabSet \}\);[\s\S]*?const dirtyTabs = Array\.from\(dirtyTabSet\);/,
+    'saveCurrentBundle should compute dirty tabs before building the pruned save payload'
   );
   assert.match(
     preloadText,
@@ -451,12 +654,12 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const BARBARIAN_OWNER_PICKER_VALUE = 'barbarian-civ';[\s\S]*?const getMapOwnerPickerOptions = \(\) => \{[\s\S]*?const barbarianOption = getBarbarianOwnerPickerOption\(\);[\s\S]*?if \(barbarianOption\) options\.push\(barbarianOption\);[\s\S]*?const addCityOwnerPicker = \(\) => \{[\s\S]*?const options = getMapOwnerPickerOptions\(\);[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value\);[\s\S]*?setMapFieldValue\(cityRecord, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(cityRecord, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?colocatedUnits\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?scheduleMapEditRerender\(0, \{[\s\S]*?territoryChanged:\s*true/,
+    /const BARBARIAN_OWNER_PICKER_VALUE = 'barbarian-civ';[\s\S]*?const getMapOwnerPickerOptions = \(ownerTypeRaw = null\) => \{[\s\S]*?return barbarianOption \? \[barbarianOption\] : \[\];[\s\S]*?const applyCityOwnerSelection = \(value, options = \{\}\) => \{[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value, getCityOwnerType\(\)\);[\s\S]*?setMapFieldValue\(cityRecord, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(cityRecord, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?colocatedUnits\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?scheduleMapEditRerender\(0, \{[\s\S]*?territoryChanged:\s*true/,
     'changing a city owner in tile info should also transfer any units on that same tile to the new owner and force an immediate territory-aware map rerender'
   );
   assert.match(
     rendererText,
-    /setMapFieldValue\(cityRecord, 'name', nextValue, 'Name'\);[\s\S]*?setDirty\(true\);[\s\S]*?scheduleMapPartialRefresh\(\[state\.biqMapSelectedTile\], 120, \{[\s\S]*?source: 'city-title'/,
+    /setMapFieldValue\(cityRecord, 'name', nextValue, 'Name'\);[\s\S]*?markCityDirty\('city-title'\);[\s\S]*?scheduleMapPartialRefresh\(\[state\.biqMapSelectedTile\], 120, \{[\s\S]*?source: 'city-title'/,
     'renaming a city should redraw only the selected map area instead of refreshing the whole map canvas'
   );
   assert.match(
@@ -466,18 +669,23 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
+    /const isCityWallsImprovementRecord = \(buildingRecord, improvementEntry\) => \{[\s\S]*?bldgwalls[\s\S]*?citywalls[\s\S]*?\};[\s\S]*?const syncCityWallsFlagFromBuildings = \(cityRecord, buildingSet, buildingRecords\) => \{[\s\S]*?setMapFieldValue\(cityRecord, 'haswalls', nextHasWalls, 'Has Walls'\);[\s\S]*?\};[\s\S]*?setCityBuildingSet\(cityRecord, currentSet\);[\s\S]*?const wallsChanged = syncCityWallsFlagFromBuildings\(cityRecord, currentSet, bldgRecords\);[\s\S]*?scheduleMapPartialRefresh\(refreshTileIndexes, 60, \{[\s\S]*?source: 'city-building'[\s\S]*?wallsChanged/,
+    'city Buildings edits should sync the game wall flag and use the existing partial redraw path so city wall art updates immediately'
+  );
+  assert.match(
+    rendererText,
     /const renderCityOptions = \(host, tile, geom\) => \{[\s\S]*?if \(!cityRecord\) \{[\s\S]*?tileInfoPanel\.style\.removeProperty\('--tile-info-owner-tint'\);[\s\S]*?tileInfoPanel\.classList\.remove\('tile-info-owner-tinted'\);/,
     'empty city tile-info state should clear any prior civ tint before rendering its neutral no-city card'
   );
   assert.match(
     rendererText,
-    /const ownerPicker = createReferencePicker\({[\s\S]*?onSelect: \(value\) => \{[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value\);[\s\S]*?units\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?const colocatedCity = getCityRecordForTile\(tile, geom\);[\s\S]*?if \(colocatedCity\) \{[\s\S]*?setMapFieldValue\(colocatedCity, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(colocatedCity, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}[\s\S]*?fullMapRerender:\s*!!colocatedCity/,
+    /const applyUnitOwnerSelection = \(value, options = \{\}\) => \{[\s\S]*?const ownerSpec = resolveMapOwnerSelection\(value, activeOwnerType\);[\s\S]*?units\.forEach\(\(record\) => \{[\s\S]*?setMapFieldValue\(record, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(record, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}\);[\s\S]*?const colocatedCity = getCityRecordForTile\(tile, geom\);[\s\S]*?if \(colocatedCity\) \{[\s\S]*?setMapFieldValue\(colocatedCity, 'ownertype', String\(ownerSpec\.ownerType\), 'Owner Type'\);[\s\S]*?setMapFieldValue\(colocatedCity, 'owner', String\(ownerSpec\.owner\), 'Owner'\);[\s\S]*?\}[\s\S]*?fullMapRerender:\s*!!colocatedCity/,
     'changing unit owners in tile info should also transfer any city on that tile and trigger a full map rerender when territory ownership changes'
   );
   assert.match(
     rendererText,
     /const getBarbarianOwnerPickerOption = \(\) => \{[\s\S]*?const entry = getBarbarianCivilizationPickerEntry\(\);[\s\S]*?return \{[\s\S]*?value: BARBARIAN_OWNER_PICKER_VALUE,[\s\S]*?ownerType: 1,[\s\S]*?owner: 0/,
-    'city and unit owner pickers should expose the barbarian civilization as a structured option that writes civ ownership'
+    'city and unit owner pickers should expose barbarians only through direct barbarian assignment'
   );
   assert.match(
     rendererText,
@@ -506,8 +714,8 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?\};[\s\S]*?const redrawMapCanvasInPlace = \(clipRects = null\) => \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-candidates'[\s\S]*?candidateCount: maxIdx \+ 1[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?if \(state\.biqMapLayer === 'terrain' && tilePx >= 4 && state\.biqMapShowOverlays\) \{[\s\S]*?for \(let i = 0; i <= maxIdx; i \+= 1\) \{/,
-    'partial map redraws should clip output to edit regions but still repaint the full tile iteration set so cleared redraw rects do not leave blank map holes'
+    /const redrawMapAfterTileChanges = \(changedIndexes, options = \{\}\) => \{[\s\S]*?const expandedIndexes = expandTileIndexesForRedraw\(changedIndexes, options\);[\s\S]*?redrawMapCanvasInPlace\(redrawRects\);[\s\S]*?\};[\s\S]*?const redrawMapCanvasInPlace = \(clipRects = null, renderOptions = \{\}\) => \{[\s\S]*?if \(useChunkedMapRenderer && !\(renderOptions && renderOptions\.chunkDraw\)\) \{[\s\S]*?redrawChunkedMapCanvas\(clipRects, \{ force: true \}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?const candidateIndexes = Array\.isArray\(renderOptions && renderOptions\.candidateIndexes\)[\s\S]*?const candidateCount = candidateIndexes \? candidateIndexes\.length : maxIdx \+ 1;[\s\S]*?candidateMode: candidateIndexes \? 'bounded' : 'full'[\s\S]*?for \(let drawPos = 0; drawPos < candidateCount; drawPos \+= 1\) \{[\s\S]*?const i = candidateTileIndexAt\(drawPos\);/,
+    'partial map redraws should clip output to edit regions, route oversized maps through chunks, and use bounded candidates only for chunk-internal repaints'
   );
   assert.match(
     rendererText,
@@ -516,7 +724,7 @@ test('Map canvas hover tooltip shows current grid coordinates', () => {
   );
   assert.match(
     rendererText,
-    /const hideHoverTooltip = \(reason = ''\) => \{[\s\S]*?hoverTooltip\.classList\.add\('hidden'\);[\s\S]*?hoverCtx\.clearRect\(0, 0, hoverCanvas\.width, hoverCanvas\.height\);[\s\S]*?appendDebugLog\('biq-map:hover-layer'/,
+    /const hideHoverTooltip = \(reason = ''\) => \{[\s\S]*?hoverTooltip\.classList\.add\('hidden'\);[\s\S]*?clearHoverLayer\(\);[\s\S]*?appendDebugLog\('biq-map:hover-layer'/,
     'hover-layer clears should emit explicit debug logs so paint-end overlay stalls can be compared against dirty-UI and minimap timings'
   );
   assert.match(
@@ -586,8 +794,33 @@ test('map unit overlay shifts sea and air units downward with zoom-scaled offset
 
   assert.match(
     rendererText,
-    /prtoClassById\[idx\]\s*=\s*normalizeUnitClassValue\(getFieldByBaseKey\(record,\s*'unitclass'\)\?\.value\);[\s\S]*?const unitClass = prtoClassById\[unitId\] \|\| 'land';[\s\S]*?const unitYOffset = unitClass === 'air'[\s\S]*?Math\.round\(45 \* tileScale\)[\s\S]*?\(unitClass === 'sea' \? Math\.round\(14 \* tileScale\) : 0\);[\s\S]*?dy = quintUnitBottom - flcH \+ unitYOffset;[\s\S]*?dy = quintUnitTop \+ unitYOffset;/,
+    /prtoClassById\[idx\]\s*=\s*normalizeUnitClassValue\(getMapFieldValue\(record,\s*'unitclass',\s*''\)\);[\s\S]*?const unitClass = prtoClassById\[unitId\] \|\| 'land';[\s\S]*?const unitYOffset = unitClass === 'air'[\s\S]*?Math\.round\(45 \* tileScale\)[\s\S]*?\(unitClass === 'sea' \? Math\.round\(14 \* tileScale\) : 0\);[\s\S]*?dy = quintUnitBottom - flcH \+ unitYOffset;[\s\S]*?dy = quintUnitTop \+ unitYOffset;/,
     'unit overlays should cache unit class and apply larger zoom-scaled offsets for air than sea units in both FLC and units32 paths'
+  );
+});
+
+test('map unit overlay resolves loaded UNIT records through direct-field-aware map values', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const unitRecordById = \{\};[\s\S]*?const unitRecordsByCoord = new Map\(\);[\s\S]*?const ux = parseIntLoose\(getMapFieldValue\(record, 'x', ''\), NaN\);[\s\S]*?const uy = parseIntLoose\(getMapFieldValue\(record, 'y', ''\), NaN\);/,
+    'unit stacks should index loaded UNIT records using the same direct-field-aware getter as the editor panel'
+  );
+  assert.match(
+    rendererText,
+    /const visibleUnit = getMapVisibleUnitRecordForStack\(stack, record\);[\s\S]*?unitId = parseIntLoose\(getMapFieldValue\(visibleUnit, 'prtonumber', '-1'\), NaN\);[\s\S]*?const rawUnit = String\(getMapFieldValue\(record, 'unit_on_tile', ''\) \|\| ''\)\.trim\(\);/,
+    'unit overlay drawing should resolve pRTONumber and unit_on_tile through direct-field-aware map values'
+  );
+  assert.match(
+    rendererText,
+    /const unitId = Number\.isFinite\(Number\(record && record\.index\)\) \? Number\(record\.index\) : idx;[\s\S]*?prtoIconById\[unitId\] = parseIntLoose\(getMapFieldValue\(record, 'iconindex', '-1'\), -1\);[\s\S]*?prtoCivilopediaKeyById\[unitId\] = prtoCivilopediaKeyById\[idx\];[\s\S]*?prtoClassById\[unitId\] = prtoClassById\[idx\];/,
+    'unit overlay metadata should read PRTO icon/class data through direct-field-aware map values and actual BIQ indexes'
+  );
+  assert.match(
+    rendererText,
+    /if \(code === 'RACE'\) return getReferenceBiqSectionFromTab\(civilizationReferenceTab, code\);[\s\S]*?if \(code === 'PRTO'\) return getReferenceBiqSectionFromTab\(unitsReferenceTab, code\);[\s\S]*?const prtoSection = getMapSupportSection\('PRTO'\);/,
+    'map-only tabs should resolve PRTO unit metadata from the Units reference tab, not only from local map sections'
   );
 });
 
@@ -601,12 +834,37 @@ test('barbarian unit overlays use barbarian owner color mapping on the map', () 
   );
 });
 
+test('civilization-owned map colors honor matching custom player data', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const getCustomPlayerColorForCivilization = \(civIdRaw\) => \{[\s\S]*?if \(!hasCustomPlayerData[\s\S]*?return NaN;[\s\S]*?parseIntLoose\(playerCivById\[p\], -1\) !== civId[\s\S]*?parseIntLoose\(playerCustomDataById\[p\], 0\) !== 1[\s\S]*?parseIntLoose\(playerColorById\[p\], NaN\)[\s\S]*?return customColor;/,
+    'map color resolution should find custom LEAD colors for civ-owned records when custom player data is enabled'
+  );
+  assert.match(
+    rendererText,
+    /const getMapCivilizationColorSlot = \(civIdRaw\) => \{[\s\S]*?const customColor = getCustomPlayerColorForCivilization\(civId\);[\s\S]*?if \(Number\.isFinite\(customColor\)\) return customColor;[\s\S]*?return parseIntLoose\(raceDefaultColorById\[civId\], NaN\);/,
+    'civilization color slots should prefer matching custom player color before falling back to RACE default color'
+  );
+  assert.match(
+    rendererText,
+    /const civMatch = text\.match\([\s\S]{0,80}\);[\s\S]*?if \(civMatch\) return getMapCivilizationColorSlot/,
+    'civilization owner picker swatches should use the same custom-player-aware color slot'
+  );
+  assert.match(
+    rendererText,
+    /const civColorSlot = getMapCivilizationColorSlot\(civId\);/,
+    'city labels and unit overlays should use the shared custom-player-aware civilization color fallback'
+  );
+});
+
 test('barbarian cities contribute territory borders through city influence ownership metadata', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
   assert.match(
     rendererText,
-    /const cityMetaList = \(citySection\?\.records \|\| \[\]\)\.map\(\(cityRecord, cityPos\) => \{[\s\S]*?let ownerId = -1;[\s\S]*?if \(ownerType === 1\) ownerId = 0;[\s\S]*?const civId = parseIntLoose\(resolveCivIdFromOwnership\(ownerTypeRaw, ownerRaw\), -1\);[\s\S]*?let borderColorId = NaN;[\s\S]*?if \(ownerType === 1 && civId >= 0\) \{[\s\S]*?borderColorId = parseIntLoose\(raceDefaultColorById\[civId\], NaN\);[\s\S]*?\}[\s\S]*?if \(!cityMeta \|\| cityMeta\.ownerId < 0\) \{/,
+    /const cityMetaList = \(citySection\?\.records \|\| \[\]\)\.map\(\(cityRecord, cityPos\) => \{[\s\S]*?let ownerId = -1;[\s\S]*?if \(ownerType === 1\) ownerId = 0;[\s\S]*?const civId = parseIntLoose\(resolveCivIdFromOwnership\(ownerTypeRaw, ownerRaw\), -1\);[\s\S]*?let borderColorId = NaN;[\s\S]*?if \(ownerType === 1 && civId >= 0\) \{[\s\S]*?borderColorId = getMapCivilizationColorSlot\(civId\);[\s\S]*?\}[\s\S]*?if \(!cityMeta \|\| cityMeta\.ownerId < 0\) \{/,
     'barbarian-owned cities should carry valid owner and border-color metadata into the city-influence territory pass so their borders render on the map'
   );
 });
@@ -615,6 +873,9 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const configCoreText = fs.readFileSync(path.join(__dirname, '..', 'src', 'configCore.js'), 'utf8');
   const biqSectionsText = fs.readFileSync(path.join(__dirname, '..', 'src', 'biq', 'biqSections.js'), 'utf8');
+  const mainText = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const preloadText = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const workerText = fs.readFileSync(path.join(__dirname, '..', 'src', 'operationWorker.js'), 'utf8');
 
   assert.match(
     rendererText,
@@ -623,13 +884,53 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
   );
   assert.match(
     rendererText,
-    /function buildImportedTerrainOverlayMapSections\(sourceMapTab\) \{[\s\S]*?setRecordFieldValue\(next, 'resource', '-1'\);[\s\S]*?setRecordFieldValue\(next, 'city', '-1'\);[\s\S]*?setRecordFieldValue\(next, 'colony', '-1'\);[\s\S]*?emptySection\('SLOC'\),[\s\S]*?emptySection\('CITY'\),[\s\S]*?emptySection\('UNIT'\),[\s\S]*?emptySection\('CLNY'\)/,
-    'terrain-overlay map import should strip resources and map entities while replacing the structural map sections'
+    /const previewFrame = document\.createElement\('div'\);[\s\S]*?previewFrame\.className = 'map-resize-preview-frame map-import-preview-frame';[\s\S]*?const previewCanvas = document\.createElement\('canvas'\);[\s\S]*?drawMapResizeMiniPreviewPlaceholder\(previewCanvas, 'Select a source\\nscenario'\);[\s\S]*?drawMapResizeMiniPreview\(previewCanvas, buildMapSectionsTerrainPreview\(sections\)\);/,
+    'map import should show a compact terrain preview using the same minimap preview frame style as resize'
+  );
+  assert.match(
+    rendererText,
+    /async function loadImportMapTab\(filePath\) \{[\s\S]*?typeof window\.c3xManager\.loadMapImport !== 'function'[\s\S]*?window\.c3xManager\.loadMapImport\(\{[\s\S]*?scenarioPath: filePath,[\s\S]*?textFileEncoding:/,
+    'map import should use the map-only IPC loader instead of loading and materializing a full source bundle'
+  );
+  assert.doesNotMatch(
+    rendererText,
+    /async function loadImportMapTab\(filePath\) \{[\s\S]*?window\.c3xManager\.loadBundle[\s\S]*?window\.c3xManager\.materializeMapTab/,
+    'map import source loading must not regress to full loadBundle plus materializeMapTab work'
   );
   assert.match(
     rendererText,
     /const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?importBtn\.textContent = '⇪ Import Map';[\s\S]*?const result = await promptImportMapAction\(\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.importedSections, 'set', 'imported'\);/,
     'the map tab should expose an Import Map button that routes accepted imports into the explicit whole-map replacement path'
+  );
+  assert.match(
+    rendererText,
+    /function clearScenarioDistrictsForWholeMapReplacement\(tab\) \{[\s\S]*?meta\.entries = \[\];[\s\S]*?meta\.namedTiles = \[\];[\s\S]*?\}[\s\S]*?function applyWholeMapSectionsToTab\(tab, mapSectionsInput, mutation = 'set', mutationSource = 'generated'\) \{[\s\S]*?if \(mutation === 'set'\) clearScenarioDistrictsForWholeMapReplacement\(tab\);/,
+    'whole-map replacement, including imported maps, should clear scenario district and named-tile sidecar metadata immediately in the renderer'
+  );
+  assert.match(
+    configCoreText,
+    /function loadMapImport\(payload = \{\}\) \{[\s\S]*?buildMapTabFromBiq\(buildMapImportBiqTab\(biqTab\), mode\)[\s\S]*?buildImportedTerrainOverlayMapSectionsFromMapTab\(mapTab\)[\s\S]*?durationMs/,
+    'config core should expose a map-only import loader that filters BIQ sections before map-tab materialization and reports timing'
+  );
+  assert.match(
+    configCoreText,
+    /function buildImportedTerrainOverlayMapSectionsFromMapTab\(sourceMapTab\) \{[\s\S]*?setRecordFieldByBaseKey\(next, 'resource', '-1'\);[\s\S]*?setRecordFieldByBaseKey\(next, 'city', '-1'\);[\s\S]*?setRecordFieldByBaseKey\(next, 'colony', '-1'\);[\s\S]*?emptySection\('SLOC'\),[\s\S]*?emptySection\('CITY'\),[\s\S]*?emptySection\('UNIT'\),[\s\S]*?emptySection\('CLNY'\)/,
+    'terrain-overlay map import should strip resources and map entities while replacing the structural map sections'
+  );
+  assert.match(
+    preloadText,
+    /loadMapImport: \(payload\) => ipcRenderer\.invoke\('manager:load-map-import', payload\)/,
+    'preload should expose the map-only import IPC to the renderer'
+  );
+  assert.match(
+    mainText,
+    /ipcMain\.handle\('manager:load-map-import'[\s\S]*?runWorkerTask\('loadMapImport'[\s\S]*?log\.info\('loadMapImport'/,
+    'main process should run map import loading in the worker path and log timings'
+  );
+  assert.match(
+    workerText,
+    /const \{ saveBundle, createScenario, deleteScenario, loadMapImport \} = require\('\.\/configCore'\);[\s\S]*?task === 'loadMapImport'[\s\S]*?result = loadMapImport\(payload\);/,
+    'operation worker should support map import loading so large source BIQs do not block the main process'
   );
   assert.match(
     configCoreText,
@@ -645,6 +946,7 @@ test('map tab exposes terrain-overlay import and routes it through explicit whol
 
 test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimension changes for save', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
 
   assert.match(
     rendererText,
@@ -698,8 +1000,13 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const terrainField = document\.createElement\('div'\);[\s\S]*?terrainLabel\.textContent = 'Add New Terrain as Type';[\s\S]*?const terrainSelect = document\.createElement\('select'\);[\s\S]*?QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS\.forEach\(\(option\) => \{[\s\S]*?terrainSelect\.value = String\(BIQ_TERRAIN\.SEA\);[\s\S]*?terrainSelect\.addEventListener\('change', refreshValidation\);/,
-    'Resize Map should expose an Add New Terrain as Type dropdown driven by the shared terrain options and refresh the preview when it changes'
+    /const terrainField = document\.createElement\('div'\);[\s\S]*?terrainField\.className = 'entity-field map-resize-terrain-field';[\s\S]*?terrainLabel\.textContent = 'Add New Terrain as Type';[\s\S]*?const terrainSelect = document\.createElement\('select'\);[\s\S]*?QUINT_CUSTOM_MAP_BASE_TERRAIN_OPTIONS\.forEach\(\(option\) => \{[\s\S]*?terrainSelect\.value = String\(BIQ_TERRAIN\.SEA\);[\s\S]*?grid\.appendChild\(terrainField\);[\s\S]*?const miniPreviewField = document\.createElement\('div'\);[\s\S]*?terrainSelect\.addEventListener\('change', refreshValidation\);/,
+    'Resize Map should expose Add New Terrain as Type in the resize grid before the minimap so it matches the Map Width and East/West control width'
+  );
+  assert.match(
+    stylesText,
+    /\.map-resize-terrain-field \{[\s\S]*?grid-column: 1 \/ span 1;[\s\S]*?\}/,
+    'Resize Map terrain selector should stay in one grid column instead of spanning the modal'
   );
   assert.match(
     rendererText,
@@ -713,8 +1020,18 @@ test('map tab exposes Edit Map for existing scenario maps and stages WMAP dimens
   );
   assert.match(
     rendererText,
-    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?const result = await promptEditMapAction\(tab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(tab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab, tileSection: resizedTileSection, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
-    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
+    /const openBtn = document\.createElement\('button'\);[\s\S]*?openBtn\.className = 'ghost action-open';[\s\S]*?let liveTab = getLiveMapTabForAction\(tab\);[\s\S]*?if \(liveTab && liveTab\.deferred\) \{[\s\S]*?liveTab = await ensureMapTabLoaded\(\{ rerender: false, openModal: false \}\);[\s\S]*?\}[\s\S]*?const liveTileSection = getMapTileSection\(liveTab\) \|\| tileSection;[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: liveTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?const importBtn = document\.createElement\('button'\);[\s\S]*?importBtn\.className = 'ghost action-import';[\s\S]*?const editBtn = document\.createElement\('button'\);[\s\S]*?editBtn\.className = 'ghost action-edit';[\s\S]*?editBtn\.textContent = '↔ Resize Map';[\s\S]*?if \(liveTab && liveTab\.deferred\) \{[\s\S]*?liveTab = await ensureMapTabLoaded\(\{ rerender: false, openModal: false \}\);[\s\S]*?\}[\s\S]*?const result = await promptEditMapAction\(liveTab\);[\s\S]*?rememberMapUndoSnapshot\(\);[\s\S]*?applyMapResizePreviewToTab\(liveTab, result\.width, result\.height, \{[\s\S]*?horizontalAnchor: result\.horizontalAnchor,[\s\S]*?verticalAnchor: result\.verticalAnchor[\s\S]*?\}\);[\s\S]*?openMapModal\(\{ tab: liveTab, tileSection: resizedTileSection, title: `\$\{liveTab\.title \|\| 'Map'\} Editor` \}\);[\s\S]*?setStatus\(`Resized map preview to \$\{result\.width\}x\$\{result\.height\}\. Save to write the BIQ\.`\);/,
+    'the map tab should expose Open Map, Import Map, Resize Map, then Remove Map; Open Map and Resize Map should materialize deferred maps only when explicitly clicked, and Resize Map should rebuild the in-memory map immediately before opening the resized preview'
+  );
+  assert.doesNotMatch(
+    rendererText,
+    /if \(hasMapData\(tab\) && tileSection\) \{[\s\S]*?editBtn\.textContent = '↔ Resize Map'|if \(isScenarioMode\(\) && hasMapData\(tab\) && tileSection\) \{[\s\S]*?removeBtn\.textContent = '🗑 Remove Map'/,
+    'deferred maps have hasMapData=true with no TILE section yet, so Resize Map and Remove Map must stay visible before materialization'
+  );
+  assert.match(
+    rendererText,
+    /function applyMapUndoSnapshotToCurrentBundle\(targetSnapshot, options = \{\}\) \{[\s\S]*?refreshActiveBiqRecordListDirtyBadges\(\);[\s\S]*?if \(state\.activeTab === 'map'\) \{[\s\S]*?renderTabs\(\);[\s\S]*?renderActiveTab\(\{ preserveTabScroll: true \}\);[\s\S]*?\}[\s\S]*?const mapModalVisible = !!\(/,
+    'scoped map undo should rerender the Map tab page before refreshing the modal so stale Open Map button closures cannot reopen an undone resized map'
   );
 });
 
@@ -743,6 +1060,11 @@ test('map tab exposes Quint-style Add Custom Map creation with even-size and til
   );
   assert.match(
     rendererText,
+    /function applyWholeMapSectionsToTab\(tab, mapSectionsInput, mutation = 'set', mutationSource = 'generated'\) \{[\s\S]*?tab\.sections = nextSections;[\s\S]*?tab\.deferred = false;[\s\S]*?tab\.mapMaterializationCacheKey = '';[\s\S]*?tab\.hasMapData = hasMapData\(tab\);[\s\S]*?tab\.mapMutation = mutation;[\s\S]*?tab\.mapMutationSource = mutation === 'set' \? String\(mutationSource \|\| 'generated'\) : null;/,
+    'whole-map replacements from Create or Import should materialize the map tab before recalculating hasMapData, so Open/Resize/Remove actions remain visible after the modal closes'
+  );
+  assert.match(
+    rendererText,
     /if \(isScenarioMode\(\) && !hasMapData\(tab\)\) \{[\s\S]*?addCustomBtn\.className = 'ghost action-add';[\s\S]*?addCustomBtn\.textContent = '＋ Create New Map';[\s\S]*?const result = await promptAddCustomMapAction\(tab\);[\s\S]*?applyWholeMapSectionsToTab\(tab, result\.customSections, 'set', 'custom'\);[\s\S]*?openMapModal\(\{ tab, tileSection: tileSectionAfterCreate, title: `\$\{tab\.title \|\| 'Map'\} Editor` \}\);/,
     'the map tab should expose Add Custom Map only when no custom map exists, route it through the explicit whole-map custom-map path, and open the new map immediately'
   );
@@ -753,8 +1075,8 @@ test('map art loads repaint an open map modal in place instead of rebuilding the
 
   assert.match(
     rendererText,
-    /function ensureMapModalNode\(\) \{[\s\S]*?<button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?mapModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?if \(!state\.isDirty \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError\) return;[\s\S]*?await saveCurrentBundle\(\);[\s\S]*?\}[\s\S]*?function refreshMapModalUndoButtons\(\) \{[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?mapModal\.saveBtn\.disabled = !state\.isDirty \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError;[\s\S]*?mapModal\.saveBtn\.title = state\.sectionValidationError \|\| '';[\s\S]*?\}/,
-    'the map modal header should expose a Save button beside Undo and route it through the shared saveCurrentBundle flow with matching disabled-state rules'
+    /function ensureMapModalNode\(\) \{[\s\S]*?<button type="button" class="secondary map-editor-modal-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?mapModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(mapModal\.saveBtn\) \{[\s\S]*?if \(!hasMapModalUndoableChanges\(\) \|\| state\.isSaving \|\| state\.isLoading \|\| !state\.bundle \|\| !!state\.sectionValidationError\) return;[\s\S]*?await saveCurrentBundle\(\);[\s\S]*?\}[\s\S]*?function refreshMapModalUndoButtons\(\) \{[\s\S]*?const hasUndoable = hasMapModalUndoableChanges\(\);[\s\S]*?setModalUndoSaveButtonState\(mapModal, \{[\s\S]*?hasUndoable,[\s\S]*?hasSaveable: hasUndoable && hasTrackedUnsavedMapChanges\(\)/,
+    'the map modal header should expose a Save button beside Undo and keep Save scoped to map-undoable changes'
   );
   assert.match(
     rendererText,
@@ -865,14 +1187,24 @@ test('Files modal tracks scenario district sidecar writes from map edits', () =>
   );
 });
 
-test('Unit Table header Save mirrors the main save button wiring', () => {
+test('modal header Save buttons mirror the main save button wiring', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const stylesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
 
   assert.match(
     rendererText,
-    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn, mapModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
-    'modal Save buttons should share the main Save label, dirty class, disabled state, and validation title'
+    /function getSaveButtons\(\) \{[\s\S]*?return \[el\.saveBtn, techTreeModal\.saveBtn, unitAvailabilityModal\.saveBtn, unitTableModal\.saveBtn, civColorPaletteModal\.saveBtn, mapModal\.saveBtn\]\.filter\(\(btn\) => btn && btn\.isConnected\);[\s\S]*?function updateSaveButtonLabel\(\) \{[\s\S]*?getSaveButtons\(\)\.forEach\(\(btn\) => \{[\s\S]*?state\.isSaving[\s\S]*?Saving\.\.\.[\s\S]*?Save[\s\S]*?\}\);[\s\S]*?function refreshDirtyUi\(\) \{[\s\S]*?const saveButtons = getSaveButtons\(\);[\s\S]*?saveButtons\.forEach\(\(btn\) => btn\.classList\.toggle\('dirty', state\.isDirty\)\);[\s\S]*?saveButtons\.forEach\(\(btn\) => \{[\s\S]*?btn\.disabled = saveDisabled;[\s\S]*?btn\.title = saveTitle;[\s\S]*?\}\);/,
+    'modal Save buttons should share the main Save label and dirty class before modal-specific action state is applied'
+  );
+  assert.match(
+    rendererText,
+    /function setModalUndoSaveButtonState\(modal, \{ canEdit = true, hasUndoable = false, hasSaveable = false \} = \{\}\) \{[\s\S]*?const undoDisabled = !canEdit \|\| !hasUndoable \|\| state\.isLoading;[\s\S]*?modal\.undoBtn\.disabled = undoDisabled;[\s\S]*?modal\.undoAllBtn\.disabled = undoDisabled;[\s\S]*?modal\.saveBtn\.disabled = undoDisabled \|\| !hasSaveable \|\| state\.isSaving \|\| !state\.bundle \|\| !!state\.sectionValidationError;/,
+    'modal Save should be disabled whenever the matching modal Undo action is disabled'
+  );
+  assert.match(
+    rendererText,
+    /function ensureTechTreeModalNode\(\) \{[\s\S]*?<button type="button" class="secondary tech-tree-save-btn" data-act="save"><span class="btn-icon">💾<\/span>Save<\/button>[\s\S]*?techTreeModal\.saveBtn = overlay\.querySelector\('\[data-act="save"\]'\);[\s\S]*?if \(techTreeModal\.saveBtn\) \{[\s\S]*?techTreeModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);[\s\S]*?\}/,
+    'Tech Tree should expose a secondary Save button and route clicks through saveCurrentBundle'
   );
   assert.match(
     rendererText,
@@ -880,9 +1212,14 @@ test('Unit Table header Save mirrors the main save button wiring', () => {
     'Unit Table should expose a secondary Save button beside Undo and route clicks through saveCurrentBundle'
   );
   assert.match(
+    rendererText,
+    /const updateToolbar = \(\) => \{[\s\S]*?refreshDirtyUi\(\);[\s\S]*?refreshUnitTableModalActionButtons\(\);[\s\S]*?\};[\s\S]*?unitTableModal\.undoBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoOneStep\(\);[\s\S]*?\}[\s\S]*?unitTableModal\.undoAllBtn\.addEventListener\('click', async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoAllChanges\(\);/,
+    'Unit Table Undo, Undo All, and Save should share the same immediate undoable-state refresh'
+  );
+  assert.match(
     stylesText,
-    /\.unit-table-modal-actions \.unit-table-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary:hover:not\(:disabled\),[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary\.dirty \{[\s\S]*?box-shadow: none;/,
-    'Unit Table Save should use the same no-shadow action styling as the main app Save button'
+    /\.tech-tree-modal-actions \.tech-tree-save-btn\.secondary,[\s\S]*?\.tech-tree-modal-actions \.tech-tree-save-btn\.secondary:hover:not\(:disabled\),[\s\S]*?\.tech-tree-modal-actions \.tech-tree-save-btn\.secondary\.dirty,[\s\S]*?\.unit-availability-modal-actions \.unit-availability-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary,[\s\S]*?\.unit-table-modal-actions \.unit-table-save-btn\.secondary\.dirty \{[\s\S]*?box-shadow: none;/,
+    'Modal Save buttons should use the same no-shadow action styling as the main app Save button'
   );
 });
 
@@ -897,8 +1234,8 @@ test('Availability by Civ keeps Undo actions in the modal header', () => {
   );
   assert.match(
     rendererText,
-    /const refreshUndoButtons = \(\) => \{[\s\S]*?unitAvailabilityModal\.undoBtn\.disabled = !referenceEditable \|\| !getLatestUndoSnapshot\(\);[\s\S]*?unitAvailabilityModal\.undoAllBtn\.disabled = !referenceEditable \|\| !state\.isDirty;[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoBtn\.onclick = async \(\) => \{[\s\S]*?await undoOneStep\(\);[\s\S]*?render\(\);[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoAllBtn\.onclick = async \(\) => \{[\s\S]*?await undoAllChanges\(\);[\s\S]*?render\(\);[\s\S]*?\};/,
-    'Availability by Civ header Undo buttons should keep their disabled-state wiring while refreshing the mounted modal in place after undo'
+    /const refreshUndoButtons = \(\) => \{[\s\S]*?refreshUnitAvailabilityModalActionButtons\(\);[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoBtn\.onclick = async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoOneStep\(\);[\s\S]*?render\(\);[\s\S]*?\};[\s\S]*?unitAvailabilityModal\.undoAllBtn\.onclick = async \(\) => \{[\s\S]*?!hasImmediateEffectiveUndoableChanges\(\)[\s\S]*?await undoAllChanges\(\);[\s\S]*?render\(\);[\s\S]*?\};/,
+    'Availability by Civ header Undo buttons should use the same undoable-state wiring while refreshing the mounted modal in place after undo'
   );
   assert.match(
     stylesText,
@@ -907,8 +1244,8 @@ test('Availability by Civ keeps Undo actions in the modal header', () => {
   );
   assert.match(
     rendererText,
-    /if \(unitAvailabilityModal\.saveBtn && !unitAvailabilityModal\.saveBtn\.dataset\.bound\) \{[\s\S]*?unitAvailabilityModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);[\s\S]*?\}[\s\S]*?overlay\.classList\.remove\('hidden'\);[\s\S]*?overlay\.setAttribute\('aria-hidden', 'false'\);[\s\S]*?refreshDirtyUi\(\);/,
-    'Availability by Civ Save should route clicks through saveCurrentBundle and sync disabled state when opened'
+    /unitAvailabilityModal\.referenceEditable = !!referenceEditable;[\s\S]*?if \(unitAvailabilityModal\.saveBtn && !unitAvailabilityModal\.saveBtn\.dataset\.bound\) \{[\s\S]*?unitAvailabilityModal\.saveBtn\.addEventListener\('click', saveCurrentBundle\);[\s\S]*?\}[\s\S]*?overlay\.classList\.remove\('hidden'\);[\s\S]*?overlay\.setAttribute\('aria-hidden', 'false'\);[\s\S]*?refreshDirtyUi\(\);/,
+    'Availability by Civ Save should route clicks through saveCurrentBundle and sync disabled state from the modal editability when opened'
   );
   assert.match(
     stylesText,
@@ -1017,6 +1354,16 @@ test('sectioned tab selection paints active row before deferred detail render', 
   );
 });
 
+test('natural wonder map placement writes the C3X district sentinel name', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const setSelectedTileNaturalWonder = \(entry\) => applySelectedTileEdit\(\(_tile\) => \{[\s\S]*?const name = String\(entry\.name \|\| ''\)\.trim\(\);[\s\S]*?return upsertScenarioDistrictEntry\(geom\.xPos, geom\.yPos, \{[\s\S]*?district: 'Natural Wonder',[\s\S]*?wonderName: name,[\s\S]*?wonderCity: ''[\s\S]*?\}\);/,
+    'natural wonder map placement should serialize as district = Natural Wonder and wonder_name = the selected natural wonder'
+  );
+});
+
 test('modal map zoom previews on the existing canvas stack and defers the expensive rerender until input settles', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
@@ -1042,7 +1389,7 @@ test('modal map zoom restore waits for non-zero pane metrics before consuming th
   );
 });
 
-test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered canvas and limiting redraws to edits', () => {
+test('large wrapped BIQ maps keep panning smooth with native scroll and bounded redraws', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
   assert.match(
@@ -1052,23 +1399,78 @@ test('large wrapped BIQ maps keep panning smooth by scrolling a fully rendered c
   );
   assert.match(
     rendererText,
-    /const redrawMapCanvasInPlace = \(clipRects = null\) => \{/,
-    'canvas redraw should continue to support clipped edit refreshes without a separate candidate-index parameter'
+    /const redrawMapCanvasInPlace = \(clipRects = null, renderOptions = \{\}\) => \{/,
+    'canvas redraw should continue to support clipped edit refreshes while allowing chunk-internal draw options'
   );
   assert.match(
     rendererText,
-    /appendDebugLog\('biq-map:canvas-redraw-candidates', \{[\s\S]*?candidateCount: maxIdx \+ 1/,
-    'canvas redraw candidate logging should continue to report the full tile iteration set for correctness-sensitive clipped repaints'
+    /appendDebugLog\('biq-map:canvas-redraw-candidates', \{[\s\S]*?candidateCount,[\s\S]*?totalTiles: maxIdx \+ 1,[\s\S]*?candidateMode: candidateIndexes \? 'bounded' : 'full'/,
+    'canvas redraw candidate logging should report whether a repaint is full-candidate or bounded-candidate'
   );
   assert.match(
     rendererText,
-    /for \(let i = 0; i <= maxIdx; i \+= 1\) \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-progress'/,
-    'clipped redraws should still iterate the full tile set so every cleared tile in the redraw region gets repainted'
+    /const candidateCount = candidateIndexes \? candidateIndexes\.length : maxIdx \+ 1;[\s\S]*?for \(let drawPos = 0; drawPos < candidateCount; drawPos \+= 1\) \{[\s\S]*?appendDebugLog\('biq-map:canvas-redraw-progress'/,
+    'chunk-internal redraws should be able to iterate bounded candidates while full-canvas redraws retain the full candidate count'
   );
   assert.match(
     rendererText,
-    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?const rebuildMiniMapBase = \(\) => \{[\s\S]*?const drewSprite = drawTerrainSpriteToContext\(baseCtx, record, geom, sx, sy, miniTileW, miniTileH\);[\s\S]*?minimapBaseDirty = false;[\s\S]*?\};[\s\S]*?renderMiniMap = \(\) => \{[\s\S]*?const rebuiltBase = !!minimapBaseDirty;[\s\S]*?if \(rebuiltBase\) rebuildMiniMapBase\(\);[\s\S]*?mmCtx\.drawImage\(minimapBaseCanvas, 0, 0, minimapCanvas\.width, minimapCanvas\.height\);[\s\S]*?const scheduleDeferredMiniMapRefresh = \(meta = \{\}\) => \{[\s\S]*?minimapBaseDirty = true;[\s\S]*?minimapRefreshRaf = window\.requestAnimationFrame\(\(\) => \{/,
-    'minimap redraws should use a cached minimap base canvas instead of sampling the main canvas'
+    /if \(state\.biqMapLayer === 'terrain' && state\.biqMapShowYields && tilePx >= 4\) \{[\s\S]*?for \(let i = 0; i < overlayPassItems\.length; i \+= 1\) \{[\s\S]*?drawTileYieldOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);[\s\S]*?logRedrawPhase\('yield-overlays', phaseStartedAt,[\s\S]*?overlayPassCount: overlayPassItems\.length/,
+    'yield icons should render as a bounded overlay pass over the same visible/chunk candidate tiles as the other map overlays'
+  );
+  assert.match(
+    rendererText,
+    /const filterTileIndexesForRects = \(indexes, rects\) => \{[\s\S]*?const candidates = Array\.isArray\(indexes\) \? indexes : \[\];[\s\S]*?clips\.some\(\(rect\) => rectIntersects\(tileClipInfluenceRect\(sx, sy\), rect\)\)[\s\S]*?const redrawMapChunk = \(chunk, clipRects = null\) => \{[\s\S]*?const chunkClips = getClipRectsForChunk\(chunk, clipRects\);[\s\S]*?const candidateIndexes = chunkClips[\s\S]*?filterTileIndexesForRects\(chunkCandidateIndexes, chunkClips\)[\s\S]*?redrawMapCanvasInPlace\([\s\S]*?chunkClips \|\| \[\{ x: chunk\.x, y: chunk\.y, w: chunk\.w, h: chunk\.h \}\]/,
+    'clipped edit redraws should filter cached chunk candidates to the actual edited rects instead of repainting full 1024px chunks'
+  );
+  assert.match(
+    rendererText,
+    /const minimapBaseCanvas = document\.createElement\('canvas'\);[\s\S]*?const minimapOverlayCanvas = document\.createElement\('canvas'\);[\s\S]*?let minimapBaseDirty = true;[\s\S]*?let minimapOverlayDirty = true;[\s\S]*?let minimapBaseReconcileIdleHandle = 0;[\s\S]*?let pendingMinimapTileIndexes = new Set\(\);/,
+    'minimap redraws should keep cached base and overlay canvases with a coalesced idle reconciliation handle'
+  );
+  assert.match(
+    rendererText,
+    /const paintMinimapResourceFilterThumb = \(holder, option\) => \{[\s\S]*?holder\.dataset\.minimapResourceThumb = String\(resourceId\);[\s\S]*?const atlas = state\.biqMapArtCache\.resources;[\s\S]*?ctx\.drawImage\(atlas, col \* cellW, row \* cellH, cellW, cellH, 0, 0, canvas\.width, canvas\.height\);[\s\S]*?const updateMiniMapResourceCounts = \(\) => \{[\s\S]*?updateMiniMapResourceFilterThumbs\(\);[\s\S]*?node\.textContent = `\(\$\{count\}\)`;[\s\S]*?const syncMinimapResourceFlyoutLayout = \(\) => \{[\s\S]*?flyout\.style\.height = `\$\{targetHeight\}px`;[\s\S]*?const showResourceFlyout = open && !!state\.biqMapMinimapShowResources;[\s\S]*?minimapOptionsControls\.classList\.toggle\('resources-visible', showResourceFlyout\);[\s\S]*?const makeMinimapResourceToggle = \(\) => \{[\s\S]*?flyout\.className = 'biq-map-minimap-resource-flyout section-card';[\s\S]*?const applyMiniMapResourceSearch = \(query\) => \{[\s\S]*?item\.hidden = !!needle && !haystack\.includes\(needle\);[\s\S]*?const applyMiniMapResourceFilterSelection = \(selectedIds\) => \{[\s\S]*?search\.placeholder = 'Search resources';[\s\S]*?const actions = document\.createElement\('div'\);[\s\S]*?checkAllBtn\.textContent = 'Check All';[\s\S]*?uncheckAllBtn\.textContent = 'Uncheck All';[\s\S]*?resourcePickerOptions\.forEach\(\(option\) => \{[\s\S]*?resourceCount\.dataset\.minimapResourceCount = String\(resourceId\);[\s\S]*?minimapOptionsMenu\.appendChild\(makeMinimapOptionToggle\(\{ key: 'biqMapMinimapShowTerritory', label: 'Territory' \}\)\);[\s\S]*?minimapOptionsMenu\.appendChild\(makeMinimapOptionToggle\(\{ key: 'biqMapMinimapShowCities', label: 'Cities' \}\)\);[\s\S]*?minimapOptionsMenu\.appendChild\(makeMinimapResourceToggle\(\)\);/,
+    'minimap options should expose Territory, Cities, and searchable per-resource filters with bulk controls, map-icon thumbnails, live counts, and bottom-aligned flyout sizing'
+  );
+  assert.match(
+    rendererText,
+    /biqMapMinimapShowTerritory: true,[\s\S]*?biqMapMinimapShowCities: true,[\s\S]*?biqMapMinimapShowResources: false,[\s\S]*?biqMapMinimapResourceFilter: null,[\s\S]*?biqMapMinimapResourceFilter: normalizeMinimapResourceFilter\(state\.biqMapMinimapResourceFilter\),[\s\S]*?state\.biqMapMinimapShowTerritory = snapshot\.biqMapMinimapShowTerritory !== false;[\s\S]*?state\.biqMapMinimapShowCities = snapshot\.biqMapMinimapShowCities !== false;[\s\S]*?state\.biqMapMinimapShowResources = snapshot\.biqMapMinimapShowResources === true;[\s\S]*?state\.biqMapMinimapResourceFilter = normalizeMinimapResourceFilter\(snapshot\.biqMapMinimapResourceFilter\);/,
+    'minimap Territory and Cities overlays should default on while Resources defaults off and preserves explicit resource filters'
+  );
+  assert.match(
+    rendererText,
+    /const rebuildMiniMapOverlay = \(\) => \{[\s\S]*?territoryTiles = drawMiniMapTerritoryOverlay\(overlayCtx, metrics\);[\s\S]*?resourceMarkers = drawMiniMapResourceOverlay\(overlayCtx, metrics\);[\s\S]*?cityDots = drawMiniMapCityOverlay\(overlayCtx, metrics\);[\s\S]*?appendDebugLog\('biq-map:minimap-overlay-rebuild'/,
+    'minimap political overlays should rebuild through a separate overlay canvas instead of changing the terrain base'
+  );
+  assert.match(
+    rendererText,
+    /renderMiniMap = \(\) => \{[\s\S]*?updateMiniMapResourceCounts\(\);[\s\S]*?const rebuiltBase = !!minimapBaseDirty;/,
+    'minimap redraws should refresh the resource flyout counts from the current TILE resources'
+  );
+  assert.match(
+    rendererText,
+    /const drawMiniMapResourceOverlay = \(overlayCtx, metrics\) => \{[\s\S]*?const resourceFilterSet = getMiniMapResourceFilterSet\(\);[\s\S]*?getMapFieldValue\(record, 'resource', '-1'\)[\s\S]*?if \(resourceFilterSet && !resourceFilterSet\.has\(resourceId\)\) continue;[\s\S]*?colorFromNumber\(\(resourceId \+ 1\) \* 17\)[\s\S]*?overlayCtx\.lineTo\(cx \+ radius, cy\)/,
+    'minimap resource overlay should draw compact resource-id-colored diamond markers from TILE.resource filtered by the selected resources'
+  );
+  assert.match(
+    rendererText,
+    /const getMiniMapTileDrawRect = \(tileIndex, metrics, paddingPx = 0\) => \{[\s\S]*?const pad = Math\.max\(0, Math\.ceil\(Number\(paddingPx\) \|\| 0\)\);[\s\S]*?const right = Math\.min\(minimapBaseCanvas\.width, Math\.ceil\(sx \+ metrics\.miniTileW\) \+ pad\);[\s\S]*?w: Math\.max\(1, right - x\),[\s\S]*?h: Math\.max\(1, bottom - y\)/,
+    'minimap patch rectangles should support padded, canvas-clamped clears so subpixel terrain edges do not leave dark outlines'
+  );
+  assert.match(
+    rendererText,
+    /const expandMiniMapPatchIndexes = \(tileIndexes, depth = 5\) => \{[\s\S]*?mapTileNeighborIndexes\(item\.idx\)\.forEach[\s\S]*?const dirtyRects = unique\.map\(\(idx\) => getMiniMapTileDrawRect\(idx, metrics, 2\)\)\.filter\(Boolean\);[\s\S]*?collectMiniMapPatchCandidates\(unique, dirtyRects, metrics\)\.forEach\(\(idx\) => \{[\s\S]*?drawMiniMapBaseTile\(baseCtx, idx, metrics\);/,
+    'minimap patches should clear padded edited bounds and repaint a wider local candidate set'
+  );
+  assert.match(
+    rendererText,
+    /const scheduleMiniMapBaseReconcile = \(reason = 'patch'\) => \{[\s\S]*?requestIdleCallback[\s\S]*?if \(paintStroke \|\| isDraggingMap \|\| minimapPointerId != null\)[\s\S]*?minimapBaseDirty = true;[\s\S]*?renderMiniMap\(\);[\s\S]*?appendDebugLog\('biq-map:minimap-base-reconcile'/,
+    'patched minimap edits should schedule an idle full-base reconciliation after active paint and drag interactions finish'
+  );
+  assert.match(
+    rendererText,
+    /if \(!minimapBaseDirty && patchIndexes\.length > 0 && patchMiniMapBaseTiles\(patchIndexes\)\) \{[\s\S]*?scheduleMiniMapBaseReconcile\('patched-edit'\);[\s\S]*?\}[\s\S]*?renderMiniMap\(\);/,
+    'deferred minimap refreshes should keep the fast patch path and queue reconciliation only after a successful patch'
   );
   assert.match(
     rendererText,
@@ -1119,6 +1521,26 @@ test('map overlay rendering offsets colony-like overlays, draws barricades, and 
   );
 });
 
+test('map record deletes keep visible tile references reindexed immediately', () => {
+  const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+
+  assert.match(
+    rendererText,
+    /const renumberMapSectionRecords = \(section\) => \{[\s\S]*?section\.records\.forEach\(\(record, index\) => \{[\s\S]*?record\.index = index;[\s\S]*?field\.value = String\(index\);[\s\S]*?\}\);[\s\S]*?\};/,
+    'map deletes should renumber surviving CITY/CLNY records in the visible editor state'
+  );
+  assert.match(
+    rendererText,
+    /const removeCityByIndex = \(cityIndex\) => \{[\s\S]*?if \(candidateValue === idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'city', '-1', 'City'\);[\s\S]*?\} else if \(candidateValue > idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'city', String\(candidateValue - 1\), 'City'\);[\s\S]*?renumberMapSectionRecords\(citySection\);/,
+    'city deletes should clear deleted tile refs and shift later tile city refs before rerender'
+  );
+  assert.match(
+    rendererText,
+    /const removeColonyByIndex = \(colonyIndex\) => \{[\s\S]*?if \(candidateValue === idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'colony', '-1', 'Colony'\);[\s\S]*?\} else if \(candidateValue > idx\) \{[\s\S]*?setMapFieldValue\(candidateTile, 'colony', String\(candidateValue - 1\), 'Colony'\);[\s\S]*?renumberMapSectionRecords\(colonySection\);/,
+    'colony deletes should clear deleted tile refs and shift later tile colony refs before rerender'
+  );
+});
+
 test('map modal undo all follows tracked map dirty state', () => {
   const rendererText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
@@ -1129,12 +1551,12 @@ test('map modal undo all follows tracked map dirty state', () => {
   );
   assert.match(
     rendererText,
-    /mapModal\.undoAllBtn\.disabled = !isScenarioMode\(\) \|\| !hasTrackedUnsavedMapChanges\(\) \|\| state\.isLoading;/,
-    'map modal Undo All should disable unless tracked map changes exist'
+    /function hasActiveChangedMapCityEditSession\(\) \{[\s\S]*?state\.activeMapCityEditSessionKey[\s\S]*?state\.activeMapCityEditSessionGetValue[\s\S]*?\}[\s\S]*?function hasMapModalUndoableChanges\(\) \{[\s\S]*?return hasTrackedUnsavedMapChanges\(\)[\s\S]*?getLatestScopedUndoSnapshot\('map'\)[\s\S]*?hasActiveChangedMapCityEditSession\(\)[\s\S]*?\}[\s\S]*?setModalUndoSaveButtonState\(mapModal, \{[\s\S]*?canEdit: isScenarioMode\(\),[\s\S]*?hasUndoable,[\s\S]*?hasSaveable: hasUndoable && hasTrackedUnsavedMapChanges\(\)/,
+    'map modal Undo and Undo All should enable for tracked map changes with a committed map snapshot or an active changed city session'
   );
-  assert.match(
+  assert.doesNotMatch(
     rendererText,
     /mapModal\.body\.appendChild\(renderBiqMapSection\(mapModal\.tab, mapModal\.tileSection, \{ inModal: true \}\)\);\s*reconcilePassiveMapRenderWithCleanSnapshot\(mapModal\.tab\);/,
-    'opening the map modal should reconcile passive render-only map fields into the clean snapshot'
+    'opening the map modal should not rewrite the clean snapshot for passive render-only map fields'
   );
 });

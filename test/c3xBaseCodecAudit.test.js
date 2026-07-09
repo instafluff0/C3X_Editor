@@ -66,6 +66,7 @@ test('C3X base string families serialize and reload with explicit audited syntax
     special_zone_of_control_rules: '[amphibious not-from-inside]',
     technology_perfume: '["Alphabet": 12]',
     unit_cycle_search_criteria: 'similar-near-destination',
+    unit_limit_groups: '["Infantry Units": "Warrior" "Archer", Tanks: Tank Panzer]',
     unit_limits: '["Settler": 1 per-city]',
     work_area_improvements: '["Aqueduct": 3]',
     work_area_limit: 'cultural-or-adjacent'

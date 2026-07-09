@@ -37,6 +37,7 @@
         <button id="global-search-btn" class="ghost" type="button" title="Jump Search (Ctrl/Cmd+K)"><span class="btn-icon">🔎</span>Search</button>
         <button id="back-btn" class="ghost nav-btn" type="button" aria-label="Back" title="Back">←</button>
         <button id="forward-btn" class="ghost nav-btn" type="button" aria-label="Forward" title="Forward">→</button>
+        <button id="refresh-btn" class="ghost nav-btn refresh-btn" type="button" aria-label="Refresh from disk" title="Refresh from disk">⟳</button>
         <button id="save-btn" class="secondary"><span class="btn-icon">💾</span>Save</button>
         <button id="save-as-btn" class="ghost" type="button"><span class="btn-icon">📁</span>Save As</button>
         <button id="undo-btn" class="ghost" type="button"><span class="btn-icon">↶</span>Undo</button>
@@ -121,6 +122,7 @@
             <label class="files-filter-toggle"><input id="files-filter-type-animation-ini" type="checkbox" /><span>Animation INI</span></label>
             <label class="files-filter-toggle"><input id="files-filter-type-text" type="checkbox" /><span>Text</span></label>
             <label class="files-filter-toggle"><input id="files-filter-type-biq" type="checkbox" /><span>BIQ</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-type-art-pcx" type="checkbox" /><span>Art PCX</span></label>
           </div>
           <div class="files-filter-group" aria-label="Status filters">
             <div class="files-filter-group-title">Status</div>
@@ -326,7 +328,7 @@
             program served as the technical guide for our FLC translations and interpreter.
           </li>
           <li>
-            <strong><a href="https://forums.civfanatics.com/members/moeniir.4015/" target="_blank" rel="noopener noreferrer">@Moerniir</a></strong>, whose <a href="https://forums.civfanatics.com/threads/make-your-own-units-flicster-version-1-0-1-build-18-now-available.10208/" target="_blank" rel="noopener noreferrer">FLICster</a> app guided how we show FLCs to users.
+            <strong><a href="https://forums.civfanatics.com/members/moeniir.4015/" target="_blank" rel="noopener noreferrer">@Moerniir</a></strong>, whose <a href="https://forums.civfanatics.com/threads/make-your-own-units-flicster-version-1-0-1-build-18-now-available.10208/" target="_blank" rel="noopener noreferrer">FLICster</a> app guided our FLC Workshop implementation.
           </li>
         </ul>
         <div class="confirm-modal-actions">
@@ -345,9 +347,13 @@
 
     <script src="./civilopediaText.js"></script>
     <script src="./mapEditorCore.js"></script>
+    <script src="./mapRenderPlanner.js"></script>
     <script src="./mapGeneratorCore.js"></script>
     <script src="./referenceIdentity.js"></script>
+    <script src="./techBoxLayout.js"></script>
+    <script src="./scienceAdvisorArrows.js"></script>
     <script src="./c3xBaseManifest.js"></script>
+    <script src="./civEraAliases.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

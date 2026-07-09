@@ -31,7 +31,7 @@ const {
 } = require('./biqMapAssertions');
 
 function mkTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-biq-map-critical-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-biq-map-'));
 }
 
 function ensureDefaultC3xFiles(root) {
@@ -125,6 +125,11 @@ function getParsedTileAtCoords(section, x, y) {
     Number(record && record.xpos) === Number(x)
     && Number(record && record.ypos) === Number(y)
   )) || null;
+}
+
+function parsedTileHasStartingLocationFlag(section, x, y) {
+  const tile = getParsedTileAtCoords(section, x, y);
+  return !!(tile && (((Number(tile.c3cBonuses) || 0) >>> 0) & 0x00000008));
 }
 
 function addSeedCity(mapTab, citySection, tile, name, owner = 0, ownerType = 2) {
@@ -379,7 +384,7 @@ function assertMapReferenceIntegrityFromMapTab(mapTab, message = '') {
   assertNoMapReferenceIssues(parsed, message);
 }
 
-test('critical BIQ map: unchanged save preserves raw map section bytes', () => {
+test('BIQ map: unchanged save preserves raw map section bytes', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -410,7 +415,7 @@ test('critical BIQ map: unchanged save preserves raw map section bytes', () => {
   assertRawSectionsEqual(before, after, DEFAULT_MAP_SECTION_CODES);
 });
 
-test('critical BIQ map: unchanged loaded map bundle emits no collected map ops or field edits', () => {
+test('BIQ map: unchanged loaded map bundle emits no collected map ops or field edits', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -427,7 +432,7 @@ test('critical BIQ map: unchanged loaded map bundle emits no collected map ops o
   assert.deepEqual(collectBiqMapEdits(bundle.tabs), [], 'expected unchanged map bundle to emit no map field edits');
 });
 
-test('critical BIQ map: centered expansion shifts existing entities and tiles together', (t) => {
+test('BIQ map: centered expansion shifts existing entities and tiles together', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -553,7 +558,7 @@ test('critical BIQ map: centered expansion shifts existing entities and tiles to
   assertMapReferenceIntegrityFromMapTab(reMap, 'expected resized map to keep valid entity/tile references');
 });
 
-test('critical BIQ map: directional resize anchors preserve placed content on the intended tile', () => {
+test('BIQ map: directional resize anchors preserve placed content on the intended tile', () => {
   const cases = [
     {
       label: 'east/south expansion keeps existing coordinates fixed',
@@ -658,7 +663,7 @@ test('critical BIQ map: directional resize anchors preserve placed content on th
   });
 });
 
-test('critical BIQ map: resizing recomputes stored terrain sprite fields for shifted map edges', () => {
+test('BIQ map: resizing recomputes stored terrain sprite fields for shifted map edges', () => {
   const raw = fs.readFileSync(getStableLeadNoMapFixturePath());
   const blankSections = buildGeneratedBlankMapSections(16, 16);
   const setMapResult = applyEdits(raw, [{
@@ -702,7 +707,7 @@ test('critical BIQ map: resizing recomputes stored terrain sprite fields for shi
   assert.equal(Number(newEastEdgeTile.image), 40, 'expected wrapped east-edge grassland tile to use recomputed wrapped-neighbor sprite image');
 });
 
-test('critical BIQ map: width-only resize keeps terrain lookups on valid staggered-grid coordinates', () => {
+test('BIQ map: width-only resize keeps terrain lookups on valid staggered-grid coordinates', () => {
   const raw = fs.readFileSync(getStableMapUnitsFixturePath());
   const parsedBefore = parseAllSections(raw);
   assert.equal(parsedBefore.ok, true, 'expected source BIQ to parse');
@@ -733,7 +738,7 @@ test('critical BIQ map: width-only resize keeps terrain lookups on valid stagger
   assert.ok(nonSeaTiles.length > 0, 'expected width-only resize to preserve some non-sea terrain instead of degenerating to an all-sea map');
 });
 
-test('critical BIQ map: resize fill terrain propagates into new edge tiles', () => {
+test('BIQ map: resize fill terrain propagates into new edge tiles', () => {
   const raw = fs.readFileSync(getStableLeadNoMapFixturePath());
   const blankSections = buildGeneratedBlankMapSections(16, 16);
   const setMapResult = applyEdits(raw, [{
@@ -761,7 +766,7 @@ test('critical BIQ map: resize fill terrain propagates into new edge tiles', () 
   assert.equal(Number(newEdgeTile.c3cBaseRealTerrain) & 0x0f, 1, 'expected new resize space to honor the chosen fill terrain');
 });
 
-test('critical BIQ map: resizing desert terrain does not remap stored sprites to tundra', () => {
+test('BIQ map: resizing desert terrain does not remap stored sprites to tundra', () => {
   const raw = fs.readFileSync(getStableLeadNoMapFixturePath());
   const blankSections = buildGeneratedBlankMapSections(16, 16);
   const tileSection = blankSections.find((section) => section && section.code === 'TILE');
@@ -813,7 +818,7 @@ test('critical BIQ map: resizing desert terrain does not remap stored sprites to
   });
 });
 
-test('critical BIQ map: shrinking dimensions removes out-of-bounds entities and still saves a valid BIQ', (t) => {
+test('BIQ map: shrinking dimensions removes out-of-bounds entities and still saves a valid BIQ', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -876,7 +881,7 @@ test('critical BIQ map: shrinking dimensions removes out-of-bounds entities and 
   assertMapReferenceIntegrityFromMapTab(reMap, 'expected shrunken map to remain reference-safe after trimming out-of-bounds entities');
 });
 
-test('critical BIQ map: city delete round-trip preserves surviving tile references', (t) => {
+test('BIQ map: city delete round-trip preserves surviving tile references', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const resolvedCiv3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -940,7 +945,7 @@ test('critical BIQ map: city delete round-trip preserves surviving tile referenc
   assertMapReferenceIntegrityFromMapTab(reMap, 'expected all tile city/colony references to stay valid after city delete round-trip');
 });
 
-test('critical BIQ map: city delete only changes CITY and TILE sections', (t) => {
+test('BIQ map: city delete only changes CITY and TILE sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -983,7 +988,7 @@ test('critical BIQ map: city delete only changes CITY and TILE sections', (t) =>
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CITY']);
 });
 
-test('critical BIQ map: scenario district sidecar round-trips entries and named tiles', () => {
+test('BIQ map: scenario district sidecar round-trips entries and named tiles', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1019,7 +1024,7 @@ test('critical BIQ map: scenario district sidecar round-trips entries and named 
   assert.match(sidecarText, /name\s*=\s*Test Named Tile/);
 });
 
-test('critical BIQ map: sidecar-only district edit changes no BIQ map sections', () => {
+test('BIQ map: sidecar-only district edit changes no BIQ map sections', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1052,7 +1057,69 @@ test('critical BIQ map: sidecar-only district edit changes no BIQ map sections',
   assert.deepEqual(getChangedSectionCodes(before, after), []);
 });
 
-test('critical BIQ map: colony overlay/type mismatches are detectable', () => {
+test('BIQ map: slim TILE field payload saves without full map sections', () => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  const scenarioDir = path.join(tmp, 'scenario');
+  fs.mkdirSync(c3x, { recursive: true });
+  fs.mkdirSync(scenarioDir, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenarioDir, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  const before = parseBiqFileForRawSections(scenarioBiq);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  const tileSection = getSection(mapTab, 'TILE');
+  const tile = tileSection && Array.isArray(tileSection.records) ? tileSection.records[0] : null;
+  assert.ok(tile, 'expected a TILE record');
+  const baseField = getRecordField(tile, 'baserealterrain');
+  const c3cField = getRecordField(tile, 'c3cbaserealterrain');
+  assert.ok(baseField && c3cField, 'expected terrain fields on TILE record');
+  const originalBase = String(baseField.value || '');
+  const originalC3c = String(c3cField.value || '');
+  const nextBase = String((parseIntLoose(originalBase, 0) + 1) & 0xff);
+  const nextC3c = String((parseIntLoose(originalC3c, 0) + 1) & 0xff);
+  const slimMapTab = {
+    key: 'map',
+    type: 'map',
+    hasMapData: true,
+    originalHasMap: true,
+    recordOps: [],
+    sections: [{
+      code: 'TILE',
+      records: [{
+        index: tile.index,
+        fields: [
+          { key: baseField.key, baseKey: baseField.baseKey, value: nextBase, originalValue: originalBase, mapEditorValueEdited: true },
+          { key: c3cField.key, baseKey: c3cField.baseKey, value: nextC3c, originalValue: originalC3c, mapEditorValueEdited: true }
+        ]
+      }]
+    }]
+  };
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    dirtyTabs: ['map'],
+    tabs: { map: slimMapTab }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = parseBiqFileForRawSections(scenarioBiq);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE']);
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedTile = getSection(reloaded.tabs.map, 'TILE').records.find((record) => Number(record && record.index) === Number(tile.index));
+  assert.equal(String(getRecordInt(reloadedTile, 'baserealterrain', -1)), nextBase);
+  assert.equal(String(getRecordInt(reloadedTile, 'c3cbaserealterrain', -1)), nextC3c);
+});
+
+test('BIQ map: colony overlay/type mismatches are detectable', () => {
   const issues = collectColonyOverlayCoherenceIssues({
     sections: [
       { code: 'TILE', records: [{ index: 0, colony: 0, c3cOverlays: 0x40000000 }] },
@@ -1062,7 +1129,7 @@ test('critical BIQ map: colony overlay/type mismatches are detectable', () => {
   assert.ok(issues.some((issue) => issue.kind === 'colony-overlay-type-mismatch' && issue.overlayType === 2 && issue.improvementType === 0), `expected colony overlay/type mismatch, got ${JSON.stringify(issues)}`);
 });
 
-test('critical BIQ map: civilization delete is blocked by concrete player and map ownership refs', () => {
+test('BIQ map: civilization delete is blocked by concrete player and map ownership refs', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1107,7 +1174,7 @@ test('critical BIQ map: civilization delete is blocked by concrete player and ma
   assert.match(String(saveResult.error || ''), /Players:/);
 });
 
-test('critical BIQ map: whole-map replacement is blocked outside generated-map saves', () => {
+test('BIQ map: whole-map replacement is blocked outside generated-map saves', () => {
   const parsed = parseBiqFileForRawSections(getStableMapUnitsFixturePath());
   assert.equal(parsed.ok, true, 'expected stable fixture BIQ parse');
   const tileSection = (parsed.sections || []).find((section) => section.code === 'TILE');
@@ -1123,7 +1190,7 @@ test('critical BIQ map: whole-map replacement is blocked outside generated-map s
   assert.match(String(result.error || ''), /Whole-map BIQ replacement is blocked/i);
 });
 
-test('critical BIQ map: end-to-end save rejects whole-map replacement without explicit generated-map source', () => {
+test('BIQ map: end-to-end save rejects whole-map replacement without explicit generated-map source', () => {
   const sampleBiq = getStableLeadNoMapFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1152,7 +1219,7 @@ test('critical BIQ map: end-to-end save rejects whole-map replacement without ex
   assert.match(String(saveResult.error || ''), /Whole-map BIQ replacement is blocked/i);
 });
 
-test('critical BIQ map: explicit custom generated-map save can replace all map sections end-to-end', () => {
+test('BIQ map: explicit custom generated-map save can replace all map sections end-to-end', () => {
   const sampleBiq = getStableLeadNoMapFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1194,21 +1261,41 @@ test('critical BIQ map: explicit custom generated-map save can replace all map s
   assertNoColonyOverlayIssues(after, 'expected generated-map save to keep colony overlay coherence intact');
 });
 
-test('critical BIQ map: explicit imported whole-map save can replace all map sections end-to-end', () => {
+test('BIQ map: explicit imported whole-map save can replace all map sections end-to-end', () => {
   const sampleBiq = getStableLeadNoMapFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  const scenarioDistrictsPath = path.join(tmp, 'scenario.districts.txt');
   fs.mkdirSync(c3x, { recursive: true });
   ensureDefaultC3xFiles(c3x);
   fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.writeFileSync(
+    scenarioDistrictsPath,
+    [
+      'DISTRICTS',
+      '',
+      '#District',
+      'coordinates = 1,2',
+      'district = Neighborhood',
+      '',
+      '#NamedTile',
+      'coordinates = 1,2',
+      'name = Old Named Tile',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
 
   const before = parseBiqFileForRawSections(scenarioBiq);
   assert.equal(before.ok, true, 'expected no-map fixture parse before imported-map save');
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   assert.ok(bundle && bundle.tabs && bundle.tabs.map, 'expected map tab for no-map fixture');
   assert.equal(bundle.tabs.map.hasMapData, false, 'expected no-map fixture to start without map data');
+  assert.ok(bundle.tabs.map.scenarioDistricts, 'expected scenario district sidecar metadata');
+  assert.equal(bundle.tabs.map.scenarioDistricts.entries.length, 1, 'expected loaded district sidecar entry before import');
+  assert.equal(bundle.tabs.map.scenarioDistricts.namedTiles.length, 1, 'expected loaded named tile before import');
 
   bundle.tabs.map.sections = buildGeneratedBlankMapSections(16, 16);
   bundle.tabs.map.mapMutation = 'set';
@@ -1234,17 +1321,38 @@ test('critical BIQ map: explicit imported whole-map save can replace all map sec
   });
   assertNoMapReferenceIssues(after, 'expected imported-map save to keep map references coherent');
   assertNoColonyOverlayIssues(after, 'expected imported-map save to keep colony overlay coherence intact');
+  const scenarioDistrictsText = fs.readFileSync(scenarioDistrictsPath, 'utf8');
+  assert.match(scenarioDistrictsText, /^DISTRICTS\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#District\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#NamedTile\b/);
 });
 
-test('critical BIQ map: explicit removemap save removes all BIQ map sections end-to-end', () => {
+test('BIQ map: explicit removemap save removes all BIQ map sections end-to-end', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  const scenarioDistrictsPath = path.join(tmp, 'scenario.districts.txt');
   fs.mkdirSync(c3x, { recursive: true });
   ensureDefaultC3xFiles(c3x);
   fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.writeFileSync(
+    scenarioDistrictsPath,
+    [
+      'DISTRICTS',
+      '',
+      '#District',
+      'coordinates = 126,2',
+      'district = Neighborhood',
+      '',
+      '#NamedTile',
+      'coordinates = 126,2',
+      'name = Test Named Tile',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
 
   const before = parseBiqFileForRawSections(scenarioBiq);
   assert.equal(before.ok, true, 'expected map fixture parse before removemap save');
@@ -1273,13 +1381,17 @@ test('critical BIQ map: explicit removemap save removes all BIQ map sections end
     assert.equal(beforeSectionCodes.has(code), true, `expected original fixture to contain ${code}`);
     assert.equal(afterSectionCodes.has(code), false, `expected removemap save to remove ${code}`);
   });
+  const scenarioDistrictsText = fs.readFileSync(scenarioDistrictsPath, 'utf8');
+  assert.match(scenarioDistrictsText, /^DISTRICTS\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#District\b/);
+  assert.doesNotMatch(scenarioDistrictsText, /#NamedTile\b/);
 
   const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   assert.ok(reloaded && reloaded.tabs && reloaded.tabs.map, 'expected map tab after removemap reload');
   assert.equal(reloaded.tabs.map.hasMapData, false, 'expected removemap save to reload without map data');
 });
 
-test('critical BIQ map: edited save preserves untouched structural map sections', (t) => {
+test('BIQ map: edited save preserves untouched structural map sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const resolvedCiv3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1346,7 +1458,7 @@ test('critical BIQ map: edited save preserves untouched structural map sections'
   });
 });
 
-test('critical BIQ map: add city only changes CITY and TILE sections', (t) => {
+test('BIQ map: add city only changes CITY and TILE sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1371,7 +1483,7 @@ test('critical BIQ map: add city only changes CITY and TILE sections', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CITY']);
 });
 
-test('critical BIQ map: tile terrain and overlay edit only changes TILE section', (t) => {
+test('BIQ map: tile terrain and overlay edit only changes TILE section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1396,7 +1508,7 @@ test('critical BIQ map: tile terrain and overlay edit only changes TILE section'
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE']);
 });
 
-test('critical BIQ map: tile fog, ruin, and victory-point edits only change TILE section', (t) => {
+test('BIQ map: tile fog, ruin, and victory-point edits only change TILE section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1422,7 +1534,7 @@ test('critical BIQ map: tile fog, ruin, and victory-point edits only change TILE
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE']);
 });
 
-test('critical BIQ map: city rename only changes CITY section', (t) => {
+test('BIQ map: city rename only changes CITY section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1455,7 +1567,7 @@ test('critical BIQ map: city rename only changes CITY section', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['CITY']);
 });
 
-test('critical BIQ map: city relocation only changes CITY and TILE sections', (t) => {
+test('BIQ map: city relocation only changes CITY and TILE sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1498,7 +1610,7 @@ test('critical BIQ map: city relocation only changes CITY and TILE sections', (t
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CITY']);
 });
 
-test('critical BIQ map: city improvements edit only changes CITY section', (t) => {
+test('BIQ map: city improvements edit only changes CITY section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1533,7 +1645,7 @@ test('critical BIQ map: city improvements edit only changes CITY section', (t) =
   assert.deepEqual(getChangedSectionCodes(before, after), ['CITY']);
 });
 
-test('critical BIQ map: add unit only changes UNIT section', (t) => {
+test('BIQ map: add unit only changes UNIT section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1558,7 +1670,7 @@ test('critical BIQ map: add unit only changes UNIT section', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['UNIT']);
 });
 
-test('critical BIQ map: unit field edit only changes UNIT section', (t) => {
+test('BIQ map: unit field edit only changes UNIT section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1583,7 +1695,7 @@ test('critical BIQ map: unit field edit only changes UNIT section', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['UNIT']);
 });
 
-test('critical BIQ map: unit delete only changes UNIT section', (t) => {
+test('BIQ map: unit delete only changes UNIT section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1611,7 +1723,7 @@ test('critical BIQ map: unit delete only changes UNIT section', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['UNIT']);
 });
 
-test('critical BIQ map: city owner transfer keeps colocated units coherent and only changes CITY and UNIT', (t) => {
+test('BIQ map: city owner transfer keeps colocated units coherent and only changes CITY and UNIT', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1671,7 +1783,7 @@ test('critical BIQ map: city owner transfer keeps colocated units coherent and o
   });
 });
 
-test('critical BIQ map: unit owner transfer keeps colocated city coherent and only changes UNIT and CITY', (t) => {
+test('BIQ map: unit owner transfer keeps colocated city coherent and only changes UNIT and CITY', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1730,7 +1842,7 @@ test('critical BIQ map: unit owner transfer keeps colocated city coherent and on
   });
 });
 
-test('critical BIQ map: starting-location edit only changes SLOC section', () => {
+test('BIQ map: starting-location edit changes SLOC and matching TILE start flag only', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1750,10 +1862,12 @@ test('critical BIQ map: starting-location edit only changes SLOC section', () =>
   const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: bundle.tabs });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const after = parseBiqFileForRawSections(scenarioBiq);
-  assert.deepEqual(getChangedSectionCodes(before, after), ['SLOC']);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'SLOC']);
+  const afterTile = getSection({ sections: after.sections }, 'TILE');
+  assert.equal(parsedTileHasStartingLocationFlag(afterTile, 4, 4), true);
 });
 
-test('critical BIQ map: starting-location delete only changes SLOC section', () => {
+test('BIQ map: starting-location delete changes SLOC and matching TILE start flag only', () => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1785,10 +1899,12 @@ test('critical BIQ map: starting-location delete only changes SLOC section', () 
   const saveResult = saveBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq, tabs: seededReload.tabs });
   assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
   const after = parseBiqFileForRawSections(scenarioBiq);
-  assert.deepEqual(getChangedSectionCodes(before, after), ['SLOC']);
+  assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'SLOC']);
+  const afterTile = getSection({ sections: after.sections }, 'TILE');
+  assert.equal(parsedTileHasStartingLocationFlag(afterTile, 4, 4), false);
 });
 
-test('critical BIQ map: colony edit only changes CLNY and TILE sections', (t) => {
+test('BIQ map: colony edit only changes CLNY and TILE sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1814,7 +1930,7 @@ test('critical BIQ map: colony edit only changes CLNY and TILE sections', (t) =>
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CLNY']);
 });
 
-test('critical BIQ map: colony-like overlay transition only changes CLNY and TILE sections', (t) => {
+test('BIQ map: colony-like overlay transition only changes CLNY and TILE sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1855,7 +1971,7 @@ test('critical BIQ map: colony-like overlay transition only changes CLNY and TIL
   assert.deepEqual(getChangedSectionCodes(before, after), ['TILE', 'CLNY']);
 });
 
-test('critical BIQ map: colony owner edit only changes CLNY section', (t) => {
+test('BIQ map: colony owner edit only changes CLNY section', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
@@ -1892,7 +2008,7 @@ test('critical BIQ map: colony owner edit only changes CLNY section', (t) => {
   assert.deepEqual(getChangedSectionCodes(before, after), ['CLNY']);
 });
 
-test('critical BIQ map: colony delete only changes CLNY and TILE sections', (t) => {
+test('BIQ map: colony delete only changes CLNY and TILE sections', (t) => {
   const sampleBiq = getStableMapUnitsFixturePath();
   const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();

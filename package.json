@@ -8,15 +8,15 @@
     "start": "electron .",
     "test": "node scripts/run-tests.js fast",
     "test:fast": "node scripts/run-tests.js fast",
-    "test:map-critical": "node scripts/run-tests.js map-critical",
+    "test:map": "node scripts/run-tests.js map",
     "test:biq": "node scripts/run-tests.js biq",
+    "test:sav-debug": "node scripts/run-tests.js sav-debug",
     "test:full": "node scripts/run-tests.js full",
     "dist": "electron-builder"
   },
   "devDependencies": {
-    "electron": "^36.0.0",
-    "electron-builder": "^26.8.1",
-    "electron-icon-maker": "^0.0.5"
+    "electron": "^39.8.10",
+    "electron-builder": "^26.8.1"
   },
   "build": {
     "appId": "com.instafluff.c3xconfigmanager",

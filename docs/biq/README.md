@@ -19,6 +19,24 @@ Binary layout was derived from the Quint_Editor source (read-only reference):
   - BICQ + major 12 -> Conquests-in-SAV embedded rules
 - Character-set handling is language-aware (Windows-1252, Windows-1251, GBK) with Windows-1252 as default.
 
+## SAV Embedded BIQ Debug Extraction
+Saved games embed a BIQ-like rules block immediately after the SAV prefix, then store live map/player/unit/city state in SAV-specific sections. This is not user-facing app functionality; it exists so agents and maintainers can inspect live-game data while debugging parser or map behavior.
+
+- Programmatic entry point: `src/biq/savExtract.js`
+- CLI: `node scripts/extract-biq-from-sav.js <input.sav> [output.biq]`
+- If no output path is given, the CLI writes `<input-basename>.embedded.biq` in the current working directory.
+- The extracted buffer is the exact embedded BIQ byte range after the SAV embedded-rules metadata. Conquests saves normally use `BICQ` plus `VER#`.
+- The extractor follows the Quint `SAV.readSAVThroughEmbeddedRules` path: decompress the SAV if needed, read `CIV3`, version, optional 16-byte header token, embedded `BIC ` metadata, then slice `biqDataLength` bytes.
+
+For live save summaries, use the inspector:
+- Programmatic entry point: `src/biq/savInspect.js`
+- CLI: `node scripts/inspect-sav.js <input.sav> [--json] [--limit N] [--biq-out output.biq]`
+- The inspector currently reports embedded rule counts, GAME counts, WRLD map dimensions, TILE resource/terrain/overlay summaries, UNIT summaries, and real CITY records.
+- TILE road/railroad/mine/irrigation/pollution counts use the same C3C overlay masks as `src/mapEditorCore.js`.
+- The inspector is read-only and intentionally not connected to Electron IPC or renderer UI.
+- `--biq-out` writes an uncompressed synthesized debug BIQ using embedded rules plus live SAV terrain/resources/overlays/cities/units/colonies. This is useful for opening the current-game map state in BIQ tooling, but it is not a lossless save-to-scenario converter; save-only state such as diplomacy, current movement/damage details, city food boxes, and many active per-turn values are not represented as normal scenario BIQ data.
+- Tests live in the explicit debug tier: `node scripts/run-tests.js sav-debug`. They are intentionally excluded from `fast` and `full` release validation.
+
 ## Section Order and Optional Blocks
 In IO.inputBIQ(...), sections are processed in this order (with conditional branches):
 1. Core header + metadata (description, title)
@@ -58,6 +76,7 @@ Current tab files:
 - `docs/biq/catalog/fields.json`: initial field catalog for high-impact BIQ fields and links.
 - `docs/biq/graph.md`: section dependency graph and optional-block gates.
 - `docs/biq/invariants.md`: mutation safety rules and invariant checklist.
+- `docs/biq/PendingReferenceSaveFlow.md`: how unsaved reference entries are planned, normalized, and tested before final BIQ indices exist.
 - `docs/biq/MapPipelineParity.md`: Quint-to-C3X map read/write pipeline mapping and current parity boundaries.
 - `docs/biq/MapSectionMutationMatrix.md`: per-section mutation/ref-cascade matrix for `TILE`, `SLOC`, `CITY`, `UNIT`, and `CLNY`.
 - `docs/biq/MapFieldProjectionMatrix.md`: raw-vs-display-vs-save source-of-truth matrix for high-risk BIQ map fields.

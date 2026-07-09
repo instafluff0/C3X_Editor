@@ -17,9 +17,12 @@ const {
   resolvePaths,
   collectBiqMapEdits,
   collectBiqMapStructureOps,
+  loadMapImport,
+  buildReferenceTabs,
   loadBundle,
   saveBundle,
-  previewSavePlan
+  previewSavePlan,
+  collectUnitRuntimeDependencyCopiesForImportedAnimation
 } = require('../src/configCore');
 
 function mkTmpDir() {
@@ -35,6 +38,66 @@ function makeMapField(baseKey, value, originalValue) {
     originalValue: String(originalValue == null ? value : originalValue)
   };
 }
+
+function getSection(sections, code) {
+  const target = String(code || '').trim().toUpperCase();
+  return (Array.isArray(sections) ? sections : []).find((section) => String(section && section.code || '').trim().toUpperCase() === target) || null;
+}
+
+function getRecordField(record, baseKey) {
+  const target = String(baseKey || '').trim().toLowerCase();
+  return (Array.isArray(record && record.fields) ? record.fields : []).find((field) => (
+    String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target
+  )) || null;
+}
+
+function getRecordValue(record, baseKey, fallback = '') {
+  const field = getRecordField(record, baseKey);
+  return field ? String(field.value || '') : String(fallback);
+}
+
+test('loadBundle preserves GAME locked-alliance war flags for Pacific scenario', (t) => {
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
+  const scenarioPath = path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific.biq');
+  if (!fs.existsSync(scenarioPath)) {
+    t.skip('Missing stock 9 MP WWII in the Pacific BIQ.');
+    return;
+  }
+  const bundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: civ3Root,
+    c3xPath: path.join(civ3Root, 'Conquests', 'C3X_Districts'),
+    scenarioPath
+  });
+  const tab = bundle && bundle.tabs && bundle.tabs.scenarioSettings;
+  const game = getSection(tab && tab.sections, 'GAME');
+  const record = game && game.records && game.records[0];
+
+  assert.equal(getRecordValue(record, 'alliance1_is_at_war_with_alliance2_0'), 'true');
+  assert.equal(getRecordValue(record, 'alliance2_is_at_war_with_alliance1_0'), 'true');
+});
+
+test('buildReferenceTabs reads scenario text from BIQ search folders before BIQ directory fallback', () => {
+  const civ3Root = mkTmpDir();
+  const biqRoot = mkTmpDir();
+  const firstSearchRoot = mkTmpDir();
+  const secondSearchRoot = mkTmpDir();
+  fs.mkdirSync(path.join(civ3Root, 'Conquests', 'Text'), { recursive: true });
+  fs.writeFileSync(path.join(civ3Root, 'Conquests', 'Text', 'Civilopedia.txt'), '', 'latin1');
+  fs.writeFileSync(path.join(civ3Root, 'Conquests', 'Text', 'PediaIcons.txt'), '', 'latin1');
+  fs.writeFileSync(path.join(biqRoot, 'PediaIcons.txt'), '#ICON_BLDG_WRONG\nwrong.pcx\n', 'latin1');
+  fs.mkdirSync(path.join(secondSearchRoot, 'Text'), { recursive: true });
+  fs.writeFileSync(path.join(secondSearchRoot, 'Text', 'PediaIcons.txt'), '#ICON_BLDG_RIGHT\nright.pcx\n', 'latin1');
+
+  const tabs = buildReferenceTabs(civ3Root, {
+    mode: 'scenario',
+    scenarioPath: biqRoot,
+    scenarioPaths: [firstSearchRoot, secondSearchRoot]
+  });
+
+  const details = tabs.civilizations.sourceDetails;
+  assert.equal(path.normalize(details.pediaIconsScenario), path.normalize(path.join(secondSearchRoot, 'Text', 'PediaIcons.txt')));
+});
 
 test('base config precedence is default -> scenario -> custom', () => {
   const defaultText = 'a = 1\nb = 2\n';
@@ -162,6 +225,32 @@ test('scenario districts codec preserves wonder completion fields and named tile
   assert.ok(serialized.endsWith('\n'));
 });
 
+test('scenario districts codec writes C3X natural wonder entries with canonical district name', () => {
+  const text = [
+    'DISTRICTS',
+    '',
+    '#District',
+    'coordinates  = 10,30',
+    'district     = Natural Wonder',
+    'wonder_name  = "Mount Everest"',
+    ''
+  ].join('\n');
+
+  const parsed = parseScenarioDistrictsText(text);
+  assert.deepEqual(parsed.entries, [{
+    x: 10,
+    y: 30,
+    district: 'Natural Wonder',
+    wonderName: 'Mount Everest',
+    wonderCity: ''
+  }]);
+
+  const serialized = serializeScenarioDistrictsText(parsed);
+  assert.match(serialized, /district\s+= Natural Wonder/);
+  assert.match(serialized, /wonder_name\s+= Mount Everest/);
+  assert.doesNotMatch(serialized, /wonder_city\s+=/);
+});
+
 test('parseBiqSectionsFromBuffer reads basic BIQ section metadata', () => {
   const header = Buffer.alloc(736, 0);
   header.write('BICX', 0, 'latin1');
@@ -193,6 +282,46 @@ test('parseBiqSectionsFromBuffer reads basic BIQ section metadata', () => {
   assert.equal(parsed.sections[parsed.sections.length - 1].code, 'GAME');
 });
 
+test('loadMapImport returns sanitized map-only replacement sections for source BIQ maps', () => {
+  const scenarioPath = path.resolve(__dirname, 'fixtures', 'biq_map_units_fixture.biq');
+  const result = loadMapImport({
+    mode: 'scenario',
+    civ3Path: path.resolve(__dirname, '..', '..'),
+    scenarioPath
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceScenarioPath, scenarioPath);
+  assert.ok(result.width > 0, 'expected source WMAP width');
+  assert.ok(result.height > 0, 'expected source WMAP height');
+  assert.ok(result.tileCount > 0, 'expected imported TILE records');
+  assert.ok(result.durationMs >= 0, 'expected loader timing metadata');
+
+  const sectionCodes = result.importedSections.map((section) => section.code);
+  assert.deepEqual(sectionCodes, ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+  assert.equal(getSection(result.importedSections, 'CITY').records.length, 0);
+  assert.equal(getSection(result.importedSections, 'UNIT').records.length, 0);
+  assert.equal(getSection(result.importedSections, 'CLNY').records.length, 0);
+  assert.equal(getSection(result.importedSections, 'SLOC').records.length, 0);
+
+  const wmapRecord = getSection(result.importedSections, 'WMAP').records[0];
+  assert.equal(getRecordValue(wmapRecord, 'numresources'), '0');
+  assert.equal(Number(getRecordValue(wmapRecord, 'width')), result.width);
+  assert.equal(Number(getRecordValue(wmapRecord, 'height')), result.height);
+
+  const tileSection = getSection(result.importedSections, 'TILE');
+  assert.equal(tileSection.records.length, result.tileCount);
+  for (const tile of tileSection.records.slice(0, Math.min(20, tileSection.records.length))) {
+    assert.equal(getRecordValue(tile, 'resource'), '-1');
+    assert.equal(getRecordValue(tile, 'barbariantribe'), '-1');
+    assert.equal(getRecordValue(tile, 'city'), '-1');
+    assert.equal(getRecordValue(tile, 'colony'), '-1');
+    assert.equal(getRecordValue(tile, 'border'), '0');
+    assert.notEqual(getRecordValue(tile, 'xpos', ''), '', 'expected tile x coordinate for preview rendering');
+    assert.notEqual(getRecordValue(tile, 'ypos', ''), '', 'expected tile y coordinate for preview rendering');
+  }
+});
+
 test('loadBundle + saveBundle writes to scope targets', () => {
   const root = mkTmpDir();
   const scenario = mkTmpDir();
@@ -219,6 +348,107 @@ test('loadBundle + saveBundle writes to scope targets', () => {
   assert.equal(fs.existsSync(customPath), true);
   const savedText = fs.readFileSync(customPath, 'utf8');
   assert.match(savedText, /flag = false/);
+});
+
+test('saveBundle writes staged Tile Animation INI repairs to scenario Art/Animations', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = Cow\nini_path = Resources\\Cow\\Cow.INI\ntype = resource\n', 'utf8');
+  const sourceDir = path.join(root, 'Art', 'Animations', 'Resources', 'Cow');
+  fs.mkdirSync(sourceDir, { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, 'Cow.INI'), [
+    '[Speed]',
+    'Normal Speed=225',
+    'Fast Speed=225',
+    '',
+    '[Animations]',
+    'DEFAULT=cow.flc',
+    'RUN=cow.flc',
+    '',
+    '[Timing]',
+    'DEFAULT=0.170000',
+    ''
+  ].join('\r\n'), 'latin1');
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: root, scenarioPath: scenario });
+  const section = bundle.tabs.animations.model.sections[0];
+  section.pendingTileAnimationIniRepair = {
+    iniPath: 'Resources\\Cow\\Cow.INI',
+    sourcePath: path.join(sourceDir, 'Cow.INI'),
+    flcFileName: 'cow.flc'
+  };
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    scenarioPath: scenario,
+    dirtyTabs: ['animations'],
+    tabs: bundle.tabs
+  });
+
+  assert.equal(saveResult.ok, true);
+  const targetPath = path.join(scenario, 'Art', 'Animations', 'Resources', 'Cow', 'Cow.INI');
+  const saved = fs.readFileSync(targetPath, 'latin1');
+  assert.match(saved, /\[Animations\]\r?\nBLANK=\r?\nDEFAULT=cow\.flc\r?\nWALK=\r?\nRUN=\r?\nATTACK1=cow\.flc/);
+  assert.match(saved, /\[Timing\]\r?\nDEFAULT=0\.170000/);
+  assert.match(saved, /\[Sound Effects\]\r?\nBLANK=\r?\nDEFAULT=\r?\nWALK=/);
+  assert.match(saved, /\[Version\]\r?\nVERSION=1/);
+  assert.match(saved, /\[Palette\]\r?\nPALETTE=/);
+});
+
+test('saveBundle rejects staged Tile Animation INI repairs in Standard Game mode', () => {
+  const root = mkTmpDir();
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = Cow\nini_path = Resources\\Cow\\Cow.INI\ntype = resource\n', 'utf8');
+  const bundle = loadBundle({ mode: 'global', c3xPath: root, scenarioPath: '' });
+  bundle.tabs.animations.model.sections[0].pendingTileAnimationIniRepair = {
+    iniPath: 'Resources\\Cow\\Cow.INI',
+    flcFileName: 'cow.flc'
+  };
+
+  const saveResult = saveBundle({
+    mode: 'global',
+    c3xPath: root,
+    dirtyTabs: ['animations'],
+    tabs: bundle.tabs
+  });
+
+  assert.equal(saveResult.ok, false);
+  assert.match(saveResult.error, /Scenario mode/i);
+});
+
+test('scenario unit import collects direct INI runtime dependencies from sibling unit folders', () => {
+  const sourceRoot = mkTmpDir();
+  const targetRoot = mkTmpDir();
+  const gravityDir = path.join(sourceRoot, 'Art', 'Units', 'Gravity Armor');
+  const hoverDir = path.join(sourceRoot, 'Art', 'Units', 'Hover Tank');
+  fs.mkdirSync(gravityDir, { recursive: true });
+  fs.mkdirSync(hoverDir, { recursive: true });
+  fs.writeFileSync(path.join(gravityDir, 'Gravity Armor.INI'), [
+    '[Animations]',
+    'DEFAULT=GravityDefault.flc',
+    '[Sound Effects]',
+    'RUN=..\\Hover Tank\\HovertankRun.wav',
+    ''
+  ].join('\r\n'), 'latin1');
+  fs.writeFileSync(path.join(gravityDir, 'GravityDefault.flc'), Buffer.from('flc'));
+  fs.writeFileSync(path.join(hoverDir, 'HoverTankRun.wav'), Buffer.from('wav'));
+
+  const copies = collectUnitRuntimeDependencyCopiesForImportedAnimation({
+    animationName: 'Gravity Armor',
+    sourceRoots: [sourceRoot],
+    targetContentRoot: targetRoot
+  });
+
+  assert.equal(copies.length, 1);
+  assert.equal(copies[0].sourcePath, path.join(hoverDir, 'HoverTankRun.wav'));
+  assert.equal(copies[0].targetPath, path.join(targetRoot, 'Art', 'Units', 'Hover Tank', 'HovertankRun.wav'));
 });
 
 test('collectBiqMapStructureOps emits resizemap and collectBiqMapEdits skips resize-managed preview fields', () => {

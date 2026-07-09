@@ -1,7 +1,7 @@
 const { parentPort, workerData } = require('node:worker_threads');
 const path = require('node:path');
 
-const { saveBundle, createScenario, deleteScenario } = require('./configCore');
+const { saveBundle, createScenario, deleteScenario, loadMapImport } = require('./configCore');
 const { auditBundle } = require('./bundleAudit');
 const log = require('./log');
 
@@ -59,6 +59,8 @@ function run() {
       result = deleteScenario(payload, {
         onProgress: payload && payload.dryRun ? null : onProgress
       });
+    } else if (task === 'loadMapImport') {
+      result = loadMapImport(payload);
     } else if (task === 'validateBundle') {
       result = auditBundle(payload);
     } else {

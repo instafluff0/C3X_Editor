@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { normalizeRaceDependentSections, normalizeDeletedReferenceSections } = require('../src/biq/biqSections');
+const { DELETE_REFERENCE_INVENTORY } = require('./referenceCrudInventory');
 
 function section(code, records) {
   return { code, records };
@@ -29,6 +30,263 @@ function runCascade({ sections, edits, originalRefsBySection }) {
   assert.equal(result.ok, true, String(result.error || 'cascade failed'));
   return parsed;
 }
+
+function codeRef(code, index) {
+  const normalized = String(code || '').trim().toUpperCase();
+  return `${normalized}_${index}`;
+}
+
+function makeIndexedRecord(code, originalIndex, extra = {}) {
+  return {
+    civilopediaEntry: codeRef(code, originalIndex),
+    index: originalIndex > 1 ? originalIndex - 1 : originalIndex,
+    ...extra
+  };
+}
+
+function fieldPropertyName(field) {
+  const raw = String(field || '');
+  const aliases = {
+    defaultdifficultylevel: 'defaultDifficultyLevel',
+    initialera: 'initialEra',
+    workerjob: 'workerJob',
+    pollutioneffect: 'pollutionEffect'
+  };
+  return aliases[raw.toLowerCase()] || raw;
+}
+
+function scalarDeletedFallback(item) {
+  const target = String(item && item.targetSection || '').toUpperCase();
+  const sectionCode = String(item && item.sectionCode || '').toUpperCase();
+  const field = String(item && item.field || '');
+  if (target === 'BLDG' && sectionCode === 'BLDG'
+    && ['gainInEveryCity', 'gainOnContinent', 'reqImprovement', 'doublesHappiness'].includes(field)) {
+    return 0;
+  }
+  if (target === 'RACE' && sectionCode === 'LEAD' && field === 'civ') return 0;
+  if (target === 'DIFF' && sectionCode === 'LEAD' && field === 'difficulty') return -2;
+  return -1;
+}
+
+function buildBaseCascadeSections(item, hostRecords) {
+  const target = String(item && item.targetSection || '').toUpperCase();
+  const sectionCode = String(item && item.sectionCode || '').toUpperCase();
+  const sections = [
+    section(target, [
+      makeIndexedRecord(target, 0),
+      makeIndexedRecord(target, 2)
+    ])
+  ];
+  if (sectionCode === target) {
+    sections[0].records = hostRecords;
+  } else {
+    sections.push(section(sectionCode, hostRecords));
+  }
+  return sections;
+}
+
+function runSingleDeleteCascadeItem(item, hostRecords) {
+  const target = String(item && item.targetSection || '').toUpperCase();
+  const parsed = runCascade({
+    sections: buildBaseCascadeSections(item, hostRecords),
+    edits: [{ op: 'delete', sectionCode: target, recordRef: codeRef(target, 1) }],
+    originalRefsBySection: {
+      [target]: [codeRef(target, 0), codeRef(target, 1), codeRef(target, 2)]
+    }
+  });
+  return parsed.sections.find((entry) => entry.code === String(item.sectionCode || '').toUpperCase()).records;
+}
+
+function assertScalarCascadeItem(item) {
+  const prop = fieldPropertyName(item.field);
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, { [prop]: 1 }),
+    makeIndexedRecord(item.sectionCode, 2, { [prop]: 2 })
+  ]);
+  assert.equal(records[0][prop], scalarDeletedFallback(item), `${item.id} should clear deleted reference`);
+  assert.equal(records[1][prop], 1, `${item.id} should shift higher reference`);
+}
+
+function assertFixedListCascadeItem(item) {
+  const prop = fieldPropertyName(item.field);
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, { [prop]: [1, 2, -1, -1] })
+  ]);
+  assert.deepEqual(records[0][prop], [-1, 1, -1, -1], `${item.id} should clear and shift fixed-list references`);
+}
+
+function assertRemovingListCascadeItem(item) {
+  const prop = fieldPropertyName(item.field);
+  const extra = { [prop]: [0, 1, 2] };
+  if (String(item.sectionCode).toUpperCase() === 'CITY' && prop === 'buildings') extra.numBuildings = 3;
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, extra)
+  ]);
+  assert.deepEqual(records[0][prop], [0, 1], `${item.id} should remove deleted list references and shift survivors`);
+  if (prop === 'buildings') assert.equal(records[0].numBuildings, 2, `${item.id} should refresh building count`);
+}
+
+function assertObjectListCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      startUnits: [
+        { startUnitCount: 1, startUnitIndex: 1 },
+        { startUnitCount: 2, startUnitIndex: 2 }
+      ],
+      numStartUnits: 2
+    })
+  ]);
+  assert.deepEqual(records[0].startUnits, [{ startUnitCount: 2, startUnitIndex: 1 }], `${item.id} should remove deleted start units and shift survivors`);
+  assert.equal(records[0].numStartUnits, 1, `${item.id} should refresh start-unit count`);
+}
+
+function assertRelationTableCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      relations: [
+        { canBribe: 10, briberyMod: 10, resistanceMod: 10 },
+        { canBribe: 11, briberyMod: 11, resistanceMod: 11 },
+        { canBribe: 12, briberyMod: 12, resistanceMod: 12 }
+      ],
+      numGovts: 3
+    }),
+    makeIndexedRecord(item.sectionCode, 2, {
+      relations: [
+        { canBribe: 20, briberyMod: 20, resistanceMod: 20 },
+        { canBribe: 21, briberyMod: 21, resistanceMod: 21 },
+        { canBribe: 22, briberyMod: 22, resistanceMod: 22 }
+      ],
+      numGovts: 3
+    })
+  ]);
+  assert.equal(records[0].numGovts, 2, `${item.id} should shrink relation count`);
+  assert.deepEqual(records[0].relations.map((entry) => entry.canBribe), [10, 12], `${item.id} should remove deleted relation column`);
+}
+
+function assertPossibleResourcesMaskCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      numTotalResources: 3,
+      possibleResources: Buffer.from([0b00000111])
+    })
+  ]);
+  assert.equal(records[0].numTotalResources, 2, `${item.id} should shrink resource mask count`);
+  assert.equal(records[0].possibleResources[0] & 0b11, 0b11, `${item.id} should shift possible resource mask bits`);
+}
+
+function assertAvailableToCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      availableTo: (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5)
+    })
+  ]);
+  assert.equal(records[0].availableTo, (1 << 0) | (1 << 1) | (1 << 5), `${item.id} should shift civilization availability bits`);
+}
+
+function assertBitmaskCascadeItem(item) {
+  const prop = fieldPropertyName(item.field);
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      [prop]: (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5)
+    })
+  ]);
+  assert.equal(records[0][prop], (1 << 0) | (1 << 1) | (1 << 5), `${item.id} should clear deleted bit and shift higher bits`);
+}
+
+function assertFlavorRelationTableCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      numRelations: 3,
+      relations: [10, 11, 12]
+    }),
+    makeIndexedRecord(item.sectionCode, 2, {
+      numRelations: 3,
+      relations: [20, 21, 22]
+    })
+  ]);
+  assert.equal(records.length, 2, `${item.id} should keep surviving flavor rows`);
+  assert.equal(records[0].numRelations, 2, `${item.id} should shrink first surviving relation count`);
+  assert.deepEqual(records[0].relations, [10, 12], `${item.id} should remove deleted relation column from first survivor`);
+  assert.equal(records[1].numRelations, 2, `${item.id} should shrink second surviving relation count`);
+  assert.deepEqual(records[1].relations, [20, 22], `${item.id} should remove deleted relation column from second survivor`);
+}
+
+function assertGamePlayableCivCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      playableCivIds: [0, 1, 2],
+      civPartOfWhichAlliance: [0, 1, 2],
+      numPlayableCivs: 3
+    })
+  ]);
+  assert.deepEqual(records[0].playableCivIds, [0, 1], `${item.id} should remove deleted playable civ and shift survivors`);
+  assert.deepEqual(records[0].civPartOfWhichAlliance, [0, 2], `${item.id} should preserve surviving alliance slots`);
+  assert.equal(records[0].numPlayableCivs, 2, `${item.id} should refresh playable civ count`);
+}
+
+function assertTechIndexListCascadeItem(item) {
+  const records = runSingleDeleteCascadeItem(item, [
+    makeIndexedRecord(item.sectionCode, 0, {
+      techIndices: [1, 2],
+      numStartTechs: 2
+    })
+  ]);
+  assert.deepEqual(records[0].techIndices, [1], `${item.id} should remove deleted start tech and shift survivors`);
+  assert.equal(records[0].numStartTechs, 1, `${item.id} should refresh start-tech count`);
+}
+
+function assertDeleteCascadeInventoryItem(item) {
+  if (item.targetSection === 'RACE' && item.sectionCode === 'GAME' && item.field === 'playable_civ') {
+    assertGamePlayableCivCascadeItem(item);
+    return;
+  }
+  if (item.targetSection === 'RACE' && item.sectionCode === 'PRTO' && item.field === 'availableTo') {
+    assertAvailableToCascadeItem(item);
+    return;
+  }
+  if (item.targetSection === 'TECH' && item.sectionCode === 'LEAD' && item.field === 'techIndices') {
+    assertTechIndexListCascadeItem(item);
+    return;
+  }
+  if (item.targetSection === 'GOOD' && item.sectionCode === 'TERR' && item.field === 'possibleResources') {
+    assertPossibleResourcesMaskCascadeItem(item);
+    return;
+  }
+  switch (item.kind) {
+    case 'scalar':
+      assertScalarCascadeItem(item);
+      return;
+    case 'fixed-list':
+      assertFixedListCascadeItem(item);
+      return;
+    case 'list':
+      assertRemovingListCascadeItem(item);
+      return;
+    case 'object-list':
+      assertObjectListCascadeItem(item);
+      return;
+    case 'relation-table':
+      assertRelationTableCascadeItem(item);
+      return;
+    case 'flavor-relation-table':
+      assertFlavorRelationTableCascadeItem(item);
+      return;
+    case 'bitmask':
+      assertBitmaskCascadeItem(item);
+      return;
+    default:
+      throw new Error(`Unhandled delete cascade inventory kind for ${item.id}: ${item.kind}`);
+  }
+}
+
+test('delete cascade semantically covers every inventoried BIQ reference field', () => {
+  const ids = new Set();
+  DELETE_REFERENCE_INVENTORY.forEach((item) => {
+    assert.equal(ids.has(item.id), false, `duplicate inventory id ${item.id}`);
+    ids.add(item.id);
+    assertDeleteCascadeInventoryItem(item);
+  });
+});
 
 test('delete cascade remaps supported technology references', () => {
   const parsed = runCascade({

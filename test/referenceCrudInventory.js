@@ -63,7 +63,12 @@ const DELETE_REFERENCE_INVENTORY = [
   { id: 'delete-diff-rule-defaultdifficultylevel', targetSection: 'DIFF', sectionCode: 'RULE', field: 'defaultdifficultylevel', kind: 'scalar' },
   { id: 'delete-eras-lead-initialera', targetSection: 'ERAS', sectionCode: 'LEAD', field: 'initialera', kind: 'scalar' },
   { id: 'delete-tfrm-terr-workerjob', targetSection: 'TFRM', sectionCode: 'TERR', field: 'workerjob', kind: 'scalar' },
-  { id: 'delete-terr-terr-pollutioneffect', targetSection: 'TERR', sectionCode: 'TERR', field: 'pollutioneffect', kind: 'scalar' }
+  { id: 'delete-terr-terr-pollutioneffect', targetSection: 'TERR', sectionCode: 'TERR', field: 'pollutioneffect', kind: 'scalar' },
+
+  { id: 'delete-flav-race-flavors', targetSection: 'FLAV', sectionCode: 'RACE', field: 'flavors', kind: 'bitmask' },
+  { id: 'delete-flav-tech-flavors', targetSection: 'FLAV', sectionCode: 'TECH', field: 'flavors', kind: 'bitmask' },
+  { id: 'delete-flav-bldg-flavors', targetSection: 'FLAV', sectionCode: 'BLDG', field: 'flavors', kind: 'bitmask' },
+  { id: 'delete-flav-flav-relations', targetSection: 'FLAV', sectionCode: 'FLAV', field: 'relations', kind: 'flavor-relation-table' }
 ];
 
 const IMPORT_REFERENCE_INVENTORY = [
@@ -98,7 +103,7 @@ const IMPORT_REFERENCE_INVENTORY = [
   { id: 'import-bldg-gainoncontinent', tabKey: 'improvements', field: 'gainoncontinent', kind: 'scalar', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' },
   { id: 'import-bldg-reqgovernment', tabKey: 'improvements', field: 'reqgovernment', kind: 'scalar', sourceTabKey: 'governments', targetTabKey: 'governments', status: 'covered' },
 
-  { id: 'import-prto-availableto', tabKey: 'units', field: 'availableto', kind: 'bitmask', sourceTabKey: 'civilizations', targetTabKey: 'civilizations', status: 'covered' },
+  { id: 'import-prto-availableto', tabKey: 'units', field: 'availableto', kind: 'bitmask', sourceTabKey: 'civilizations', targetTabKey: 'civilizations', status: 'gap', reason: 'Imported units clear Available To instead of preserving source scenario civilization masks.' },
   { id: 'import-prto-requiredtech', tabKey: 'units', field: 'requiredtech', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
   { id: 'import-prto-requiredresource1', tabKey: 'units', field: 'requiredresource1', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
   { id: 'import-prto-requiredresource2', tabKey: 'units', field: 'requiredresource2', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },

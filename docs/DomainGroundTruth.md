@@ -86,10 +86,37 @@ Pedia quirks:
 - Unit animation indirection uses `#ANIMNAME_PRTO_*`.
 - Art lookup precedence: `Conquests/Art` -> `civ3PTW/Art` -> `Art`.
 
+## Civilization Colors and Unit Palettes
+- BIQ civilization records store color slot assignments, not custom RGB palettes.
+  - `RACE.defaultColor` is the normal/default civilization color slot.
+  - `RACE.uniqueColor` is the alternate civilization color slot; user-facing UI should call this `Alternate`.
+- The actual RGB definitions for civilization color slots live in indexed PCX unit palette files:
+  - `Art/Units/Palettes/ntp00.pcx` through `ntp31.pcx`.
+- Scenario custom colors should be written as scenario-local palette files, not by modifying base game palette files.
+  - For a shared BIQ or scenario with no local palette override yet, seed the scenario-local `Art/Units/Palettes/ntpXX.pcx` from the resolved stock/base palette before editing.
+- Custom Civ Colors save payloads use the `civpalettes` family and write dirty palette bytes back into the selected slot's `ntpXX.pcx`.
+- Color slot generation must be deterministic from the stock Civ3 palette template for that slot, not from the slot's current edited rows.
+  - Row 7 is the representative/main civ color (`Color of pixel in PCX file`) and is the anchor for generated ramps.
+  - The generator should preserve the stock template's hue/saturation/value offsets from row 7 so the generated shade rate/pattern matches Civ3's shipped palettes.
+  - This also repairs flattened or damaged custom palettes when the same main color is applied again.
+- Automatic main-color generation updates the main ramp and other linked/useful city/UI rows, while gray/protected rows remain unchanged unless edited directly.
+- The Civs tab `Assign Unique Colors` action changes BIQ assignments only:
+  - It sets each changed civilization's default and alternate color to the same distinct slot.
+  - It preserves the first civilization already using each slot.
+  - Because many RACE rows may change at once, it must rebuild the Civs dirty/reference cache so row badges and tab counts stay accurate.
+- Unsaved palette edits should repaint Civs-tab color chips and color pickers from the in-memory palette state immediately; Undo must restore both palette data and visible swatches.
+
 ## Serialization Compatibility Requirements
 - Base config line format: `key = value`.
 - Sectioned file format: section marker + `key = value` lines.
 - Preserve quoted token lists where present.
+
+## C3X and District References to BIQ Data
+- C3X base and District config references are serialized as names/tokens, not BIQ numeric indices.
+- These references are not vulnerable to final-BIQ-index drift when pending BIQ entries are saved.
+- They can still become stale if a referenced item is renamed or deleted; treat that as a name-integrity problem, not an index-normalization problem.
+- Save/reload coverage should include pending BIQ entries referenced by name from C3X base and District fields.
+- See `docs/biq/PendingReferenceSaveFlow.md`.
 
 ## C3X Named Tiles (Scenario Placement File)
 - C3X named tiles are parsed from `scenario.districts.txt` using `#NamedTile` sections in the same file family as pre-placed districts.

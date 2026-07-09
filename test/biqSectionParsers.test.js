@@ -6,15 +6,19 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { BiqWriter } = require('../src/biq/biqBuffer');
 const {
   BiqIO,
   SECTION_REGISTRY,
+  parseAllSections,
   serializeSection,
   sectionToEnglish,
   sectionRecordName,
   sectionWritableKeys,
+  applySetToRecord,
   TILE_FIELDS,
 } = require('../src/biq/biqSections');
 
@@ -101,6 +105,28 @@ test('TECH parser produces human-readable fields', () => {
   assert.equal(map.get('y'), '7');
 
   assertNameNotFallback({ index: 0, ...rec }, 'TECH');
+});
+
+test('GAME Scenario Search Folders is writable and serialized', () => {
+  const io = makeIo();
+  const rec = {
+    useDefaultRules: 1,
+    defaultVictoryConditions: 0,
+    numPlayableCivs: 1,
+    playableCivIds: [0],
+    victoryConditionsAndRules: 0,
+    turnsPerTimescale: Array(7).fill(0),
+    timeUnitsPerTurn: Array(7).fill(0),
+    scenarioSearchFolders: 'OldFolder',
+    civPartOfWhichAlliance: [0]
+  };
+
+  assert.equal(sectionWritableKeys('GAME').includes('scenario_search_folders'), true);
+  assert.equal(applySetToRecord(rec, 'scenarioSearchFolders', 'CCM3-Worldmap;CCM3', 'GAME', io), true);
+
+  const serialized = serializeSection({ code: 'GAME', records: [rec] }, io);
+  const reparsed = SECTION_REGISTRY.GAME.parse(serialized.subarray(12), io);
+  assert.equal(reparsed.scenarioSearchFolders, 'CCM3-Worldmap;CCM3');
 });
 
 test('PRTO serializer preserves Conquests record layout when clearing requirement fields', () => {
@@ -941,6 +967,9 @@ test('RULE parser produces human-readable fields', () => {
   assert.equal(map.get('numSpaceshipParts'), '5', 'RULE: expected numSpaceshipParts');
   assert.equal(map.get('number_of_parts_0_required'), '1', 'RULE: expected number_of_parts_0_required');
   assert.equal(map.get('number_of_parts_4_required'), '5', 'RULE: expected number_of_parts_4_required');
+  assert.equal(map.get('numCultureLevels'), '3', 'RULE: expected numCultureLevels');
+  assert.equal(map.get('cultural_level_0'), 'Village', 'RULE: expected cultural_level_0');
+  assert.equal(map.get('cultural_level_2'), 'City', 'RULE: expected cultural_level_2');
   assert.equal(map.get('futureTechCost'), '41');
   assert.equal(map.get('goldenAgeDuration'), '42');
   assert.equal(map.get('maximumResearchTime'), '43');
@@ -951,6 +980,27 @@ test('RULE parser produces human-readable fields', () => {
   // RULE has a static name, verify it is not a code+index fallback
   const name = sectionRecordName({ index: 0, ...rec }, 'RULE');
   assert.ok(!/^RULE\s+\d+$/.test(name), `RULE: expected non-fallback name, got "${name}"`);
+});
+
+test('RULE field edits update spaceship part and culture level arrays', () => {
+  const rec = {
+    numSSParts: 1,
+    numberOfPartsRequired: [1],
+    numCultureLevels: 1,
+    culturalLevelNames: ['Village'],
+  };
+
+  assert.equal(applySetToRecord(rec, 'number_of_parts_2_required', '5', 'RULE', makeIo()), true);
+  assert.deepEqual(rec.numberOfPartsRequired, [1, 0, 5]);
+  assert.equal(rec.numSSParts, 3);
+
+  assert.equal(applySetToRecord(rec, 'cultural_level_1', 'Town', 'RULE', makeIo()), true);
+  assert.deepEqual(rec.culturalLevelNames, ['Village', 'Town']);
+  assert.equal(rec.numCultureLevels, 2);
+
+  assert.equal(applySetToRecord(rec, 'numCultureLevels', '1', 'RULE', makeIo()), true);
+  assert.deepEqual(rec.culturalLevelNames, ['Village']);
+  assert.equal(rec.numCultureLevels, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -1052,6 +1102,49 @@ test('GAME parser produces human-readable fields with individual playable_civ_N 
   assert.equal(map.get('spaceRaceEnabled'), '1', 'GAME: expected spaceRaceEnabled=1 for vcr=7');
   assert.equal(map.get('diplomacticEnabled'), '1', 'GAME: expected diplomacticEnabled=1 for vcr=7');
   assert.equal(map.get('conquestEnabled'), '0', 'GAME: expected conquestEnabled=0 for vcr=7');
+});
+
+test('GAME field edits update locked alliance membership and war arrays', () => {
+  const io = makeIo();
+  const rec = {
+    playableCivIds: [2, 5],
+    civPartOfWhichAlliance: [0, 1],
+    warWith: [[], [], [], [], []],
+  };
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GAME', io);
+  const map = parseEnglish(english);
+  assert.equal(map.get('alliance0_member_2'), '1');
+  assert.equal(map.get('alliance1_member_5'), '1');
+
+  assert.equal(applySetToRecord(rec, 'alliance2_member_2', 'true', 'GAME', io), true);
+  assert.deepEqual(rec.civPartOfWhichAlliance, [2, 1]);
+
+  assert.equal(applySetToRecord(rec, 'alliance1_member_5', 'false', 'GAME', io), true);
+  assert.deepEqual(rec.civPartOfWhichAlliance, [2, 0]);
+
+  assert.equal(applySetToRecord(rec, 'alliance2_is_at_war_with_alliance3_0', 'true', 'GAME', io), true);
+  assert.equal(rec.warWith[2][3], 1);
+  assert.equal(applySetToRecord(rec, 'alliance2_is_at_war_with_alliance3_0', 'false', 'GAME', io), true);
+  assert.equal(rec.warWith[2][3], 0);
+});
+
+test('GAME projection matches Pacific locked-alliance war matrix', (t) => {
+  const biqPath = path.resolve(__dirname, '..', '..', 'Scenarios', '9 MP WWII in the Pacific.biq');
+  if (!fs.existsSync(biqPath)) {
+    t.skip('Missing stock 9 MP WWII in the Pacific BIQ.');
+    return;
+  }
+  const parsed = parseAllSections(fs.readFileSync(biqPath));
+  assert.equal(parsed.ok, true, parsed.error || 'BIQ parse failed');
+  const game = (parsed.sections.find((section) => section.code === 'GAME') || {}).records?.[0];
+  assert.ok(game, 'expected GAME record');
+  const map = parseEnglish(sectionToEnglish({ index: 0, ...game }, 'GAME', parsed.io));
+
+  assert.equal(map.get('alliance1'), 'Allies');
+  assert.equal(map.get('alliance2'), 'Japanese Empire');
+  assert.equal(map.get('alliance1_is_at_war_with_alliance2_0'), '1');
+  assert.equal(map.get('alliance2_is_at_war_with_alliance1_0'), '1');
 });
 
 test('GAME parser emits Victory Point Limits panel fields', () => {
@@ -1481,6 +1574,19 @@ test('FLAV toEnglish produces human-readable fields', () => {
   assert.equal(map.get('relation_with_flavor_0'), '10');
   assert.equal(map.get('relation_with_flavor_1'), '-5');
   assertNameNotFallback(flavRec, 'FLAV');
+});
+
+test('FLAV field edits update flavor relation arrays', () => {
+  const rec = {
+    name: 'Militaristic',
+    questionMark: 0,
+    numRelations: 1,
+    relations: [10],
+  };
+
+  assert.equal(applySetToRecord(rec, 'relation_with_flavor_2', '-5', 'FLAV', makeIo()), true);
+  assert.deepEqual(rec.relations, [10, 0, -5]);
+  assert.equal(rec.numRelations, 3);
 });
 
 // ---------------------------------------------------------------------------

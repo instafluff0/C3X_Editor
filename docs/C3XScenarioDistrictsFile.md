@@ -6,8 +6,8 @@ This document covers C3X parsing semantics for the mixed scenario placement file
 - Named tile labels (`#NamedTile`)
 
 Primary source:
-- `../C3X_Districts/injected_code.c` (`load_scenario_districts_from_file`, `handle_scenario_named_tile_key`, `finalize_scenario_named_tile_entry`)
-- `../C3X_Districts/C3X.h` (`scenario_named_tile_entry`, `named_tile_entry`)
+- `../C3X_Districts/injected_code.c` (`load_scenario_districts_from_file`, `handle_scenario_district_key`, `handle_scenario_named_tile_key`, `finalize_scenario_district_entry`, `finalize_scenario_named_tile_entry`)
+- `../C3X_Districts/C3X.h` (`scenario_district_entry`, `scenario_named_tile_entry`, `named_tile_entry`)
 
 ## File Discovery
 - Filename is fixed: `scenario.districts.txt`.
@@ -30,6 +30,20 @@ Primary source:
 Important quirk:
 - Unknown `#...` directives are ignored and do **not** explicitly terminate the current section type.
 
+## `#District` Schema
+Supported keys:
+- `coordinates = x,y` (required)
+- `district = ...` (required)
+- `wonder_city = ...` (required only for Wonder District entries)
+- `wonder_name = ...` (required for Wonder District and Natural Wonder entries)
+
+Validation:
+- `district` must match a loaded district config name exactly.
+- Wonder District entries require both `wonder_city` and a `wonder_name` that resolves to a known wonder district config.
+- Natural Wonder entries require `district = Natural Wonder` and `wonder_name = <natural wonder name>`.
+- `wonder_city` on a Natural Wonder entry is reported as an ignored-field issue.
+- `wonder_*` fields on non-wonder districts are reported as invalid-field issues.
+
 ## `#NamedTile` Schema
 Supported keys:
 - `coordinates = x,y` (required)
@@ -47,7 +61,7 @@ Application behavior:
 - Runtime entry stored in `is->named_tile_map`.
 
 ## String/Quote Behavior
-- `name` uses `copy_trimmed_string_or_null(..., remove_quotes=1)`.
+- `district`, `wonder_city`, `wonder_name`, and named-tile `name` use `copy_trimmed_string_or_null(..., remove_quotes=1)`.
 - `remove_quotes=1` strips matching **double quotes only**.
 - Single quotes are not stripped by this parser path.
 - Runtime storage is `char name[100]`, so stored label is truncated to 99 chars + null terminator.
@@ -78,6 +92,11 @@ Critical distinction:
 ## Suggested Canonical Output Shape
 ```ini
 DISTRICTS
+
+#District
+coordinates  = 10,30
+district     = Natural Wonder
+wonder_name  = Mount Everest
 
 #NamedTile
 coordinates  = 41,23

@@ -189,6 +189,87 @@ test('sanitizeTerrainBonusMask keeps only variants valid for the active terrain'
   );
 });
 
+test('applyDeepwaterHarborTerrain turns coast into sea without changing stored graphics', () => {
+  const BIQ_TERRAIN = {
+    COAST: 11,
+    SEA: 12
+  };
+  const BIQ_TILE_BONUS = {
+    BONUS_GRASSLAND: 0x01,
+    LANDMARK: 0x2000
+  };
+  const coast = makeTile(0, 4);
+  mapCore.setField(coast, 'baserealterrain', packTerrain(BIQ_TERRAIN.COAST), 'Base Real Terrain');
+  mapCore.setField(coast, 'c3cbaserealterrain', packTerrain(BIQ_TERRAIN.COAST), 'C3C Base Real Terrain');
+  mapCore.setField(coast, 'file', '2', 'File');
+  mapCore.setField(coast, 'image', '37', 'Image');
+  mapCore.setField(coast, 'c3cbonuses', String(BIQ_TILE_BONUS.BONUS_GRASSLAND), 'C3C Bonuses');
+
+  const changed = mapCore.applyDeepwaterHarborTerrain(
+    coast,
+    BIQ_TERRAIN,
+    BIQ_TILE_BONUS,
+    BIQ_TILE_BONUS.BONUS_GRASSLAND | BIQ_TILE_BONUS.LANDMARK
+  );
+
+  assert.equal(changed, true);
+  assert.equal(mapCore.getField(coast, 'baserealterrain').value, packTerrain(BIQ_TERRAIN.SEA));
+  assert.equal(mapCore.getField(coast, 'c3cbaserealterrain').value, packTerrain(BIQ_TERRAIN.SEA));
+  assert.equal(mapCore.getField(coast, 'file').value, '2');
+  assert.equal(mapCore.getField(coast, 'image').value, '37');
+  assert.equal(mapCore.getField(coast, 'c3cbonuses').value, String(BIQ_TILE_BONUS.LANDMARK));
+});
+
+test('computeBrushTileIndexes resolves local wrapped brush tiles without scanning the full map', () => {
+  assert.deepEqual(
+    mapCore.computeBrushTileIndexes(10, 50, 22, 1, { wrapX: true }),
+    [22]
+  );
+  assert.deepEqual(
+    mapCore.computeBrushTileIndexes(10, 50, 22, 3, { wrapX: true }).sort((a, b) => a - b),
+    [12, 16, 17, 21, 22, 23, 26, 27, 32]
+  );
+  assert.deepEqual(
+    mapCore.computeBrushTileIndexes(10, 50, 20, 3, { wrapX: true }).sort((a, b) => a - b),
+    [10, 15, 19, 20, 21, 24, 25, 29, 30]
+  );
+});
+
+test('applyDeepwaterHarborTerrain refuses non-coast tiles', () => {
+  const BIQ_TERRAIN = {
+    GRASSLAND: 2,
+    COAST: 11,
+    SEA: 12
+  };
+  const tile = makeTile(0, 4);
+  const before = mapCore.getField(tile, 'baserealterrain').value;
+
+  const changed = mapCore.applyDeepwaterHarborTerrain(tile, BIQ_TERRAIN, null, 0);
+
+  assert.equal(changed, false);
+  assert.equal(mapCore.getField(tile, 'baserealterrain').value, before);
+  assert.equal(mapCore.getField(tile, 'c3cbaserealterrain').value, before);
+});
+
+test('isDeepwaterHarborTile detects sea tiles that directly touch land', () => {
+  const BIQ_TERRAIN = {
+    GRASSLAND: 2,
+    COAST: 11,
+    SEA: 12
+  };
+  const deepwater = makeTile(0, 4);
+  const land = makeTile(1, 4);
+  const coast = makeTile(2, 4);
+  mapCore.setField(deepwater, 'baserealterrain', packTerrain(BIQ_TERRAIN.SEA), 'Base Real Terrain');
+  mapCore.setField(deepwater, 'c3cbaserealterrain', packTerrain(BIQ_TERRAIN.SEA), 'C3C Base Real Terrain');
+  mapCore.setField(coast, 'baserealterrain', packTerrain(BIQ_TERRAIN.COAST), 'Base Real Terrain');
+  mapCore.setField(coast, 'c3cbaserealterrain', packTerrain(BIQ_TERRAIN.COAST), 'C3C Base Real Terrain');
+
+  assert.equal(mapCore.isDeepwaterHarborTile(deepwater, [coast], BIQ_TERRAIN), false);
+  assert.equal(mapCore.isDeepwaterHarborTile(deepwater, [coast, land], BIQ_TERRAIN), true);
+  assert.equal(mapCore.isDeepwaterHarborTile(coast, [land], BIQ_TERRAIN), false);
+});
+
 test('applyOverlay toggles bool-like overlay fields', () => {
   const tiles = [makeTile(0, 4), makeTile(1, 4)];
   mapCore.applyOverlay(tiles, [0, 1], 'road', true);

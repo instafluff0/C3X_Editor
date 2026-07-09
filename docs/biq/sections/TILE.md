@@ -118,3 +118,7 @@
 ## Notes for C3XConfigManager Docs
 - Use this class as authoritative for binary field names, flag packing, and unresolved unknowns.
 - When documenting a field in app UI, verify both declaration semantics in this class and read/write behavior in IO.java.
+
+## Starting Location Notes
+- `PLAYER_START_MASK` (`0x00000008`) is stored in `C3CBonuses`, not the older bonus mask. It marks the tile itself as a player starting position.
+- `SLOC` records are optional owner metadata for start tiles. Editor add/remove flows should keep `SLOC` and this tile flag in sync, while save-time repair should only add missing tile flags for existing `SLOC` records.

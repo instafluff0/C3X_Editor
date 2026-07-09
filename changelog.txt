@@ -1,4 +1,11 @@
 * RELEASE 28.0.0
+- Added inline FLC previews and FLC Workshop buttons for District and Natural Wonder animation items.
+- Added Tile Animation INI quality checks with a staged repair action that writes canonical DEFAULT/ATTACK1-only INIs through the normal Save transaction.
+- Fixed District animation previews for INI files whose FLC values are relative to the `Art/Animations` root, such as Wind Farm.
+- Added an FLC Workshop button to Tile Animations that opens the selected animation's resolved FLC directly.
+- Fixed Unit Limits editing so newly edited unsaved `unit_limit_groups` labels immediately appear in the Unit Limits picker.
+- Fixed Tile Animation and District/Natural Wonder animation previews so scenario-local `Art/Animations` INI/FLC files are checked before falling back to the C3X install.
+- Added current R28 C3X base config fields for unit limit groups, invisible-unit detection distances, and Steal Plans duration, including structured unit-limit group editing and QA.
 - Added R28 base manifest coverage for tile destruction animation settings so valid shipped keys no longer show unknown C3X warnings.
 - Updated the default C3X feature-gate setting to R28 so R28-only UI such as Tile Animations is shown by default after loading settings.
 - Fixed the empty Tile Animations tab state so C3X installs without `default.tile_animations.txt` still render the editor shell instead of blanking the UI.
@@ -22,7 +29,378 @@
 - Added R28 District `type` editing and validation for `district` versus `tile-improvement` behavior.
 - Removed the placeholder Terrain chip from Tile Animation adjacency rules and stretched each rule's Remove button to full width.
 
-* RELEASE 27.12.1
+* RELEASE 27.22
+- Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
+- Fixed Units-tab FLC and sound browsing so valid unit animation and sound picks are stored relative to the unit animation folder instead of leaking absolute paths.
+- Fixed Units-tab unit previews so a selected facing stays on that direction instead of cycling through every FLC direction.
+- Renamed the FLC Workshop export tab and button to `Export Storyboard` when the opened source is an FLC.
+- Refined the FLC Workshop preview UI with a shorter modal, map-mode-style tabs, a frame-delay slider, and civilization thumbnail color selection based on each civ's default color.
+- Fixed the FLC Workshop modal shell so its background stays opaque and its size remains stable when switching tabs.
+- Tightened the FLC Workshop layout with a narrower preview modal, in-modal animation switching, and civ-color-aware palette previews with smaller swatches.
+- Added simple FLC Workshop preview controls for indexed zoom and hour-based palette darkening, with Current Viewer Palette export using the same displayed palette.
+- Organized FLC Workshop preview controls into display, playback, and transform groups, and let zoomed previews grow their display frame instead of clipping scaled-up units.
+- Expanded FLC Workshop export options for current/custom/maximum frame size, current/custom/maximum frame count, original/viewer/selected palettes, and original/viewer/custom delay.
+- Reworked the FLC Workshop Preview layout with compact controls stacked on the left and the animation plus facing pad centered in the main area.
+- Reworked FLC Workshop export options into compact summary buttons with focused click-away editors for size, frame count, palette, and delay settings.
+- Tightened FLC Workshop Preview controls so alpha/shadow, frame delay, zoom, and hour controls align as compact label-and-control rows.
+- Simplified FLC Workshop export option editors with explicit close controls, no explanatory subtext, and custom inputs embedded in their matching choices.
+- Matched FLC Workshop export summary font sizing to the smaller form inputs and removed the thin wrapper border around the Workshop tabs.
+- Changed FLC Workshop to open and display a current FLC or storyboard source file, removed the separate Build tab, and made storyboard sources preview through the same tabs before saving them as FLC files from Export.
+- Fixed FLC Workshop selected-palette export editing, displayed source paths relative to the Civ3 folder when possible, defaulted output folders to the opened file's directory, and warned before overwriting export outputs.
+- Replaced FLC Workshop inline export success messages with a timed clickable toast that opens the output folder, required a chosen output directory before export, and compacted the Open file menu to avoid horizontal scrolling.
+- Moved the FLC Workshop source file selector into the modal header, added preview frame width and height sliders, and renamed the hour transform control to Day/Night.
+- Simplified the FLC Workshop Open menu, combined FLC/storyboard browsing into one picker, and let zoomed-out previews reduce the minimum frame width and height.
+- Added a Units toolbar FLC Workshop button and per-animation FLC Edit buttons that open the Workshop directly for the selected FLC.
+- Changed the FLC Workshop Open control to use a native grouped dropdown with known FLCs separated from the Browse option.
+- Polished the FLC Workshop modal with a clearer Open browse label, smaller consistent full-width Export inputs, no redundant Export footer, and a film-style Workshop icon.
+- Moved FLC Workshop export/save completion notifications inside the modal and lowered the Units toolbar width threshold for showing the Workshop button.
+- Made FLC Workshop storyboard Current Size exports use the current preview frame dimensions, including user-adjusted width and height.
+- Cached FLC Workshop preview transforms by direction/settings and disabled unavailable facing buttons for animations that do not include every direction.
+- Added an FLC Workshop Reset control and reorganized export frame-size choices around original, current viewer, selected, and maximum sizes.
+- Replaced FLC Workshop overwrite prompts with a structured in-modal confirmation that lists the files to be replaced.
+- Made FLC Workshop exports default to current viewer size, palette, and delay, and made storyboard Save as FLC use the current Preview transforms.
+- Displayed FLC Workshop output directories relative to the Civ3 folder while preserving absolute paths for writes.
+- Displayed the FLC Workshop Info file path relative to the Civ3 folder when possible.
+- Removed the redundant FLC Workshop header file-type label and changed the modal close control to a text Close button.
+- Added vanilla FLC fixture coverage for unit, vehicle, and single-direction animation storyboard export, import, transform, rebuild, and malformed companion validation.
+- Fixed storyboard Save as FLC rebuilds so the FXM direction count, frame count, offsets, and original geometry metadata survive viewer-frame exports.
+
+* RELEASE 27.21
+- Added async QA warnings for unit animation entries that reference files other than `.flc`, while preserving vanilla `DEAD=.` placeholders.
+- Added async QA warnings for unit `[Sound Effects]` entries that reference files other than `.amb` or `.wav`, matching vanilla unit sound-file conventions.
+- Added approximate Units-tab AMB sound previews by parsing AMB KMAP WAV references, resolving component samples through scenario and vanilla unit-art roots, and playing them from the existing sound Preview controls.
+- Fixed the Units list-panel header actions so Add All/Remove All buttons wrap inside their cards instead of overlapping neighboring panels.
+- Fixed unit imports so direct runtime `.flc`, `.amb`, and `.wav` references in imported unit INI files can bring along sibling unit-folder dependencies, preventing imports like Gravity Armor from dropping reused Hover Tank sounds.
+- Added async QA warnings for missing unit runtime INI, FLC, AMB, and WAV files, reporting the Civ3-style `Art\Units\...` path that would trigger FILE NOT FOUND.
+- Fixed Scenario-mode Districts image previews so the era picker uses scenario BIQ era names when available, falls back to standard era buttons only when needed, and keeps detected art rows selectable.
+- Added Map minimap dropup toggles for territory tinting, city dots, and resource markers with searchable per-resource filters, Check All/Uncheck All controls, map-icon thumbnails, and live resource counts while keeping the overlays separate from the cached terrain minimap.
+- Added a Map editor Show Yields overlay that uses scenario-aware CityIcons.pcx crops to draw map-rule food, shield, and commerce icons from terrain, landmark, improvement, railroad, river, bonus-grassland, and resource yield data.
+- Expanded the Map editor Display menu into grouped View Aids, Terrain, Map Features, Map Objects, and Scenario Markers controls, including separate toggles for tile improvements, resources, terrain features, borders, starting locations, and victory points, with sturdier panel clicks, Tile Info stacking, and chunk-cache invalidation so toggled layers stay consistent after scrolling or minimap jumps.
+
+* RELEASE 27.20
+- Fixed Map-tab unit overlays so map-only BIQ tabs resolve UNIT coordinates and PRTO icon/class metadata through the same support data used by Tile Info.
+- Updated Map-tab city and colony deletes to immediately reindex surviving map references in the open editor state, matching the save cascade and avoiding stale tile pointers before save.
+- Fixed BIQ map reference validation so map-only integrity checks do not misread absent civilization/player support sections as zero-length data, and kept civilization-delete blocker messages labeled as Scenario Players.
+- Reduced large-scenario save overhead after opening the Map tab by omitting clean materialized map data from save/diff payloads and sending slim map payloads for ordinary map field edits and C3X sidecar-only map edits.
+- Fixed Map tab imports and custom map creation so replacing a deferred/no-map tab immediately materializes the map state and keeps Open Map, Resize Map, and Remove Map available after the modal closes.
+- Reused the just-loaded deferred scenario bundle for initial Quality Checks so scenario switching no longer asks the QA worker to reload the same BIQ immediately after the visible load.
+- Fixed scenario QA resolution so text and art audits check all BIQ Scenario Search Folders in BIQ order before falling back to the BIQ directory.
+- Deferred broad reference-art Quality Checks for scenarios with unopened large maps, running the rest of QA immediately and resuming the full art scan after the map materializes.
+- Fixed Scenario Search Folders BIQ saves so edited semicolon-delimited search roots persist after Save and Reload.
+- Reused the initial deferred BIQ parse when opening large maps, with file-staleness checks and fresh map-tab materialization so editor state is not shared with the cache.
+- Fixed map resource rendering and resource-icon import handling for wide scenario `resources.pcx` sheets, matching width-based 50x50 atlas slicing so CCM3's pre-placed city resources display from multi-folder scenarios.
+- Restored the Map tab Resize Map and Remove Map actions for deferred large maps, materializing map sections only when Resize is clicked.
+- Fixed scenario C3X config loading so `scenario.*` config files are discovered across all BIQ Scenario Search Folders in order, while scenario saves still write to the primary local content root.
+- Routed Fuji-sized world maps through the chunked map renderer at the default zoom, avoiding repeated whole-map canvas redraws during initial Map open.
+- Fixed large BIQ scenario opens so deferred Map loads no longer send the full parsed BIQ, including every TILE record, to the renderer during initial load, and the Map tab no longer materializes the full map until Open Map is clicked.
+- Fixed a Resources-tab blank-pane crash caused by Luxury city-icon preview type detection calling a config-only helper.
+- Renamed the Resource import setting to cover all imported Resource art, including `resources.pcx` and Luxury city icons.
+- Added scenario-aware Luxury resource city-icon import support for `luxuryicons_small.pcx`, including BIQ-order previews and non-fatal missing-art warnings.
+- Added a Resources-tab type filter with Bonus, Luxury, and Strategic chips selected by default.
+- Fixed Unit Table no-reload saves so successful saves clear stale row dirty badges in the open modal.
+- Added async QA warnings for Civ3-long Civilopedia/PediaIcons art paths, with a staged repair action that shortens paths and keeps uploaded tech icons under the inferred 63-character runtime limit.
+- Added the era-specific Science Advisor face and dialog art overlay to the Tech Tree screen, using scenario-aware `popupSCIENCE.pcx` and `dialogbox.pcx` assets.
+- Added an Availability by Civ dropdown that lets the selected civilization immediately copy unit availability from another civilization in one undoable bulk edit.
+- Fixed day/night async QA so scenario seasonal folders such as `Art/DayNight/Summer/2400` and `Art/Districts/Winter/1800` satisfy terrain and district art checks.
+- Added developer-only SAV embedded BIQ extraction and save-inspection utilities, with tests isolated in a non-release debug tier, for debugging live-game rules, map resources, roads, units, and cities from saved games.
+- Added a debug-only SAV inspector `--biq-out` option that writes a synthesized BIQ with embedded rules plus live terrain, resource, overlay, city, unit, and colony placement data.
+- Fixed map natural wonder placement so `scenario.districts.txt` writes `district = Natural Wonder` with the selected natural wonder in `wonder_name`, matching C3X parser expectations.
+
+* RELEASE 27.19
+- Fixed Music async QA display so Music warnings show both as a tab badge and inside the Music tab content.
+- Added Music async QA warnings for custom playlist MP3s outside the observed Civ3-safe 128 kbps, 44.1 kHz, stereo profile, which can freeze Civ3 when scenario music starts.
+- Fixed newly added MP3 rows so drag/drop and picker imports inspect the source file immediately and show duration, bitrate, sample rate, and channel metadata before save/reload.
+- Unified renderer and main-process debug logging so the in-app debug panel, stdout, and debug log file use the same formatted lines instead of rewrapping or duplicating renderer messages.
+- Added Music now-playing waveform seeking before playback, displayed current time, total time, bitrate, sample rate, and channel mode in the sticky player, removed the redundant Selected/Playing status row, showed the play-button ring while seek metadata buffers, attached audio handlers before loading media, fixed cleared pending seeks being misread as seek-to-zero on Play, and added external music seek diagnostics for live reset/playback evidence.
+- Reconciled the R27.19 Music and Custom Civ Colors branches so the final Music player/playlist UI and final civ palette editor ship together.
+- Added a Civ -> Music editor organized by era and culture, with MP3 playback, drag/drop imports into scenario music folders, save/undo support, Files modal tracking, and import compatibility QA.
+- Refined the Civ -> Music editor with path-aware play/pause state, a compact now-playing waveform seeker, and narrower era/culture playlist columns.
+- Fixed scenario music inheritance so scenarios without local music show base-game music, then localize the playlist and MP3 files on scenario music saves.
+- Documented Civ3 music layout, sparse scenario playlist behavior, and Music-tab UX implications in `docs/Civ3Music.md`.
+- Stopped forcing ambiguous MP3 files into fake era/culture cells; they now remain playable in a matrix-integrated Playlist row.
+- Fixed Natural Wonders animation saves so semicolon specs with comma-delimited seasons or offsets are not split into quoted fragments that C3X rejects.
+- Added Civs tab color-picker usage hover details, Alternate color terminology, an outside-corner unused color marker, and reorganized the Colors/Diplomacy card into Colors and Diplomacy subsections.
+- Added a Civs tab Assign Unique Colors action that gives each civilization a distinct color slot while preserving the first civilization already using each slot.
+- Fixed Assign Unique Colors dirty tracking so every changed civilization gets a row badge and the Civs tab count reflects all changed rows.
+- Fixed Custom Civ Colors table edits so changing row 7 by hex, RGB, or color picker uses the same linked-shade generation as Set Main Color, rebuilt from the stock Civ3 palette profile.
+- Documented Custom Civ Colors storage, generation, scenario-local palette, and CIV-tab UI invariants for future editor work.
+- Added a scenario-only Custom Civ Colors modal on the Civs tab, editing `ntp00`-`ntp31` palette files with a vertical palette editor, main-color generation for linked shades, per-color RGB/hex controls, scenario-local setup for shared BIQs, and save/undo support.
+- Added compact batch Hue, Saturation, Balance, and Tint adjustments with live table and ramp previews for the active palette row filter.
+- Changed the Custom Civ Colors row filter into compact combinable facets, including Main shades, Other useful colors, Gray, Protected, and All others.
+- Matched the Custom Civ Colors row-filter styling to the Files modal checkbox-chip filters, with tighter spacing for the inline palette toolbar.
+- Fixed unsaved Custom Civ Colors edits so Civs-tab color chips and color pickers repaint from the edited palette immediately, without requiring Save or tab reload.
+- Fixed the Custom Civ Colors Main Color native picker so dragging inside the picker no longer closes it on the first live color update.
+- Preserved Custom Civ Colors sidebar and row-table scroll positions when selecting another color set.
+- Removed the redundant Custom Civ Colors Restore Color Set action.
+- Added compact default-civilization usage summaries to the Custom Civ Colors sidebar rows.
+- Renamed the Custom Civ Colors main picker label to Set Main Color and added hover/focus affordances around the label and swatch.
+- Fixed Custom Civ Colors undo so restored palette data also refreshes the color swatches.
+- Fixed Custom Civ Colors undo so the Set Main Color picker resets to the restored main color instead of keeping a stale draft.
+- Fixed BIQ Government add/copy/import saves so every GOVT record's relation matrix is expanded to the final government count, and auto-repaired pre-existing GOVT matrix mismatches on later BIQ saves.
+- Added subtle primary/secondary civilization color chips to the Civs list thumbnails.
+- Added Terrain as the first Resources -> Generated By relationship group, editing TERR possible-resource masks from the selected Resource.
+- Fixed Districts button tile previews to prefer scenario-local `Art\Districts\WorkerDistrictButtonsNorm.pcx` before falling back to the standard C3X sheet.
+
+* RELEASE 27.18
+- Fixed blank Technology placeholder staging so generated PCX conversion payloads survive template cleanup, and updated the Tides catalog parity baseline for the installed 241-improvement fixture.
+- Added Scenario-mode tech PediaIcons coverage warnings and first-save tech icon block generation, including generated blank PCX placeholders when a Technology has no art.
+- Fixed Resource imports so terrain rows that allowed the source resource now allow the imported resource too, preserving source scenario possible-resource terrain membership.
+- Updated the Conquests unit-resolution baseline for the current Tides of Crimson scenario helper folders.
+- Kept copied reference rows dirty when a pending copy is renamed back to a deleted original key before save.
+- Added Standard Game as a Reference-tab Import source, so scenario BIQ entries can be imported from the global Conquests rules as well as other scenarios.
+- Changed the Units `Unit Abilities` and `Available To` panels to show full checkbox lists, with ability labels and civilization thumbnails.
+- Fixed the Units `Unit Abilities` checkbox labels so compact BIQ keys display as spaced friendly names.
+- Fixed reference dropdown labels so copied/renamed Improvements and other reference entries show their current names without needing a full tab refresh.
+- Fixed BIQ civilization copy saves so units available to the source civilization also become available to the copied civilization.
+- Fixed BIQ civilization copy/delete saves so multiple same-save `@INDEX` operations keep targeting the original records instead of shifting later civ copies onto neighboring records.
+- Added an Improvements `Required By Units` C3X reverse editor for `building_prereqs_for_units`, placed under Generated Resources.
+- Fixed BIQ reference QA so Technologies with no era (`TECH.era = -1`) are treated as valid no-era techs instead of false missing-era warnings.
+- Fixed no-reload BIQ save reconciliation so deleting a reference record updates already-open downstream reference fields, preventing shifted resources such as Helium-3 from temporarily displaying as the next resource until Refresh.
+- Changed unit import so imported units start with no civilizations in Available To, and added a visible Add All action to the Unit Available To editor.
+- Added async QA warnings for known BIQ reference fields that point outside their target tables, and made reference pickers display unresolved current values as invalid indexes instead of `(none)`.
+- Fixed no-reload BIQ saves so successful saves with non-fatal warnings clear dirty badges and pending Save state, and kept same-session copied reference chains pointed at renamed pending source entries.
+- Fixed Districts/Wonder Districts "Include in this scenario" saves so late progress events cannot reopen the save details modal after the save completes.
+- Added app-wide Save and Undo keyboard shortcuts, with Ctrl+S/Ctrl+Z on Windows and Cmd+S/Cmd+Z on macOS routed through the shared main and modal action contract.
+- Added lazy thumbnails to Terrain Type reference dropdowns, so Pollution Yields shows terrain art and Worker Terraform Action shows worker command-button art without preloading hidden option rows.
+- Added a Map city Bulk Improvements modal with thumbnail multi-selects, city-owner/population/coastal filters, sorted affected-city preview with unchanged rows de-emphasized, clearer exact-set wording, and one-step undoable apply behavior.
+- Tightened the single-city Map Improvements panel with compact rows, full-width search, aligned present-count text, and a Multi-City Edit action.
+- Fixed single-city Map city edits so name, population, culture, owner, and improvement changes immediately enable the Map modal Save, Undo, and Undo All controls, including Cmd/Ctrl+Z for active improvement toggles.
+- Fixed Units-list BIQ index hover details so they still work when visible index badges are hidden and are cancelled immediately when a unit drag starts or ends.
+- Fixed the reference dirty-cache regression harness so it extracts the renderer dirty-state helper used by `rebuildReferenceDirtyCacheForTab`.
+- Added a hostile multi-turn saved-BIQ unit regression that composes add, copy, delete, reorder, repeated save/reload, AI-strategy changes, PRTO self-reference lists, hidden strategy rows, and downstream unit-index references in one workflow.
+- Added Units-list and BIQ save diagnostics for unit reordering, including drag start, highlighted drop target changes, row drops, pane-only drops, no-op drops, applied order fingerprints, PRTO primary remap summaries, hidden AI-strategy child-row remaps, and downstream unit-reference field families touched during save.
+- Fixed Units-list BIQ index hover styling so rows keep the same thumbnail padding with indices shown and drag-enabled rows keep the grab cursor.
+- Added a default-on File -> Settings -> Units toggle for Units-list BIQ index hover details and shortened the tooltip's first label to "Primary Index" to avoid truncation.
+- Switched Units-list BIQ index annotations to the app's rich blue tooltip on row hover, including primary PRTO index and named hidden AI-strategy rows.
+- Made Units-tab reorder Undo use a targeted in-memory snapshot instead of the slow full-tab restore/reload path.
+- Added a default-on File -> Settings -> Units toggle for Units-tab drag reordering, with the list cursor and drag/drop affordances disabled immediately when the setting is off.
+- Added app-wide dirty badge/count and Undo/Undo All contract tests covering editable tab families, reference rows, BIQ record lists, main toolbar controls, and modal undo/save button clusters.
+- Fixed Units-tab reorder dirty tracking so moving a unit immediately shows the Units change badge/count and remains undoable via Undo All before save; reorder row badges now follow the units the user intentionally dragged instead of every row shifted by the final BIQ index plan.
+- Added an optional File -> Settings -> Units toggle that shows subtle lower-right Units-list BIQ PRTO index annotations, including dynamically planned hidden AI-strategy row indices in parentheses.
+- Added Units-tab drag reordering for scenario BIQs, saving PRTO primary order changes by BIQ index while remapping hidden AI-strategy child rows and downstream unit-index references.
+- Improved Units-tab drag reordering with edge auto-scroll and drag previews that retain the unit thumbnail.
+- Added exhaustive saved-BIQ unit reorder regressions across 2021 EXPANSION, Civilization LEGENDS, stock Conquests, and map/player fixtures, including full PRTO field snapshots, hidden AI-strategy rows, rule default units, map units, player start units, civilization king units, and building-produced unit references.
+
+* RELEASE 27.17
+- Fixed reverse-relationship source tooltips so BIQ structure records such as Worker Jobs report the loaded BIQ file instead of C3X effective config metadata.
+- Added source/field tooltips to Tech Enables, Resource Required By/Generated By, and Government Required By relationship group labels and cards.
+- Restored the searchable right-sidebar section list on Resources detail views.
+- Added the Hide Sidebar / Show Sidebar toggle to Resources and Governments detail views.
+- Aligned the Units prerequisites cards with the surrounding Unit Art and Unit Class sections by removing an extra horizontal inset.
+- Removed the redundant inline Resources Civilopedia editor below Generated By now that Resources uses the top collapsible Civilopedia section.
+- Reordered the Governments detail view so Civilopedia and Government Icons sit above Required Tech and Required By, matching the Resources layout.
+- Added a Governments `Required By` board for Improvements and Districts that require the selected government, editing downstream Improvement Required Government and District Allowed Governments fields from the Government detail view.
+- Added Resources `Required By` and `Generated By` boards below the Resource `Required Tech` controls, showing and editing downstream Unit, Improvement, Worker Job, District, and C3X generated-resource relationships from the selected resource.
+- Fixed Refresh from Disk so the scenario selector reloads newly added, copied, or deleted `.biq` files before reloading the current bundle.
+- Added async QA warnings and red wavy link highlighting for Civilopedia `$LINK` targets that point at missing Civ3 entries, catching imported scenario prose that still links to source-scenario Civs, units, concepts, or other absent entries.
+- Fixed empty scenario Wonder District fallback screens so incompatible default wonder sets show the create/seed prompt instead of throwing a renderer error after scenarios filter them to zero entries.
+- Added File -> Settings -> Tooltips presets for no delay, short delay at 300ms, medium delay at 800ms, long delay at 2s, or never showing shared blue metadata tooltips.
+- Fixed reference picker metadata to target existing BIQ rows by `@INDEX` instead of Civilopedia key, preventing duplicate-key scenario data from saving as later same-key records.
+- Fixed reference edit collection for existing BIQ rows with blank Civilopedia keys so edits still target the row by `@INDEX`.
+- Fixed copied reference entries so their default copy name is written into the BIQ name field, preventing UI-created unit copies from reloading under the source unit's name.
+- Fixed imported Unit and Improvement BIQ fields so they are saved as imported values even when the imported Civilopedia key already exists in the target BIQ, preventing target-template fields such as Improvement required tech from silently winning.
+- Fixed blank Civilization creation so inherited city, military leader, and scientific leader list rows are not carried into new blank civs.
+- Fixed imported Government relation rows so the pre-save imported editor state is expanded to the target BIQ government list before save/reload.
+- Fixed blank unit creation so new PRTO rows use defaults shown after save/reload, including `otherstrategy = -1`, movement, AI Strategy, and order/action defaults.
+- Fixed unit copy record operations to use BIQ index source references for duplicate Civilopedia-key units, so (for example) Civilization LEGENDS `War Chariot` copies clone the selected row instead of the first `PRTO_WAR_CHARIOT` row.
+- Fixed concurrent BIQ record delete plus field-edit saves so edits targeting original indexes are shifted or dropped after deletes, and PRTO copy/delete now preserves or reconciles strategy-map child rows, preventing unit edits/adds/deletes from poisoning neighboring unit fields or AI Strategy masks.
+- Added full-field saved-BIQ reload assertions for add, edit, copy, delete-survivor, and import CRUD workflows across Civilizations, Technologies, Resources, Improvements, Governments, and Units.
+- Added semantic delete-cascade coverage for every inventoried BIQ reference field affected by CRUD deletes, including Rules default units, Civilization government/unit references, Unit and Improvement prerequisites, leader/player references, terrain resource masks, and government relation tables.
+- Added save-after-each-prefix BIQ CRUD regressions for Rules default units, cross-entity Tech/Resource prerequisites, and Government references so fields shown in the UI are rechecked after each intermediate save/reload point.
+- Fixed FLAV delete cascades so Civilization, Technology, and Improvement flavor bitmasks plus FLAV relation rows shift with surviving flavors, and broadened real-save pre-delete reference snapshots for structured BIQ sections such as Terrain, Worker Jobs, Eras, Difficulties, Espionage, and Flavors.
+- Added saved-BIQ reload regressions for FLAV CRUD and Terrain/Worker Job reference cascades so flavor masks, terrain resource masks, worker jobs, worker-job tech requirements, and worker-job resource requirements are verified after intermediate saves.
+- Added fixture-backed Civilization LEGENDS and 2021 EXPANSION unit edit/copy regressions so same-key PRTO primaries and strategy-map units are tested for adds as well as deletes.
+- Added unit pending-reference regression coverage for logical PRTO primary indices when new units serialize with strategy-map duplicate records.
+- Added full-field saved-BIQ reload assertions for newly added, copied, and imported PRTO units so regressions such as dropped unit names fail directly.
+- Added BIQ regressions for newly added and imported units edited to multiple AI Strategy bits before first save, including checks that existing neighboring PRTO rows keep their fields and strategy masks.
+- Added per-arrow floating Tech Tree border warnings for dirty Science Advisor arrows that touch protected advisor-frame areas, with red route highlights, stale route-snapshot invalidation for resized tech boxes, cleaner selected-focus route previews, a selected-arrow frame guide, no stray stage focus ring after handle deletion, and a save-details note.
+- Improved Tech Tree drag responsiveness by caching selected-focus arrow layers and limiting border-warning refresh work during live tech-box and arrow-handle drags.
+- Kept saved route metadata handles available on clean Tech Tree opens so precomputed Science Advisor arrows can be inspected and edited without first dirtying generated arrow art.
+- Preserved clean-era Science Advisor arrow metadata when saving regenerated arrows for a different era, preventing an Industrial or Modern arrow save from dropping Ancient or Middle Ages hover handles.
+- Added BIQ regression coverage for adjacent and duplicate-key unit AI Strategy masks, pending copied units, repeated unit saves, pending copied civilizations, repeated civilization saves, and civilization Flavor masks, guarding against save/reload transfers or losses in the areas reported by mod authors.
+
+* RELEASE 27.16
+- Collapsed trailing source-default C3X era-alias resets before positional backfill, preventing deleted middle-era aliases from pushing earlier blank eras to the previous custom name.
+- Scoped C3X era-alias live autofill to the active focus session and committed serialized alias rows for Save/Undo state.
+- Backfilled empty preceding C3X era-alias cells while editing and serializing, preventing later-era-only aliases from reloading into earlier eras.
+- Renamed the Units contextual C3X card to C3X Rules and adjusted its checkbox spacing to match neighboring rule groups.
+- Enforced BIQ header byte limits in the Scenario Title and Description editors, clipping by detected BIQ text encoding before save.
+- Corrected Locked Alliances BIQ numbering, where slot 0 is No Alliances and slots 1-4 are Alliance 1-4, show alliance war states in a named matrix, and use a full-width layout without the field sidebar.
+- Fixed GAME field enrichment so locked-alliance war flags keep their parsed BIQ values instead of reading the field-name suffix as the value.
+- Removed the empty Player Options card from Scenario setup now that playable civilizations live in the dedicated Players panel.
+- Patched Scenario and Rules BIQ field mappings for locked alliances, spaceship part requirements, culture level names, flavor relations, and read-only Civilopedia Entry fields to better match exposed fields.
+- Added a read-only Total row to the scenario Time Scale table, corrected Base Time Unit to BIQ order, and made displayed ranges refresh when related time fields change without jumping scroll.
+- Kept contextual C3X controls editable in Standard Game on Civs, Improvements, Units, and Techs while BIQ fields remain read-only, so changes save through the active C3X config target.
+- Restyled C3X era alias matrices as bordered tables with transparent table-cell editing, while keeping the same structured alias editors and serialization.
+- Added contextual C3X unit-rule toggles to the Units tab for PTW artillery targeting, sea-only bombarders, unit-per-tile-limit exemptions, and water defensive retreat limits.
+- Audited C3X array-style base fields and tightened structured parsing so comma-delimited fields preserve newline-wrapped item bodies, while `show_tile_destruct_animation_after` now uses the token-list editor.
+- Added contextual C3X era alias editors to the Civs tab so each civilization can edit its civ and leader aliases alongside its BIQ identity and leader fields.
+- Replaced the C3X `civ_aliases_by_era` editor with a civilization picker and era table that groups noun, adjective, and formal-name aliases while preserving raw unmatched/duplicate source entries.
+- Replaced the C3X `leader_aliases_by_era` editor with a leader picker and era table for replacement name, gender, and title aliases.
+- Removed LF-only scenario text quality warnings and now silently normalize scenario Civilopedia/PediaIcons line endings to Windows CRLF on save, while skipping those text writes when the generated bytes already match disk.
+- Drew selected-tech prerequisite and dependent arrow highlights on the top Tech Tree overlay layer, so temporary purple and green relationship arrows remain visible over unrelated tech boxes like selected blue arrows.
+- Preserved explicit user-edited Tech Tree arrow routes during Science Advisor PCX saves, instead of re-constraining approved handles into generated-arrow safe bounds.
+- Kept clean scenario Tech Tree opens on the saved Science Advisor PCX pixels even when arrow metadata exists, while still exposing saved route handles and temporary selected-arrow/relationship highlights for editing.
+- Added async quality warnings for technology prerequisite loops, including self-prerequisite techs and circular chains that can crash Civ3 when opening the Tech Tree.
+- Added a subtle colored glow behind selected and related Tech Tree boxes so highlighted prerequisite/dependent relationships are easier to read without relying only on outlines.
+- Added a compact Background Arrows Delete handle button with the shared red x icon for deleting the selected non-endpoint Tech Tree arrow handle, with the same endpoint-protection rules as keyboard Delete.
+- Fixed Tech Tree Auto-Position generated arrows so successful Tidy/Rebuild passes invalidate every generated route in the era, preventing stale route snapshots from leaving arrows detached after layout changes.
+- Fixed Tech Tree arrow endpoint-handle drags so moving the source or target handle no longer rewrites the neighboring handle, preventing two-point arrows from disconnecting and preserving user-added middle handles.
+- Refreshed an open Tech Tree modal after no-reload saves of generated Science Advisor arrow art, so saved arrows remain visible from the newly written PCX instead of disappearing when the dirty overlay is cleared.
+- Opened the Tech Tree modal without preselecting the current Technologies row, keeping the initial title and box/arrow focus neutral until the user clicks inside the tree.
+- Kept clean Tech Tree opens faithful to the base Science Advisor PCX by separating dirty generated-arrow preview from stored route-handle metadata, and cleared stale box/arrow selection when switching eras.
+- Restored the previous Tech Tree arrow drag behavior while keeping the newer selected-arrow/selected-tech highlighting, route handle visibility, and explicit double-click/Delete route-handle editing for generated-arrow preview mode.
+- Kept explicit Tech Tree arrow handle drags as raw user-edited routes instead of re-constraining them into generated right-angle paths after each move.
+- Collapsed immediate out-and-back Tech Tree arrow route stubs before smoothing, preventing generated arrows from leaving small protruding handles in preview or saved PCX output.
+- Fixed explicit Tech Tree arrow editing so double-click insertion survives selected-arrow rerenders and handle drags keep their pointer capture instead of losing the drag immediately.
+- Added explicit Tech Tree arrow route editing: double-click an arrow segment to add a handle, click a handle to select it, Delete/Backspace removes selected internal handles, and Delete on a selected arrow clears its custom route override.
+- Fixed Tech Tree arrow handles so a plain click selects the route without creating a route override, dirtying arrow art, or enabling Save/Undo; detailed arrow diagnostics now mirror into the daily app log.
+- Added Tech Tree debug logs for generated-arrow hover, click, active-handle rendering, override creation, and handle drag start/end with edge keys and route points.
+- Drew selected Tech Tree arrows and active route handles on top layers above tech boxes while leaving ordinary invisible arrow hit targets below boxes.
+- Cached unchanged generated-arrow raster layers during Tech Tree box and arrow drags, so only moving route overlays are redrawn while boxes still move live with the pointer.
+- Let Tech Tree arrow hit targets receive clicks through empty node-layer space while keeping actual tech boxes above arrows in the click order.
+- Kept Tech Tree boxes above invisible generated-arrow hit targets, so clicking a box always selects/highlights the technology instead of accidentally selecting an overlaid arrow.
+- Reduced Tech Tree drag-time work by rerouting only affected generated-arrow edges during box and handle drags, while keeping live box-drag arrows on fresh geometry instead of stale route snapshots.
+- Kept generated Tech Tree arrows out of Science Advisor restored frame/border coordinates, including detours around the top-right notch before preview routes or saved PCX art can preserve them.
+- Fixed Refresh from Disk while the Tech Tree modal is open so the modal rebuilds from freshly loaded scenario metadata and PCX previews instead of showing stale canvases.
+- Fixed Tech Tree Auto-Position generated arrows so moved techs invalidate stale route snapshots and baseline hints instead of preserving old Science Advisor arrow stubs.
+- Constrained Tech Tree Auto-Position to the same Science Advisor inner-frame geometry used when restoring saved PCX frame pixels, including the top-right notch exclusion.
+- Added save-time Science Advisor arrow cleanup diagnostics that log residual arrow-colored pixel clusters and compare the current clear bounds against preview-style broad clearing.
+- Changed generated Science Advisor PCX saves to restore fixed frame pixels before drawing new arrows, so edge-adjacent routes are not overwritten by the frame restore pass.
+- Fixed generated Science Advisor PCX saves to use fresh Tech Tree preview route snapshots instead of recomputing stale dirty edges differently, and logged per-route save geometry for mismatch debugging.
+- Improved Tech Tree background-arrow editing so selected arrows keep their handles after the cursor leaves, selected/hovered routes get prioritized hit targets, and selected technologies highlight their incoming and outgoing arrows.
+- Fixed Tech Tree Auto-Position so dense Tidy layouts cannot keep overlapping boxes, using horizontal repair before accepting an existing-position layout.
+- Changed Tech Tree selected-technology arrow highlighting to use a temporary contrasting color overlay, making related arrows easier to pick out in dense route tangles.
+- Split Tech Tree selected-technology arrow highlights into exact-color incoming and outgoing overlays, and let plain background clicks clear the modal-only selected tech outline.
+- Adjusted Tech Tree selected-technology arrow highlights so incoming arrows render purple and temporary arrowhead glints match their arrow body colors.
+- Highlighted selected Tech Tree source tech boxes in purple and dependent target tech boxes in green to match the related arrow colors.
+- Changed individually selected Tech Tree arrows to use a blue exact-color overlay so they stand apart from selected-tech source and target relationships.
+- Fixed direct Tech Tree arrow clicks so selecting the edge itself immediately repaints the blue selected-arrow overlay, matching handle clicks.
+- Shifted in-modal Tech Tree game boxes 4 pixels lower to better match the in-game Science Advisor, while keeping Auto-Position, arrow routing, drag saves, and stored BIQ coordinates on the correct display/storage coordinate split.
+- Temporarily dimmed unrelated Tech Tree boxes and generated arrows while a tech or arrow is selected, keeping the focused relationship neighborhood visually prominent.
+- Made Tech Tree selection dimming feel more immediate by applying focus classes before deferred arrow raster repaint and tinting the cached arrow layer instead of rerendering every unrelated route.
+- Fixed clicking away from a selected Tech Tree arrow so unrelated boxes and arrows immediately undim instead of keeping stale arrow-focus dimming.
+
+* RELEASE 27.15.1
+- Kept era-less Tech Tree gutter technologies visually unconnected, so prerequisite arrows are only drawn between techs in the selected era.
+
+* RELEASE 27.15
+- Restored Industrial Science Advisor lookups to prefer `Art/Advisors/science_industrial_new.pcx`, matching common scenario art, while retaining `science_industrial.pcx` as fallback.
+- Restored fixed Science Advisor frame/shadow pixels from the original PCX after generated-arrow cleanup, using the same inner polygon for every era and scenario.
+- Persisted exact generated Tech Tree arrow route snapshots in the scenario-local sidecar so reopened Science Advisor previews match the saved PCX instead of recomputing slightly different routes.
+- Added background quality warnings for dangerous scenario-local Civilopedia/PediaIcons shapes, including damaged `#HomelessIcons`, LF-only text files, suspiciously tiny overrides, and missing fallback EraSplash sections that can cause Firaxis editor freezes or in-game crashes.
+- Documented the shared Save, Undo, and Undo All synchronization contract for the main UI and modal headers, including dirty badges, side-channel dirty state, and modal restore behavior.
+- Fixed Tech Tree Auto-Position Undo so the main Save and Undo All buttons and Technologies dirty badges refresh after modal Undo returns the tree to its clean state.
+- Fixed Tech Tree Auto-Position Undo so technology dirty badges are recomputed from restored X/Y data instead of leaving stale row badges behind.
+- Fixed Tech Tree Auto-Position dirty badges so every moved technology row is marked based on changed X/Y coordinates, instead of only the selected tech.
+- Added a Background Arrows `Snap drag` toggle so arrow route handles can either snap to nearby route axes or drag freely for more granular placement.
+- Kept Tech Tree modal Undo and Undo All on the currently viewed era, so reverting moved tech boxes restores data and arrow mode without navigating to a different era.
+- Kept untouched scenario Tech Tree eras on the original Science Advisor PCX arrows until the user edits that era, while still enabling generated-arrow handles immediately for eras loaded from the scenario arrow metadata sidecar.
+- Removed faint stock Ancient Science Advisor pale scratch remnants by filling small holes inside cleared arrow masks and avoiding same-color replacement fills for those masked pixels.
+- Restored broad generated Science Advisor arrow cleanup for stock and scenario backgrounds while keeping protected frame/chrome pixels out of the erase mask.
+- Protected fixed Science Advisor frame/chrome regions from generated-arrow cleanup so stock and scenario backgrounds keep border texture while still removing old arrow remnants in the tech graph.
+- Added a scenario-local editor-only Tech Tree arrow metadata sidecar so saved generated Science Advisor route adjustments are reused when reopening a scenario.
+- Changed Tech Tree generated-arrow handles so previously saved scenario arrow metadata makes routes editable immediately when reopening that era.
+- Improved generated Science Advisor arrow erasing near advisor-frame edges so cleared old arrows are filled from matching local background instead of smearing nearby frame texture into the parchment.
+- Fixed generated Science Advisor arrow erasing so isolated fringe-colored background pixels are not cleared merely because they are near a real arrow.
+- Grouped Tech Tree header controls into soft Scope, Display, Layout, and Background Arrows sections for easier scanning.
+- Made the Tech Tree modal header more compact by removing redundant helper text and moving the live coordinate readout into the tree stage.
+- Synced modal Save, Undo, and Undo All enablement so modal Save cannot be active when the matching modal Undo action is inactive, and Undo/Undo All now share the same undoable-state predicate.
+- Added gentle nearby route-axis snapping while dragging Tech Tree arrow route handles, with Alt/Option-drag bypass for exact free placement.
+- Fixed Tech Tree node double-click navigation so Back reopens the Tech Tree modal instead of staying on the Techs tab.
+- Reduced Tech Tree flashing after dragging a tech by updating the moved node and generated-arrow preview in place instead of rebuilding the whole era.
+- Added fuzzy Firaxis Science Advisor arrow-shape regression tests that compare generated route tangents and curve proximity against stock PCX arrow pixels.
+- Fixed Tech Tree arrow route handle drags so each arrow-point move is its own Undo step instead of the next Undo reverting multiple previous arrow edits.
+- Fixed Tech Tree single-step Undo after moving a tech so it restores the generated-arrow preview state as well as the tech coordinates, returning to the original PCX arrows when appropriate.
+- Replaced the Tech Tree `Snap to Grid` checkbox with `Tidy` and `Rebuild` Auto-Position modes, with stock Conquests tests covering close-to-current cleanup and from-scratch Firaxis-like layout generation.
+- Improved Tech Tree `Rebuild` Auto-Position so from-scratch layouts ignore current coordinate noise, keep stable prerequisite-branch ordering, and score visible generated-arrow crossings to avoid spaghetti routes.
+- Constrained Tech Tree Auto-Position around the Science Advisor upper-right face area, using stock Conquests layouts to keep the reserved corner clear without shrinking the whole advisor frame.
+- Tightened the Tech Tree Background Arrows style panel so color labels and swatches render as compact paired controls.
+- Fixed Tech Tree `Auto-Position` bounds repair so close/tall stock-shaped layouts keep bottom-row tech boxes inside the Science Advisor frame instead of pushing them below the visible border.
+- Improved Tech Tree arrow routing for close diagonal prerequisite boxes so routes prefer Firaxis-like bottom/top exits instead of odd side exits into nearby targets.
+- Fixed Tech Tree `Auto-Position` so it scores box overlap as a hard failure, compares generated layouts against stock-shaped candidates automatically, compacts excessive dependency ranks into readable visual columns, and is regression-tested against Firaxis Conquests era layouts.
+- Fixed generated Science Advisor PCX saves so arrow anchors use the same civ-scoped tech-box sizing shown in the Tech Tree modal, including unit availability filters and obsolete improvement icons.
+- Added regression coverage that compares generated Science Advisor arrow preview pixels against the saved PCX output after palette quantization, including route overrides and custom arrow style.
+- Reduced generated Science Advisor arrow erasure near game borders by requiring nearby true arrow-color pixels before clearing detached fringe-colored runs.
+- Added a Tech Tree `Auto-Position` action that lays out the selected era left-to-right from prerequisites, aligns tech boxes on a grid, avoids overlaps, and favors generated-arrow routes that do not pass through unrelated boxes.
+- Fixed Tech Tree modal Undo All enablement so it activates after the first unsaved change, including pending arrow-style edits before the global dirty flag refresh completes.
+- Fixed Tech Tree node clicks so single-click selection and double-click close/focus are not misclassified as drag moves or arrow redraws.
+- Changed generated Science Advisor arrow previews to clear the era background once and redraw all arrows with cached app-generated route baselines, while recomputing only edges connected to moved tech boxes.
+- Added scenario-aware Science Advisor and `Art/Advisors/techboxes.pcx` rendering in the Tech Tree modal, including native background sizing, in-game techbox art, unit/improvement/worker-job unlock thumbnails for box size selection, and opt-in scenario-local Science Advisor arrow regeneration after moving techs.
+- Refined generated Science Advisor arrows with shared preview/save raster output, coverage-based antialiasing, wider Firaxis-style arrowheads, and layered light glints on the arrow body.
+- Added live Tech Tree controls for generated Science Advisor arrow colors, body thickness, edge softness, curve radius, and arrowhead geometry, with the same style passed to scenario PCX save output and color-picker redraws throttled for smoother dragging.
+- Added Tech Tree modal Save and Refresh header actions that share the main app button handlers, labels, dirty state, validation blocking, and loading/saving disabled states.
+- Added generated Science Advisor PCX arrow backgrounds to the Files modal as changed scenario write targets, with an Art PCX filter so queued arrow-art saves are visible before saving.
+- Fixed Tech Tree Arrow Style dirty and undo handling so style-only edits enable Undo/Undo All, Reset is undoable only when it changes a custom style, and Undo All restores the clean saved style.
+- Improved generated Science Advisor arrow cleanup for modded PCX backgrounds by removing connected and detached muted antialias/glint/shadow arrow pixels before drawing new arrows.
+- Added session-only draggable Science Advisor arrow route handles in the Tech Tree modal, so regenerated arrows can be adjusted in preview and written through the normal scenario PCX save without creating extra route files.
+- Improved generated Science Advisor arrow routing and editing by avoiding rounded reverse-turn kinks, preventing short-gap target approaches from bending back on themselves, preserving separated shared endpoint slots, removing avoidable mixed-side doglegs, entering side borders for vertically offset targets, choosing arrow-red palette colors instead of neutral near-matches, showing route handles only while hovering an arrow, and allowing arrow start/tip points to slide along tech-box borders.
+- Matched generated Science Advisor arrows to era-specific Firaxis palette colors, including blue Modern Times arrows, cleared existing blue background arrows in previews and save output, limited scenario PCX regeneration to only changed eras, and added route-shape tests for Firaxis-like connector behavior.
+- Added stock Conquests Science Advisor PCX regression coverage across Ancient Times, Middle Ages, Industrial Ages, and Modern Times for generated arrow endpoint sides and side-axis attachment placement, including the Monotheism, Theology, Chivalry, Feudalism, Invention, and Engineering cluster plus Industrial Combustion, Flight, Amphibious War, Advanced Flight, Mass Production, Motorized Transportation, Electronics, and Replaceable Parts routes, using Firaxis arrow pixels as the comparison target.
+- Added read-only Worker Jobs command-button previews from Conquests `NormButtons.pcx` in Terrain -> Worker Jobs and Tech Tree unlock boxes, and documented that BIQ `TFRM` records do not store those atlas coordinates.
+- Added obsoleted improvements to Tech Tree unlock boxes with Civ-style red X overlays, so they contribute to tech-box icon sizing and match the in-game Science Advisor.
+- Added the in-game italic title and blue no-go marker for Tech Tree technologies flagged as not required for era advancement, keeping the marker as UI-only overlay art.
+
+* RELEASE 27.14
+- Renamed the focused BIQ map test file and npm test tier from map-critical to map for clearer maintenance naming.
+- Changed the Map editor renderer to use bounded canvas chunks for oversized maps while keeping native scrolling, independent minimap rendering, and viewport-sized hover overlays, preventing large 362x306 maps from allocating multi-gigabyte full-world canvases.
+- Smoothed large-map scrolling, minimap dragging, and Ctrl-pan by draining visible map chunks across frame budgets, retaining nearby chunk canvases, and prefetching adjacent chunks after interaction settles.
+- Sped up large-map painting by keeping 1x1 brush resolution local, repainting only clipped edit regions inside already-rendered chunks, and patching changed minimap tiles instead of rebuilding the full minimap after every paint stroke.
+- Fixed incremental minimap terrain-paint patches so edited tiles do not leave dark background rectangles or stale overlapping coastline artifacts on the minimap.
+- Reconciled incremental minimap edit patches during idle time and widened their local repaint bounds, preventing subtle dark terrain-edge outlines without blocking paint gestures on a full minimap rebuild.
+- Changed Map import to load source BIQs through a worker-backed map-only path and added a compact terrain preview to the import modal, avoiding full source scenario bundle/materialization work before confirming an import.
+- Cleared `scenario.districts.txt` district and named-tile sidecar data when importing or otherwise replacing the whole scenario map, so coordinate-bound labels do not survive onto the new map.
+- Added Deepwater Harbor map painting as a Sea terrain variant that converts Coast tiles to Sea while preserving their Coast graphics, with `DH` special-terrain markers on the map.
+- Moved the Resize Map terrain-fill selector into the resize control grid above the minimap preview so it matches the Map Width and East/West control width.
+- Fixed Map Resize undo so closing and reopening the Map editor cannot show the undone resized map from a stale Map tab button.
+- Changed Scenario -> Players so the main search bar filters Playable Civs and removed the duplicate mini search inside the Playable Civs panel.
+- Updated Tides catalog parity tests to follow the BIQ-declared scenario search root and the installed 242-improvement fixture baseline.
+- Fixed Scenario -> Players search inputs so typing in either the player filter or Playable Civs filter keeps focus and caret position after the filtered list rerenders.
+- Moved the Scenario Playable Civilizations checklist from Scenario -> Scenario into Scenario -> Players beside the player list, matching workflow while still saving the underlying GAME playable-civ fields.
+- Cleared `scenario.districts.txt` district and named-tile sidecar data when a scenario map is removed, preventing coordinate-bound district data from surviving after BIQ map sections are deleted.
+- Repaired scenario `PediaIcons.txt` saves so app-created files with real icon blocks inside `#HomelessIcons` are automatically normalized on the next scenario save, preserving Firaxis-safe homeless placeholders, CRLF line endings, and family-aware icon/wonder-splash block placement.
+- Hardened scenario text saves so unrelated `PediaIcons.txt` comment/separator sections, EraSplash blocks, spaceship icon blocks, and Civilopedia spaceship articles survive reference edits unchanged.
+- Fixed first-write scenario `Civilopedia.txt` and `PediaIcons.txt` saves to start from the loaded fallback text layer when the scenario-local file does not exist yet, preventing one-entry override files that drop stock references.
+- Added icon-only Refresh buttons beside Save in the main toolbar and Map modal, reloading the current BIQ/config files from disk while preserving the active screen.
+- Synced Map city wall art with the Improvements picker by updating the CITY Has Walls flag when the Walls improvement is selected or cleared, reusing the existing partial city redraw path.
+- Preserved C3X District and Wonder District improvement-name references when an Improvement is renamed, including dependent improvements, wonder prerequisites, and conditional bonus entries, with async quality checks now warning on unknown conditional bonus improvement/terrain references.
+- Aligned Scenario Players by exposing direct LEAD player Add/Delete controls and structured Starting Units editing in the Scenario -> Players panel, keeping playable civilizations separate from player-record count, and seeding added players with defaults.
+- Matched Scenario Player save invariants by writing LEAD Any difficulty as `-2`, syncing WMAP civilization count to LEAD player count, and keeping SLOC/TILE starting-location state coherent.
+- Normalized fixed playable-civ scenarios with preplaced city starts so player-slot-owned cities save as civ-owned stock-style cities and orphan TILE start flags are cleared when no SLOC records exist.
+- Fixed Scenario Player saves with tile-only starting locations so harmless starting-location coherence notes no longer keep the Players tab dirty after a successful save.
+- Added Scenario Players validation for playable civilizations that do not map to fixed LEAD player slots, warning in QC and blocking saves that can make Civ3 freeze while configuring AI players.
+- Fixed Map city ownership reloads so Player 1-owned cities no longer display as ownerless, restoring borders, civ-color, and culture-specific city art after reopening scenarios.
+- Added BIQ map regression coverage so barbarian owner zero and Player 1 owner zero cannot be conflated for city or unit records.
+- Aligned Map owner pickers with ownership semantics by switching the owner list by owner type instead of unioning Player and Civilization choices.
+- Matched direct-Barbarians map owner UI by hiding the Owner picker for Barbarian assignment and preserving map scroll when changing city or unit assignment.
+- Removed RACE 0 Barbarians from Map Civilization assignment owner lists; Barbarian ownership is now selected only through the Barbarians assignment.
+- Fixed civ-owned Map color rendering with custom player data so matching LEAD custom colors apply consistently to borders, city labels, unit overlays, and owner swatches.
+- Made Map Tile Info Assignment controls full-width for cities, units, and starting locations.
+- Refreshed open Map views when Scenario Player records or custom-player-data state change, keeping owner dropdowns, labels, colors, and culture art in sync.
+- Refreshed open Map views when Civilization color or culture group fields change, so borders and culture-specific art update without closing and reopening the Map tab.
+- Fixed Map rerenders after BIQ support edits so dirty Border Factor, live Civilization defaults, player color, and player era values are used immediately, with Border Factor now driving culture border expansion thresholds.
+- Fixed Map modal startup on scenarios with Bridge districts by hoisting district-neighbor helpers used during the first canvas draw.
+- Fixed Map district previews for configured art cells that are fully transparent, so placements still show the fallback district marker and log the transparent crop instead of appearing to fail.
+- Fixed Improvement Gain reference dropdowns so `In every city` and `In every city on this continent` lazily populate Improvement option thumbnails like the other quick reference pickers.
+- Cleaned up BIQ reference picker search placeholders so they use readable field labels instead of bunched raw keys.
+- Removed the unused one-time Electron icon generator dependency and upgraded Electron to the patched 39.8 line, clearing the npm audit vulnerability report.
+
+* RELEASE 27.13
+- Fixed Scenario Civ art saves so generated Civilopedia icon sheets cannot overwrite the primary large icon when both slots start from the same source filename, with save/reload tests covering distinct PediaIcons paths and PCX dimensions.
+- Fixed Improvement Required Government saves so a dirty Improvement tab resolves the selected Government through the full BIQ reference set and writes the BIQ instead of reporting no file changes.
+- Added unobtrusive active-tab item counts for BIQ reference tabs, with Units counts ignoring synthetic era rows and strategy-map duplicate PRTO records.
+- Documented the pending BIQ reference save flow, C3X/District name-reference boundary, and UI invariants for reference CRUD Undo, blank Add metadata, no-reload clean state, and dirty badges.
+- Added save/reload regression coverage for pending BIQ entries referenced from C3X base and District configs, plus empty-index pending reference planning guards.
+- Fixed blank Add templates so creating a new Civ, Tech, Resource, Improvement, Government, or Unit from an unsaved entry with staged art no longer inherits hidden pending thumbnail/import metadata.
+- Fixed reference-tab Add/Copy/Import Undo so pending BIQ create operations are not left behind after the visible entry is restored, preventing undone Civ adds from still failing Save at the 32-civ cap.
+- Fixed BIQ save planning for newly added Tech references so unsaved `biqIndex: null` entries cannot be mistaken for index 0, preserving Civilization free-tech assignments and similar pending references after reload.
+- Added city-screen building icon atlas support for Improvements, including a vertical row picker from `Art/city screen/buildings-small.pcx`, selected small/large previews, combined scenario copy staging for both building PCX files, automatic imported Improvement row appends to `buildings-large.pcx` and `buildings-small.pcx`, and a Settings toggle for disabling those automatic imports.
+- Added robust building city icon atlas tests covering Civ3 row geometry, display-mode column counts, BIQ/PediaIcons index allocation floors, palette-preserving appends, and deleted pending import compaction.
+- Improved atlas picker responsiveness by caching decoded PCX preview canvases instead of rebuilding full-sheet RGBA canvases for every visible icon cell.
+- Fixed no-reload saves after imported Improvement PediaIcons writes so quality checks recognize the just-saved scenario `#ICON_BLDG_*` block instead of showing a stale missing-block warning.
+- Fixed imported Improvements with city-screen icon metadata but no loaded Civilopedia art paths so first save still writes the required scenario `#ICON_BLDG_*` block.
+- Hid unreleased R28 C3X fields while the editor supports R27, including tile destruction animation settings now marked with R28 release metadata.
+- Fixed blank Add templates for Civs, Techs, Resources, Improvements, Governments, and Units so new entries no longer inherit thumbnail/art paths or live reference defaults from the selected entry, and blank Civs now start with no favorite/shunned government, monarch unit, or diplomacy text slot.
 - Fixed import/add modal field alignment so Name and Key inputs stay top-aligned even when the Key helper text is visible.
 - Fixed the main Units tab so its sort menu no longer exposes the Unit Table-only `Manual` mode, stale saved `Manual` sort state falls back to in-game order, unsaved new Units stay surfaced before Save, and no-reload saves keep synthetic era-specific unit rows behind real BIQ unit records.
 - Fixed unsaved Resource and Unit icon atlas pickers so every active pending import is drawn in its assigned future slot before Save, not just the currently selected import.
@@ -140,7 +518,7 @@
 - Added section-scoped undo snapshots and fast section-restore dirty updates for sectioned editors such as Districts, Wonder Districts, and Natural Wonders so ordinary single-section undos no longer have to restore and recompute entire section tabs.
 - Moved Tech Tree modal `Undo` and `Undo All` controls into the modal header beside `Close`, matching the Unit Table modal layout.
 - Fixed a renderer regression that left the Improvements tab blank by restoring the missing `tabKey` and selected-entry context passed into the Improvements top-board builder, so its undo-key wiring no longer throws while rendering.
-- Fixed Map modal hill painting to use a grassland base beneath hills, matching the existing mountain/volcano handling and Quint Editor’s map semantics so coastal and edge hill placements no longer leave the wrong underlying terrain.
+- Fixed Map modal hill painting to use a grassland base beneath hills, matching the existing mountain/volcano handling and other editors' map semantics so coastal and edge hill placements no longer leave the wrong underlying terrain.
 - Reverted clipped local-redraw handling for Map modal Undo after it produced terrain and overlay corruption; diff-based Undo still uses the faster map-specific restore path, but now falls back to the safe full map refresh.
 - Fixed the new diff-based Map modal Undo path to write the restored map tab back before refreshing visuals, and updated the map-redraw regression coverage so targeted Undo repaints can be validated without falling back to the old full-refresh test assumptions.
 - Routed tile-only Map modal Undo operations through the existing clipped local-redraw path, so diff-based Undo can refresh just the affected map region and defer minimap work instead of forcing a full 8,160-tile repaint.

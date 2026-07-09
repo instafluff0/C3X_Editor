@@ -3,8 +3,10 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const iconv = require('iconv-lite');
-const { resolveUnitIniPath, decodePcx, encodePcx, encodeRgbaToPcx, encodeRgbaToLeaderFlc } = require('./artPreview');
+const { resolveConquestsAssetPath, resolveUnitIniPath, parseUnitAnimationIni, decodePcx, encodePcx, encodeRgbaToPcx, encodeRgbaToLeaderFlc } = require('./artPreview');
 const log = require('./log');
+const techBoxLayout = require('./techBoxLayout');
+const scienceAdvisorArrows = require('./scienceAdvisorArrows');
 const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
 const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('./biq/bldgCodec');
@@ -17,13 +19,69 @@ const { parseAllSections } = require('./biq/biqSections');
 const C3X_BASE_MANIFEST = require('./c3xBaseManifest');
 
 const RESOURCE_ATLAS_RELATIVE_PATH = 'Art/resources.pcx';
-const RESOURCE_ATLAS_COLS = 6;
 const RESOURCE_ATLAS_CELL_SIZE = 50;
 const RESOURCE_ATLAS_MAGENTA = { r: 255, g: 0, b: 255 };
+const LUXURY_ICONS_SMALL_ATLAS_RELATIVE_PATH = 'Art/city screen/luxuryicons_small.pcx';
+const LUXURY_ICONS_SMALL_ATLAS_COLS = 8;
+const LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE = 22;
 const UNIT_ATLAS_RELATIVE_PATH = 'Art/Units/units_32.pcx';
 const UNIT_ATLAS_SPRITE_SIZE = 32;
 const UNIT_ATLAS_GUTTER = 1;
 const UNIT_ATLAS_MAGENTA = RESOURCE_ATLAS_MAGENTA;
+const UNIT_RUNTIME_IMPORT_EXTENSIONS = new Set(['.amb', '.flc', '.wav']);
+const TILE_ANIMATION_INI_ANIMATION_KEYS = [
+  'BLANK', 'DEFAULT', 'WALK', 'RUN', 'ATTACK1', 'ATTACK2', 'ATTACK3', 'DEFEND', 'DEATH', 'DEAD',
+  'FORTIFY', 'FORTIFYHOLD', 'FIDGET', 'VICTORY', 'TURNLEFT', 'TURNRIGHT', 'BUILD', 'ROAD', 'MINE',
+  'IRRIGATE', 'FORTRESS', 'CAPTURE', 'STOP_AT_LAST_FRAME', 'PauseROAD', 'PauseMINE', 'PauseIRRIGATE'
+];
+const BUILDING_CITY_ATLAS_RELATIVE_PATHS = {
+  large: 'Art/city screen/buildings-large.pcx',
+  small: 'Art/city screen/buildings-small.pcx'
+};
+const BUILDING_CITY_ATLAS_ORIGIN = 32;
+const BUILDING_CITY_ATLAS_GUIDE = { r: 0, g: 255, b: 0 };
+const BUILDING_CITY_ATLAS_MAGENTA = RESOURCE_ATLAS_MAGENTA;
+const BUILDING_CITY_ATLAS_GEOMETRY = {
+  large: { cellW: 51, cellH: 41, drawW: 50, drawH: 40 },
+  small: { cellW: 33, cellH: 33, drawW: 32, drawH: 32 }
+};
+const SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS = [
+  ['Art/Advisors/science_ancient.pcx'],
+  ['Art/Advisors/science_middle.pcx', 'Art/Advisors/science_middle_ages.pcx'],
+  ['Art/Advisors/science_industrial_new.pcx', 'Art/Advisors/science_industrial.pcx'],
+  ['Art/Advisors/science_modern.pcx']
+];
+const SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH = 'Art/Advisors/techboxes.pcx';
+const SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH = 'c3x_editor_tech_tree_arrows.json';
+const SCIENCE_ADVISOR_ARROW_METADATA_FORMAT = 'c3x-editor-tech-tree-arrows';
+const CIV3_PEDIA_ART_PATH_MAX_CHARS = 65;
+const CIV_COLOR_PALETTE_RELATIVE_DIR = path.join('Art', 'Units', 'Palettes');
+const CIV_COLOR_PALETTE_COUNT = 32;
+const CIV_COLOR_PALETTE_EDITABLE_COLOR_COUNT = 70;
+const SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES = [
+  { w: 84, h: 54 },
+  { w: 140, h: 54 },
+  { w: 140, h: 85 },
+  { w: 170, h: 54 }
+];
+const MUSIC_TEXT_RELATIVE_PATH = path.join('Text', 'music.txt');
+const MUSIC_BUILD_RELATIVE_PATH = path.join('Sounds', 'Build');
+const MUSIC_CULTURES = [
+  { key: 'american', label: 'American', code: 'NA' },
+  { key: 'european', label: 'European', code: 'EC' },
+  { key: 'roman', label: 'Roman', code: 'GR' },
+  { key: 'mideast', label: 'Mideast', code: 'ME' },
+  { key: 'asian', label: 'Asian', code: 'OR' }
+];
+const MUSIC_ERAS = [
+  { key: 'ancient', label: 'Ancient Times', biqIndex: 0 },
+  { key: 'medieval', label: 'Middle Ages', biqIndex: 1 },
+  { key: 'industrial', label: 'Industrial Age', biqIndex: 2 },
+  { key: 'modern', label: 'Modern Times', biqIndex: 3, shared: true }
+];
+const MUSIC_CELL_KEYS = MUSIC_ERAS.map((era) => era.key).concat(['playlist']);
+const DEFERRED_MAP_BIQ_CACHE_LIMIT = 3;
+const deferredMapBiqCache = new Map();
 
 const FILE_SPECS = {
   base: {
@@ -361,6 +419,14 @@ function maybeFormatIdReference(indexMap, value, noneLabel = 'None') {
   if (idx < 0) return noneLabel;
   const name = indexMap[idx];
   return name ? `${name} (${idx})` : String(idx);
+}
+
+function formatLeadCivilizationReference(indexMap, value) {
+  const idx = parseIntMaybe(value);
+  if (idx == null) return cleanDisplayText(value);
+  if (idx === -3) return 'Any (-3)';
+  if (idx === -2) return 'Random (-2)';
+  return maybeFormatIdReference(indexMap, idx);
 }
 
 function toBoolStringFromInt(value) {
@@ -860,7 +926,7 @@ function enrichBridgeSections(sections) {
   const formatOwnerField = (record, rawValue) => {
     const ownerType = ownerTypeForRecord(record);
     if (ownerType === 2) return maybeFormatIdReference(raceIndex, rawValue);
-    if (ownerType === 3) return maybeFormatIdReferenceOneBased(leadIndex, rawValue);
+    if (ownerType === 3) return maybeFormatIdReference(leadIndex, rawValue);
     return rawValue;
   };
 
@@ -997,7 +1063,7 @@ function enrichBridgeSections(sections) {
             field.value = toBoolStringFromInt(v);
           }
         } else if (code === 'LEAD') {
-          if (k === 'civ') field.value = maybeFormatIdReference(raceIndex, v);
+          if (k === 'civ') field.value = formatLeadCivilizationReference(raceIndex, v);
           else if (k === 'government') field.value = maybeFormatIdReference(govIndex, v);
           else if (k === 'initialera') field.value = maybeFormatIdReference(eraIndex, v);
           else if (k === 'humanplayer' || k === 'customcivdata' || k === 'startembassies' || k === 'skipfirstturn') field.value = normalizeBoolish(v);
@@ -1107,14 +1173,14 @@ function enrichBridgeSections(sections) {
           const allianceNameMatch = k.match(/^alliance(\d+)$/);
           if (allianceNameMatch) {
             const idx = Number.parseInt(allianceNameMatch[1], 10);
-            field.label = `Alliance ${idx + 1} Name`;
+            field.label = idx === 0 ? 'No Alliances Name' : `Alliance ${idx} Name`;
           }
           const warMatch = k.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_(\d+)$/);
           if (warMatch) {
-            const a = Number.parseInt(warMatch[1], 10) + 1;
-            const b = Number.parseInt(warMatch[2], 10) + 1;
+            const a = Number.parseInt(warMatch[1], 10);
+            const b = Number.parseInt(warMatch[2], 10);
             field.label = `Alliance ${a} At War With Alliance ${b}`;
-            field.value = toBoolStringFromInt(warMatch[3]);
+            field.value = toBoolStringFromInt(field.value);
           }
         } else if (code === 'CITY') {
           if (k === 'building') {
@@ -2169,6 +2235,159 @@ function deriveScenarioPathContext({
   };
 }
 
+function getCivColorPaletteFileName(slot) {
+  const idx = Math.max(0, Math.min(CIV_COLOR_PALETTE_COUNT - 1, Number(slot) || 0));
+  return `ntp${String(idx).padStart(2, '0')}.pcx`;
+}
+
+function getCivColorPaletteAssetPath(slot) {
+  return path.join(CIV_COLOR_PALETTE_RELATIVE_DIR, getCivColorPaletteFileName(slot));
+}
+
+function readPcxPaletteBytes(filePath) {
+  const source = String(filePath || '').trim();
+  if (!source) throw new Error('Missing PCX path.');
+  const buffer = fs.readFileSync(source);
+  if (buffer.length < 769 || buffer[buffer.length - 769] !== 12) {
+    throw new Error(`Missing 256-color PCX palette: ${source}`);
+  }
+  return buffer.slice(buffer.length - 768);
+}
+
+function getCivColorPaletteRepresentativeColor(paletteBytes) {
+  const palette = Buffer.isBuffer(paletteBytes) || paletteBytes instanceof Uint8Array
+    ? paletteBytes
+    : null;
+  if (!palette || palette.length < 24) return { r: 0, g: 0, b: 0 };
+  const base = 7 * 3;
+  return {
+    r: Number(palette[base]) || 0,
+    g: Number(palette[base + 1]) || 0,
+    b: Number(palette[base + 2]) || 0
+  };
+}
+
+function inspectScenarioCivColorPalettes(payload = {}) {
+  const civ3Path = String(payload.civ3Path || '').trim();
+  const scenarioPath = String(payload.scenarioPath || '').trim();
+  const scenarioSettingsTab = payload.scenarioSettingsTab || null;
+  if (!civ3Path) return { ok: false, error: 'Civilization III path is required.' };
+  if (!scenarioPath || !isBiqPath(scenarioPath)) return { ok: false, error: 'Load a scenario BIQ before editing custom civ palettes.' };
+
+  const scenarioContext = deriveScenarioPathContext({
+    scenarioPath,
+    civ3Path,
+    biqTab: scenarioSettingsTab,
+    searchFolderOverride: getPendingScenarioSearchFolderOverride({ scenarioSettings: scenarioSettingsTab }),
+    includeMissingSearchRoots: true,
+    ensureLocalSearchRoot: false
+  });
+  const scenarioRoot = scenarioContext.contentWriteRoot || '';
+  const bootstrapRoot = (!scenarioRoot && scenarioContext.autoCreatedSearchRoot)
+    ? scenarioContext.autoCreatedSearchRoot
+    : ((!scenarioRoot && isSharedScenariosRootDir(scenarioContext.biqRoot, civ3Path))
+      ? allocateScenarioSearchFolderPath({ scenarioPath, civ3Path })
+      : '');
+  const bootstrapValue = bootstrapRoot ? toScenarioSearchFolderValue(bootstrapRoot, scenarioPath) : '';
+  const targetRoot = scenarioRoot || bootstrapRoot || scenarioContext.biqRoot || '';
+  const writableRoots = dedupePathList([scenarioContext.biqRoot, ...scenarioContext.searchRoots, bootstrapRoot]);
+  const scenarioPreviewRoots = dedupePathList([...scenarioContext.searchRoots, scenarioContext.biqRoot]);
+  const slots = [];
+
+  for (let slot = 0; slot < CIV_COLOR_PALETTE_COUNT; slot += 1) {
+    const assetPath = getCivColorPaletteAssetPath(slot);
+    const resolvedPath = resolveConquestsAssetPath(civ3Path, assetPath, scenarioContext.biqRoot, scenarioPreviewRoots);
+    if (!resolvedPath) {
+      return { ok: false, error: `Could not find ${getCivColorPaletteFileName(slot)} in the scenario or base game content.` };
+    }
+    const templatePath = resolveConquestsAssetPath(civ3Path, assetPath, '', []);
+    const targetPath = targetRoot ? path.join(targetRoot, assetPath) : '';
+    const palette = readPcxPaletteBytes(resolvedPath);
+    const templatePalette = templatePath ? readPcxPaletteBytes(templatePath) : palette;
+    const scenarioLocal = isPathWithinAnyRoot(resolvedPath, writableRoots);
+    slots.push({
+      slot,
+      fileName: getCivColorPaletteFileName(slot),
+      assetPath,
+      sourcePath: resolvedPath,
+      sourceKind: scenarioLocal ? 'scenario' : 'base',
+      paletteBase64: Buffer.from(palette).toString('base64'),
+      templateSourcePath: templatePath || resolvedPath,
+      templatePaletteBase64: Buffer.from(templatePalette).toString('base64'),
+      representativeColor: getCivColorPaletteRepresentativeColor(palette),
+      targetPath,
+      targetExists: !!(targetPath && fs.existsSync(targetPath)),
+      targetScenarioLocal: !!(targetPath && isPathWithinAnyRoot(targetPath, writableRoots))
+    });
+  }
+
+  return {
+    ok: true,
+    scenarioRoot,
+    targetRoot,
+    writableRoots,
+    needsSearchFolderSetup: !scenarioRoot && !!bootstrapRoot,
+    searchFolderSetupRoot: bootstrapRoot,
+    searchFolderSetupValue: bootstrapValue,
+    slots
+  };
+}
+
+function prepareScenarioCivColorPaletteWrites(payload = {}) {
+  const root = payload && payload.civColorPalettes && typeof payload.civColorPalettes === 'object'
+    ? payload.civColorPalettes
+    : null;
+  const slots = Array.isArray(root && root.slots) ? root.slots : [];
+  const writes = [];
+  const saveReport = [];
+
+  for (const slotEntry of slots) {
+    const slot = Number(slotEntry && slotEntry.slot);
+    const targetPath = String(slotEntry && slotEntry.targetPath || '').trim();
+    const sourcePath = String(slotEntry && slotEntry.sourcePath || '').trim();
+    const paletteBase64 = String(slotEntry && slotEntry.paletteBase64 || '').trim();
+    if (!Number.isInteger(slot) || slot < 0 || slot >= CIV_COLOR_PALETTE_COUNT) {
+      return { ok: false, error: `Invalid civ color palette slot: ${slot}` };
+    }
+    if (!targetPath) {
+      return { ok: false, error: `Missing target path for ${getCivColorPaletteFileName(slot)}.` };
+    }
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      return { ok: false, error: `Could not read source palette file for ${getCivColorPaletteFileName(slot)}.` };
+    }
+    if (!paletteBase64) {
+      return { ok: false, error: `Missing palette data for ${getCivColorPaletteFileName(slot)}.` };
+    }
+    const paletteBytes = Buffer.from(paletteBase64, 'base64');
+    if (paletteBytes.length !== 768) {
+      return { ok: false, error: `Palette data for ${getCivColorPaletteFileName(slot)} must be exactly 768 bytes.` };
+    }
+    const decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [] });
+    if (!decoded || !decoded.indices || !decoded.palette || decoded.palette.length < 768) {
+      return { ok: false, error: `${getCivColorPaletteFileName(slot)} is not a supported indexed PCX palette file.` };
+    }
+    const nextPalette = Buffer.from(decoded.palette);
+    paletteBytes.copy(nextPalette, 0, 0, Math.min(nextPalette.length, paletteBytes.length));
+    const data = encodePcx(decoded.indices, nextPalette, decoded.width, decoded.height);
+    if (bufferMatchesExistingFile(targetPath, data)) continue;
+    writes.push({
+      kind: 'civPalette',
+      path: targetPath,
+      sourcePath,
+      data,
+      slot
+    });
+    saveReport.push({
+      kind: 'civPalette',
+      path: targetPath,
+      slot,
+      detail: `Saved ${getCivColorPaletteFileName(slot)}`
+    });
+  }
+
+  return { ok: true, writes, saveReport };
+}
+
 function sanitizeScenarioStem(rawName) {
   return String(rawName || '')
     .trim()
@@ -3052,8 +3271,8 @@ function resolveScenarioTextPath(scenarioPath, name, scenarioPaths = []) {
     seen.add(normalized);
     roots.push(normalized);
   };
-  addRoot(resolveScenarioDir(scenarioPath));
   (scenarioPaths || []).forEach((p) => addRoot(p));
+  addRoot(resolveScenarioDir(scenarioPath));
 
   const candidates = [];
   roots.forEach((root) => {
@@ -3205,16 +3424,41 @@ function collectScenarioDistrictsEdit(tabs) {
   const mapTab = tabs && tabs.map;
   const meta = mapTab && mapTab.scenarioDistricts;
   if (!meta) return null;
+  const mapMutation = String(mapTab && mapTab.mapMutation || '').trim().toLowerCase();
   const entries = Array.isArray(meta.entries) ? meta.entries : [];
   const namedTiles = Array.isArray(meta.namedTiles) ? meta.namedTiles : [];
   const beforeEntries = Array.isArray(meta.originalEntries) ? meta.originalEntries : [];
   const beforeNamedTiles = Array.isArray(meta.originalNamedTiles) ? meta.originalNamedTiles : [];
+  const targetPath = String(meta.targetPath || '').trim();
+  const sourcePath = String(meta.sourcePath || '').trim();
+  const wholeMapReplacementSource = String(mapTab && mapTab.mapMutationSource || '').trim().toLowerCase();
+  const clearsCoordinateSidecar = mapMutation === 'remove'
+    || (mapMutation === 'set' && ['generated', 'imported', 'custom'].includes(wholeMapReplacementSource));
+  if (clearsCoordinateSidecar) {
+    const hadScenarioDistricts = entries.length > 0
+      || namedTiles.length > 0
+      || beforeEntries.length > 0
+      || beforeNamedTiles.length > 0
+      || (sourcePath && fs.existsSync(sourcePath))
+      || (targetPath && fs.existsSync(targetPath));
+    if (hadScenarioDistricts) {
+      return {
+        targetPath,
+        sourcePath,
+        encoding: String(meta.encoding || ''),
+        bom: !!meta.bom,
+        entries: [],
+        namedTiles: [],
+        cleared: true
+      };
+    }
+  }
   const now = JSON.stringify({ entries, namedTiles });
   const before = JSON.stringify({ entries: beforeEntries, namedTiles: beforeNamedTiles });
   if (now === before) return null;
   return {
-    targetPath: String(meta.targetPath || '').trim(),
-    sourcePath: String(meta.sourcePath || '').trim(),
+    targetPath,
+    sourcePath,
     encoding: String(meta.encoding || ''),
     bom: !!meta.bom,
     entries,
@@ -3682,21 +3926,245 @@ function applyDiplomacySectionSlotLines(section, values) {
   return JSON.stringify(lines) !== before;
 }
 
+function detectDominantLineEnding(text) {
+  const src = String(text == null ? '' : text);
+  const crlf = (src.match(/\r\n/g) || []).length;
+  const loneLf = (src.match(/(?<!\r)\n/g) || []).length;
+  const loneCr = (src.match(/\r(?!\n)/g) || []).length;
+  if (crlf > 0 && crlf >= loneLf && crlf >= loneCr) return '\r\n';
+  if (loneLf > 0) return '\n';
+  if (loneCr > 0) return '\n';
+  return '\n';
+}
+
+function normalizeTextLineEndingsToCrlf(text) {
+  return String(text == null ? '' : text).replace(/\r\n|\r|\n/g, '\r\n');
+}
+
+function hasNonCrlfLineEndings(text) {
+  const src = String(text == null ? '' : text);
+  return normalizeTextLineEndingsToCrlf(src) !== src;
+}
+
+function bufferMatchesExistingFile(filePath, data) {
+  const target = String(filePath || '').trim();
+  if (!target || !Buffer.isBuffer(data) || !fs.existsSync(target)) return false;
+  try {
+    return Buffer.compare(fs.readFileSync(target), data) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+const PEDIA_HOMELESS_PLACEHOLDER_LINES = [
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+  '#',
+  'art\\civilopedia\\icons\\terrain\\riverssmall.pcx'
+];
+
+function normalizePediaIconsKey(key) {
+  return String(key || '').trim().toUpperCase();
+}
+
+function isPediaIconsRealDataBlockKey(key) {
+  const k = normalizePediaIconsKey(key);
+  if (!k || k === 'HOMELESSICONS' || k === 'END CIVILOPEDIA ART') return false;
+  return /^(ICON_|WON_SPLASH_|TECH_|ANIMNAME_|RACE_|HAPPY_|CULTCON_|ERA_|PRTO_|GOOD_|BLDG_|GOVT_|TERR_|TFRM_)/.test(k);
+}
+
+function isPediaIconsWonderSplashBlockKey(key) {
+  return normalizePediaIconsKey(key).startsWith('WON_SPLASH_');
+}
+
+function findPediaIconsInsertionIndex(order, blockKey) {
+  const keys = Array.isArray(order) ? order.map(normalizePediaIconsKey) : [];
+  const targetKey = normalizePediaIconsKey(blockKey);
+  const homelessIdx = keys.indexOf('HOMELESSICONS');
+  const endIdx = keys.indexOf('END CIVILOPEDIA ART');
+  if (isPediaIconsWonderSplashBlockKey(targetKey)) {
+    let lastSplashIdx = -1;
+    keys.forEach((key, idx) => {
+      if (idx > endIdx && isPediaIconsWonderSplashBlockKey(key)) lastSplashIdx = idx;
+    });
+    if (lastSplashIdx >= 0) return lastSplashIdx + 1;
+    const wonderMarkerIdx = keys.findIndex((key, idx) => (
+      idx > endIdx && key.includes('WONDER_SPLASH_ART')
+    ));
+    if (wonderMarkerIdx >= 0) return wonderMarkerIdx + 1;
+    if (endIdx >= 0) return endIdx + 1;
+    return keys.length;
+  }
+  if (homelessIdx >= 0) return homelessIdx;
+  if (endIdx >= 0) return endIdx;
+  return keys.length;
+}
+
+function getPediaIconsItemKey(item) {
+  return normalizePediaIconsKey(item && item.key);
+}
+
+function getPediaIconsItemKeys(doc) {
+  return Array.isArray(doc && doc.items)
+    ? doc.items.map(getPediaIconsItemKey)
+    : (Array.isArray(doc && doc.order) ? doc.order.map(normalizePediaIconsKey) : []);
+}
+
+function rebuildPediaIconsDocumentIndexes(doc) {
+  if (!doc) return doc;
+  const items = Array.isArray(doc.items) ? doc.items : null;
+  const blocks = {};
+  const headers = {};
+  const order = [];
+  if (items) {
+    items.forEach((item) => {
+      const key = getPediaIconsItemKey(item);
+      if (!key) return;
+      item.key = key;
+      if (!Object.prototype.hasOwnProperty.call(item, 'headerKey') || String(item.headerKey || '').length === 0) {
+        item.headerKey = key;
+      }
+      if (!Array.isArray(item.rawLines)) item.rawLines = [];
+      blocks[key] = item.rawLines;
+      headers[key] = String(item.headerKey || key);
+      if (!order.includes(key)) order.push(key);
+    });
+  } else {
+    (Array.isArray(doc.order) ? doc.order : []).forEach((rawKey) => {
+      const key = normalizePediaIconsKey(rawKey);
+      if (!key) return;
+      if (!order.includes(key)) order.push(key);
+      const rawLines = Array.isArray(doc.blocks && doc.blocks[key]) ? doc.blocks[key] : [];
+      blocks[key] = rawLines;
+      headers[key] = Object.prototype.hasOwnProperty.call(doc.headers || {}, key)
+        ? String(doc.headers[key])
+        : key;
+    });
+  }
+  doc.order = order;
+  doc.blocks = blocks;
+  doc.headers = headers;
+  return doc;
+}
+
+function findLastPediaIconsItemIndexByKey(doc, key) {
+  const target = normalizePediaIconsKey(key);
+  if (!target || !Array.isArray(doc && doc.items)) return -1;
+  for (let i = doc.items.length - 1; i >= 0; i -= 1) {
+    if (getPediaIconsItemKey(doc.items[i]) === target) return i;
+  }
+  return -1;
+}
+
+function insertPediaIconsItemsAt(doc, blockKey, itemsToInsert) {
+  if (!doc || !Array.isArray(doc.items) || !Array.isArray(itemsToInsert) || itemsToInsert.length === 0) return;
+  const itemKeys = getPediaIconsItemKeys(doc);
+  const idx = findPediaIconsInsertionIndex(itemKeys, blockKey);
+  doc.items.splice(Math.max(0, Math.min(idx, doc.items.length)), 0, ...itemsToInsert);
+}
+
+function pediaIconsLinesEqual(a, b) {
+  const left = (Array.isArray(a) ? a : []).map((line) => String(line || '').trim());
+  const right = (Array.isArray(b) ? b : []).map((line) => String(line || '').trim());
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function repairPediaIconsDocumentForFiraxis(doc) {
+  if (!doc) return { changed: false, moved: 0, restoredHomeless: false };
+  rebuildPediaIconsDocumentIndexes(doc);
+  if (!Array.isArray(doc.items)) {
+    doc.items = (Array.isArray(doc.order) ? doc.order : []).map((key) => ({
+      key: normalizePediaIconsKey(key),
+      headerKey: Object.prototype.hasOwnProperty.call(doc.headers || {}, normalizePediaIconsKey(key))
+        ? String(doc.headers[normalizePediaIconsKey(key)])
+        : normalizePediaIconsKey(key),
+      rawLines: Array.isArray(doc.blocks && doc.blocks[normalizePediaIconsKey(key)])
+        ? doc.blocks[normalizePediaIconsKey(key)].slice()
+        : []
+    })).filter((item) => item.key);
+  }
+  const keys = getPediaIconsItemKeys(doc);
+  const homelessIdx = keys.indexOf('HOMELESSICONS');
+  const endIdx = keys.indexOf('END CIVILOPEDIA ART');
+  if (homelessIdx < 0 || endIdx < 0 || endIdx <= homelessIdx) {
+    return { changed: false, moved: 0, restoredHomeless: false };
+  }
+
+  let changed = false;
+  const misplacedItems = doc.items
+    .slice(homelessIdx + 1, endIdx)
+    .filter((item) => isPediaIconsRealDataBlockKey(getPediaIconsItemKey(item)));
+  if (misplacedItems.length > 0) {
+    const misplacedSet = new Set(misplacedItems);
+    doc.items = doc.items.filter((item) => !misplacedSet.has(item));
+    const nonSplash = misplacedItems.filter((item) => !isPediaIconsWonderSplashBlockKey(getPediaIconsItemKey(item)));
+    const splash = misplacedItems.filter((item) => isPediaIconsWonderSplashBlockKey(getPediaIconsItemKey(item)));
+    if (nonSplash.length > 0) {
+      insertPediaIconsItemsAt(doc, getPediaIconsItemKey(nonSplash[0]), nonSplash);
+    }
+    if (splash.length > 0) {
+      insertPediaIconsItemsAt(doc, getPediaIconsItemKey(splash[0]), splash);
+    }
+    changed = true;
+  }
+
+  const currentHomelessIdx = findLastPediaIconsItemIndexByKey(doc, 'HOMELESSICONS');
+  const homelessItem = currentHomelessIdx >= 0 ? doc.items[currentHomelessIdx] : null;
+  const currentHomeless = Array.isArray(homelessItem && homelessItem.rawLines) ? homelessItem.rawLines : [];
+  let restoredHomeless = false;
+  if (!pediaIconsLinesEqual(currentHomeless, PEDIA_HOMELESS_PLACEHOLDER_LINES)) {
+    if (homelessItem) {
+      homelessItem.rawLines = PEDIA_HOMELESS_PLACEHOLDER_LINES.slice();
+      homelessItem.normalized = true;
+      if (!String(homelessItem.headerKey || '').trim()) homelessItem.headerKey = 'HomelessIcons';
+    }
+    restoredHomeless = true;
+    changed = true;
+  }
+
+  if (changed) doc.lineEnding = '\r\n';
+  rebuildPediaIconsDocumentIndexes(doc);
+  return { changed, moved: misplacedItems.length, restoredHomeless };
+}
+
 function parsePediaIconsDocumentWithOrder(text) {
   const src = String(text || '');
-  const doc = { order: [], blocks: {}, headers: {}, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
+  const doc = {
+    preamble: [],
+    items: [],
+    order: [],
+    blocks: {},
+    headers: {},
+    hadTrailingNewline: /\r\n$|\n$|\r$/.test(src),
+    lineEnding: detectDominantLineEnding(src)
+  };
   const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let currentKey = null;
   let currentHeader = '';
   let currentLines = [];
   const flush = () => {
     if (!currentKey) return;
+    const item = {
+      key: currentKey,
+      headerKey: currentHeader || currentKey,
+      rawLines: currentLines.slice()
+    };
+    doc.items.push(item);
     doc.blocks[currentKey] = [...currentLines];
     if (!doc.order.includes(currentKey)) doc.order.push(currentKey);
     if (!doc.headers[currentKey]) doc.headers[currentKey] = currentHeader || currentKey;
   };
   lines.forEach((raw) => {
     const line = String(raw || '');
+    if (line.trim() === '#') {
+      if (currentKey) currentLines.push(line);
+      else doc.preamble.push(line);
+      return;
+    }
     if (line.startsWith('#')) {
       flush();
       currentHeader = line.slice(1);
@@ -3710,8 +4178,10 @@ function parsePediaIconsDocumentWithOrder(text) {
       return;
     }
     if (currentKey) currentLines.push(line);
+    else doc.preamble.push(line);
   });
   flush();
+  rebuildPediaIconsDocumentIndexes(doc);
   return doc;
 }
 
@@ -3731,19 +4201,35 @@ function serializePediaIconsDocumentWithOrder(doc) {
   const order = Array.isArray(doc && doc.order) ? doc.order : [];
   const blocks = (doc && doc.blocks) || {};
   const headers = (doc && doc.headers) || {};
+  const items = Array.isArray(doc && doc.items) ? doc.items : null;
+  const preamble = Array.isArray(doc && doc.preamble) ? doc.preamble : [];
   const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
+  const lineEnding = (doc && doc.lineEnding === '\r\n') ? '\r\n' : '\n';
   const out = [];
-  order.forEach((key) => {
-    const k = String(key || '').trim().toUpperCase();
-    if (!k) return;
-    const headingRaw = Object.prototype.hasOwnProperty.call(headers, k) ? String(headers[k]) : String(k);
-    const heading = headingRaw.length > 0 ? headingRaw : String(k);
-    out.push(`#${heading}`);
-    const lines = Array.isArray(blocks[k]) ? blocks[k] : [];
-    lines.forEach((line) => out.push(toWindowsPediaIconsLine(line)));
-  });
-  const serialized = out.join('\n');
-  return hadTrailingNewline ? ensureTrailingNewline(serialized) : serialized;
+  preamble.forEach((line) => out.push(String(line || '')));
+  if (items && items.length > 0) {
+    items.forEach((item) => {
+      const k = getPediaIconsItemKey(item);
+      if (!k) return;
+      const headingRaw = Object.prototype.hasOwnProperty.call(item, 'headerKey') ? String(item.headerKey) : String(k);
+      const heading = headingRaw.length > 0 ? headingRaw : String(k);
+      out.push(`#${heading}`);
+      const lines = Array.isArray(item.rawLines) ? item.rawLines : [];
+      lines.forEach((line) => out.push(item.normalized ? toWindowsPediaIconsLine(line) : String(line || '')));
+    });
+  } else {
+    order.forEach((key) => {
+      const k = String(key || '').trim().toUpperCase();
+      if (!k) return;
+      const headingRaw = Object.prototype.hasOwnProperty.call(headers, k) ? String(headers[k]) : String(k);
+      const heading = headingRaw.length > 0 ? headingRaw : String(k);
+      out.push(`#${heading}`);
+      const lines = Array.isArray(blocks[k]) ? blocks[k] : [];
+      lines.forEach((line) => out.push(toWindowsPediaIconsLine(line)));
+    });
+  }
+  const serialized = out.join(lineEnding);
+  return (hadTrailingNewline && !serialized.endsWith(lineEnding)) ? `${serialized}${lineEnding}` : serialized;
 }
 
 function toCanonicalKeyMap(rawMap) {
@@ -4182,6 +4668,9 @@ function mergePrtoStrategyMapRecords(biqTab) {
     let mergedValue = parseAiBits(aiField && aiField.value, 0);
     let mergedOriginal = parseAiBits(aiField && aiField.originalValue, mergedValue);
     const duplicates = duplicatesByPrimary.get(idx) || [];
+    const prtoStrategyRowIndexes = duplicates
+      .map((dupRecord) => Number(dupRecord && dupRecord.index))
+      .filter((rowIndex) => Number.isInteger(rowIndex) && rowIndex >= 0);
     duplicates.forEach((dupRecord) => {
       mergedValue |= parseAiBits(getRecordFieldValue(dupRecord, 'PRTO', 'AIStrategy'), 0);
       const dupAiField = Array.isArray(dupRecord && dupRecord.fields)
@@ -4197,7 +4686,8 @@ function mergePrtoStrategyMapRecords(biqTab) {
     out.push({
       ...record,
       fields: baseFields,
-      index: idx
+      index: idx,
+      prtoStrategyRowIndexes
     });
   });
   return out;
@@ -4273,6 +4763,9 @@ function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
     rawBiqCivilopediaKey: civilopediaEntry || '',
     linkCivilopediaKey: civilopediaEntry || '',
     biqIndex: Number.isFinite(index) ? index : null,
+    prtoStrategyRowIndexes: Array.isArray(record && record.prtoStrategyRowIndexes)
+      ? record.prtoStrategyRowIndexes.slice()
+      : [],
     name,
     civilopediaSection1: '',
     originalCivilopediaSection1: '',
@@ -4407,6 +4900,99 @@ function normalizeRaceIconPaths(values) {
     out.push(normalized);
   });
   return out.slice(0, 4);
+}
+
+function appendFileNameStemSuffix(fileName, suffix) {
+  const base = String(fileName || '').trim();
+  const safeSuffix = String(suffix || '').trim();
+  if (!base || !safeSuffix) return base;
+  const ext = path.extname(base) || '.pcx';
+  const stem = path.basename(base, ext) || 'art';
+  if (stem.toLowerCase().endsWith(safeSuffix.toLowerCase())) return `${stem}${ext}`;
+  return `${stem}${safeSuffix}${ext}`;
+}
+
+function getReferenceArtCollisionSuffix(tabKey, group, index) {
+  const normalizedTab = String(tabKey || '').trim();
+  const normalizedGroup = String(group || '').trim();
+  const idx = Number(index);
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'iconPaths') {
+    if (idx === 0) return '_large';
+    if (idx === 1) return '_small';
+    if (Number.isFinite(idx) && idx >= 2) return `_icon${idx + 1}`;
+  }
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'racePaths') {
+    if (idx === 0) return '_leaderhead';
+    if (idx === 1) return '_advisor';
+  }
+  return Number.isFinite(idx) ? `_slot${idx + 1}` : '_slot';
+}
+
+function applyReferenceArtDefaultFileNameSuffix(fileName, tabKey, group, index) {
+  const normalizedTab = String(tabKey || '').trim();
+  const normalizedGroup = String(group || '').trim();
+  const idx = Number(index);
+  if (normalizedTab === 'civilizations' && normalizedGroup === 'iconPaths' && Number.isFinite(idx) && idx >= 2) {
+    return appendFileNameStemSuffix(fileName, `_icon${idx + 1}`);
+  }
+  return fileName;
+}
+
+function getCiv3PediaArtPathLength(rawPath) {
+  return String(rawPath || '').trim().replace(/^["']|["']$/g, '').replace(/\//g, '\\').length;
+}
+
+function splitPreservedPediaArtSuffix(stem) {
+  const value = String(stem || '');
+  const match = value.match(/^(.+?)([_ -]?)(small|large|sm|lg|32|128)$/i);
+  if (!match) return { base: value, suffix: '' };
+  const separator = match[2] || '_';
+  return { base: match[1] || value, suffix: `${separator}${String(match[3] || '').toLowerCase()}` };
+}
+
+function appendStemNumberBeforePediaArtSuffix(stem, attempt, maxStemLength) {
+  const suffixParts = splitPreservedPediaArtSuffix(stem);
+  const numericSuffix = `_${Number(attempt) + 1}`;
+  const preservedSuffix = suffixParts.suffix.length < maxStemLength ? suffixParts.suffix : '';
+  const baseStem = preservedSuffix ? suffixParts.base : stem;
+  const baseMax = Math.max(1, maxStemLength - numericSuffix.length - preservedSuffix.length);
+  const trimmedBase = baseStem.slice(0, baseMax).replace(/[._ -]+$/g, '') || 'art';
+  return `${trimmedBase}${numericSuffix}${preservedSuffix}`;
+}
+
+function shortenPediaArtRelativePath(rawPath) {
+  const normalized = normalizeRelativePath(rawPath);
+  if (!normalized || getCiv3PediaArtPathLength(normalized) <= CIV3_PEDIA_ART_PATH_MAX_CHARS) return normalized;
+  const dir = path.posix.dirname(normalized);
+  const ext = path.posix.extname(normalized) || '.pcx';
+  const stem = path.posix.basename(normalized, ext) || 'art';
+  const prefix = dir && dir !== '.' ? `${dir}/` : '';
+  const maxFileNameLength = CIV3_PEDIA_ART_PATH_MAX_CHARS - getCiv3PediaArtPathLength(prefix);
+  if (maxFileNameLength <= ext.length + 1) return normalized;
+  const maxStemLength = Math.max(1, maxFileNameLength - ext.length);
+  const suffixParts = splitPreservedPediaArtSuffix(stem);
+  const suffix = suffixParts.suffix.length < maxStemLength ? suffixParts.suffix : '';
+  const baseMax = Math.max(1, maxStemLength - suffix.length);
+  const baseStem = suffix ? suffixParts.base : stem;
+  const trimmedStem = `${baseStem.slice(0, baseMax).replace(/[._ -]+$/g, '') || 'art'}${suffix}`;
+  return normalizeRelativePath(`${prefix}${trimmedStem}${ext}`);
+}
+
+function appendNumericSuffixToPediaArtPath(relTarget, attempt) {
+  const normalized = normalizeRelativePath(relTarget);
+  const ext = path.posix.extname(normalized) || '.pcx';
+  const dir = path.posix.dirname(normalized);
+  const stem = path.posix.basename(normalized, ext) || 'art';
+  const prefix = dir && dir !== '.' ? `${dir}/` : '';
+  const suffix = `_${Number(attempt) + 1}`;
+  const maxFileNameLength = CIV3_PEDIA_ART_PATH_MAX_CHARS - getCiv3PediaArtPathLength(prefix);
+  if (maxFileNameLength > ext.length + suffix.length) {
+    const maxStemLength = Math.max(1, maxFileNameLength - ext.length);
+    const trimmedStem = appendStemNumberBeforePediaArtSuffix(stem, attempt, maxStemLength);
+    return normalizeRelativePath(`${prefix}${trimmedStem}${ext}`);
+  }
+  const nextBase = appendFileNameStemSuffix(`${stem}${ext}`, suffix);
+  return shortenPediaArtRelativePath(dir && dir !== '.' ? path.posix.join(dir, nextBase) : nextBase);
 }
 
 function findFirstPathLine(lines) {
@@ -4619,7 +5205,10 @@ function buildReferenceTabs(civ3Path, options = {}) {
           rawCivilopediaKey,
           rawBiqCivilopediaKey: rawCivilopediaKey,
           biqRecord: record,
-          biqIndex: Number.isFinite(idx) ? idx : null
+          biqIndex: Number.isFinite(idx) ? idx : null,
+          prtoStrategyRowIndexes: tabSpec.key === 'units' && Array.isArray(record && record.prtoStrategyRowIndexes)
+            ? record.prtoStrategyRowIndexes.slice()
+            : []
         });
       });
       const allowedKeys = biqKeySets && biqKeySets[tabSpec.key] instanceof Set ? biqKeySets[tabSpec.key] : null;
@@ -4641,7 +5230,8 @@ function buildReferenceTabs(civ3Path, options = {}) {
             rawCivilopediaKey,
             rawBiqCivilopediaKey: '',
             biqRecord: null,
-            biqIndex: null
+            biqIndex: null,
+            prtoStrategyRowIndexes: []
           });
         };
         Object.keys(civilopediaSections)
@@ -4844,6 +5434,9 @@ function buildReferenceTabs(civ3Path, options = {}) {
           biqIndex: Number.isFinite(entry && entry.biqIndex)
             ? Number(entry.biqIndex)
             : (biqRecord ? Number(biqRecord.index) : null),
+          prtoStrategyRowIndexes: tabSpec.key === 'units' && Array.isArray(entry && entry.prtoStrategyRowIndexes)
+            ? entry.prtoStrategyRowIndexes.slice()
+            : [],
           name: displayName,
           civilopediaSection1: section1RawText,
           originalCivilopediaSection1: section1RawText,
@@ -5086,13 +5679,27 @@ function buildReferenceTabs(civ3Path, options = {}) {
   return tabs;
 }
 
+const BIQ_MAP_TAB_SECTION_CODES = new Set(['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+
+function isBiqMapTabSectionCode(code) {
+  return BIQ_MAP_TAB_SECTION_CODES.has(String(code || '').trim().toUpperCase());
+}
+
 function buildMapTabFromBiq(biqTab, mode, options = {}) {
-  const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections.map((section) => ({
-    ...section,
-    records: Array.isArray(section && section.records)
-      ? section.records.map((record, index) => {
+  const sourceSections = biqTab && Array.isArray(biqTab.sections) ? biqTab.sections : [];
+  const selectedSections = options.mapOnly
+    ? sourceSections.filter((section) => isBiqMapTabSectionCode(section && section.code))
+    : sourceSections;
+  const sections = selectedSections.map((section) => {
+    const { fullRecords: _fullRecords, ...sectionForMap } = section || {};
+    return {
+      ...sectionForMap,
+      records: Array.isArray(section && section.records)
+        ? section.records.map((record, index) => {
         const rawRecord = Array.isArray(section && section.fullRecords) ? section.fullRecords[index] : null;
         const recordClone = { ...(rawRecord || {}), ...record };
+        delete recordClone.english;
+        delete recordClone.writableBaseKeys;
         const rawFields = Array.isArray(rawRecord && rawRecord.fields)
           ? rawRecord.fields
           : (Array.isArray(record && record.fields)
@@ -5131,7 +5738,8 @@ function buildMapTabFromBiq(biqTab, mode, options = {}) {
         return recordClone;
       })
       : []
-  })) : [];
+    };
+  });
   const hasMapData = sections.some((s) => s.code === 'TILE') && sections.some((s) => s.code === 'WMAP');
   return {
     title: 'Map',
@@ -5146,6 +5754,152 @@ function buildMapTabFromBiq(biqTab, mode, options = {}) {
     recordOps: [],
     scenarioDistricts: options.scenarioDistricts || null,
     sections
+  };
+}
+
+function isBiqMapImportSectionCode(code) {
+  return ['WCHR', 'WMAP', 'TILE', 'CONT'].includes(String(code || '').trim().toUpperCase());
+}
+
+function getRecordFieldByBaseKey(record, baseKey) {
+  if (!record || !Array.isArray(record.fields)) return null;
+  const canonical = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetRaw = String(baseKey || '').trim().toLowerCase();
+  const targetCanonical = canonical(baseKey);
+  return record.fields.find((field) => {
+    const keyRaw = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    return keyRaw === targetRaw || canonical(keyRaw) === targetCanonical;
+  }) || null;
+}
+
+function setRecordFieldByBaseKey(record, baseKey, value) {
+  const field = getRecordFieldByBaseKey(record, baseKey);
+  const nextValue = String(value == null ? '' : value);
+  if (field) {
+    field.value = nextValue;
+    field.originalValue = nextValue;
+  }
+  if (record && typeof record === 'object') {
+    const canonical = (text) => String(text || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = canonical(baseKey);
+    Object.keys(record).forEach((key) => {
+      if (canonical(key) === target) record[key] = nextValue;
+    });
+  }
+  return !!field;
+}
+
+function getMapImportFieldInt(record, baseKey, fallback = 0) {
+  const field = getRecordFieldByBaseKey(record, baseKey);
+  if (field) return parseIntLoose(field.value, fallback);
+  if (record && typeof record === 'object') {
+    const canonical = (text) => String(text || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = canonical(baseKey);
+    const key = Object.keys(record).find((candidate) => canonical(candidate) === target);
+    if (key) return parseIntLoose(record[key], fallback);
+  }
+  return fallback;
+}
+
+function cloneMapImportSection(section) {
+  return section ? JSON.parse(JSON.stringify(section)) : null;
+}
+
+function findMapImportSection(sections, code) {
+  const target = String(code || '').trim().toUpperCase();
+  return (Array.isArray(sections) ? sections : []).find((section) => String(section && section.code || '').trim().toUpperCase() === target) || null;
+}
+
+function buildImportedTerrainOverlayMapSectionsFromMapTab(sourceMapTab) {
+  const sourceSections = Array.isArray(sourceMapTab && sourceMapTab.sections) ? sourceMapTab.sections : [];
+  const wchr = cloneMapImportSection(findMapImportSection(sourceSections, 'WCHR'));
+  const wmap = cloneMapImportSection(findMapImportSection(sourceSections, 'WMAP'));
+  const sourceTile = cloneMapImportSection(findMapImportSection(sourceSections, 'TILE'));
+  const cont = cloneMapImportSection(findMapImportSection(sourceSections, 'CONT'));
+  if (!wmap || !sourceTile) {
+    throw new Error('Selected scenario is missing required WMAP/TILE map sections.');
+  }
+  if (Array.isArray(wmap.records) && wmap.records[0]) {
+    setRecordFieldByBaseKey(wmap.records[0], 'numresources', '0');
+  }
+  const sanitizeTileRecord = (record) => {
+    const next = cloneMapImportSection(record) || {};
+    setRecordFieldByBaseKey(next, 'border', '0');
+    setRecordFieldByBaseKey(next, 'resource', '-1');
+    setRecordFieldByBaseKey(next, 'barbariantribe', '-1');
+    setRecordFieldByBaseKey(next, 'city', '-1');
+    setRecordFieldByBaseKey(next, 'colony', '-1');
+    return next;
+  };
+  const tile = {
+    ...sourceTile,
+    records: Array.isArray(sourceTile.records) ? sourceTile.records.map(sanitizeTileRecord) : []
+  };
+  const emptySection = (code) => ({
+    code,
+    title: code,
+    records: []
+  });
+  return [
+    ...(wchr ? [wchr] : []),
+    wmap,
+    tile,
+    ...(cont ? [cont] : []),
+    emptySection('SLOC'),
+    emptySection('CITY'),
+    emptySection('UNIT'),
+    emptySection('CLNY')
+  ];
+}
+
+function buildMapImportBiqTab(biqTab) {
+  const mapSections = (Array.isArray(biqTab && biqTab.sections) ? biqTab.sections : [])
+    .filter((section) => isBiqMapImportSectionCode(section && section.code));
+  return {
+    ...(biqTab || {}),
+    sections: mapSections
+  };
+}
+
+function loadMapImport(payload = {}) {
+  const startedAt = Date.now();
+  const mode = 'scenario';
+  const civ3Path = payload.civ3Path || '';
+  const scenarioPath = String(payload.scenarioPath || '').trim();
+  if (!/\.biq$/i.test(scenarioPath)) {
+    throw new Error('Choose a source scenario BIQ file to import a map.');
+  }
+  log.info('loadMapImport', `Loading map-only import source: ${log.rel(scenarioPath)}`);
+  const biqTab = loadBiqTab({
+    mode,
+    civ3Path,
+    scenarioPath,
+    textEncoding: payload.textFileEncoding || payload.textEncoding || 'windows-1252'
+  });
+  if (biqTab && biqTab.error) throw new Error(biqTab.error);
+  const mapTab = buildMapTabFromBiq(buildMapImportBiqTab(biqTab), mode);
+  if (!detectBiqHasMapData({ sections: mapTab.sections })) {
+    throw new Error('Selected scenario does not contain a map.');
+  }
+  const importedSections = buildImportedTerrainOverlayMapSectionsFromMapTab(mapTab);
+  const wmap = findMapImportSection(importedSections, 'WMAP');
+  const tile = findMapImportSection(importedSections, 'TILE');
+  const wmapRecord = wmap && Array.isArray(wmap.records) ? wmap.records[0] : null;
+  const width = getMapImportFieldInt(wmapRecord, 'width', 0);
+  const height = getMapImportFieldInt(wmapRecord, 'height', 0);
+  const tileCount = tile && Array.isArray(tile.records) ? tile.records.length : 0;
+  const durationMs = Date.now() - startedAt;
+  log.info('loadMapImport', `Complete — ${width}x${height}, tiles=${tileCount}, sections=${importedSections.length}, durationMs=${durationMs}`);
+  return {
+    ok: true,
+    sourceScenarioPath: scenarioPath,
+    importedSections,
+    width,
+    height,
+    tileCount,
+    compressedSource: !!biqTab.compressedSource,
+    textEncoding: biqTab.textEncoding || '',
+    durationMs
   };
 }
 
@@ -5166,6 +5920,141 @@ function detectBiqHasMapData(biqTab) {
   return !!(wmapSection && tileSection && wmapCount > 0 && tileCount > 0);
 }
 
+function getBiqFileSignature(filePath) {
+  const raw = String(filePath || '').trim();
+  if (!raw) return null;
+  try {
+    const resolved = path.resolve(raw);
+    const stat = fs.statSync(resolved);
+    if (!stat || !stat.isFile()) return null;
+    return {
+      path: resolved,
+      size: Number(stat.size) || 0,
+      mtimeMs: Number(stat.mtimeMs) || 0
+    };
+  } catch (_err) {
+    return null;
+  }
+}
+
+function normalizeDeferredMapCachePath(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    return path.resolve(raw);
+  } catch (_err) {
+    return raw;
+  }
+}
+
+function buildDeferredMapBiqCacheKey({ mode, civ3Path, scenarioPath, textEncoding, sourcePath, signature }) {
+  const keyPayload = {
+    mode: mode === 'scenario' ? 'scenario' : 'global',
+    civ3Path: normalizeDeferredMapCachePath(civ3Path),
+    scenarioPath: normalizeDeferredMapCachePath(scenarioPath),
+    textEncoding: normalizeTextFileEncoding(textEncoding),
+    sourcePath: normalizeDeferredMapCachePath(sourcePath),
+    size: Number(signature && signature.size) || 0,
+    mtimeMs: Number(signature && signature.mtimeMs) || 0
+  };
+  return crypto.createHash('sha1').update(JSON.stringify(keyPayload)).digest('hex');
+}
+
+function trimDeferredMapBiqCache() {
+  if (deferredMapBiqCache.size <= DEFERRED_MAP_BIQ_CACHE_LIMIT) return;
+  const entries = Array.from(deferredMapBiqCache.entries())
+    .sort((a, b) => Number(a[1] && a[1].lastUsedAt || 0) - Number(b[1] && b[1].lastUsedAt || 0));
+  while (deferredMapBiqCache.size > DEFERRED_MAP_BIQ_CACHE_LIMIT && entries.length > 0) {
+    const [key] = entries.shift();
+    deferredMapBiqCache.delete(key);
+  }
+}
+
+function rememberDeferredMapBiqTab(biqTab, context = {}) {
+  if (!biqTab || typeof biqTab !== 'object' || biqTab.summarized) return null;
+  if (!Array.isArray(biqTab.sections)) return null;
+  const sourcePath = String(biqTab.sourcePath || '').trim();
+  const signature = getBiqFileSignature(sourcePath);
+  if (!signature) return null;
+  const key = buildDeferredMapBiqCacheKey({
+    mode: context.mode,
+    civ3Path: context.civ3Path,
+    scenarioPath: context.scenarioPath,
+    textEncoding: context.textEncoding || biqTab.textEncoding,
+    sourcePath,
+    signature
+  });
+  const now = Date.now();
+  deferredMapBiqCache.set(key, {
+    key,
+    biqTab,
+    sourcePath: signature.path,
+    signature,
+    createdAt: now,
+    lastUsedAt: now
+  });
+  trimDeferredMapBiqCache();
+  return {
+    key,
+    sourcePath: signature.path,
+    size: signature.size,
+    mtimeMs: signature.mtimeMs
+  };
+}
+
+function getDeferredMapBiqTabFromCache(cacheKey) {
+  const key = String(cacheKey || '').trim();
+  if (!key) return null;
+  const entry = deferredMapBiqCache.get(key);
+  if (!entry || !entry.biqTab) return null;
+  const current = getBiqFileSignature(entry.sourcePath);
+  if (!current
+      || current.path !== entry.signature.path
+      || current.size !== entry.signature.size
+      || current.mtimeMs !== entry.signature.mtimeMs) {
+    deferredMapBiqCache.delete(key);
+    return null;
+  }
+  entry.lastUsedAt = Date.now();
+  return entry.biqTab;
+}
+
+function invalidateDeferredMapBiqCacheForPath(filePath) {
+  const resolved = normalizeDeferredMapCachePath(filePath);
+  if (!resolved) return;
+  Array.from(deferredMapBiqCache.entries()).forEach(([key, entry]) => {
+    if (normalizeDeferredMapCachePath(entry && entry.sourcePath) === resolved) {
+      deferredMapBiqCache.delete(key);
+    }
+  });
+}
+
+function summarizeBiqTabForBundle(biqTab, options = {}) {
+  if (!biqTab || typeof biqTab !== 'object') return biqTab;
+  const summary = { ...biqTab };
+  if (Array.isArray(biqTab.sections)) {
+    summary.sections = biqTab.sections.map((section) => ({
+      id: section && section.id,
+      code: section && section.code,
+      title: section && section.title,
+      count: Number(section && section.count) || (Array.isArray(section && section.records) ? section.records.length : 0),
+      startOffset: section && section.startOffset,
+      endOffset: section && section.endOffset,
+      byteLength: section && section.byteLength,
+      parseMode: section && section.parseMode,
+      textEncoding: section && section.textEncoding,
+      recordsTruncated: section && section.recordsTruncated,
+      records: [],
+      summarized: true
+    }));
+  }
+  summary.summarized = true;
+  if (options.mapMaterializationCacheKey) {
+    summary.mapMaterializationCacheKey = options.mapMaterializationCacheKey;
+  }
+  return summary;
+}
+
 function buildDeferredMapTab(biqTab, mode, options = {}) {
   const hasMapData = detectBiqHasMapData(biqTab);
   return {
@@ -5180,6 +6069,7 @@ function buildDeferredMapTab(biqTab, mode, options = {}) {
     mapMutationSource: null,
     recordOps: [],
     scenarioDistricts: options.scenarioDistricts || null,
+    mapMaterializationCacheKey: options.mapMaterializationCacheKey || '',
     sections: [],
     deferred: true
   };
@@ -5187,13 +6077,33 @@ function buildDeferredMapTab(biqTab, mode, options = {}) {
 
 function materializeMapTab(payload = {}) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
-  const biqTab = payload.biqTab || payload.biq || null;
+  let biqTab = payload.biqTab || payload.biq || null;
   const existingMapTab = payload.mapTab && typeof payload.mapTab === 'object' ? payload.mapTab : null;
+  if (!biqTab || !Array.isArray(biqTab.sections) || (biqTab && biqTab.summarized)) {
+    const cacheKey = String(
+      payload.mapMaterializationCacheKey
+      || (biqTab && biqTab.mapMaterializationCacheKey)
+      || (existingMapTab && existingMapTab.mapMaterializationCacheKey)
+      || ''
+    ).trim();
+    const cachedBiqTab = getDeferredMapBiqTabFromCache(cacheKey);
+    if (cachedBiqTab) {
+      log.info('materializeMapTab', 'Using cached BIQ parse for deferred map materialization.');
+      biqTab = cachedBiqTab;
+    } else {
+      biqTab = loadBiqTab({
+        mode,
+        civ3Path: payload.civ3Path || '',
+        scenarioPath: payload.scenarioPath || '',
+        textEncoding: payload.textFileEncoding || payload.textEncoding || (biqTab && biqTab.textEncoding) || 'windows-1252'
+      });
+    }
+  }
   const supportingTabs = payload.tabs && typeof payload.tabs === 'object' ? payload.tabs : {};
   const scenarioDistricts = Object.prototype.hasOwnProperty.call(payload, 'scenarioDistricts')
     ? payload.scenarioDistricts
     : (existingMapTab && existingMapTab.scenarioDistricts) || null;
-  const mapTab = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts });
+  const mapTab = buildMapTabFromBiq(biqTab, mode, { scenarioDistricts, mapOnly: true });
   mapTab.recordOps = Array.isArray(existingMapTab && existingMapTab.recordOps) ? existingMapTab.recordOps : [];
   mapTab.mapMutation = existingMapTab && existingMapTab.mapMutation ? existingMapTab.mapMutation : null;
   mapTab.mapMutationSource = existingMapTab && existingMapTab.mapMutationSource ? existingMapTab.mapMutationSource : null;
@@ -5287,7 +6197,7 @@ function parseCivilopediaDocumentWithOrder(text) {
   const sections = {};
   const items = [];
   const preamble = [];
-  if (!text) return { order, sections, items, preamble, hadTrailingNewline: false };
+  if (!text) return { order, sections, items, preamble, hadTrailingNewline: false, lineEnding: '\n' };
   const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let currentKey = '';
   let currentHeader = '';
@@ -5316,7 +6226,14 @@ function parseCivilopediaDocumentWithOrder(text) {
     else preamble.push(line);
   });
   flush();
-  return { order, sections, items, preamble, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
+  return {
+    order,
+    sections,
+    items,
+    preamble,
+    hadTrailingNewline: /\r\n$|\n$|\r$/.test(src),
+    lineEnding: detectDominantLineEnding(src)
+  };
 }
 
 function serializeCivilopediaDocumentWithOrder(doc) {
@@ -5325,6 +6242,7 @@ function serializeCivilopediaDocumentWithOrder(doc) {
   const items = Array.isArray(doc && doc.items) ? doc.items : null;
   const preamble = Array.isArray(doc && doc.preamble) ? doc.preamble : [];
   const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
+  const lineEnding = (doc && doc.lineEnding === '\r\n') ? '\r\n' : '\n';
   const lines = [];
   preamble.forEach((line) => lines.push(String(line || '')));
   if (items && items.length > 0) {
@@ -5353,8 +6271,8 @@ function serializeCivilopediaDocumentWithOrder(doc) {
       rawLines.forEach((line) => lines.push(String(line || '')));
     });
   }
-  const serialized = lines.join('\n');
-  return hadTrailingNewline ? ensureTrailingNewline(serialized) : serialized;
+  const serialized = lines.join(lineEnding);
+  return (hadTrailingNewline && !serialized.endsWith(lineEnding)) ? `${serialized}${lineEnding}` : serialized;
 }
 
 function parseIniLines(text) {
@@ -5366,7 +6284,24 @@ function parseIniLines(text) {
 
   const lines = text.split(/\r?\n/);
   let pendingComments = [];
-  for (const line of lines) {
+  const bracketDepth = (value) => {
+    const raw = String(value || '');
+    let depth = 0;
+    let inQuotes = false;
+    for (let idx = 0; idx < raw.length; idx += 1) {
+      const ch = raw[idx];
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+      if (inQuotes) continue;
+      if (ch === '[') depth += 1;
+      else if (ch === ']' && depth > 0) depth -= 1;
+    }
+    return depth;
+  };
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
+    const line = lines[lineIdx];
     const trimmed = line.trim();
     if (trimmed.startsWith(';')) {
       pendingComments.push(line);
@@ -5385,7 +6320,12 @@ function parseIniLines(text) {
       continue;
     }
     const key = match[1];
-    const value = match[2];
+    const valueLines = [match[2]];
+    while (bracketDepth(valueLines.join('\n')) > 0 && lineIdx + 1 < lines.length) {
+      lineIdx += 1;
+      valueLines.push(lines[lineIdx].trim());
+    }
+    const value = valueLines.join('\n').trim();
     rows.push({ key, value, leadingComments: pendingComments });
     pendingComments = [];
     map[key] = value;
@@ -5710,6 +6650,11 @@ function quoteSectionToken(value) {
   return `"${escaped}"`;
 }
 
+function unquoteSectionToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  return raw.replace(/^"(.*)"$/, '$1').trim();
+}
+
 function tokenizeSectionListPreservingQuotes(text) {
   const input = String(text == null ? '' : text);
   const items = [];
@@ -5735,6 +6680,168 @@ function tokenizeSectionListPreservingQuotes(text) {
   return items;
 }
 
+function normalizeNaturalWonderAnimationValueForWrite(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  if (!raw.includes('"')) return raw;
+  return tokenizeSectionListPreservingQuotes(raw)
+    .map((token) => unquoteSectionToken(token))
+    .filter(Boolean)
+    .join(', ');
+}
+
+function findUnquotedColon(value) {
+  const input = String(value == null ? '' : value);
+  let inQuotes = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && ch === ':') return i;
+  }
+  return -1;
+}
+
+function normalizeSectionReferenceToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  return raw.replace(/^"(.*)"$/, '$1').trim();
+}
+
+function formatRenamedSectionReferenceToken(originalToken, nextName) {
+  const next = String(nextName == null ? '' : nextName).trim();
+  if (!next) return '';
+  const raw = String(originalToken == null ? '' : originalToken).trim();
+  if (/^".*"$/.test(raw) || /[,\s:]/.test(next)) return quoteSectionToken(next);
+  return next;
+}
+
+function replaceSectionReferenceListNames(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value);
+  const tokens = tokenizeSectionListPreservingQuotes(raw);
+  let changed = false;
+  const nextTokens = tokens.map((token) => {
+    const normalized = normalizeSectionReferenceToken(token);
+    const replacement = renameByLookup.get(normalized.toLowerCase());
+    if (!replacement) return token;
+    changed = true;
+    return formatRenamedSectionReferenceToken(token, replacement);
+  });
+  return { value: changed ? nextTokens.join(', ') : raw, changed };
+}
+
+function replaceSectionBonusReferenceNames(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value);
+  const tokens = tokenizeSectionListPreservingQuotes(raw);
+  let changed = false;
+  const nextTokens = tokens.map((token, index) => {
+    if (index === 0) return token;
+    const colonIndex = findUnquotedColon(token);
+    if (colonIndex < 0) return token;
+    const rawName = token.slice(0, colonIndex).trim();
+    const replacement = renameByLookup.get(normalizeSectionReferenceToken(rawName).toLowerCase());
+    if (!replacement) return token;
+    changed = true;
+    const rhs = token.slice(colonIndex + 1).trim();
+    return `${formatRenamedSectionReferenceToken(rawName, replacement)}: ${rhs}`;
+  });
+  return { value: changed ? nextTokens.join(', ') : raw, changed };
+}
+
+function replaceSectionSingleReferenceName(value, renameByLookup) {
+  if (!(renameByLookup instanceof Map) || renameByLookup.size <= 0) return { value: String(value == null ? '' : value), changed: false };
+  const raw = String(value == null ? '' : value).trim();
+  const replacement = renameByLookup.get(normalizeSectionReferenceToken(raw).toLowerCase());
+  if (!replacement) return { value: String(value == null ? '' : value), changed: false };
+  return { value: replacement, changed: true };
+}
+
+const DISTRICT_IMPROVEMENT_REFERENCE_LIST_KEYS = new Set(['dependent_improvs', 'wonder_prereqs']);
+const DISTRICT_IMPROVEMENT_BONUS_KEYS = new Set([
+  'defense_bonus_percent',
+  'culture_bonus',
+  'science_bonus',
+  'food_bonus',
+  'gold_bonus',
+  'shield_bonus',
+  'happiness_bonus'
+]);
+
+function getImprovementEntryNameField(entry) {
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  return fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name') || null;
+}
+
+function getImprovementEntryCurrentName(entry) {
+  const field = getImprovementEntryNameField(entry);
+  return normalizeSectionReferenceToken(field && field.value) || normalizeSectionReferenceToken(entry && entry.name);
+}
+
+function getImprovementEntryOriginalName(entry) {
+  const field = getImprovementEntryNameField(entry);
+  return normalizeSectionReferenceToken(field && field.originalValue) || normalizeSectionReferenceToken(entry && entry.originalName);
+}
+
+function collectImprovementNameRenames(tabs) {
+  const entries = Array.isArray(tabs && tabs.improvements && tabs.improvements.entries)
+    ? tabs.improvements.entries
+    : [];
+  const renameByLookup = new Map();
+  entries.forEach((entry) => {
+    const oldName = getImprovementEntryOriginalName(entry);
+    const newName = getImprovementEntryCurrentName(entry);
+    if (!oldName || !newName) return;
+    if (oldName.toLowerCase() === newName.toLowerCase() && oldName === newName) return;
+    renameByLookup.set(oldName.toLowerCase(), newName);
+  });
+  return renameByLookup;
+}
+
+function applyImprovementNameRenamesToSectionedTabs(tabs) {
+  const renameByLookup = collectImprovementNameRenames(tabs || {});
+  const changedTabs = new Set();
+  if (renameByLookup.size <= 0) return changedTabs;
+
+  const updateFields = (tabKey, section, updater) => {
+    const fields = Array.isArray(section && section.fields) ? section.fields : [];
+    fields.forEach((field) => {
+      const result = updater(field);
+      if (!result || !result.changed) return;
+      field.value = result.value;
+      changedTabs.add(tabKey);
+    });
+  };
+
+  const districtSections = (((tabs || {}).districts || {}).model || {}).sections;
+  (Array.isArray(districtSections) ? districtSections : []).forEach((section) => {
+    updateFields('districts', section, (field) => {
+      const key = String(field && field.key || '').trim().toLowerCase();
+      if (DISTRICT_IMPROVEMENT_REFERENCE_LIST_KEYS.has(key)) {
+        return replaceSectionReferenceListNames(field.value, renameByLookup);
+      }
+      if (DISTRICT_IMPROVEMENT_BONUS_KEYS.has(key)) {
+        return replaceSectionBonusReferenceNames(field.value, renameByLookup);
+      }
+      return null;
+    });
+  });
+
+  const wonderSections = (((tabs || {}).wonders || {}).model || {}).sections;
+  (Array.isArray(wonderSections) ? wonderSections : []).forEach((section) => {
+    updateFields('wonders', section, (field) => {
+      const key = String(field && field.key || '').trim().toLowerCase();
+      if (key !== 'name') return null;
+      return replaceSectionSingleReferenceName(field.value, renameByLookup);
+    });
+  });
+
+  return changedTabs;
+}
+
 const SECTION_QUOTED_VALUE_KEYS_BY_KIND = {
   districts: new Set([
     'name', 'display_name', 'tooltip', 'obsoleted_by',
@@ -5754,6 +6861,9 @@ function normalizeSectionFieldValueForWrite(kind, key, value) {
   const rawKey = String(key || '').trim();
   const keyLower = rawKey.toLowerCase();
   const rawValue = String(value == null ? '' : value).trim();
+  if (kindKey === 'naturalWonders' && keyLower === 'animation') {
+    return normalizeNaturalWonderAnimationValueForWrite(rawValue);
+  }
   const quotedKeys = SECTION_QUOTED_VALUE_KEYS_BY_KIND[kindKey];
   if (!quotedKeys || !quotedKeys.has(rawKey) || !rawValue) return rawValue;
   const normalizeArtPath = isSectionArtImagePathField(kindKey, rawKey);
@@ -5844,13 +6954,36 @@ function serializeBaseConfig(baseRows, defaultMap, mode, commentsByKey = {}) {
   return ensureTrailingNewline(lines.join('\n'));
 }
 
-function resolvePaths({ c3xPath, scenarioPath, mode }) {
+function resolveScenarioConfigFilePath(scenarioPath, scenarioPaths, fileName) {
+  const roots = [];
+  const seen = new Set();
+  const addRoot = (root) => {
+    const resolved = resolveScenarioDir(root);
+    if (!resolved) return;
+    const key = normalizePathForCompare(resolved);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    roots.push(resolved);
+  };
+  (Array.isArray(scenarioPaths) ? scenarioPaths : []).forEach(addRoot);
+  addRoot(scenarioPath);
+  for (const root of roots) {
+    const candidate = path.join(root, fileName);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return '';
+}
+
+function resolvePaths({ c3xPath, scenarioPath, scenarioPaths = [], mode }) {
   const scenarioDir = resolveScenarioDir(scenarioPath);
   const paths = {};
   for (const [kind, spec] of Object.entries(FILE_SPECS)) {
     const defaultPath = c3xPath ? path.join(c3xPath, spec.defaultName) : null;
     const userPath = c3xPath ? path.join(c3xPath, spec.userName) : null;
-    const scenarioFilePath = scenarioDir ? path.join(scenarioDir, spec.scenarioName) : null;
+    const scenarioTargetPath = scenarioDir ? path.join(scenarioDir, spec.scenarioName) : null;
+    const scenarioFilePath = mode === 'scenario'
+      ? (resolveScenarioConfigFilePath(scenarioDir, scenarioPaths, spec.scenarioName) || scenarioTargetPath)
+      : scenarioTargetPath;
 
     let effectivePath = defaultPath;
     let effectiveSource = 'default';
@@ -5874,7 +7007,7 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
       }
     }
 
-    const targetPath = mode === 'scenario' ? scenarioFilePath : userPath;
+    const targetPath = mode === 'scenario' ? scenarioTargetPath : userPath;
 
     const defaultExists = !!(defaultPath && fs.existsSync(defaultPath));
     const userExists = !!(userPath && fs.existsSync(userPath));
@@ -5885,12 +7018,442 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
       defaultPath,
       userPath,
       scenarioPath: scenarioFilePath,
+      scenarioTargetPath,
       effectivePath,
       effectiveSource,
       targetPath
     };
   }
   return paths;
+}
+
+function getConquestsRootPath(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  return root ? path.join(root, 'Conquests') : '';
+}
+
+function getMusicTextPathForRoot(rootPath) {
+  const root = String(rootPath || '').trim();
+  return root ? path.join(root, MUSIC_TEXT_RELATIVE_PATH) : '';
+}
+
+function getMusicBuildPathForRoot(rootPath) {
+  const root = String(rootPath || '').trim();
+  return root ? path.join(root, MUSIC_BUILD_RELATIVE_PATH) : '';
+}
+
+function makeEmptyMusicAssignments() {
+  const out = {};
+  MUSIC_ERAS.forEach((era) => {
+    out[era.key] = {};
+    if (era.shared) {
+      out[era.key].all = [];
+    } else {
+      MUSIC_CULTURES.forEach((culture) => {
+        out[era.key][culture.key] = [];
+      });
+    }
+  });
+  out.playlist = { all: [] };
+  return out;
+}
+
+function normalizeMusicRelativePath(value) {
+  const raw = String(value || '').trim().replace(/\\/g, '/');
+  if (!raw) return '';
+  return raw.replace(/^sounds\/build\//i, '').replace(/^\/+/, '').replace(/\/+/g, '/');
+}
+
+function toMusicWindowsPath(value) {
+  return normalizeMusicRelativePath(value).replace(/\//g, '\\');
+}
+
+function parseMusicPlaylistText(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => normalizeMusicRelativePath(line))
+    .filter(Boolean);
+}
+
+function walkFilesRecursiveSafe(rootPath, options = {}) {
+  const root = String(rootPath || '').trim();
+  if (!root || !fs.existsSync(root)) return [];
+  const maxFiles = Number.isFinite(options.maxFiles) ? Math.max(1, options.maxFiles) : 1000;
+  const out = [];
+  const visit = (dirPath) => {
+    if (out.length >= maxFiles) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch (_err) {
+      return;
+    }
+    entries.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'en', { sensitivity: 'base' }));
+    entries.forEach((entry) => {
+      if (out.length >= maxFiles) return;
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) visit(fullPath);
+      else if (entry.isFile()) out.push(fullPath);
+    });
+  };
+  visit(root);
+  return out;
+}
+
+function inferStockMusicCellFromPath(relativePath) {
+  const normalized = normalizeMusicRelativePath(relativePath);
+  const base = path.basename(normalized).replace(/\.[^.]+$/u, '');
+  const compact = base.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const cultureByCode = new Map(MUSIC_CULTURES.map((culture) => [String(culture.code || '').toLowerCase(), culture.key]));
+  const ancient = compact.match(/^anc(na|ec|gr|me|or)(?:full)?$/);
+  if (ancient) return { eraKey: 'ancient', cultureKey: cultureByCode.get(ancient[1]) || '' };
+  const middle = compact.match(/^mid(na|ec|gr|me|or)full$/);
+  if (middle) return { eraKey: 'medieval', cultureKey: cultureByCode.get(middle[1]) || '' };
+  const industrial = compact.match(/^ind(na|ec|gr|me|or)full$/);
+  if (industrial) return { eraKey: 'industrial', cultureKey: cultureByCode.get(industrial[1]) || '' };
+  if (compact === 'smashfull' || compact === 'starsfull' || compact === 'technomixfull' || compact === 'modernfull') {
+    return { eraKey: 'modern', cultureKey: 'all' };
+  }
+  return null;
+}
+
+function parseMp3Metadata(filePath) {
+  let buf = null;
+  try {
+    buf = fs.readFileSync(filePath);
+  } catch (_err) {
+    return {};
+  }
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return {};
+  let offset = 0;
+  if (buf.length >= 10 && buf.subarray(0, 3).toString('latin1') === 'ID3') {
+    const size = ((buf[6] & 0x7f) << 21) | ((buf[7] & 0x7f) << 14) | ((buf[8] & 0x7f) << 7) | (buf[9] & 0x7f);
+    offset = Math.min(buf.length - 4, 10 + size);
+  }
+  const bitrateTable = {
+    mpeg1_layer3: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+    mpeg2_layer3: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160]
+  };
+  const sampleRateTable = {
+    3: [44100, 48000, 32000],
+    2: [22050, 24000, 16000],
+    0: [11025, 12000, 8000]
+  };
+  for (let i = offset; i + 4 <= buf.length; i += 1) {
+    if (buf[i] !== 0xff || (buf[i + 1] & 0xe0) !== 0xe0) continue;
+    const versionBits = (buf[i + 1] >> 3) & 0x03;
+    const layerBits = (buf[i + 1] >> 1) & 0x03;
+    const bitrateIndex = (buf[i + 2] >> 4) & 0x0f;
+    const sampleRateIndex = (buf[i + 2] >> 2) & 0x03;
+    const channelMode = (buf[i + 3] >> 6) & 0x03;
+    if (versionBits === 1 || layerBits !== 1 || bitrateIndex <= 0 || bitrateIndex >= 15 || sampleRateIndex >= 3) continue;
+    const versionKey = versionBits === 3 ? 'mpeg1_layer3' : 'mpeg2_layer3';
+    const bitrateKbps = bitrateTable[versionKey][bitrateIndex] || 0;
+    const sampleRateHz = (sampleRateTable[versionBits] || [])[sampleRateIndex] || 0;
+    if (!bitrateKbps || !sampleRateHz) continue;
+    const audioBytes = Math.max(0, buf.length - i - (buf.length > 128 && buf.subarray(buf.length - 128, buf.length - 125).toString('latin1') === 'TAG' ? 128 : 0));
+    const durationSeconds = bitrateKbps > 0 ? (audioBytes * 8) / (bitrateKbps * 1000) : null;
+    return {
+      durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : null,
+      bitrateKbps,
+      sampleRateHz,
+      channelMode: channelMode === 3 ? 'mono' : 'stereo'
+    };
+  }
+  return {};
+}
+
+function inspectAudioFileBasic(filePath) {
+  const target = String(filePath || '').trim();
+  if (!target || !fs.existsSync(target)) return null;
+  let stat = null;
+  try {
+    stat = fs.statSync(target);
+  } catch (_err) {
+    stat = null;
+  }
+  return {
+    filePath: target,
+    fileName: path.basename(target),
+    extension: path.extname(target).replace(/^\./, '').toLowerCase(),
+    size: stat && Number.isFinite(stat.size) ? stat.size : 0,
+    ...parseMp3Metadata(target)
+  };
+}
+
+function makeMusicTrack({ relativePath, sourcePath = '', scope = '', inherited = false, explicit = false }) {
+  const rel = normalizeMusicRelativePath(relativePath || (sourcePath ? path.basename(sourcePath) : ''));
+  const title = path.basename(rel || sourcePath || '');
+  const info = inspectAudioFileBasic(sourcePath);
+  return {
+    id: crypto.createHash('sha1').update(`${scope}|${rel}|${sourcePath}`).digest('hex').slice(0, 12),
+    relativePath: rel,
+    displayPath: rel,
+    title,
+    sourcePath: String(sourcePath || ''),
+    playablePath: String(sourcePath || ''),
+    scope: String(scope || ''),
+    inherited: !!inherited,
+    explicit: !!explicit,
+    missing: !(sourcePath && fs.existsSync(sourcePath)),
+    fileName: info ? info.fileName : title,
+    size: info ? info.size : 0,
+    durationSeconds: info ? info.durationSeconds : null,
+    bitrateKbps: info ? info.bitrateKbps : null,
+    sampleRateHz: info ? info.sampleRateHz : null,
+    channelMode: info ? info.channelMode : ''
+  };
+}
+
+function scanMusicBuildLibrary(rootPath, scope) {
+  const buildRoot = getMusicBuildPathForRoot(rootPath);
+  if (!buildRoot || !fs.existsSync(buildRoot)) return [];
+  return walkFilesRecursiveSafe(buildRoot, { maxFiles: 2000 })
+    .filter((filePath) => /\.mp3$/i.test(filePath))
+    .map((filePath) => makeMusicTrack({
+      relativePath: normalizeMusicRelativePath(path.relative(buildRoot, filePath)),
+      sourcePath: filePath,
+      scope
+    }));
+}
+
+function buildMusicLibraryIndex(libraries) {
+  const tracks = [];
+  const byRelative = new Map();
+  (Array.isArray(libraries) ? libraries : []).forEach((track) => {
+    if (!track) return;
+    tracks.push(track);
+    const key = normalizeMusicRelativePath(track.relativePath).toLowerCase();
+    if (key && !byRelative.has(key)) byRelative.set(key, track);
+    const baseKey = path.basename(key);
+    if (baseKey && !byRelative.has(baseKey)) byRelative.set(baseKey, track);
+  });
+  return { tracks, byRelative };
+}
+
+function resolveMusicPlaylistEntry(relativePath, libraryIndex, options = {}) {
+  const rel = normalizeMusicRelativePath(relativePath);
+  const lookup = libraryIndex && libraryIndex.byRelative ? libraryIndex.byRelative : new Map();
+  const found = lookup.get(rel.toLowerCase()) || lookup.get(path.basename(rel).toLowerCase()) || null;
+  if (found) {
+    return {
+      ...found,
+      id: crypto.createHash('sha1').update(`${found.scope}|${rel}|${found.sourcePath}|${options.explicit ? 'explicit' : 'library'}`).digest('hex').slice(0, 12),
+      relativePath: rel,
+      displayPath: rel,
+      inherited: !!options.inherited,
+      explicit: !!options.explicit,
+      missing: false
+    };
+  }
+  return makeMusicTrack({ relativePath: rel, sourcePath: '', scope: options.explicit ? 'playlist' : 'library', inherited: !!options.inherited, explicit: !!options.explicit });
+}
+
+function assignMusicTrack(assignments, track, cell) {
+  const target = cell || inferStockMusicCellFromPath(track && track.relativePath);
+  const eraKey = String(target && target.eraKey || '').trim();
+  const cultureKey = String(target && target.cultureKey || '').trim();
+  if (eraKey && cultureKey && assignments[eraKey] && Array.isArray(assignments[eraKey][cultureKey])) {
+    assignments[eraKey][cultureKey].push(track);
+    return true;
+  }
+  assignments.playlist.all.push(track);
+  return false;
+}
+
+function flattenMusicAssignments(assignments, options = {}) {
+  const includeMatrix = options.includeMatrix !== false;
+  const out = [];
+  const seen = new Set();
+  const pushTrack = (track) => {
+    const rel = normalizeMusicRelativePath(track && track.relativePath);
+    if (!rel) return;
+    const key = `${rel.toLowerCase()}|${String(track && (track.pendingSourcePath || track.sourcePath) || '').toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(track);
+  };
+  if (includeMatrix) {
+    MUSIC_ERAS.forEach((era) => {
+      const cultureKeys = era.shared ? ['all'] : MUSIC_CULTURES.map((culture) => culture.key);
+      cultureKeys.forEach((cultureKey) => {
+        ((((assignments || {})[era.key] || {})[cultureKey]) || []).forEach(pushTrack);
+      });
+    });
+  }
+  ((((assignments || {}).playlist || {}).all) || []).forEach(pushTrack);
+  return out;
+}
+
+function scanStandardMusicLibraries(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  const conquestsRoot = getConquestsRootPath(civ3Path);
+  return dedupePathList([root, conquestsRoot])
+    .flatMap((rootPath) => scanMusicBuildLibrary(rootPath, normalizePathForCompare(rootPath) === normalizePathForCompare(root) ? 'standard-root' : 'conquests'));
+}
+
+function buildStockMusicAssignments(libraryTracks, inherited = false) {
+  const assignments = makeEmptyMusicAssignments();
+  (Array.isArray(libraryTracks) ? libraryTracks : []).forEach((track) => {
+    const nextTrack = { ...track, inherited: !!inherited, explicit: false };
+    assignMusicTrack(assignments, nextTrack, inferStockMusicCellFromPath(nextTrack.relativePath));
+  });
+  return assignments;
+}
+
+function findMusicTextFileCaseInsensitive(rootPath) {
+  const textDir = rootPath ? path.join(rootPath, 'Text') : '';
+  if (!textDir || !fs.existsSync(textDir)) return getMusicTextPathForRoot(rootPath);
+  try {
+    const entries = fs.readdirSync(textDir);
+    const hit = entries.find((name) => String(name || '').toLowerCase() === 'music.txt');
+    if (hit) return path.join(textDir, hit);
+  } catch (_err) {
+    // fall through
+  }
+  return getMusicTextPathForRoot(rootPath);
+}
+
+function loadMusicTab({ mode, civ3Path, scenarioContext, textFileEncoding }) {
+  const conquestsRoot = getConquestsRootPath(civ3Path);
+  const scenarioRoot = mode === 'scenario'
+    ? (scenarioContext && (scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioContext.biqRoot))
+    : '';
+  const targetRoot = mode === 'scenario' ? scenarioRoot : conquestsRoot;
+  const targetPath = getMusicTextPathForRoot(targetRoot);
+  const standardLibrary = scanStandardMusicLibraries(civ3Path);
+  const scenarioRoots = mode === 'scenario'
+    ? dedupePathList([scenarioRoot].concat((scenarioContext && scenarioContext.searchRoots) || []))
+    : [];
+  const scenarioLibraries = scenarioRoots.flatMap((rootPath) => scanMusicBuildLibrary(rootPath, normalizePathForCompare(rootPath) === normalizePathForCompare(scenarioRoot) ? 'scenario' : 'scenario-search'));
+  const libraryIndex = buildMusicLibraryIndex(scenarioLibraries.concat(standardLibrary));
+  const activePath = findMusicTextFileCaseInsensitive(targetRoot);
+  const activeInfo = readTextFileWithEncodingInfoIfExists(activePath, { preferredEncoding: textFileEncoding });
+  const tab = {
+    type: 'music',
+    title: 'Music',
+    layout: 'stock',
+    targetPath,
+    buildTargetPath: getMusicBuildPathForRoot(targetRoot),
+    cultures: MUSIC_CULTURES.map((culture) => ({ ...culture })),
+    eras: MUSIC_ERAS.map((era) => ({ ...era })),
+    assignments: makeEmptyMusicAssignments(),
+    library: standardLibrary,
+    effectiveSource: 'standard-library',
+    sourceDetails: {
+      targetPath,
+      activePath: activeInfo ? activePath : '',
+      hasActive: !!activeInfo,
+      inheritedFromStandard: mode === 'scenario' && !activeInfo,
+      generatedFromLibrary: !activeInfo,
+      activeEncoding: activeInfo ? activeInfo.encoding : '',
+      activeBom: !!(activeInfo && activeInfo.bom),
+      standardBuildRoots: dedupePathList([resolveCiv3RootPath(civ3Path), conquestsRoot]).map(getMusicBuildPathForRoot).filter(Boolean),
+      scenarioBuildRoots: scenarioRoots.map(getMusicBuildPathForRoot).filter(Boolean)
+    }
+  };
+  if (activeInfo) {
+    tab.layout = 'playlist';
+    tab.effectiveSource = mode === 'scenario' ? 'scenario' : 'standard';
+    tab.sourceDetails.generatedFromLibrary = false;
+    tab.sourceDetails.inheritedFromStandard = false;
+    parseMusicPlaylistText(activeInfo.text).forEach((relativePath) => {
+      tab.assignments.playlist.all.push(resolveMusicPlaylistEntry(relativePath, libraryIndex, { explicit: true }));
+    });
+    return tab;
+  }
+  tab.assignments = buildStockMusicAssignments(standardLibrary, mode === 'scenario');
+  return tab;
+}
+
+function getMusicTracksForSave(tab) {
+  if (!tab || typeof tab !== 'object') return [];
+  if (String(tab.layout || '').trim().toLowerCase() === 'playlist') {
+    return ((((tab.assignments || {}).playlist || {}).all) || []).filter(Boolean);
+  }
+  return flattenMusicAssignments(tab.assignments || {}, { includeMatrix: true });
+}
+
+function makeCollisionSafeMusicTarget(buildRoot, relativePath, existingTargets) {
+  const rel = normalizeMusicRelativePath(relativePath) || 'music.mp3';
+  const dirPart = path.dirname(rel);
+  const base = path.basename(rel, path.extname(rel)).replace(/[<>:"|?*\x00-\x1f]/g, '_') || 'music';
+  const ext = path.extname(rel) || '.mp3';
+  const safeDir = dirPart && dirPart !== '.' ? dirPart.replace(/\\/g, '/') : '';
+  let idx = 1;
+  while (idx < 10000) {
+    const name = idx === 1 ? `${base}${ext}` : `${base}_${idx}${ext}`;
+    const candidateRel = normalizeMusicRelativePath(safeDir ? `${safeDir}/${name}` : name);
+    const candidatePath = path.join(buildRoot, candidateRel);
+    const key = normalizePathForCompare(candidatePath);
+    if (!existingTargets.has(key) && !fs.existsSync(candidatePath)) {
+      existingTargets.add(key);
+      return { relativePath: candidateRel, targetPath: candidatePath };
+    }
+    idx += 1;
+  }
+  const fallbackRel = normalizeMusicRelativePath(`${safeDir ? `${safeDir}/` : ''}${base}_${Date.now()}${ext}`);
+  const fallbackPath = path.join(buildRoot, fallbackRel);
+  existingTargets.add(normalizePathForCompare(fallbackPath));
+  return { relativePath: fallbackRel, targetPath: fallbackPath };
+}
+
+function prepareMusicTabWrites({ tab, targetRoot, textFileEncoding }) {
+  if (!tab || !targetRoot) return { ok: true, writes: [], saveReport: [] };
+  const targetPath = String(tab.targetPath || getMusicTextPathForRoot(targetRoot));
+  const buildRoot = String(tab.buildTargetPath || getMusicBuildPathForRoot(targetRoot));
+  const tracks = getMusicTracksForSave(tab);
+  const writes = [];
+  const saveReport = [];
+  const existingTargets = new Set();
+  const serializedLines = [];
+  for (const track of tracks) {
+    let relativePath = normalizeMusicRelativePath(track && track.relativePath);
+    const pendingSourcePath = String(track && track.pendingSourcePath || '').trim();
+    if (pendingSourcePath) {
+      if (!fs.existsSync(pendingSourcePath)) {
+        return { ok: false, error: `Could not read imported music file: ${pendingSourcePath}` };
+      }
+      const preferredRelativePath = relativePath || normalizeMusicRelativePath(path.basename(pendingSourcePath));
+      const preferredTargetPath = path.join(buildRoot, preferredRelativePath);
+      if (normalizePathForCompare(preferredTargetPath) === normalizePathForCompare(pendingSourcePath)) {
+        relativePath = preferredRelativePath;
+        existingTargets.add(normalizePathForCompare(preferredTargetPath));
+      } else {
+        const target = makeCollisionSafeMusicTarget(buildRoot, preferredRelativePath, existingTargets);
+        relativePath = target.relativePath;
+        writes.push({
+          kind: 'musicAudio',
+          path: target.targetPath,
+          sourcePath: pendingSourcePath,
+          relativePath,
+          data: fs.readFileSync(pendingSourcePath)
+        });
+        saveReport.push({ kind: 'musicAudio', path: target.targetPath, sourcePath: pendingSourcePath, relativePath });
+      }
+    }
+    if (relativePath) serializedLines.push(toMusicWindowsPath(relativePath));
+  }
+  const serialized = serializedLines.join('\r\n') + (serializedLines.length > 0 ? '\r\n' : '');
+  const sourceDetails = tab.sourceDetails || {};
+  const resolvedEncoding = resolveScenarioTextWriteEncoding({
+    targetPath,
+    sourcePath: String(sourceDetails.activePath || ''),
+    explicitEncoding: String(sourceDetails.activeEncoding || ''),
+    preferredEncoding: textFileEncoding,
+    fallbackEncoding: 'windows-1252'
+  });
+  writes.push({
+    kind: 'music',
+    path: targetPath,
+    data: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: resolvedEncoding.bom }),
+    encoding: resolvedEncoding.encoding,
+    bom: resolvedEncoding.bom
+  });
+  saveReport.push({ kind: 'music', path: targetPath, applied: serializedLines.length });
+  return { ok: true, writes, saveReport };
 }
 
 function loadBundle(payload) {
@@ -5935,7 +7498,12 @@ function loadBundle(payload) {
     const scenarioPathForFilePaths = mode === 'scenario'
       ? (scenarioContext.expectedContentWriteRoot || scenarioContext.contentWriteRoot || scenarioContext.biqRoot)
       : scenarioContext.biqRoot;
-    const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioPathForFilePaths, mode });
+    const filePaths = resolvePaths({
+      c3xPath,
+      scenarioPath: scenarioPathForFilePaths,
+      scenarioPaths: scenarioSearchPaths,
+      mode
+    });
     const bundle = {
       mode,
       c3xPath,
@@ -5948,8 +7516,23 @@ function loadBundle(payload) {
       scenarioWriteRoots: scenarioContext.writableRoots,
       tabs: {}
     };
+    bundle.scienceAdvisorArrowMetadata = mode === 'scenario'
+      ? loadScienceAdvisorArrowMetadata(scenarioContext.contentWriteRoot || scenarioContext.expectedContentWriteRoot || scenarioDir)
+      : loadScienceAdvisorArrowMetadata('');
 
-    bundle.biq = biqTab;
+    const deferredMapCache = deferMapTab
+      ? rememberDeferredMapBiqTab(biqTab, {
+        mode,
+        civ3Path,
+        scenarioPath,
+        textEncoding: biqTab && biqTab.textEncoding || initialBiqTextEncoding
+      })
+      : null;
+    bundle.biq = deferMapTab
+      ? summarizeBiqTabForBundle(biqTab, {
+        mapMaterializationCacheKey: deferredMapCache && deferredMapCache.key
+      })
+      : biqTab;
     if (mode === 'scenario' && scenarioSearchFolderOverride.length > 0 && biqTab && Array.isArray(biqTab.sections)) {
       const game = biqTab.sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'GAME');
       const record = game && Array.isArray(game.records) ? game.records[0] : null;
@@ -5995,7 +7578,10 @@ function loadBundle(payload) {
         preferredEncoding: textFileEncoding
       })
       : null;
-    bundle.tabs.map = buildDeferredMapTab(biqTab, mode, { scenarioDistricts: scenarioDistrictsMetadata });
+    bundle.tabs.map = buildDeferredMapTab(biqTab, mode, {
+      scenarioDistricts: scenarioDistrictsMetadata,
+      mapMaterializationCacheKey: deferredMapCache && deferredMapCache.key
+    });
     let biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
     if (shouldUseScenarioDefaultRulesFallback(mode, biqTab)) {
       globalBiqTab = globalBiqTab || loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '', textEncoding: bundle.biqTextEncoding || textFileEncoding });
@@ -6015,6 +7601,13 @@ function loadBundle(payload) {
       if (referenceTabs.terrainPedia) bundle.tabs.terrainPedia = referenceTabs.terrainPedia;
       if (referenceTabs.workerActions) bundle.tabs.workerActions = referenceTabs.workerActions;
     }
+
+    bundle.tabs.music = loadMusicTab({
+      mode,
+      civ3Path,
+      scenarioContext,
+      textFileEncoding
+    });
 
     if (!deferMapTab && bundle.tabs.map) {
       bundle.tabs.map = materializeMapTab({
@@ -6096,7 +7689,9 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
     return { ok: true, applied: 0, buffer: null };
   }
   try {
-    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    const existingInfo = readEncodedTextWithFallbackInfo(targetPath, sourcePath, preferredEncoding);
+    const existing = existingInfo ? existingInfo.text || '' : '';
+    const existingTargetHasLineEndingRepair = fs.existsSync(targetPath) && hasNonCrlfLineEndings(existing);
     const doc = parsePediaIconsDocumentWithOrder(existing);
     let applied = 0;
     edits.forEach((edit) => {
@@ -6104,26 +7699,57 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
       if (!blockKey) return;
       const op = String(edit && edit.op || 'upsert').trim().toLowerCase();
       if (op === 'delete') {
-        delete doc.blocks[blockKey];
-        delete doc.headers[blockKey];
-        doc.order = doc.order.filter((key) => String(key || '').trim().toUpperCase() !== blockKey);
-        applied += 1;
+        if (Array.isArray(doc.items)) {
+          const before = doc.items.length;
+          doc.items = doc.items.filter((item) => getPediaIconsItemKey(item) !== blockKey);
+          if (doc.items.length !== before) {
+            rebuildPediaIconsDocumentIndexes(doc);
+            applied += 1;
+          }
+          return;
+        }
+        if (doc.blocks[blockKey]) {
+          delete doc.blocks[blockKey];
+          delete doc.headers[blockKey];
+          doc.order = doc.order.filter((key) => String(key || '').trim().toUpperCase() !== blockKey);
+          applied += 1;
+        }
         return;
       }
       const nextLines = normalizePediaIconsLines(edit.lines || []);
-      const prevLines = normalizePediaIconsLines(doc.blocks[blockKey] || []);
+      const existingItemIdx = findLastPediaIconsItemIndexByKey(doc, blockKey);
+      const existingItem = existingItemIdx >= 0 ? doc.items[existingItemIdx] : null;
+      const prevLines = normalizePediaIconsLines((existingItem && existingItem.rawLines) || doc.blocks[blockKey] || []);
       if (JSON.stringify(prevLines) === JSON.stringify(nextLines)) return;
-      doc.blocks[blockKey] = nextLines;
-      if (!doc.order.includes(blockKey)) {
-        const markerIdx = doc.order.findIndex((key) => String(key || '').trim().toUpperCase() === 'END CIVILOPEDIA ART');
-        if (markerIdx >= 0) doc.order.splice(markerIdx, 0, blockKey);
-        else doc.order.push(blockKey);
+      if (Array.isArray(doc.items)) {
+        if (existingItem) {
+          existingItem.key = blockKey;
+          if (!String(existingItem.headerKey || '').trim()) existingItem.headerKey = blockKey;
+          existingItem.rawLines = nextLines;
+          existingItem.normalized = true;
+        } else {
+          insertPediaIconsItemsAt(doc, blockKey, [{
+            key: blockKey,
+            headerKey: blockKey,
+            rawLines: nextLines,
+            normalized: true
+          }]);
+        }
+        rebuildPediaIconsDocumentIndexes(doc);
+      } else {
+        doc.blocks[blockKey] = nextLines;
+        if (!doc.order.includes(blockKey)) {
+          doc.order.splice(findPediaIconsInsertionIndex(doc.order, blockKey), 0, blockKey);
+        }
+        if (!doc.headers) doc.headers = {};
+        if (!doc.headers[blockKey]) doc.headers[blockKey] = blockKey;
       }
-      if (!doc.headers) doc.headers = {};
-      if (!doc.headers[blockKey]) doc.headers[blockKey] = blockKey;
       applied += 1;
     });
-    if (applied === 0) return { ok: true, applied: 0, buffer: null };
+    const repair = repairPediaIconsDocumentForFiraxis(doc);
+    if (repair.changed) applied += 1;
+    if (applied > 0 || existingTargetHasLineEndingRepair) doc.lineEnding = '\r\n';
+    if (applied === 0 && !existingTargetHasLineEndingRepair) return { ok: true, applied: 0, buffer: null };
     const serialized = serializePediaIconsDocumentWithOrder(doc);
     const resolvedEncoding = resolveScenarioTextWriteEncoding({
       targetPath,
@@ -6133,7 +7759,11 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
     });
     return {
       ok: true,
-      applied,
+      applied: existingTargetHasLineEndingRepair ? Math.max(applied, 1) : applied,
+      repaired: !!repair.changed,
+      movedHomelessBlocks: repair.moved || 0,
+      restoredHomeless: !!repair.restoredHomeless,
+      lineEndingsNormalized: existingTargetHasLineEndingRepair,
       buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
       encoding: resolvedEncoding.encoding,
       bom: bom || resolvedEncoding.bom
@@ -6143,12 +7773,50 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits, sourcePath = '',
   }
 }
 
+function buildScenarioPediaIconsRepairResult({ targetPath, sourcePath = '', encoding = DEFAULT_TEXT_FILE_ENCODING, bom = false, preferredEncoding = DEFAULT_TEXT_FILE_ENCODING }) {
+  if (!targetPath || !fs.existsSync(targetPath)) {
+    return { ok: true, applied: 0, buffer: null };
+  }
+  try {
+    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    const lineEndingsNormalized = hasNonCrlfLineEndings(existing);
+    const doc = parsePediaIconsDocumentWithOrder(existing);
+    const repair = repairPediaIconsDocumentForFiraxis(doc);
+    if (repair.changed || lineEndingsNormalized) doc.lineEnding = '\r\n';
+    if (!repair.changed && !lineEndingsNormalized) return { ok: true, applied: 0, buffer: null };
+    const serialized = repair.changed
+      ? serializePediaIconsDocumentWithOrder(doc)
+      : normalizeTextLineEndingsToCrlf(existing);
+    const resolvedEncoding = resolveScenarioTextWriteEncoding({
+      targetPath,
+      sourcePath,
+      explicitEncoding: encoding,
+      preferredEncoding
+    });
+    return {
+      ok: true,
+      applied: 1,
+      repaired: !!repair.changed,
+      movedHomelessBlocks: repair.moved || 0,
+      restoredHomeless: !!repair.restoredHomeless,
+      lineEndingsNormalized,
+      buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
+      encoding: resolvedEncoding.encoding,
+      bom: bom || resolvedEncoding.bom
+    };
+  } catch (err) {
+    return { ok: false, error: `Failed to repair PediaIcons: ${err.message}` };
+  }
+}
+
 function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = '', encoding = DEFAULT_TEXT_FILE_ENCODING, bom = false, preferredEncoding = DEFAULT_TEXT_FILE_ENCODING }) {
   if (!targetPath || !Array.isArray(edits) || edits.length === 0) {
     return { ok: true, applied: 0, buffer: null };
   }
   try {
-    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    const existingInfo = readEncodedTextWithFallbackInfo(targetPath, sourcePath, preferredEncoding);
+    const existing = existingInfo ? existingInfo.text || '' : '';
+    const existingTargetHasLineEndingRepair = fs.existsSync(targetPath) && hasNonCrlfLineEndings(existing);
     const doc = parseCivilopediaDocumentWithOrder(existing);
     const items = Array.isArray(doc.items) ? doc.items.slice() : [];
     let applied = 0;
@@ -6225,7 +7893,8 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = ''
       }
       applied += 1;
     });
-    if (applied === 0) return { ok: true, applied: 0, buffer: null };
+    if (applied > 0 || existingTargetHasLineEndingRepair) doc.lineEnding = '\r\n';
+    if (applied === 0 && !existingTargetHasLineEndingRepair) return { ok: true, applied: 0, buffer: null };
     if (items.length > 0) {
       const eofItems = [];
       for (let i = items.length - 1; i >= 0; i -= 1) {
@@ -6255,13 +7924,40 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits, sourcePath = ''
     });
     return {
       ok: true,
-      applied,
+      applied: existingTargetHasLineEndingRepair ? Math.max(applied, 1) : applied,
+      lineEndingsNormalized: existingTargetHasLineEndingRepair,
       buffer: encodeTextBuffer(serialized, resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
       encoding: resolvedEncoding.encoding,
       bom: bom || resolvedEncoding.bom
     };
   } catch (err) {
     return { ok: false, error: `Failed to save Civilopedia edits: ${err.message}` };
+  }
+}
+
+function buildScenarioCivilopediaRepairResult({ targetPath, sourcePath = '', encoding = DEFAULT_TEXT_FILE_ENCODING, bom = false, preferredEncoding = DEFAULT_TEXT_FILE_ENCODING }) {
+  if (!targetPath || !fs.existsSync(targetPath)) {
+    return { ok: true, applied: 0, buffer: null };
+  }
+  try {
+    const existing = readEncodedTextIfExists(targetPath, { preferredEncoding }) || '';
+    if (!hasNonCrlfLineEndings(existing)) return { ok: true, applied: 0, buffer: null };
+    const resolvedEncoding = resolveScenarioTextWriteEncoding({
+      targetPath,
+      sourcePath,
+      explicitEncoding: encoding,
+      preferredEncoding
+    });
+    return {
+      ok: true,
+      applied: 1,
+      lineEndingsNormalized: true,
+      buffer: encodeTextBuffer(normalizeTextLineEndingsToCrlf(existing), resolvedEncoding.encoding, { bom: bom || resolvedEncoding.bom }),
+      encoding: resolvedEncoding.encoding,
+      bom: bom || resolvedEncoding.bom
+    };
+  } catch (err) {
+    return { ok: false, error: `Failed to repair Civilopedia: ${err.message}` };
   }
 }
 
@@ -6657,6 +8353,129 @@ function resolveArtFileFromRoots(relPath, searchRoots) {
   return null;
 }
 
+function resolveCaseInsensitivePath(root, relPath) {
+  const rootPath = String(root || '').trim();
+  const normalized = normalizeRelativePath(relPath);
+  if (!rootPath || !normalized) return '';
+  let current = rootPath;
+  for (const part of normalized.split('/').filter(Boolean)) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (_err) {
+      return '';
+    }
+    const match = entries.find((entry) => entry && entry.name.toLowerCase() === part.toLowerCase());
+    if (!match) return '';
+    current = path.join(current, match.name);
+  }
+  return current;
+}
+
+function resolveCaseInsensitiveArtFileFromRoots(relPath, searchRoots) {
+  const normalized = normalizeRelativePath(relPath);
+  if (!normalized) return '';
+  for (const root of (Array.isArray(searchRoots) ? searchRoots : [])) {
+    const resolved = resolveCaseInsensitivePath(root, normalized);
+    if (!resolved) continue;
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+    } catch (_err) {
+      // skip
+    }
+  }
+  return '';
+}
+
+function isSafeUnitRuntimeArtRelativePath(relPath) {
+  const normalized = normalizeRelativePath(relPath);
+  if (!normalized || isAbsoluteFilesystemPath(normalized)) return false;
+  const collapsed = path.posix.normalize(normalized);
+  if (!collapsed || collapsed === '.' || collapsed.startsWith('../') || collapsed === '..') return false;
+  return collapsed.toLowerCase().startsWith('art/units/');
+}
+
+function buildUnitRuntimeArtRelativePath(animationName, rawAssetPath) {
+  const anim = String(animationName || '').trim();
+  const raw = normalizeAssetReferencePath(rawAssetPath);
+  if (!anim || !raw || isAbsoluteFilesystemPath(raw)) return '';
+  const ext = path.extname(raw).toLowerCase();
+  if (!UNIT_RUNTIME_IMPORT_EXTENSIONS.has(ext)) return '';
+  const lower = raw.toLowerCase();
+  const rel = lower.startsWith('art/units/')
+    ? raw
+    : path.posix.join('Art', 'Units', anim.replace(/\\/g, '/'), raw);
+  const normalized = normalizeRelativePath(path.posix.normalize(rel));
+  return isSafeUnitRuntimeArtRelativePath(normalized) ? normalized : '';
+}
+
+function collectDirectUnitRuntimeIniRefs(manifest) {
+  const refs = [];
+  const seen = new Set();
+  for (const section of (Array.isArray(manifest && manifest.sections) ? manifest.sections : [])) {
+    for (const field of (Array.isArray(section && section.fields) ? section.fields : [])) {
+      const value = String(field && field.value || '').trim();
+      if (!value || !UNIT_RUNTIME_IMPORT_EXTENSIONS.has(path.extname(value).toLowerCase())) continue;
+      const key = value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      refs.push(value);
+    }
+  }
+  return refs;
+}
+
+function findUnitAnimationIniInFolder(unitDir, animationName) {
+  const files = listFilesRecursive(unitDir);
+  const wanted = `${String(animationName || '').trim().toLowerCase()}.ini`;
+  return files.find((file) => path.basename(file).toLowerCase() === wanted)
+    || files.find((file) => path.extname(file).toLowerCase() === '.ini')
+    || '';
+}
+
+function collectUnitRuntimeDependencyCopiesForImportedAnimation({ animationName, sourceRoots, targetContentRoot }) {
+  const targetRoot = String(targetContentRoot || '').trim();
+  const anim = String(animationName || '').trim();
+  const roots = dedupePathList(Array.isArray(sourceRoots) ? sourceRoots : []);
+  if (!targetRoot || !anim || roots.length === 0) return [];
+
+  let sourceUnitDir = '';
+  let sourceIniPath = '';
+  for (const root of roots) {
+    const candidateDir = resolveCaseInsensitivePath(root, path.join('Art', 'Units', anim));
+    if (!candidateDir) continue;
+    try {
+      if (!fs.existsSync(candidateDir) || !fs.statSync(candidateDir).isDirectory()) continue;
+    } catch (_err) {
+      continue;
+    }
+    const candidateIni = findUnitAnimationIniInFolder(candidateDir, anim);
+    if (candidateIni) {
+      sourceUnitDir = candidateDir;
+      sourceIniPath = candidateIni;
+      break;
+    }
+  }
+  if (!sourceIniPath) return [];
+
+  const manifest = parseUnitAnimationIni(sourceIniPath);
+  const copies = [];
+  const seenTargets = new Set();
+  for (const ref of collectDirectUnitRuntimeIniRefs(manifest)) {
+    const relPath = buildUnitRuntimeArtRelativePath(anim, ref);
+    if (!relPath) continue;
+    const sourcePath = resolveCaseInsensitiveArtFileFromRoots(relPath, roots);
+    if (!sourcePath) continue;
+    if (sourceUnitDir && isPathWithinAnyRoot(sourcePath, [sourceUnitDir])) continue;
+    const targetPath = path.join(targetRoot, ...relPath.split('/').filter(Boolean));
+    const targetKey = normalizePathForCompare(targetPath);
+    if (seenTargets.has(targetKey)) continue;
+    seenTargets.add(targetKey);
+    copies.push({ sourcePath, targetPath, relativePath: relPath });
+  }
+  return copies;
+}
+
 function paletteRgbAt(palette, index) {
   const idx = Number(index) | 0;
   return {
@@ -6688,7 +8507,8 @@ function getIndexedResourceAtlas(buffer, label = 'resources.pcx') {
   if (!decoded || !decoded.indices || !decoded.palette) {
     throw new Error(`${label} must be an indexed 256-color PCX file.`);
   }
-  if (decoded.width < RESOURCE_ATLAS_COLS * RESOURCE_ATLAS_CELL_SIZE) {
+  const cols = Math.floor(decoded.width / RESOURCE_ATLAS_CELL_SIZE);
+  if (cols < 1) {
     throw new Error(`${label} is too narrow for a Civ3 resources.pcx atlas.`);
   }
   const rows = Math.floor(decoded.height / RESOURCE_ATLAS_CELL_SIZE);
@@ -6699,7 +8519,7 @@ function getIndexedResourceAtlas(buffer, label = 'resources.pcx') {
   if (magentaIndex < 0) {
     throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
   }
-  return { ...decoded, rows, magentaIndex };
+  return { ...decoded, cols, rows, cellSize: RESOURCE_ATLAS_CELL_SIZE, magentaIndex };
 }
 
 function isPaletteIndexMagenta(palette, index, magentaIndex) {
@@ -6709,17 +8529,17 @@ function isPaletteIndexMagenta(palette, index, magentaIndex) {
 function isResourceAtlasCellEmpty(atlas, cellIndex) {
   const idx = Number(cellIndex) | 0;
   if (!atlas || idx < 0) return false;
-  const row = Math.floor(idx / RESOURCE_ATLAS_COLS);
-  const col = idx % RESOURCE_ATLAS_COLS;
+  const row = Math.floor(idx / atlas.cols);
+  const col = idx % atlas.cols;
   if (row < 0 || row >= atlas.rows) return false;
-  const startX = col * RESOURCE_ATLAS_CELL_SIZE;
-  const startY = row * RESOURCE_ATLAS_CELL_SIZE;
+  const startX = col * atlas.cellSize;
+  const startY = row * atlas.cellSize;
   // Civ3 resources.pcx cells include non-magenta top/left grid lines inside each
   // 50x50 slot. Those guide pixels are not icon content and must not make an
   // otherwise empty right-most slot look occupied.
-  for (let y = 1; y < RESOURCE_ATLAS_CELL_SIZE; y += 1) {
+  for (let y = 1; y < atlas.cellSize; y += 1) {
     const rowOff = (startY + y) * atlas.width + startX;
-    for (let x = 1; x < RESOURCE_ATLAS_CELL_SIZE; x += 1) {
+    for (let x = 1; x < atlas.cellSize; x += 1) {
       const paletteIndex = atlas.indices[rowOff + x];
       if (!isPaletteIndexMagenta(atlas.palette, paletteIndex, atlas.magentaIndex)) {
         return false;
@@ -6731,7 +8551,7 @@ function isResourceAtlasCellEmpty(atlas, cellIndex) {
 
 function findNextResourceAtlasSlot(targetBuffer) {
   const atlas = getIndexedResourceAtlas(targetBuffer, 'target resources.pcx');
-  const slotCount = atlas.rows * RESOURCE_ATLAS_COLS;
+  const slotCount = atlas.rows * atlas.cols;
   let lastOccupied = -1;
   for (let idx = 0; idx < slotCount; idx += 1) {
     if (!isResourceAtlasCellEmpty(atlas, idx)) lastOccupied = idx;
@@ -6740,6 +8560,7 @@ function findNextResourceAtlasSlot(targetBuffer) {
     index: lastOccupied + 1,
     lastOccupied,
     rows: atlas.rows,
+    cols: atlas.cols,
     capacity: slotCount
   };
 }
@@ -6794,6 +8615,335 @@ function getNextResourceAtlasAssignmentSlot(targetBuffer, resourceTab, activeImp
     index: Math.max(scan.index, referenceFloor),
     scanIndex: scan.index,
     referenceFloor
+  };
+}
+
+function getIndexedLuxuryIconsSmallAtlas(buffer, label = 'luxuryicons_small.pcx') {
+  const decoded = decodePcx(buffer, { returnIndexed: true, transparentIndexes: [] });
+  if (!decoded || !decoded.indices || !decoded.palette) {
+    throw new Error(`${label} must be an indexed 256-color PCX file.`);
+  }
+  const gridWidth = LUXURY_ICONS_SMALL_ATLAS_COLS * LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE;
+  if (decoded.width < gridWidth) {
+    throw new Error(`${label} is too narrow for a Civ3 luxuryicons_small.pcx atlas.`);
+  }
+  const magentaIndex = findPaletteColorIndex(decoded.palette, RESOURCE_ATLAS_MAGENTA, 255);
+  if (magentaIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
+  }
+  const guideIndex = decoded.indices[0];
+  const rows = detectLuxuryIconsSmallAtlasGridRows(decoded, guideIndex, gridWidth);
+  if (rows < 1) {
+    throw new Error(`${label} does not contain any full luxury icon rows.`);
+  }
+  const gridHeight = rows * LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE;
+  return {
+    ...decoded,
+    cols: LUXURY_ICONS_SMALL_ATLAS_COLS,
+    rows,
+    cellSize: LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE,
+    gridWidth,
+    footerHeight: Math.max(0, decoded.height - gridHeight),
+    magentaIndex,
+    guideIndex
+  };
+}
+
+function detectLuxuryIconsSmallAtlasGridRows(decoded, guideIndex, gridWidth) {
+  if (!decoded || !decoded.indices || !decoded.width || !decoded.height) return 0;
+  const cols = LUXURY_ICONS_SMALL_ATLAS_COLS;
+  const cellSize = LUXURY_ICONS_SMALL_ATLAS_CELL_SIZE;
+  const guideXs = [];
+  for (let col = 0; col <= cols; col += 1) {
+    const x = col * cellSize;
+    if (x >= 0 && x < decoded.width && x <= gridWidth) guideXs.push(x);
+  }
+  if (guideXs.length === 0) return 0;
+  let rows = 0;
+  const maxRows = Math.floor(decoded.height / cellSize);
+  for (let row = 0; row < maxRows; row += 1) {
+    const startY = row * cellSize;
+    let samples = 0;
+    let matches = 0;
+    for (let y = startY; y < startY + cellSize && y < decoded.height; y += 1) {
+      for (const x of guideXs) {
+        samples += 1;
+        if (decoded.indices[y * decoded.width + x] === guideIndex) matches += 1;
+      }
+    }
+    if (samples > 0 && matches / samples >= 0.65) {
+      rows += 1;
+      continue;
+    }
+    break;
+  }
+  return rows;
+}
+
+function isLuxuryIconsSmallAtlasGuideOrBackground(atlas, index) {
+  if (!atlas) return false;
+  return index === atlas.magentaIndex
+    || index === atlas.guideIndex
+    || isPaletteIndexMagenta(atlas.palette, index, atlas.magentaIndex);
+}
+
+function isLuxuryIconsSmallAtlasCellEmpty(atlas, cellIndex) {
+  const idx = Number(cellIndex) | 0;
+  if (!atlas || idx < 0) return false;
+  const row = Math.floor(idx / atlas.cols);
+  const col = idx % atlas.cols;
+  if (row < 0 || row >= atlas.rows) return false;
+  const startX = col * atlas.cellSize;
+  const startY = row * atlas.cellSize;
+  for (let y = 1; y < atlas.cellSize; y += 1) {
+    const rowOff = (startY + y) * atlas.width + startX;
+    for (let x = 1; x < atlas.cellSize; x += 1) {
+      if (!isLuxuryIconsSmallAtlasGuideOrBackground(atlas, atlas.indices[rowOff + x])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function findNextLuxuryIconsSmallAtlasSlot(targetBuffer) {
+  const atlas = getIndexedLuxuryIconsSmallAtlas(targetBuffer, 'target luxuryicons_small.pcx');
+  const slotCount = atlas.rows * atlas.cols;
+  let lastOccupied = -1;
+  for (let idx = 0; idx < slotCount; idx += 1) {
+    if (!isLuxuryIconsSmallAtlasCellEmpty(atlas, idx)) lastOccupied = idx;
+  }
+  return {
+    index: lastOccupied + 1,
+    lastOccupied,
+    rows: atlas.rows,
+    cols: atlas.cols,
+    capacity: slotCount
+  };
+}
+
+function getResourceTypeValue(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'type');
+  const raw = field ? (field.value == null ? field.originalValue : field.value) : '';
+  const parsed = parseIntLoose(cleanDisplayText(raw), NaN);
+  if (Number.isFinite(parsed)) return parsed;
+  const text = String(raw || '').trim().toLowerCase();
+  if (text.includes('luxury')) return 1;
+  if (text.includes('strategic')) return 2;
+  if (text.includes('bonus')) return 0;
+  return NaN;
+}
+
+function isLuxuryResourceEntry(entry) {
+  return getResourceTypeValue(entry) === 1;
+}
+
+function getResourceLuxuryOrdinal(resourceTab, entryOrRef) {
+  const entries = Array.isArray(resourceTab && resourceTab.entries) ? resourceTab.entries : [];
+  const targetRef = typeof entryOrRef === 'string'
+    ? String(entryOrRef || '').trim().toUpperCase()
+    : String(entryOrRef && entryOrRef.civilopediaKey || '').trim().toUpperCase();
+  let ordinal = 0;
+  for (const entry of entries) {
+    if (!isLuxuryResourceEntry(entry)) continue;
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (entry === entryOrRef || (targetRef && ref === targetRef)) return ordinal;
+    ordinal += 1;
+  }
+  return -1;
+}
+
+function drawLuxuryIconsSmallAtlasGuideLines(indices, atlas, gridRows) {
+  const maxX = Math.min(atlas.gridWidth, atlas.width - 1);
+  const gridHeight = gridRows * atlas.cellSize;
+  for (let row = 0; row <= gridRows; row += 1) {
+    const y = row * atlas.cellSize;
+    if (y < 0 || y >= gridHeight) continue;
+    const rowOff = y * atlas.width;
+    for (let x = 0; x <= maxX; x += 1) {
+      indices[rowOff + x] = atlas.guideIndex;
+    }
+  }
+  for (let col = 0; col <= atlas.cols; col += 1) {
+    const x = col * atlas.cellSize;
+    if (x < 0 || x >= atlas.width) continue;
+    for (let y = 0; y < gridHeight; y += 1) {
+      indices[y * atlas.width + x] = atlas.guideIndex;
+    }
+  }
+}
+
+function appendLuxuryIconToLuxuryIconsSmallPcx({ targetBuffer, sourceBuffer, sourceIconIndex, targetIconIndex = null }) {
+  const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
+    throw new Error(`Invalid source luxury icon index: ${sourceIconIndex}`);
+  }
+  const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
+  const target = getIndexedLuxuryIconsSmallAtlas(targetBuffer, 'target luxuryicons_small.pcx');
+  const source = getIndexedLuxuryIconsSmallAtlas(sourceBuffer, 'source luxuryicons_small.pcx');
+  if (sourceIndex >= source.rows * source.cols) {
+    throw new Error(`Source luxury icon index ${sourceIndex} is outside source luxuryicons_small.pcx.`);
+  }
+
+  const slot = findNextLuxuryIconsSmallAtlasSlot(targetBuffer);
+  const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
+    ? explicitTargetIndex
+    : slot.index;
+  const requiredRows = Math.floor(targetIndex / target.cols) + 1;
+  const newGridRows = Math.max(target.rows, requiredRows);
+  const oldGridHeight = target.rows * target.cellSize;
+  const newGridHeight = newGridRows * target.cellSize;
+  const newHeight = Math.max(target.height, newGridHeight + target.footerHeight);
+  const nextIndices = new Uint8Array(target.width * newHeight);
+  nextIndices.fill(target.magentaIndex);
+  for (let y = 0; y < oldGridHeight; y += 1) {
+    nextIndices.set(
+      target.indices.subarray(y * target.width, (y + 1) * target.width),
+      y * target.width
+    );
+  }
+  if (target.footerHeight > 0) {
+    for (let y = 0; y < target.footerHeight; y += 1) {
+      const sourceY = oldGridHeight + y;
+      const targetY = newGridHeight + y;
+      if (sourceY >= target.height || targetY >= newHeight) continue;
+      nextIndices.set(
+        target.indices.subarray(sourceY * target.width, (sourceY + 1) * target.width),
+        targetY * target.width
+      );
+    }
+  }
+  drawLuxuryIconsSmallAtlasGuideLines(nextIndices, target, newGridRows);
+
+  const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
+  const srcCol = sourceIndex % source.cols;
+  const srcRow = Math.floor(sourceIndex / source.cols);
+  const dstCol = targetIndex % target.cols;
+  const dstRow = Math.floor(targetIndex / target.cols);
+  const srcX = srcCol * source.cellSize;
+  const srcY = srcRow * source.cellSize;
+  const dstX = dstCol * target.cellSize;
+  const dstY = dstRow * target.cellSize;
+
+  for (let y = 1; y < target.cellSize; y += 1) {
+    const sourceRow = (srcY + y) * source.width + srcX;
+    const targetRow = (dstY + y) * target.width + dstX;
+    for (let x = 1; x < target.cellSize; x += 1) {
+      nextIndices[targetRow + x] = remap[source.indices[sourceRow + x]];
+    }
+  }
+
+  return {
+    buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
+    index: targetIndex,
+    lastOccupied: slot.lastOccupied,
+    scanIndex: slot.index,
+    oldRows: target.rows,
+    newRows: newGridRows,
+    appendedRow: newGridRows > target.rows
+  };
+}
+
+function applyImportedLuxuryIconAtlasAssignments({ resourceTab, targetAtlasBuffer, loadSourceAtlasBuffer, loadSourceResourceTab }) {
+  if (!resourceTab || !Array.isArray(resourceTab.recordOps) || !Array.isArray(resourceTab.entries)) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [], warnings: [] };
+  }
+  const importOps = getActiveImportedAtlasOps(resourceTab).filter((item) => isLuxuryResourceEntry(item && item.entry));
+  if (importOps.length === 0) {
+    return { ok: true, changed: false, buffer: targetAtlasBuffer, assignments: [], warnings: [] };
+  }
+  const warnings = [];
+  if (!Buffer.isBuffer(targetAtlasBuffer)) {
+    return {
+      ok: true,
+      changed: false,
+      buffer: targetAtlasBuffer,
+      assignments: [],
+      warnings: ['Could not load target luxuryicons_small.pcx for imported Luxury resource city icons.']
+    };
+  }
+  let workingBuffer = targetAtlasBuffer;
+  const assignments = [];
+  const sourceBufferCache = new Map();
+  const sourceResourceTabCache = new Map();
+
+  for (const importItem of importOps) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
+    const sourceBiqPath = String(op && op.importArtFrom || '').trim();
+    if (!newRef || !sourceBiqPath) continue;
+    const entry = importItem.entry;
+    const targetIconIndex = getResourceLuxuryOrdinal(resourceTab, entry);
+    if (!Number.isFinite(targetIconIndex) || targetIconIndex < 0) {
+      warnings.push(`Could not determine target Luxury order for imported resource ${newRef}; luxuryicons_small.pcx was not updated for it.`);
+      continue;
+    }
+    const pendingIcon = entry && entry._pendingImportedLuxuryIcon && typeof entry._pendingImportedLuxuryIcon === 'object'
+      ? entry._pendingImportedLuxuryIcon
+      : null;
+    let sourceIconIndex = Number.parseInt(String(pendingIcon && pendingIcon.sourceIconIndex), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      if (!sourceResourceTabCache.has(sourceBiqPath)) {
+        let sourceResourceTab = null;
+        try {
+          sourceResourceTab = typeof loadSourceResourceTab === 'function' ? loadSourceResourceTab(sourceBiqPath) : null;
+        } catch (_err) {
+          sourceResourceTab = null;
+        }
+        sourceResourceTabCache.set(sourceBiqPath, sourceResourceTab);
+      }
+      const sourceResourceTab = sourceResourceTabCache.get(sourceBiqPath);
+      const sourceRef = String(op && op.sourceRef || '').trim().toUpperCase();
+      sourceIconIndex = getResourceLuxuryOrdinal(sourceResourceTab, sourceRef);
+    }
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      warnings.push(`Could not determine source Luxury order for imported resource ${newRef}; luxuryicons_small.pcx was not updated for it.`);
+      continue;
+    }
+    if (!sourceBufferCache.has(sourceBiqPath)) {
+      let sourceBuffer = null;
+      try {
+        sourceBuffer = typeof loadSourceAtlasBuffer === 'function' ? loadSourceAtlasBuffer(sourceBiqPath) : null;
+      } catch (_err) {
+        sourceBuffer = null;
+      }
+      sourceBufferCache.set(sourceBiqPath, sourceBuffer);
+    }
+    const sourceBuffer = sourceBufferCache.get(sourceBiqPath);
+    if (!Buffer.isBuffer(sourceBuffer)) {
+      warnings.push(`Could not load source luxuryicons_small.pcx for imported resource ${newRef}; its city luxury icon was not copied.`);
+      continue;
+    }
+    try {
+      const result = appendLuxuryIconToLuxuryIconsSmallPcx({
+        targetBuffer: workingBuffer,
+        sourceBuffer,
+        sourceIconIndex,
+        targetIconIndex
+      });
+      workingBuffer = result.buffer;
+      entry._pendingImportedLuxuryIcon = {
+        sourceIconIndex,
+        targetIconIndex,
+        importScenarioPath: sourceBiqPath
+      };
+      assignments.push({
+        civilopediaKey: newRef,
+        sourceIconIndex,
+        targetIconIndex: result.index,
+        appendedRow: result.appendedRow
+      });
+    } catch (err) {
+      warnings.push(`Could not copy luxuryicons_small.pcx icon for ${newRef}: ${err.message}`);
+    }
+  }
+
+  return {
+    ok: true,
+    changed: assignments.length > 0,
+    buffer: workingBuffer,
+    assignments,
+    warnings
   };
 }
 
@@ -6908,7 +9058,7 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
   const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
   const target = getIndexedResourceAtlas(targetBuffer, 'target resources.pcx');
   const source = getIndexedResourceAtlas(sourceBuffer, 'source resources.pcx');
-  if (sourceIndex >= source.rows * RESOURCE_ATLAS_COLS) {
+  if (sourceIndex >= source.rows * source.cols) {
     throw new Error(`Source resource icon index ${sourceIndex} is outside source resources.pcx.`);
   }
 
@@ -6916,7 +9066,7 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
   const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
     ? explicitTargetIndex
     : slot.index;
-  const requiredRows = Math.floor(targetIndex / RESOURCE_ATLAS_COLS) + 1;
+  const requiredRows = Math.floor(targetIndex / target.cols) + 1;
   const newHeight = Math.max(target.height, requiredRows * RESOURCE_ATLAS_CELL_SIZE);
   const nextIndices = new Uint8Array(target.width * newHeight);
   nextIndices.fill(target.magentaIndex);
@@ -6928,10 +9078,10 @@ function appendResourceIconToResourcesPcx({ targetBuffer, sourceBuffer, sourceIc
   }
 
   const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
-  const srcCol = sourceIndex % RESOURCE_ATLAS_COLS;
-  const srcRow = Math.floor(sourceIndex / RESOURCE_ATLAS_COLS);
-  const dstCol = targetIndex % RESOURCE_ATLAS_COLS;
-  const dstRow = Math.floor(targetIndex / RESOURCE_ATLAS_COLS);
+  const srcCol = sourceIndex % source.cols;
+  const srcRow = Math.floor(sourceIndex / source.cols);
+  const dstCol = targetIndex % target.cols;
+  const dstRow = Math.floor(targetIndex / target.cols);
   const srcX = srcCol * RESOURCE_ATLAS_CELL_SIZE;
   const srcY = srcRow * RESOURCE_ATLAS_CELL_SIZE;
   const dstX = dstCol * RESOURCE_ATLAS_CELL_SIZE;
@@ -7018,6 +9168,759 @@ function getBiqFieldByBaseKey(entry, key) {
   return (Array.isArray(entry && entry.biqFields) ? entry.biqFields : []).find((field) =>
     String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target
   ) || null;
+}
+
+function parseScienceAdvisorTechFieldInt(entry, key, fallback = 0) {
+  const field = getBiqFieldByBaseKey(entry, key);
+  const parsed = parseReferenceIdFromFieldValue(field && field.value);
+  if (parsed != null) return parsed;
+  const n = Number.parseInt(String(field && field.value || ''), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function collectScienceAdvisorTechNodes(tabs) {
+  const entries = (tabs && tabs.technologies && Array.isArray(tabs.technologies.entries))
+    ? tabs.technologies.entries
+    : [];
+  const nodes = entries.map((entry, fallbackIdx) => {
+    const id = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    const prereqs = ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4', 'prerequisite']
+      .map((key) => {
+        const field = getBiqFieldByBaseKey(entry, key);
+        return parseReferenceIdFromFieldValue(field && field.value);
+      })
+      .filter((value, idx, arr) => value != null && value >= 0 && arr.indexOf(value) === idx);
+    return {
+      id,
+      entry,
+      era: parseScienceAdvisorTechFieldInt(entry, 'era', -1),
+      x: Math.max(0, parseScienceAdvisorTechFieldInt(entry, 'x', 0)),
+      y: Math.max(0, parseScienceAdvisorTechFieldInt(entry, 'y', 0)),
+      prereqs
+    };
+  });
+  const byId = new Map();
+  nodes.forEach((node) => byId.set(node.id, node));
+  return { nodes, byId };
+}
+
+function decodeScienceAdvisorAvailableToIndices(rawValue) {
+  const raw = cleanDisplayText(rawValue);
+  const parsed = /^-?\d+$/.test(raw) ? Number.parseInt(raw, 10) : 0;
+  const mask = (Number.isFinite(parsed) ? parsed : 0) >>> 0;
+  const out = [];
+  for (let idx = 0; idx < 32; idx += 1) {
+    if (((mask >>> idx) & 1) === 1) out.push(idx);
+  }
+  return out;
+}
+
+function normalizeScienceAdvisorUnitCivFilter(filter) {
+  if (!filter || typeof filter !== 'object') return null;
+  const rawSelectedCivIndex = filter.selectedCivIndex;
+  const selectedCivIndex = rawSelectedCivIndex == null || rawSelectedCivIndex === '' ? NaN : Number(rawSelectedCivIndex);
+  const generalCivIndices = Array.isArray(filter.generalCivIndices)
+    ? filter.generalCivIndices
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value >= 0)
+    : [];
+  return {
+    selectedCivIndex: Number.isFinite(selectedCivIndex) && selectedCivIndex >= 0 ? selectedCivIndex : null,
+    generalCivIndices
+  };
+}
+
+function shouldShowScienceAdvisorUnitInTechBox(entry, unitCivFilter = null) {
+  const availableTo = new Set(decodeScienceAdvisorAvailableToIndices(getBiqFieldByBaseKey(entry, 'availableto') && getBiqFieldByBaseKey(entry, 'availableto').value));
+  if (availableTo.size === 0) return false;
+  const filter = normalizeScienceAdvisorUnitCivFilter(unitCivFilter);
+  if (filter && filter.selectedCivIndex != null) return availableTo.has(filter.selectedCivIndex);
+  const generalCivIndices = filter ? filter.generalCivIndices : [];
+  if (generalCivIndices.length === 0) return true;
+  return generalCivIndices.every((idx) => availableTo.has(idx));
+}
+
+function getScienceAdvisorCivFilterForEra(civFiltersByEra, eraIndex) {
+  const root = civFiltersByEra && typeof civFiltersByEra === 'object' ? civFiltersByEra : {};
+  return normalizeScienceAdvisorUnitCivFilter(root[String(Number(eraIndex) || 0)] || null);
+}
+
+function countScienceAdvisorUnlockIconsForTech(tabs, techId, unitCivFilter = null) {
+  let count = 1;
+  const unitEntries = (((tabs || {}).units || {}).entries) || [];
+  unitEntries.forEach((entry) => {
+    const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'requiredtech') && getBiqFieldByBaseKey(entry, 'requiredtech').value);
+    if (required === techId && shouldShowScienceAdvisorUnitInTechBox(entry, unitCivFilter)) count += 1;
+  });
+  const improvementEntries = (((tabs || {}).improvements || {}).entries) || [];
+  improvementEntries.forEach((entry) => {
+    const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'reqadvance') && getBiqFieldByBaseKey(entry, 'reqadvance').value);
+    if (required === techId) count += 1;
+    const obsoleteBy = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'obsoleteby') && getBiqFieldByBaseKey(entry, 'obsoleteby').value);
+    if (obsoleteBy === techId) count += 1;
+  });
+  const workerEntries = (((tabs || {}).workerActions || {}).entries) || [];
+  workerEntries.forEach((entry) => {
+    const required = parseReferenceIdFromFieldValue(getBiqFieldByBaseKey(entry, 'requiredadvance') && getBiqFieldByBaseKey(entry, 'requiredadvance').value);
+    if (required === techId) count += 1;
+  });
+  return count;
+}
+
+function loadScienceAdvisorTechBoxLayout({ civ3Path, scenarioPath, scenarioRoots }) {
+  const sourcePath = resolveConquestsAssetPath(civ3Path, SCIENCE_ADVISOR_TECHBOX_RELATIVE_PATH, scenarioPath, scenarioRoots);
+  if (!sourcePath) return null;
+  try {
+    const decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [254, 255] });
+    return techBoxLayout.parseTechBoxSheetLayout(decoded);
+  } catch (_err) {
+    return null;
+  }
+}
+
+function getScienceAdvisorTechBoxRect({ layout, eraIndex, sizeIndex }) {
+  const frame = layout
+    ? techBoxLayout.getTechBoxFrame(layout, eraIndex, sizeIndex, techBoxLayout.TECH_BOX_DEFAULT_COLUMN_INDEX)
+    : null;
+  if (frame) return { w: Math.max(1, Number(frame.w) || 1), h: Math.max(1, Number(frame.h) || 1) };
+  return SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES[sizeIndex] || SCIENCE_ADVISOR_FALLBACK_TECHBOX_FRAMES[0];
+}
+
+function annotateScienceAdvisorNodeRects({ nodes, tabs, layout, civFiltersByEra = {} }) {
+  nodes.forEach((node) => {
+    const iconCount = countScienceAdvisorUnlockIconsForTech(tabs, node.id, getScienceAdvisorCivFilterForEra(civFiltersByEra, node.era));
+    const sizeIndex = techBoxLayout.chooseTechBoxSizeIndexForIconCount(iconCount);
+    const rect = getScienceAdvisorTechBoxRect({ layout, eraIndex: node.era, sizeIndex });
+    node.w = rect.w;
+    node.h = rect.h;
+    node.sizeIndex = sizeIndex;
+  });
+}
+
+function getScienceAdvisorArrowBounds(nodes, width, height) {
+  const visible = nodes.filter((node) => node && node.era >= 0);
+  if (visible.length === 0) return { x1: 0, y1: 0, x2: width - 1, y2: height - 1 };
+  let x1 = width;
+  let y1 = height;
+  let x2 = 0;
+  let y2 = 0;
+  visible.forEach((node) => {
+    x1 = Math.min(x1, Number(node.x) || 0);
+    y1 = Math.min(y1, Number(node.y) || 0);
+    x2 = Math.max(x2, (Number(node.x) || 0) + (Number(node.w) || 120));
+    y2 = Math.max(y2, (Number(node.y) || 0) + (Number(node.h) || 60));
+  });
+  return {
+    x1: Math.max(0, Math.floor(x1 - 90)),
+    y1: Math.max(0, Math.floor(y1 - 70)),
+    x2: Math.min(width - 1, Math.ceil(x2 + 120)),
+    y2: Math.min(height - 1, Math.ceil(y2 + 90))
+  };
+}
+
+function normalizeScienceAdvisorArrowBounds(bounds, width, height) {
+  const w = Math.max(0, Number(width) || 0);
+  const h = Math.max(0, Number(height) || 0);
+  if (!w || !h) return { x1: 0, y1: 0, x2: -1, y2: -1 };
+  return {
+    x1: Math.max(0, Math.min(w - 1, Math.floor(Number(bounds && bounds.x1) || 0))),
+    y1: Math.max(0, Math.min(h - 1, Math.floor(Number(bounds && bounds.y1) || 0))),
+    x2: Math.max(0, Math.min(w - 1, Math.ceil(Number(bounds && bounds.x2) || 0))),
+    y2: Math.max(0, Math.min(h - 1, Math.ceil(Number(bounds && bounds.y2) || 0)))
+  };
+}
+
+function getScienceAdvisorPreviewClearBounds(width, height) {
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  return {
+    x1: Math.max(0, Math.floor(w * 0.04)),
+    y1: Math.max(0, Math.floor(h * 0.11)),
+    x2: Math.min(w - 1, Math.ceil(w * 0.94)),
+    y2: Math.min(h - 1, Math.ceil(h * 0.9))
+  };
+}
+
+function getScienceAdvisorArrowRouteConstraintArea(width, height) {
+  const w = Math.max(1, Number(width) || 1024);
+  const h = Math.max(1, Number(height) || 768);
+  if (scienceAdvisorArrows && typeof scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea === 'function') {
+    const area = scienceAdvisorArrows.getScienceAdvisorFrameInnerLayoutArea(w, h);
+    const bounds = area && area.bounds;
+    if (bounds && Number(bounds.w) > 0 && Number(bounds.h) > 0) {
+      return {
+        bounds: {
+          x: Math.max(0, Number(bounds.x) || 0),
+          y: Math.max(0, Number(bounds.y) || 0),
+          w: Math.max(1, Number(bounds.w) || 1),
+          h: Math.max(1, Number(bounds.h) || 1)
+        },
+        exclusionZones: Array.isArray(area.exclusionZones) ? area.exclusionZones : [],
+        margin: 10
+      };
+    }
+  }
+  return { bounds: { x: 0, y: 0, w, h }, exclusionZones: [], margin: 10 };
+}
+
+function isScienceAdvisorArrowPixelIndexed(indices, palette, offset) {
+  if (!indices || !palette || offset < 0 || offset >= indices.length) return false;
+  const idx = Number(indices[offset]) || 0;
+  const paletteOffset = idx * 3;
+  if (paletteOffset + 2 >= palette.length) return false;
+  return scienceAdvisorArrows.isScienceAdvisorArrowColor(
+    Number(palette[paletteOffset]) || 0,
+    Number(palette[paletteOffset + 1]) || 0,
+    Number(palette[paletteOffset + 2]) || 0
+  );
+}
+
+function collectScienceAdvisorResidualArrowDiagnostics({ indices, palette, width, height, bounds, clusterLimit = 8 }) {
+  const normalizedBounds = normalizeScienceAdvisorArrowBounds(bounds, width, height);
+  if (!indices || !palette || normalizedBounds.x2 < normalizedBounds.x1 || normalizedBounds.y2 < normalizedBounds.y1) {
+    return { count: 0, bounds: null, clusters: [], omittedClusters: 0 };
+  }
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  const visited = new Uint8Array(Math.max(0, w * h));
+  const queue = new Int32Array(Math.max(1, w * h));
+  const clusters = [];
+  let total = 0;
+  let globalBounds = null;
+  const addGlobal = (x, y) => {
+    if (!globalBounds) globalBounds = { x1: x, y1: y, x2: x, y2: y };
+    else {
+      globalBounds.x1 = Math.min(globalBounds.x1, x);
+      globalBounds.y1 = Math.min(globalBounds.y1, y);
+      globalBounds.x2 = Math.max(globalBounds.x2, x);
+      globalBounds.y2 = Math.max(globalBounds.y2, y);
+    }
+  };
+  for (let y = normalizedBounds.y1; y <= normalizedBounds.y2; y += 1) {
+    for (let x = normalizedBounds.x1; x <= normalizedBounds.x2; x += 1) {
+      const start = (y * w) + x;
+      if (visited[start] || !isScienceAdvisorArrowPixelIndexed(indices, palette, start)) continue;
+      let head = 0;
+      let tail = 0;
+      let count = 0;
+      const cluster = { count: 0, x1: x, y1: y, x2: x, y2: y };
+      visited[start] = 1;
+      queue[tail] = start;
+      tail += 1;
+      while (head < tail) {
+        const pixel = queue[head];
+        head += 1;
+        const px = pixel % w;
+        const py = Math.floor(pixel / w);
+        count += 1;
+        addGlobal(px, py);
+        cluster.x1 = Math.min(cluster.x1, px);
+        cluster.y1 = Math.min(cluster.y1, py);
+        cluster.x2 = Math.max(cluster.x2, px);
+        cluster.y2 = Math.max(cluster.y2, py);
+        for (let oy = -1; oy <= 1; oy += 1) {
+          for (let ox = -1; ox <= 1; ox += 1) {
+            if (ox === 0 && oy === 0) continue;
+            const nx = px + ox;
+            const ny = py + oy;
+            if (nx < normalizedBounds.x1 || nx > normalizedBounds.x2 || ny < normalizedBounds.y1 || ny > normalizedBounds.y2) continue;
+            const next = (ny * w) + nx;
+            if (visited[next] || !isScienceAdvisorArrowPixelIndexed(indices, palette, next)) continue;
+            visited[next] = 1;
+            queue[tail] = next;
+            tail += 1;
+          }
+        }
+      }
+      cluster.count = count;
+      total += count;
+      clusters.push(cluster);
+    }
+  }
+  clusters.sort((a, b) => b.count - a.count);
+  const limit = Math.max(0, Number(clusterLimit) || 0);
+  return {
+    count: total,
+    bounds: globalBounds,
+    clusters: clusters.slice(0, limit),
+    omittedClusters: Math.max(0, clusters.length - limit)
+  };
+}
+
+function compareScienceAdvisorIndexedPixels(a, b, width, height) {
+  const total = Math.min(
+    a && a.length ? a.length : 0,
+    b && b.length ? b.length : 0,
+    Math.max(0, Number(width) || 0) * Math.max(0, Number(height) || 0)
+  );
+  const w = Math.max(1, Number(width) || 1);
+  let count = 0;
+  let bounds = null;
+  for (let offset = 0; offset < total; offset += 1) {
+    if (a[offset] === b[offset]) continue;
+    count += 1;
+    const x = offset % w;
+    const y = Math.floor(offset / w);
+    if (!bounds) bounds = { x1: x, y1: y, x2: x, y2: y };
+    else {
+      bounds.x1 = Math.min(bounds.x1, x);
+      bounds.y1 = Math.min(bounds.y1, y);
+      bounds.x2 = Math.max(bounds.x2, x);
+      bounds.y2 = Math.max(bounds.y2, y);
+    }
+  }
+  return { count, bounds };
+}
+
+function formatScienceAdvisorBoundsForLog(bounds) {
+  if (!bounds) return 'none';
+  return `${bounds.x1},${bounds.y1}-${bounds.x2},${bounds.y2}`;
+}
+
+function formatScienceAdvisorClustersForLog(clusters, omittedClusters = 0) {
+  const list = Array.isArray(clusters) ? clusters : [];
+  if (list.length === 0) return 'none';
+  const text = list.map((cluster) => (
+    `${cluster.count}@${formatScienceAdvisorBoundsForLog(cluster)}`
+  )).join(';');
+  return omittedClusters > 0 ? `${text};+${omittedClusters} more` : text;
+}
+
+function formatScienceAdvisorRectForLog(rect) {
+  if (!rect) return 'none';
+  return `${Math.round(Number(rect.x) || 0)},${Math.round(Number(rect.y) || 0)},${Math.round(Number(rect.w) || 0)}x${Math.round(Number(rect.h) || 0)}`;
+}
+
+function formatScienceAdvisorRoutePointsForLog(points) {
+  const list = Array.isArray(points) ? points : [];
+  if (list.length === 0) return 'none';
+  return list.map((point) => `${Math.round(Number(point.x) || 0)},${Math.round(Number(point.y) || 0)}`).join(';');
+}
+
+function getScienceAdvisorRouteNodeName(node) {
+  return String((node && (node.name || node.title || node.label)) || '').trim() || 'unknown';
+}
+
+function getScienceAdvisorRoutePointSide(rect, point) {
+  if (!rect || !point) return '';
+  const x = Number(point.x) || 0;
+  const y = Number(point.y) || 0;
+  const left = Math.abs(x - (Number(rect.x) || 0));
+  const right = Math.abs(x - ((Number(rect.x) || 0) + (Number(rect.w) || 0)));
+  const top = Math.abs(y - (Number(rect.y) || 0));
+  const bottom = Math.abs(y - ((Number(rect.y) || 0) + (Number(rect.h) || 0)));
+  const min = Math.min(left, right, top, bottom);
+  if (min === left) return 'left';
+  if (min === right) return 'right';
+  if (min === top) return 'top';
+  return 'bottom';
+}
+
+function buildScienceAdvisorArrowRouteKey(eraIndex, sourceId, targetId) {
+  return `${Number(eraIndex) || 0}:${Number(sourceId)}->${Number(targetId)}`;
+}
+
+function getScienceAdvisorArrowRouteEraKey(routeKey) {
+  const match = String(routeKey || '').match(/^(\d+):/);
+  return match ? String(Number.parseInt(match[1], 10) || 0) : '';
+}
+
+function normalizeScienceAdvisorOverrideRoute(route) {
+  const points = Array.isArray(route && route.points) ? route.points : [];
+  const normalized = points
+    .map((point) => ({ x: Number(point && point.x), y: Number(point && point.y) }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  return normalized.length >= 2 ? normalized : null;
+}
+
+function normalizeScienceAdvisorRouteOverrides(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const out = {};
+  Object.entries(source).forEach(([key, value]) => {
+    const route = normalizeScienceAdvisorOverrideRoute(value);
+    if (!route) return;
+    out[String(key)] = {
+      points: route.map((point) => ({
+        x: Math.round(point.x),
+        y: Math.round(point.y)
+      }))
+    };
+  });
+  return out;
+}
+
+function normalizeScienceAdvisorRouteHint(hint) {
+  const sourceSide = String(hint && hint.sourceSide || '').toLowerCase();
+  const targetSide = String(hint && hint.targetSide || '').toLowerCase();
+  const validSides = new Set(['left', 'right', 'top', 'bottom']);
+  if (!validSides.has(sourceSide) || !validSides.has(targetSide)) return null;
+  return {
+    sourceSide,
+    targetSide,
+    sourceOffset: Number(hint && hint.sourceOffset) || 0,
+    targetOffset: Number(hint && hint.targetOffset) || 0,
+    horizontalTolerance: Number.isFinite(Number(hint && hint.horizontalTolerance)) ? Number(hint.horizontalTolerance) : 18
+  };
+}
+
+function normalizeScienceAdvisorRouteHints(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const out = {};
+  Object.entries(source).forEach(([key, value]) => {
+    const hint = normalizeScienceAdvisorRouteHint(value);
+    if (!hint) return;
+    out[String(key)] = hint;
+  });
+  return out;
+}
+
+function loadScienceAdvisorArrowMetadata(targetContentRoot) {
+  const root = String(targetContentRoot || '').trim();
+  const metadataPath = root ? path.join(root, SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH) : '';
+  if (!metadataPath) {
+    return {
+      path: '',
+      exists: false,
+      routeOverrides: {},
+      routeSnapshots: {},
+      baselineRouteHints: {}
+    };
+  }
+  let parsed = null;
+  const text = readTextIfExists(metadataPath);
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch (_err) {
+      parsed = null;
+    }
+  }
+  return {
+    path: metadataPath,
+    exists: !!text,
+    format: parsed && typeof parsed === 'object' ? String(parsed.format || '') : '',
+    version: parsed && typeof parsed === 'object' ? Number(parsed.version) || 0 : 0,
+    routeOverrides: normalizeScienceAdvisorRouteOverrides(parsed && parsed.routeOverrides),
+    routeSnapshots: normalizeScienceAdvisorRouteOverrides(parsed && parsed.routeSnapshots),
+    baselineRouteHints: normalizeScienceAdvisorRouteHints(parsed && parsed.baselineRouteHints)
+  };
+}
+
+function mergeScienceAdvisorArrowMetadataForDirtyEras(existingMap, incomingMap, dirtyEraKeys) {
+  const out = {};
+  const dirtyKeys = dirtyEraKeys instanceof Set ? dirtyEraKeys : new Set();
+  Object.entries(existingMap && typeof existingMap === 'object' ? existingMap : {}).forEach(([key, value]) => {
+    const eraKey = getScienceAdvisorArrowRouteEraKey(key);
+    if (eraKey && !dirtyKeys.has(eraKey)) out[key] = value;
+  });
+  Object.entries(incomingMap && typeof incomingMap === 'object' ? incomingMap : {}).forEach(([key, value]) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+function buildScienceAdvisorArrowMetadataWrite({
+  targetContentRoot,
+  routeOverrides = {},
+  routeSnapshots = {},
+  baselineRouteHints = {},
+  dirtyEraIndexes = []
+}) {
+  const root = String(targetContentRoot || '').trim();
+  if (!root) return null;
+  const dirtyEraKeys = new Set((Array.isArray(dirtyEraIndexes) ? dirtyEraIndexes : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0)
+    .map((value) => String(value)));
+  const incoming = {
+    routeOverrides: normalizeScienceAdvisorRouteOverrides(routeOverrides),
+    routeSnapshots: normalizeScienceAdvisorRouteOverrides(routeSnapshots),
+    baselineRouteHints: normalizeScienceAdvisorRouteHints(baselineRouteHints)
+  };
+  const existing = dirtyEraKeys.size > 0
+    ? loadScienceAdvisorArrowMetadata(root)
+    : null;
+  const metadata = {
+    format: SCIENCE_ADVISOR_ARROW_METADATA_FORMAT,
+    version: 1,
+    routeOverrides: existing && existing.exists
+      ? mergeScienceAdvisorArrowMetadataForDirtyEras(existing.routeOverrides, incoming.routeOverrides, dirtyEraKeys)
+      : incoming.routeOverrides,
+    routeSnapshots: existing && existing.exists
+      ? mergeScienceAdvisorArrowMetadataForDirtyEras(existing.routeSnapshots, incoming.routeSnapshots, dirtyEraKeys)
+      : incoming.routeSnapshots,
+    baselineRouteHints: existing && existing.exists
+      ? mergeScienceAdvisorArrowMetadataForDirtyEras(existing.baselineRouteHints, incoming.baselineRouteHints, dirtyEraKeys)
+      : incoming.baselineRouteHints
+  };
+  return {
+    kind: 'scienceAdvisorArrowMetadata',
+    path: path.join(root, SCIENCE_ADVISOR_ARROW_METADATA_RELATIVE_PATH),
+    data: `${JSON.stringify(metadata, null, 2)}\n`,
+    encoding: 'utf8',
+    applied: Object.keys(metadata.routeOverrides).length + Object.keys(metadata.routeSnapshots).length + Object.keys(metadata.baselineRouteHints).length,
+    detail: 'Saved generated Science Advisor arrow routing metadata'
+  };
+}
+
+function getScienceAdvisorEraDirtyEdgeSet(dirtyEdgesByEra, eraIndex) {
+  const root = dirtyEdgesByEra && typeof dirtyEdgesByEra === 'object' ? dirtyEdgesByEra : {};
+  const value = root[String(Number(eraIndex) || 0)];
+  if (!value || typeof value !== 'object') return new Set();
+  return new Set(Object.keys(value).filter((key) => value[key]));
+}
+
+function buildScienceAdvisorArrowRoutesForEra({
+  nodes,
+  byId,
+  eraIndex,
+  routeOverrides = {},
+  routeSnapshots = {},
+  baselineRouteHints = {},
+  dirtyEdgesByEra = {}
+}) {
+  const edges = [];
+  const eraNodes = nodes.filter((node) => node && node.era === eraIndex);
+  eraNodes.forEach((target) => {
+      target.prereqs.forEach((sourceId) => {
+        const source = byId.get(sourceId);
+        if (!source || source.era !== eraIndex) return;
+        edges.push({
+          key: buildScienceAdvisorArrowRouteKey(eraIndex, source.id, target.id),
+          source,
+          target,
+          sourceRect: { x: source.x, y: source.y, w: source.w, h: source.h },
+          targetRect: { x: target.x, y: target.y, w: target.w, h: target.h }
+        });
+      });
+    });
+  const dirtyEdgeSet = getScienceAdvisorEraDirtyEdgeSet(dirtyEdgesByEra, eraIndex);
+  const makeRouteDebug = (edge, routeKey, routeSource, points, extra = {}) => {
+    const first = Array.isArray(points) && points.length > 0 ? points[0] : null;
+    const last = Array.isArray(points) && points.length > 0 ? points[points.length - 1] : null;
+    return {
+      key: routeKey,
+      sourceId: edge.source.id,
+      targetId: edge.target.id,
+      sourceName: getScienceAdvisorRouteNodeName(edge.source),
+      targetName: getScienceAdvisorRouteNodeName(edge.target),
+      sourceRect: edge.sourceRect,
+      targetRect: edge.targetRect,
+      edgeSourceSide: edge.sourceSide || '',
+      edgeTargetSide: edge.targetSide || '',
+      routeSource,
+      routeSourceSide: extra.routeSourceSide || getScienceAdvisorRoutePointSide(edge.sourceRect, first),
+      routeTargetSide: extra.routeTargetSide || getScienceAdvisorRoutePointSide(edge.targetRect, last),
+      dirty: extra.dirty === true,
+      ignoredSnapshot: extra.ignoredSnapshot === true,
+      ignoredHint: extra.ignoredHint === true
+    };
+  };
+  const makeRouteFromPoints = (points, edge, routeKey, routeSource, extra = {}) => {
+    const tip = points[points.length - 1];
+    const prev = points.length > 1 ? points[points.length - 2] : { x: tip.x - 1, y: tip.y };
+    return {
+      dir: tip.x >= prev.x ? 1 : -1,
+      headVector: { x: tip.x - prev.x, y: tip.y - prev.y },
+      points,
+      debug: makeRouteDebug(edge, routeKey, routeSource, points, extra)
+    };
+  };
+  return techBoxLayout.layoutTechTreeArrowEdges(edges, { slotSpacing: 10 })
+    .map((edge) => {
+      const routeKey = edge.key || buildScienceAdvisorArrowRouteKey(eraIndex, edge.source.id, edge.target.id);
+      const isDirtyEdge = dirtyEdgeSet.has(routeKey);
+      const override = normalizeScienceAdvisorOverrideRoute(routeOverrides[routeKey]);
+      if (override) {
+        return makeRouteFromPoints(override, edge, routeKey, 'override', { dirty: isDirtyEdge });
+      }
+      const rawSnapshot = normalizeScienceAdvisorOverrideRoute(routeSnapshots[routeKey]);
+      const snapshotAttached = rawSnapshot
+        && techBoxLayout
+        && typeof techBoxLayout.isTechTreeArrowRouteAttachedToRects === 'function'
+        && techBoxLayout.isTechTreeArrowRouteAttachedToRects(rawSnapshot, edge.sourceRect, edge.targetRect, { tolerance: 4 });
+      const snapshot = !isDirtyEdge && snapshotAttached ? rawSnapshot : null;
+      if (snapshot) {
+        return makeRouteFromPoints(snapshot, edge, routeKey, 'snapshot', { dirty: false });
+      }
+      const rawBaselineHint = normalizeScienceAdvisorRouteHint(baselineRouteHints[routeKey]);
+      const baselineHint = !isDirtyEdge ? rawBaselineHint : null;
+      const routeOptions = baselineHint || {
+        sourceSide: edge.sourceSide,
+        targetSide: edge.targetSide,
+        sourceOffset: edge.sourceOffset,
+        targetOffset: edge.targetOffset,
+        horizontalTolerance: 18
+      };
+      const route = techBoxLayout.buildTechTreeArrowRoute(
+        edge.sourceRect,
+        edge.targetRect,
+        {
+          pad: 0,
+          maxElbow: 140,
+          sourceSide: routeOptions.sourceSide,
+          targetSide: routeOptions.targetSide,
+          sourceOffset: routeOptions.sourceOffset,
+          targetOffset: routeOptions.targetOffset,
+          horizontalTolerance: routeOptions.horizontalTolerance
+        }
+      );
+      return {
+        ...route,
+        debug: makeRouteDebug(
+          edge,
+          routeKey,
+          baselineHint ? 'baseline-hint' : 'generated',
+          route.points,
+          {
+            routeSourceSide: routeOptions.sourceSide,
+            routeTargetSide: routeOptions.targetSide,
+            dirty: isDirtyEdge,
+            ignoredSnapshot: !!rawSnapshot && (isDirtyEdge || !snapshotAttached),
+            ignoredHint: isDirtyEdge && !!rawBaselineHint
+          }
+        )
+      };
+    });
+}
+
+function prepareScienceAdvisorArrowArtWrites({
+  tabs,
+  targetContentRoot,
+  scenarioPath,
+  scenarioRoots,
+  civ3Path,
+  routeOverrides = {},
+  routeSnapshots = {},
+  baselineRouteHints = {},
+  dirtyEdgesByEra = {},
+  dirtyEraIndexes = [],
+  arrowStyle = null,
+  civFiltersByEra = {}
+}) {
+  if (!targetContentRoot) return { ok: true, changed: false, writes: [] };
+  const { nodes, byId } = collectScienceAdvisorTechNodes(tabs || {});
+  if (nodes.length === 0) return { ok: true, changed: false, writes: [] };
+  const layout = loadScienceAdvisorTechBoxLayout({ civ3Path, scenarioPath, scenarioRoots });
+  annotateScienceAdvisorNodeRects({ nodes, tabs: tabs || {}, layout, civFiltersByEra });
+  const writes = [];
+  const dirtyEraSet = new Set((Array.isArray(dirtyEraIndexes) ? dirtyEraIndexes : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0));
+  SCIENCE_ADVISOR_BACKGROUND_RELATIVE_PATHS.forEach((candidates, eraIndex) => {
+    if (dirtyEraSet.size > 0 && !dirtyEraSet.has(eraIndex)) return;
+    const eraNodes = nodes.filter((node) => node.era === eraIndex);
+    if (eraNodes.length === 0) return;
+    let routes = buildScienceAdvisorArrowRoutesForEra({
+      nodes,
+      byId,
+      eraIndex,
+      routeOverrides,
+      routeSnapshots,
+      baselineRouteHints,
+      dirtyEdgesByEra
+    });
+    if (routes.length === 0) return;
+    const relativePath = candidates.find((assetPath) => resolveConquestsAssetPath(civ3Path, assetPath, scenarioPath, scenarioRoots));
+    if (!relativePath) return;
+    const sourcePath = resolveConquestsAssetPath(civ3Path, relativePath, scenarioPath, scenarioRoots);
+    if (!sourcePath) return;
+    let decoded;
+    try {
+      decoded = decodePcx(sourcePath, { returnIndexed: true, transparentIndexes: [] });
+    } catch (_err) {
+      return;
+    }
+    if (!decoded || !decoded.indices || !decoded.palette || typeof decoded.palette.length !== 'number') return;
+    const width = Number(decoded.width) || 0;
+    const height = Number(decoded.height) || 0;
+    if (techBoxLayout && typeof techBoxLayout.constrainTechTreeArrowRoute === 'function') {
+      const routeConstraintArea = getScienceAdvisorArrowRouteConstraintArea(width, height);
+      routes = routes.map((route) => (
+        route && route.debug && route.debug.routeSource === 'override'
+          ? route
+          : techBoxLayout.constrainTechTreeArrowRoute(route, routeConstraintArea)
+      ));
+    }
+    const sourceIndices = decoded.indices;
+    const indices = Uint8Array.from(sourceIndices);
+    const bounds = getScienceAdvisorArrowBounds(eraNodes, width, height);
+    const broadBounds = getScienceAdvisorPreviewClearBounds(width, height);
+    scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({ indices, palette: decoded.palette, width, height, bounds });
+    const residualAfterCurrentClear = collectScienceAdvisorResidualArrowDiagnostics({
+      indices,
+      palette: decoded.palette,
+      width,
+      height,
+      bounds: broadBounds
+    });
+    const broadIndices = Uint8Array.from(sourceIndices);
+    scienceAdvisorArrows.clearScienceAdvisorArrowPixelsIndexed({ indices: broadIndices, palette: decoded.palette, width, height, bounds: broadBounds });
+    const residualAfterBroadClear = collectScienceAdvisorResidualArrowDiagnostics({
+      indices: broadIndices,
+      palette: decoded.palette,
+      width,
+      height,
+      bounds: broadBounds
+    });
+    if (typeof scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed === 'function') {
+      scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed({ indices: broadIndices, sourceIndices, width, height });
+      scienceAdvisorArrows.restoreScienceAdvisorFramePixelsIndexed({ indices, sourceIndices, width, height });
+    }
+    scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices: broadIndices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle });
+    scienceAdvisorArrows.drawScienceAdvisorRoutesIndexed({ indices, palette: decoded.palette, width, height, routes, techBoxLayout, eraIndex, style: arrowStyle });
+    const broadOutputDiff = compareScienceAdvisorIndexedPixels(indices, broadIndices, width, height);
+    const targetPath = path.join(targetContentRoot, relativePath);
+    routes.forEach((route) => {
+      const debug = route && route.debug;
+      if (!debug) return;
+      log.info(
+        'ScienceAdvisor',
+        `arrow-route era=${eraIndex} key=${debug.key} target=${log.rel(targetPath)} `
+          + `source="${String(debug.sourceName || '').replace(/"/g, "'")}"(${debug.sourceId}) `
+          + `dest="${String(debug.targetName || '').replace(/"/g, "'")}"(${debug.targetId}) `
+          + `routeSource=${debug.routeSource} dirty=${debug.dirty ? 1 : 0} `
+          + `edgeSides=${debug.edgeSourceSide || ''}->${debug.edgeTargetSide || ''} `
+          + `routeSides=${debug.routeSourceSide || ''}->${debug.routeTargetSide || ''} `
+          + `ignoredSnapshot=${debug.ignoredSnapshot ? 1 : 0} ignoredHint=${debug.ignoredHint ? 1 : 0} `
+          + `sourceRect=${formatScienceAdvisorRectForLog(debug.sourceRect)} `
+          + `targetRect=${formatScienceAdvisorRectForLog(debug.targetRect)} `
+          + `points=${formatScienceAdvisorRoutePointsForLog(route.points)}`
+      );
+    });
+    const clearDiagnostics = {
+      clearBounds: bounds,
+      residualAfterCurrentClear,
+      broadClearBounds: broadBounds,
+      residualAfterBroadClear,
+      broadOutputDiff
+    };
+    log.info(
+      'ScienceAdvisor',
+      `arrow-clear era=${eraIndex} routes=${routes.length} source=${log.rel(sourcePath)} target=${log.rel(targetPath)} `
+        + `clearBounds=${formatScienceAdvisorBoundsForLog(bounds)} residual=${residualAfterCurrentClear.count} `
+        + `residualBounds=${formatScienceAdvisorBoundsForLog(residualAfterCurrentClear.bounds)} `
+        + `clusters=${formatScienceAdvisorClustersForLog(residualAfterCurrentClear.clusters, residualAfterCurrentClear.omittedClusters)} `
+        + `broadBounds=${formatScienceAdvisorBoundsForLog(broadBounds)} broadResidual=${residualAfterBroadClear.count} `
+        + `broadClusters=${formatScienceAdvisorClustersForLog(residualAfterBroadClear.clusters, residualAfterBroadClear.omittedClusters)} `
+        + `broadOutputDiff=${broadOutputDiff.count} diffBounds=${formatScienceAdvisorBoundsForLog(broadOutputDiff.bounds)}`
+    );
+    try {
+      const data = encodePcx(indices, decoded.palette, width, height);
+      writes.push({
+        kind: 'scienceAdvisor',
+        path: targetPath,
+        sourcePath,
+        data,
+        eraIndex,
+        applied: routes.length,
+        clearDiagnostics
+      });
+    } catch (_err) {
+      // Skip this era; other scenario saves should not be blocked by one unreadable advisor PCX.
+    }
+  });
+  return { ok: true, changed: writes.some((write) => write.kind === 'scienceAdvisor'), writes };
 }
 
 function applyImportedResourceIconAtlasAssignments({ resourceTab, targetAtlasBuffer, loadSourceAtlasBuffer }) {
@@ -7180,6 +10083,317 @@ function applyImportedUnitIconAtlasAssignments({ unitsTab, targetAtlasBuffer, lo
   };
 }
 
+function normalizeBuildingCityIconKind(value) {
+  const kind = String(value || '').trim().toUpperCase();
+  if (kind === 'ERA' || kind === 'CULTURE' || kind === 'SINGLE') return kind;
+  return 'SINGLE';
+}
+
+function getBuildingCityIconColumnCount(kind) {
+  const normalized = normalizeBuildingCityIconKind(kind);
+  if (normalized === 'ERA') return 4;
+  if (normalized === 'CULTURE') return 5;
+  return 1;
+}
+
+function getIndexedBuildingCityAtlas(buffer, size, label = 'buildings.pcx') {
+  const atlasSize = String(size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const geometry = BUILDING_CITY_ATLAS_GEOMETRY[atlasSize];
+  const decoded = decodePcx(buffer, { returnIndexed: true, transparentIndexes: [] });
+  if (!decoded || !decoded.indices || !decoded.palette) {
+    throw new Error(`${label} must be an indexed 256-color PCX file.`);
+  }
+  if (decoded.width < BUILDING_CITY_ATLAS_ORIGIN + geometry.cellW) {
+    throw new Error(`${label} is too narrow for a Civ3 city building atlas.`);
+  }
+  if (decoded.height < BUILDING_CITY_ATLAS_ORIGIN + geometry.cellH) {
+    throw new Error(`${label} does not contain any full city building icon rows.`);
+  }
+  const cols = Math.floor((decoded.width - BUILDING_CITY_ATLAS_ORIGIN) / geometry.cellW);
+  const rows = Math.floor((decoded.height - BUILDING_CITY_ATLAS_ORIGIN) / geometry.cellH);
+  if (cols < 1 || rows < 1) {
+    throw new Error(`${label} does not contain any full city building icon cells.`);
+  }
+  const magentaIndex = findPaletteColorIndex(decoded.palette, BUILDING_CITY_ATLAS_MAGENTA, 255);
+  if (magentaIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 magenta (#ff00ff).`);
+  }
+  const guideIndex = findPaletteColorIndex(decoded.palette, BUILDING_CITY_ATLAS_GUIDE, 254);
+  if (guideIndex < 0) {
+    throw new Error(`${label} palette does not contain Civ3 city-building guide green (#00ff00).`);
+  }
+  return { ...decoded, size: atlasSize, ...geometry, cols, rows, magentaIndex, guideIndex, origin: BUILDING_CITY_ATLAS_ORIGIN };
+}
+
+function isBuildingCityAtlasGuideOrBackground(atlas, index) {
+  if (!atlas) return false;
+  return index === atlas.magentaIndex
+    || index === atlas.guideIndex
+    || paletteColorMatches(atlas.palette, index, BUILDING_CITY_ATLAS_MAGENTA)
+    || paletteColorMatches(atlas.palette, index, BUILDING_CITY_ATLAS_GUIDE);
+}
+
+function isBuildingCityAtlasRowEmpty(atlas, rowIndex) {
+  const row = Number(rowIndex) | 0;
+  if (!atlas || row < 0 || row >= atlas.rows) return false;
+  const y0 = atlas.origin + row * atlas.cellH;
+  for (let col = 0; col < atlas.cols; col += 1) {
+    const x0 = atlas.origin + col * atlas.cellW;
+    for (let y = 1; y < atlas.cellH; y += 1) {
+      const rowOff = (y0 + y) * atlas.width + x0;
+      for (let x = 1; x < atlas.cellW; x += 1) {
+        if (!isBuildingCityAtlasGuideOrBackground(atlas, atlas.indices[rowOff + x])) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function findNextBuildingCityAtlasRow(targetBuffer, size) {
+  const atlas = getIndexedBuildingCityAtlas(targetBuffer, size, `target buildings-${size}.pcx`);
+  let lastOccupied = -1;
+  for (let row = 0; row < atlas.rows; row += 1) {
+    if (!isBuildingCityAtlasRowEmpty(atlas, row)) lastOccupied = row;
+  }
+  return {
+    index: lastOccupied + 1,
+    lastOccupied,
+    rows: atlas.rows,
+    cols: atlas.cols
+  };
+}
+
+function findNextBuildingCityAtlasPairRow(targetBuffers) {
+  const large = findNextBuildingCityAtlasRow(targetBuffers && targetBuffers.large, 'large');
+  const small = findNextBuildingCityAtlasRow(targetBuffers && targetBuffers.small, 'small');
+  return {
+    index: Math.max(large.index, small.index),
+    lastOccupied: Math.max(large.lastOccupied, small.lastOccupied),
+    large,
+    small
+  };
+}
+
+function getBuildingCityIconIndexAllocationFloor(improvementsTab, excludedRefs = new Set()) {
+  let maxIndex = -1;
+  (Array.isArray(improvementsTab && improvementsTab.entries) ? improvementsTab.entries : []).forEach((entry) => {
+    const ref = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (ref && excludedRefs.has(ref)) return;
+    const idx = Number.parseInt(String(entry && entry.buildingIconIndex || ''), 10);
+    if (Number.isFinite(idx) && idx >= 0) maxIndex = Math.max(maxIndex, idx);
+  });
+  return maxIndex + 1;
+}
+
+function getNextBuildingCityAtlasAssignmentRow(targetBuffers, improvementsTab, activeImports = null) {
+  const scan = findNextBuildingCityAtlasPairRow(targetBuffers);
+  const imports = Array.isArray(activeImports) ? activeImports : getActiveImportedAtlasOps(improvementsTab);
+  const excludedRefs = new Set(imports.map((item) => String(item && item.newRef || '').trim().toUpperCase()).filter(Boolean));
+  const referenceFloor = getBuildingCityIconIndexAllocationFloor(improvementsTab, excludedRefs);
+  return {
+    ...scan,
+    index: Math.max(scan.index, referenceFloor),
+    scanIndex: scan.index,
+    referenceFloor
+  };
+}
+
+function drawBuildingCityAtlasGuideLines(indices, atlas, newHeight) {
+  const maxX = Math.min(atlas.width - 1, atlas.origin + atlas.cols * atlas.cellW);
+  for (let row = 0; row <= Math.floor((newHeight - atlas.origin - 1) / atlas.cellH); row += 1) {
+    const y = atlas.origin + row * atlas.cellH;
+    if (y < 0 || y >= newHeight) continue;
+    const rowOff = y * atlas.width;
+    for (let x = atlas.origin; x <= maxX; x += 1) {
+      indices[rowOff + x] = atlas.guideIndex;
+    }
+  }
+  for (let col = 0; col <= atlas.cols; col += 1) {
+    const x = atlas.origin + col * atlas.cellW;
+    if (x < 0 || x >= atlas.width) continue;
+    for (let y = atlas.origin; y < newHeight; y += 1) {
+      indices[y * atlas.width + x] = atlas.guideIndex;
+    }
+  }
+}
+
+function appendBuildingCityIconRowToAtlas({ targetBuffer, sourceBuffer, sourceIconIndex, targetIconIndex = null, size = 'large', kind = 'SINGLE' }) {
+  const atlasSize = String(size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const sourceIndex = Number.parseInt(String(sourceIconIndex == null ? '' : sourceIconIndex), 10);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
+    throw new Error(`Invalid source city building icon index: ${sourceIconIndex}`);
+  }
+  const explicitTargetIndex = Number.parseInt(String(targetIconIndex == null ? '' : targetIconIndex), 10);
+  const target = getIndexedBuildingCityAtlas(targetBuffer, atlasSize, `target buildings-${atlasSize}.pcx`);
+  const source = getIndexedBuildingCityAtlas(sourceBuffer, atlasSize, `source buildings-${atlasSize}.pcx`);
+  if (sourceIndex >= source.rows) {
+    throw new Error(`Source city building icon index ${sourceIndex} is outside source buildings-${atlasSize}.pcx.`);
+  }
+  const columnCount = Math.min(getBuildingCityIconColumnCount(kind), source.cols, target.cols);
+  if (columnCount < 1) {
+    throw new Error(`Could not determine city building icon columns for ${kind}.`);
+  }
+
+  const slot = findNextBuildingCityAtlasRow(targetBuffer, atlasSize);
+  const targetIndex = Number.isFinite(explicitTargetIndex) && explicitTargetIndex >= 0
+    ? explicitTargetIndex
+    : slot.index;
+  const requiredHeight = target.origin + (targetIndex + 1) * target.cellH + 1;
+  const newHeight = Math.max(target.height, requiredHeight);
+  const nextIndices = new Uint8Array(target.width * newHeight);
+  nextIndices.fill(target.magentaIndex);
+  for (let y = 0; y < target.height; y += 1) {
+    nextIndices.set(
+      target.indices.subarray(y * target.width, (y + 1) * target.width),
+      y * target.width
+    );
+  }
+  drawBuildingCityAtlasGuideLines(nextIndices, target, newHeight);
+
+  const targetRowY = target.origin + targetIndex * target.cellH;
+  for (let col = 0; col < target.cols; col += 1) {
+    const targetColX = target.origin + col * target.cellW;
+    for (let y = 1; y < target.cellH; y += 1) {
+      const rowOff = (targetRowY + y) * target.width + targetColX;
+      for (let x = 1; x < target.cellW; x += 1) {
+        nextIndices[rowOff + x] = target.magentaIndex;
+      }
+    }
+  }
+
+  const remap = makePaletteRemap(source.palette, target.palette, target.magentaIndex);
+  const sourceRowY = source.origin + sourceIndex * source.cellH;
+  for (let col = 0; col < columnCount; col += 1) {
+    const sourceColX = source.origin + col * source.cellW;
+    const targetColX = target.origin + col * target.cellW;
+    for (let y = 1; y <= target.drawH; y += 1) {
+      const sourceRow = (sourceRowY + y) * source.width + sourceColX;
+      const targetRow = (targetRowY + y) * target.width + targetColX;
+      for (let x = 1; x <= target.drawW; x += 1) {
+        nextIndices[targetRow + x] = remap[source.indices[sourceRow + x]];
+      }
+    }
+  }
+
+  return {
+    buffer: encodePcx(nextIndices, target.palette, target.width, newHeight),
+    index: targetIndex,
+    lastOccupied: slot.lastOccupied,
+    scanIndex: slot.index,
+    oldRows: target.rows,
+    newRows: Math.floor((newHeight - target.origin) / target.cellH),
+    appendedRow: newHeight > target.height,
+    columnCount
+  };
+}
+
+function appendBuildingCityIconRowToAtlases({ targetBuffers, sourceBuffers, sourceIconIndex, targetIconIndex = null, kind = 'SINGLE' }) {
+  const large = appendBuildingCityIconRowToAtlas({
+    targetBuffer: targetBuffers && targetBuffers.large,
+    sourceBuffer: sourceBuffers && sourceBuffers.large,
+    sourceIconIndex,
+    targetIconIndex,
+    size: 'large',
+    kind
+  });
+  const small = appendBuildingCityIconRowToAtlas({
+    targetBuffer: targetBuffers && targetBuffers.small,
+    sourceBuffer: sourceBuffers && sourceBuffers.small,
+    sourceIconIndex,
+    targetIconIndex: large.index,
+    size: 'small',
+    kind
+  });
+  return {
+    buffers: { large: large.buffer, small: small.buffer },
+    index: large.index,
+    large,
+    small,
+    appendedRow: large.appendedRow || small.appendedRow
+  };
+}
+
+function applyImportedBuildingCityIconAtlasAssignments({ improvementsTab, targetAtlasBuffers, loadSourceAtlasBuffers }) {
+  if (!improvementsTab || !Array.isArray(improvementsTab.recordOps) || !Array.isArray(improvementsTab.entries)) {
+    return { ok: true, changed: false, buffers: targetAtlasBuffers, assignments: [] };
+  }
+  const importOps = getActiveImportedAtlasOps(improvementsTab);
+  if (importOps.length === 0) {
+    return { ok: true, changed: false, buffers: targetAtlasBuffers, assignments: [] };
+  }
+  if (!Buffer.isBuffer(targetAtlasBuffers && targetAtlasBuffers.large) || !Buffer.isBuffer(targetAtlasBuffers && targetAtlasBuffers.small)) {
+    return { ok: false, error: 'Could not load target city building PCX files for imported improvement icons.' };
+  }
+  let workingBuffers = { large: targetAtlasBuffers.large, small: targetAtlasBuffers.small };
+  const assignments = [];
+  const sourceBufferCache = new Map();
+  let nextTargetIndex = getNextBuildingCityAtlasAssignmentRow(workingBuffers, improvementsTab, importOps).index;
+
+  for (const importItem of importOps) {
+    const op = importItem.op;
+    const newRef = importItem.newRef;
+    const sourceBiqPath = String(op && op.importArtFrom || '').trim();
+    if (!newRef || !sourceBiqPath) continue;
+    const entry = importItem.entry;
+    if (!entry) {
+      return { ok: false, error: `Could not find imported improvement entry ${newRef} for city building atlas update.` };
+    }
+    const pendingIcon = entry && entry._pendingImportedBuildingCityIcon && typeof entry._pendingImportedBuildingCityIcon === 'object'
+      ? entry._pendingImportedBuildingCityIcon
+      : null;
+    const pendingSourceIndex = Number.parseInt(String(pendingIcon && pendingIcon.sourceIconIndex), 10);
+    const sourceIconIndex = Number.isFinite(pendingSourceIndex) && pendingSourceIndex >= 0
+      ? pendingSourceIndex
+      : Number.parseInt(String(entry.buildingIconIndex || ''), 10);
+    if (!Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) {
+      return { ok: false, error: `Imported improvement ${newRef} has invalid source city building icon index.` };
+    }
+    const kind = normalizeBuildingCityIconKind((pendingIcon && pendingIcon.kind) || entry.buildingIconKind);
+    if (!sourceBufferCache.has(sourceBiqPath)) {
+      let sourceBuffers = null;
+      try {
+        sourceBuffers = typeof loadSourceAtlasBuffers === 'function' ? loadSourceAtlasBuffers(sourceBiqPath) : null;
+      } catch (_err) {
+        sourceBuffers = null;
+      }
+      if (!sourceBuffers || !Buffer.isBuffer(sourceBuffers.large) || !Buffer.isBuffer(sourceBuffers.small)) {
+        return { ok: false, error: `Could not load source city building PCX files for imported improvement ${newRef}.` };
+      }
+      sourceBufferCache.set(sourceBiqPath, sourceBuffers);
+    }
+    try {
+      const result = appendBuildingCityIconRowToAtlases({
+        targetBuffers: workingBuffers,
+        sourceBuffers: sourceBufferCache.get(sourceBiqPath),
+        sourceIconIndex,
+        targetIconIndex: nextTargetIndex,
+        kind
+      });
+      workingBuffers = result.buffers;
+      entry.buildingIconIndex = String(result.index);
+      nextTargetIndex = result.index + 1;
+      assignments.push({
+        civilopediaKey: newRef,
+        kind,
+        sourceIconIndex,
+        targetIconIndex: result.index,
+        appendedRow: result.appendedRow
+      });
+    } catch (err) {
+      return { ok: false, error: `Could not append city building icon for ${newRef}: ${err.message}` };
+    }
+  }
+
+  return {
+    ok: true,
+    changed: assignments.length > 0,
+    buffers: workingBuffers,
+    assignments
+  };
+}
+
 function resolveResourcesAtlasPath({ civ3Path, targetContentRoot, scenarioRoots }) {
   const rel = RESOURCE_ATLAS_RELATIVE_PATH;
   const candidates = [];
@@ -7196,6 +10410,33 @@ function resolveResourcesAtlasPath({ civ3Path, targetContentRoot, scenarioRoots 
     add(path.join(civ3Root, 'Conquests', rel));
     add(path.join(civ3Root, 'civ3PTW', rel));
     add(path.join(civ3Root, rel));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch (_err) {
+      // skip unreadable candidates
+    }
+  }
+  return '';
+}
+
+function resolveLuxuryIconsSmallAtlasPath({ civ3Path, targetContentRoot, scenarioRoots }) {
+  const rel = LUXURY_ICONS_SMALL_ATLAS_RELATIVE_PATH;
+  const candidates = [];
+  const add = (candidate) => {
+    if (!candidate) return;
+    const resolved = path.resolve(candidate);
+    if (candidates.some((entry) => normalizePathForCompare(entry) === normalizePathForCompare(resolved))) return;
+    candidates.push(resolved);
+  };
+  add(targetContentRoot ? path.join(targetContentRoot, ...rel.split('/')) : '');
+  (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => add(path.join(root, ...rel.split('/'))));
+  const civ3Root = resolveCiv3RootPath(civ3Path);
+  if (civ3Root) {
+    add(path.join(civ3Root, 'Conquests', ...rel.split('/')));
+    add(path.join(civ3Root, 'civ3PTW', ...rel.split('/')));
+    add(path.join(civ3Root, ...rel.split('/')));
   }
   for (const candidate of candidates) {
     try {
@@ -7232,6 +10473,41 @@ function resolveUnits32AtlasPath({ civ3Path, targetContentRoot, scenarioRoots })
     }
   }
   return '';
+}
+
+function resolveBuildingCityAtlasPath({ civ3Path, targetContentRoot, scenarioRoots, size }) {
+  const atlasSize = String(size || '').trim().toLowerCase() === 'small' ? 'small' : 'large';
+  const rel = BUILDING_CITY_ATLAS_RELATIVE_PATHS[atlasSize];
+  const candidates = [];
+  const add = (candidate) => {
+    if (!candidate) return;
+    const resolved = path.resolve(candidate);
+    if (candidates.some((entry) => normalizePathForCompare(entry) === normalizePathForCompare(resolved))) return;
+    candidates.push(resolved);
+  };
+  add(targetContentRoot ? path.join(targetContentRoot, ...rel.split('/')) : '');
+  (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => add(path.join(root, ...rel.split('/'))));
+  const civ3Root = resolveCiv3RootPath(civ3Path);
+  if (civ3Root) {
+    add(path.join(civ3Root, 'Conquests', ...rel.split('/')));
+    add(path.join(civ3Root, 'civ3PTW', ...rel.split('/')));
+    add(path.join(civ3Root, ...rel.split('/')));
+  }
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch (_err) {
+      // skip unreadable candidates
+    }
+  }
+  return '';
+}
+
+function resolveBuildingCityAtlasPaths({ civ3Path, targetContentRoot, scenarioRoots }) {
+  return {
+    large: resolveBuildingCityAtlasPath({ civ3Path, targetContentRoot, scenarioRoots, size: 'large' }),
+    small: resolveBuildingCityAtlasPath({ civ3Path, targetContentRoot, scenarioRoots, size: 'small' })
+  };
 }
 
 function prepareImportedResourceIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
@@ -7304,6 +10580,95 @@ function prepareImportedResourceIconAtlasWrite({ tabs, targetContentRoot, scenar
     sourcePath: targetSourcePath,
     data: update.buffer,
     assignments: update.assignments
+  };
+}
+
+function prepareImportedLuxuryIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path, textFileEncoding = 'windows-1252' }) {
+  const resourceTab = tabs && tabs.resources;
+  if (!resourceTab || !Array.isArray(resourceTab.recordOps)) return { ok: true, changed: false, warnings: [] };
+  const activeLuxuryImports = getActiveImportedAtlasOps(resourceTab).filter((item) => isLuxuryResourceEntry(item && item.entry));
+  if (activeLuxuryImports.length === 0) return { ok: true, changed: false, warnings: [] };
+
+  const targetRoot = String(targetContentRoot || '').trim();
+  if (!targetRoot) {
+    return { ok: true, changed: false, warnings: ['Could not determine target scenario folder for luxuryicons_small.pcx.'] };
+  }
+  const targetPath = path.join(targetRoot, ...LUXURY_ICONS_SMALL_ATLAS_RELATIVE_PATH.split('/'));
+  const targetSourcePath = resolveLuxuryIconsSmallAtlasPath({
+    civ3Path,
+    targetContentRoot: targetRoot,
+    scenarioRoots
+  });
+  if (!targetSourcePath) {
+    return { ok: true, changed: false, warnings: ['Could not find target luxuryicons_small.pcx to copy before importing Luxury resource city icons.'] };
+  }
+
+  let targetAtlasBuffer;
+  try {
+    targetAtlasBuffer = fs.readFileSync(targetSourcePath);
+  } catch (err) {
+    return { ok: true, changed: false, warnings: [`Could not read target luxuryicons_small.pcx: ${targetSourcePath} (${err.message})`] };
+  }
+
+  const sourceRootsCache = new Map();
+  const sourceResourceTabCache = new Map();
+  const getSourceRoots = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceRootsCache.has(cacheKey)) return sourceRootsCache.get(cacheKey);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath, textEncoding: textFileEncoding });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots]);
+    } catch (_err) {
+      roots = dedupePathList([resolveScenarioDir(sourceBiqPath)]);
+    }
+    sourceRootsCache.set(cacheKey, roots);
+    return roots;
+  };
+  const loadSourceResourceTab = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceResourceTabCache.has(cacheKey)) return sourceResourceTabCache.get(cacheKey);
+    let sourceTab = null;
+    try {
+      const loaded = loadBundle({
+        mode: 'scenario',
+        civ3Path,
+        scenarioPath: sourceBiqPath,
+        textFileEncoding,
+        deferMapTab: true
+      });
+      sourceTab = loaded && loaded.tabs && loaded.tabs.resources ? loaded.tabs.resources : null;
+    } catch (_err) {
+      sourceTab = null;
+    }
+    sourceResourceTabCache.set(cacheKey, sourceTab);
+    return sourceTab;
+  };
+
+  const update = applyImportedLuxuryIconAtlasAssignments({
+    resourceTab,
+    targetAtlasBuffer,
+    loadSourceAtlasBuffer: (sourceBiqPath) => {
+      const sourcePath = resolveLuxuryIconsSmallAtlasPath({
+        civ3Path,
+        targetContentRoot: '',
+        scenarioRoots: getSourceRoots(sourceBiqPath)
+      });
+      return sourcePath ? fs.readFileSync(sourcePath) : null;
+    },
+    loadSourceResourceTab
+  });
+  if (!update.ok) return update;
+  if (!update.changed) return { ok: true, changed: false, warnings: update.warnings || [] };
+  return {
+    ok: true,
+    changed: true,
+    path: targetPath,
+    sourcePath: targetSourcePath,
+    data: update.buffer,
+    assignments: update.assignments,
+    warnings: update.warnings || []
   };
 }
 
@@ -7380,6 +10745,92 @@ function prepareImportedUnitIconAtlasWrite({ tabs, targetContentRoot, scenarioRo
   };
 }
 
+function prepareImportedBuildingCityIconAtlasWrite({ tabs, targetContentRoot, scenarioRoots, civ3Path }) {
+  const improvementsTab = tabs && tabs.improvements;
+  if (!improvementsTab || !Array.isArray(improvementsTab.recordOps)) return { ok: true, changed: false };
+  const activeImprovementImports = getActiveImportedAtlasOps(improvementsTab);
+  if (activeImprovementImports.length === 0) return { ok: true, changed: false };
+
+  const targetRoot = String(targetContentRoot || '').trim();
+  if (!targetRoot) return { ok: false, error: 'Could not determine target scenario folder for city building PCX files.' };
+  const targetPaths = {
+    large: path.join(targetRoot, ...BUILDING_CITY_ATLAS_RELATIVE_PATHS.large.split('/')),
+    small: path.join(targetRoot, ...BUILDING_CITY_ATLAS_RELATIVE_PATHS.small.split('/'))
+  };
+  const pending = improvementsTab.pendingAtlasCopies && typeof improvementsTab.pendingAtlasCopies === 'object'
+    ? improvementsTab.pendingAtlasCopies
+    : {};
+  const targetSourcePaths = {};
+  ['large', 'small'].forEach((size) => {
+    const atlasKey = size === 'large' ? 'buildingCityLarge' : 'buildingCitySmall';
+    const staged = pending && pending[atlasKey];
+    if (staged && staged.staged && isAbsoluteFilesystemPath(staged.sourcePath)) {
+      targetSourcePaths[size] = String(staged.sourcePath || '').trim();
+    }
+  });
+  const resolvedTargetSourcePaths = resolveBuildingCityAtlasPaths({
+    civ3Path,
+    targetContentRoot: targetRoot,
+    scenarioRoots
+  });
+  if (!targetSourcePaths.large) targetSourcePaths.large = resolvedTargetSourcePaths.large;
+  if (!targetSourcePaths.small) targetSourcePaths.small = resolvedTargetSourcePaths.small;
+  if (!targetSourcePaths.large || !targetSourcePaths.small) {
+    return { ok: false, error: 'Could not find target city building PCX files to copy before importing improvement city icons.' };
+  }
+
+  let targetAtlasBuffers;
+  try {
+    targetAtlasBuffers = {
+      large: fs.readFileSync(targetSourcePaths.large),
+      small: fs.readFileSync(targetSourcePaths.small)
+    };
+  } catch (err) {
+    return { ok: false, error: `Could not read target city building PCX files: ${err.message}` };
+  }
+
+  const sourceRootsCache = new Map();
+  const getSourceRoots = (sourceBiqPath) => {
+    const cacheKey = String(sourceBiqPath || '').trim();
+    if (sourceRootsCache.has(cacheKey)) return sourceRootsCache.get(cacheKey);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots]);
+    } catch (_err) {
+      roots = dedupePathList([resolveScenarioDir(sourceBiqPath)]);
+    }
+    sourceRootsCache.set(cacheKey, roots);
+    return roots;
+  };
+
+  const update = applyImportedBuildingCityIconAtlasAssignments({
+    improvementsTab,
+    targetAtlasBuffers,
+    loadSourceAtlasBuffers: (sourceBiqPath) => {
+      const sourcePaths = resolveBuildingCityAtlasPaths({
+        civ3Path,
+        targetContentRoot: '',
+        scenarioRoots: getSourceRoots(sourceBiqPath)
+      });
+      return sourcePaths.large && sourcePaths.small
+        ? { large: fs.readFileSync(sourcePaths.large), small: fs.readFileSync(sourcePaths.small) }
+        : null;
+    }
+  });
+  if (!update.ok) return update;
+  if (!update.changed) return { ok: true, changed: false };
+  return {
+    ok: true,
+    changed: true,
+    paths: targetPaths,
+    sourcePaths: targetSourcePaths,
+    data: update.buffers,
+    assignments: update.assignments
+  };
+}
+
 // Imported units always start at icon index 0. The target scenario's units_32.pcx
 // is never rewritten automatically because atlas layout is mod-specific.
 function spliceImportedUnitIconsIntoAtlas({ tabs }) {
@@ -7419,17 +10870,20 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
 
   const getSourceRoots = (sourceBiqPath) => {
     if (sourceRootsCache.has(sourceBiqPath)) return sourceRootsCache.get(sourceBiqPath);
-    let roots = [];
+    let rootInfo = { roots: [], scenarioRoots: [] };
     try {
       const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
       const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
       // Prefer: source scenario dir → its search roots → civ3 base.
-      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots, civ3Path].filter(Boolean));
+      rootInfo = {
+        roots: dedupePathList([ctx.biqRoot, ...ctx.searchRoots, civ3Path].filter(Boolean)),
+        scenarioRoots: dedupePathList([ctx.biqRoot, ...ctx.searchRoots].filter(Boolean))
+      };
     } catch (_err) {
-      roots = [];
+      rootInfo = { roots: [], scenarioRoots: [] };
     }
-    sourceRootsCache.set(sourceBiqPath, roots);
-    return roots;
+    sourceRootsCache.set(sourceBiqPath, rootInfo);
+    return rootInfo;
   };
 
   const addFileCopy = (sourcePath, relPath) => {
@@ -7459,7 +10913,9 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
       const entry = importItem.entry;
       if (!entry) continue;
 
-      const sourceRoots = getSourceRoots(sourceBiqPath);
+      const sourceRootInfo = getSourceRoots(sourceBiqPath);
+      const sourceRoots = sourceRootInfo.roots || [];
+      const sourceScenarioRoots = sourceRootInfo.scenarioRoots || [];
 
       // Copy icon PCX files (used by tech, resource, improvement, government, etc.)
       for (const relPath of (Array.isArray(entry.iconPaths) ? entry.iconPaths : [])) {
@@ -7491,6 +10947,13 @@ function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
             break;
           }
         }
+        collectUnitRuntimeDependencyCopiesForImportedAnimation({
+          animationName: entry.animationName,
+          sourceRoots: sourceScenarioRoots,
+          targetContentRoot
+        }).forEach((copy) => {
+          copies.push({ sourcePath: copy.sourcePath, targetPath: copy.targetPath });
+        });
       }
 
       // Copy FLC files embedded in RACE BIQ fields (forward/reverse era filenames)
@@ -7515,7 +10978,9 @@ function collectScenarioAtlasCopies({ tabs, targetContentRoot }) {
   const copySpecs = [];
   [
     { tabKey: 'resources', atlasKey: 'resources', relativePath: 'Art/resources.pcx' },
-    { tabKey: 'units', atlasKey: 'units32', relativePath: 'Art/Units/units_32.pcx' }
+    { tabKey: 'units', atlasKey: 'units32', relativePath: 'Art/Units/units_32.pcx' },
+    { tabKey: 'improvements', atlasKey: 'buildingCityLarge', relativePath: BUILDING_CITY_ATLAS_RELATIVE_PATHS.large },
+    { tabKey: 'improvements', atlasKey: 'buildingCitySmall', relativePath: BUILDING_CITY_ATLAS_RELATIVE_PATHS.small }
   ].forEach((spec) => {
     const tab = tabs[spec.tabKey];
     const pending = tab && tab.pendingAtlasCopies && typeof tab.pendingAtlasCopies === 'object'
@@ -7564,7 +11029,12 @@ function buildSavePlan(payload) {
     };
   const scenarioDir = scenarioContext.biqRoot;
 
-  const filePaths = resolvePaths({ c3xPath, scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot, mode });
+  const filePaths = resolvePaths({
+    c3xPath,
+    scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot,
+    scenarioPaths: mode === 'scenario' ? scenarioContext.searchRoots : [],
+    mode
+  });
   if (mode === 'scenario' && scenarioContext.autoCreatedSearchRoot && !scenarioContext.autoCreatedSearchValue) {
     return { ok: false, error: 'Could not derive a valid scenario search folder path for this BIQ.' };
   }
@@ -7590,7 +11060,9 @@ function buildSavePlan(payload) {
   const saveReport = [];
   const plannedWrites = [];
   let importedResourceAtlasWrite = null;
+  let importedLuxuryIconAtlasWrite = null;
   let importedUnitAtlasWrite = null;
+  let importedBuildingCityAtlasWrite = null;
   const dirtyTabs = new Set(
     Array.isArray(payload && payload.dirtyTabs)
       ? payload.dirtyTabs.map((tabKey) => String(tabKey || ''))
@@ -7610,6 +11082,9 @@ function buildSavePlan(payload) {
     )
   });
   if (unitValidationError) return { ok: false, error: unitValidationError };
+
+  const sectionTabsChangedByImprovementRenames = applyImprovementNameRenamesToSectionedTabs(payload.tabs || {});
+  sectionTabsChangedByImprovementRenames.forEach((tabKey) => dirtyTabs.add(tabKey));
 
   const baseTab = payload.tabs.base;
   const shouldSaveBase = dirtyTabs.size === 0 || dirtyTabs.has('base');
@@ -7664,11 +11139,53 @@ function buildSavePlan(payload) {
     saveReport.push({ kind, path: targetPath });
   }
 
+  if (dirtyTabs.size === 0 || dirtyTabs.has('animations')) {
+    const tileAnimationIniRepairs = collectTileAnimationIniRepairs(payload.tabs || {}, {
+      mode,
+      c3xPath,
+      scenarioContentRoot: scenarioContext.contentWriteRoot || scenarioDir
+    });
+    for (const repair of tileAnimationIniRepairs) {
+      if (!repair || repair.ok === false) {
+        return { ok: false, error: repair && repair.error ? repair.error : 'Failed to prepare Tile Animation INI repair.' };
+      }
+      const protectErr = failIfProtected(repair.targetPath, 'Tile Animation INI target');
+      if (protectErr) return { ok: false, error: protectErr };
+      if (!bufferMatchesExistingFile(repair.targetPath, repair.buffer)) {
+        plannedWrites.push({
+          kind: 'tileAnimationIni',
+          path: repair.targetPath,
+          sourcePath: repair.sourcePath,
+          data: repair.buffer,
+          encoding: 'windows-1252'
+        });
+        saveReport.push({ kind: 'tileAnimationIni', path: repair.targetPath, applied: 1 });
+      }
+    }
+  }
+
+  const musicTab = payload.tabs && payload.tabs.music;
+  const shouldSaveMusic = !!musicTab && (dirtyTabs.has('music') || (dirtyTabs.size === 0 && String(musicTab.layout || '').trim().toLowerCase() === 'playlist'));
+  if (shouldSaveMusic) {
+    const musicTargetRoot = mode === 'scenario'
+      ? (scenarioContext.contentWriteRoot || scenarioDir)
+      : getConquestsRootPath(civ3Path);
+    const musicWrites = prepareMusicTabWrites({ tab: musicTab, targetRoot: musicTargetRoot, textFileEncoding });
+    if (!musicWrites.ok) return { ok: false, error: musicWrites.error || 'Failed to prepare music writes.' };
+    for (const write of musicWrites.writes || []) {
+      const label = write.kind === 'musicAudio' ? 'music audio target' : 'music playlist target';
+      const protectErr = failIfProtected(write.path, label);
+      if (protectErr) return { ok: false, error: protectErr };
+      plannedWrites.push(write);
+    }
+    (musicWrites.saveReport || []).forEach((entry) => saveReport.push(entry));
+  }
+
   if (mode === 'scenario' && isBiqPath(scenarioPath)) {
     const protectErr = failIfProtected(scenarioPath, 'scenario BIQ target');
     if (protectErr) return { ok: false, error: protectErr };
 
-    const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations']);
+    const nonBiqDirtyTabs = new Set(['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'music']);
     const dirtyTabsAreOnlyNonBiq = dirtyTabs.size > 0
       && Array.from(dirtyTabs).every((tabKey) => nonBiqDirtyTabs.has(String(tabKey || '')));
     const hasPendingBiqOperations = hasPendingBiqOperationPayload(payload.tabs || {});
@@ -7708,6 +11225,24 @@ function buildSavePlan(payload) {
         if (importedResourceAtlasWrite && !importedResourceAtlasWrite.ok) {
           return { ok: false, error: importedResourceAtlasWrite.error || 'Failed to update resources.pcx for imported resource icons.' };
         }
+        importedLuxuryIconAtlasWrite = prepareImportedLuxuryIconAtlasWrite({
+          tabs: payload.tabs || {},
+          targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+          scenarioRoots: scenarioContext.searchRoots,
+          civ3Path,
+          textFileEncoding
+        });
+      }
+      if (payload.autoAddImportedBuildingCityIcons !== false) {
+        importedBuildingCityAtlasWrite = prepareImportedBuildingCityIconAtlasWrite({
+          tabs: payload.tabs || {},
+          targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+          scenarioRoots: scenarioContext.searchRoots,
+          civ3Path
+        });
+        if (importedBuildingCityAtlasWrite && !importedBuildingCityAtlasWrite.ok) {
+          return { ok: false, error: importedBuildingCityAtlasWrite.error || 'Failed to update city building PCX files for imported improvement icons.' };
+        }
       }
 
       const biqTabsForCollection = getTabsForDirtyBiqCollection(payload.tabs || {}, {
@@ -7716,6 +11251,7 @@ function buildSavePlan(payload) {
       });
       normalizePendingReferenceTargetsForSave({
         tabs: biqTabsForCollection,
+        indexTabs: payload.tabs || {},
         biqTab
       });
       const biqCustomRulesOps = collectBiqCustomRulesMutationOps({
@@ -7733,7 +11269,7 @@ function buildSavePlan(payload) {
       const biqStructureRecordOps = collectBiqStructureRecordOps(biqTabsForCollection);
       const biqMapStructureOps = collectBiqMapStructureOps(biqTabsForCollection);
       const biqMapRecordOps = collectBiqMapRecordOps(biqTabsForCollection);
-      const biqEdits = collectBiqReferenceEdits(biqTabsForCollection);
+      const biqEdits = collectBiqReferenceEdits(biqTabsForCollection, { biqTab });
       const structureEdits = collectBiqStructureEdits(biqTabsForCollection);
       const mapEdits = collectBiqMapEdits(biqTabsForCollection);
       const autoSearchField = !pendingSearchFolderOverride || pendingSearchFolderOverride.length === 0
@@ -7830,9 +11366,9 @@ function buildSavePlan(payload) {
     }
 
     const pediaIconsEdits = collectPediaIconsReferenceEdits(payload.tabs || {});
-    if (pediaIconsEdits.length > 0) {
+    {
       const sourceDetails = (((payload.tabs || {}).civilizations || {}).sourceDetails || {});
-      const explicitPediaTarget = (sourceDetails.pediaIconsScenarioWrite || '').trim();
+      const explicitPediaTarget = String(sourceDetails.pediaIconsScenarioWrite || sourceDetails.pediaIconsScenario || '').trim();
       const targetPath = explicitPediaTarget || path.join(scenarioContext.contentWriteRoot || scenarioDir, 'Text', 'PediaIcons.txt');
       const protectErr = failIfProtected(targetPath, 'PediaIcons target');
       if (protectErr) return { ok: false, error: protectErr };
@@ -7840,18 +11376,26 @@ function buildSavePlan(payload) {
         || String(sourceDetails.pediaIconsConquests || '').trim()
         || String(sourceDetails.pediaIconsPtw || '').trim()
         || String(sourceDetails.pediaIconsVanilla || '').trim();
-      const pediaSave = buildScenarioPediaIconsEditResult({
-        targetPath,
-        sourcePath: pediaSourcePath,
-        edits: pediaIconsEdits,
-        encoding: String(sourceDetails.pediaIconsScenarioEncoding || sourceDetails.pediaIconsActiveEncoding || ''),
-        bom: !!sourceDetails.pediaIconsScenarioBom,
-        preferredEncoding: textFileEncoding
-      });
+      const pediaSave = pediaIconsEdits.length > 0
+        ? buildScenarioPediaIconsEditResult({
+          targetPath,
+          sourcePath: pediaSourcePath,
+          edits: pediaIconsEdits,
+          encoding: String(sourceDetails.pediaIconsScenarioEncoding || sourceDetails.pediaIconsActiveEncoding || ''),
+          bom: !!sourceDetails.pediaIconsScenarioBom,
+          preferredEncoding: textFileEncoding
+        })
+        : buildScenarioPediaIconsRepairResult({
+          targetPath,
+          sourcePath: pediaSourcePath,
+          encoding: String(sourceDetails.pediaIconsScenarioEncoding || sourceDetails.pediaIconsActiveEncoding || ''),
+          bom: !!sourceDetails.pediaIconsScenarioBom,
+          preferredEncoding: textFileEncoding
+        });
       if (!pediaSave.ok) {
         return { ok: false, error: pediaSave.error || 'Failed to save PediaIcons edits.' };
       }
-      if (pediaSave.applied > 0) {
+      if (pediaSave.applied > 0 && !bufferMatchesExistingFile(targetPath, pediaSave.buffer)) {
         plannedWrites.push({
           kind: 'pediaIcons',
           path: targetPath,
@@ -7859,12 +11403,20 @@ function buildSavePlan(payload) {
           encoding: pediaSave.encoding,
           bom: pediaSave.bom
         });
-        saveReport.push({ kind: 'pediaIcons', path: targetPath, applied: pediaSave.applied });
+        saveReport.push({
+          kind: 'pediaIcons',
+          path: targetPath,
+          applied: pediaSave.applied,
+          repaired: !!pediaSave.repaired,
+          movedHomelessBlocks: pediaSave.movedHomelessBlocks || 0,
+          restoredHomeless: !!pediaSave.restoredHomeless,
+          lineEndingsNormalized: !!pediaSave.lineEndingsNormalized
+        });
       }
     }
 
     const civilopediaEdits = collectCivilopediaReferenceEdits(payload.tabs || {});
-    if (civilopediaEdits.length > 0) {
+    {
       const sourceDetails = (((payload.tabs || {}).civilizations || {}).sourceDetails || {});
       const explicitTarget = (sourceDetails.civilopediaScenario || '').trim();
       const targetPath = explicitTarget || path.join(scenarioContext.contentWriteRoot || scenarioDir, 'Text', 'Civilopedia.txt');
@@ -7874,18 +11426,26 @@ function buildSavePlan(payload) {
         || String(sourceDetails.civilopediaConquests || '').trim()
         || String(sourceDetails.civilopediaPtw || '').trim()
         || String(sourceDetails.civilopediaVanilla || '').trim();
-      const civilopediaSave = buildScenarioCivilopediaEditResult({
-        targetPath,
-        sourcePath: civilopediaSourcePath,
-        edits: civilopediaEdits,
-        encoding: String(sourceDetails.civilopediaScenarioEncoding || sourceDetails.civilopediaActiveEncoding || ''),
-        bom: !!sourceDetails.civilopediaScenarioBom,
-        preferredEncoding: textFileEncoding
-      });
+      const civilopediaSave = civilopediaEdits.length > 0
+        ? buildScenarioCivilopediaEditResult({
+          targetPath,
+          sourcePath: civilopediaSourcePath,
+          edits: civilopediaEdits,
+          encoding: String(sourceDetails.civilopediaScenarioEncoding || sourceDetails.civilopediaActiveEncoding || ''),
+          bom: !!sourceDetails.civilopediaScenarioBom,
+          preferredEncoding: textFileEncoding
+        })
+        : buildScenarioCivilopediaRepairResult({
+          targetPath,
+          sourcePath: civilopediaSourcePath,
+          encoding: String(sourceDetails.civilopediaScenarioEncoding || sourceDetails.civilopediaActiveEncoding || ''),
+          bom: !!sourceDetails.civilopediaScenarioBom,
+          preferredEncoding: textFileEncoding
+        });
       if (!civilopediaSave.ok) {
         return { ok: false, error: civilopediaSave.error || 'Failed to save Civilopedia edits.' };
       }
-      if (civilopediaSave.applied > 0) {
+      if (civilopediaSave.applied > 0 && !bufferMatchesExistingFile(targetPath, civilopediaSave.buffer)) {
         plannedWrites.push({
           kind: 'civilopedia',
           path: targetPath,
@@ -7893,7 +11453,12 @@ function buildSavePlan(payload) {
           encoding: civilopediaSave.encoding,
           bom: civilopediaSave.bom
         });
-        saveReport.push({ kind: 'civilopedia', path: targetPath, applied: civilopediaSave.applied });
+        saveReport.push({
+          kind: 'civilopedia',
+          path: targetPath,
+          applied: civilopediaSave.applied,
+          lineEndingsNormalized: !!civilopediaSave.lineEndingsNormalized
+        });
       }
     }
 
@@ -7980,6 +11545,60 @@ function buildSavePlan(payload) {
       saveReport.push({ kind: 'scenarioDistricts', path: targetPath, applied: scenarioDistrictsEdit.entries.length + scenarioDistrictsEdit.namedTiles.length });
     }
 
+    if (payload.autoUpdateScienceAdvisorArrows === true) {
+      const scienceAdvisorWrites = prepareScienceAdvisorArrowArtWrites({
+        tabs: payload.tabs || {},
+        targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+        scenarioPath,
+        scenarioRoots: scenarioContext.searchRoots,
+        civ3Path,
+        routeOverrides: payload.techTreeArrowRouteOverrides || {},
+        routeSnapshots: payload.techTreeArrowRouteSnapshots || {},
+        baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {},
+        dirtyEdgesByEra: payload.techTreeArrowDirtyEdgesByEra || {},
+        dirtyEraIndexes: payload.techTreeArrowDirtyEras || [],
+        arrowStyle: payload.scienceAdvisorArrowStyle || null,
+        civFiltersByEra: payload.techTreeArrowCivFiltersByEra || {}
+      });
+      if (scienceAdvisorWrites && !scienceAdvisorWrites.ok) {
+        return { ok: false, error: scienceAdvisorWrites.error || 'Failed to update Science Advisor arrow art.' };
+      }
+      for (const write of (scienceAdvisorWrites && scienceAdvisorWrites.writes) || []) {
+        const protectErr = failIfProtected(write.path, 'Science Advisor background target');
+        if (protectErr) return { ok: false, error: protectErr };
+        if (isProtectedBaseCiv3Path(civ3Path, write.path)) {
+          return { ok: false, error: `Refusing to modify base Civilization III file (Science Advisor background target): ${write.path}` };
+        }
+        plannedWrites.push(write);
+        saveReport.push({
+          kind: write.kind,
+          path: write.path,
+          sourcePath: write.sourcePath,
+          applied: write.applied || 0,
+          clearDiagnostics: write.clearDiagnostics || null,
+          detail: `Regenerated ${write.applied || 0} Science Advisor arrow connector${(write.applied || 0) === 1 ? '' : 's'}`
+        });
+      }
+      const metadataWrite = buildScienceAdvisorArrowMetadataWrite({
+        targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+        routeOverrides: payload.techTreeArrowRouteOverrides || {},
+        routeSnapshots: payload.techTreeArrowRouteSnapshots || {},
+        baselineRouteHints: payload.techTreeArrowBaselineRouteHints || {},
+        dirtyEraIndexes: payload.techTreeArrowDirtyEras || []
+      });
+      if (metadataWrite) {
+        const protectErr = failIfProtected(metadataWrite.path, 'Science Advisor arrow metadata target');
+        if (protectErr) return { ok: false, error: protectErr };
+        plannedWrites.push(metadataWrite);
+        saveReport.push({
+          kind: metadataWrite.kind,
+          path: metadataWrite.path,
+          applied: metadataWrite.applied || 0,
+          detail: metadataWrite.detail
+        });
+      }
+    }
+
     // Copy art files referenced by imported entries into the local scenario content root.
     // Skips files that cannot be resolved; never blocks a save.
     const artCopies = collectImportArtCopies({
@@ -8006,8 +11625,18 @@ function buildSavePlan(payload) {
       if (importedResourceAtlasWrite && importedResourceAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedResourceAtlasWrite.path)) {
         continue;
       }
+      if (importedLuxuryIconAtlasWrite && importedLuxuryIconAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedLuxuryIconAtlasWrite.path)) {
+        continue;
+      }
       if (importedUnitAtlasWrite && importedUnitAtlasWrite.changed && normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedUnitAtlasWrite.path)) {
         continue;
+      }
+      if (importedBuildingCityAtlasWrite && importedBuildingCityAtlasWrite.changed) {
+        const importedPaths = importedBuildingCityAtlasWrite.paths || {};
+        if (normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedPaths.large)
+            || normalizePathForCompare(atlasCopy.targetPath) === normalizePathForCompare(importedPaths.small)) {
+          continue;
+        }
       }
       const protectErr = failIfProtected(atlasCopy.targetPath, 'scenario atlas copy target');
       if (protectErr) return { ok: false, error: protectErr };
@@ -8044,6 +11673,32 @@ function buildSavePlan(payload) {
       });
     }
 
+    if (importedLuxuryIconAtlasWrite && importedLuxuryIconAtlasWrite.changed) {
+      const protectErr = failIfProtected(importedLuxuryIconAtlasWrite.path, 'scenario luxuryicons_small.pcx target');
+      if (protectErr) return { ok: false, error: protectErr };
+      if (isProtectedBaseCiv3Path(civ3Path, importedLuxuryIconAtlasWrite.path)) {
+        return { ok: false, error: `Refusing to modify base Civilization III file (scenario luxuryicons_small.pcx target): ${importedLuxuryIconAtlasWrite.path}` };
+      }
+      plannedWrites.push({
+        kind: 'atlas',
+        path: importedLuxuryIconAtlasWrite.path,
+        sourcePath: importedLuxuryIconAtlasWrite.sourcePath,
+        data: importedLuxuryIconAtlasWrite.data
+      });
+      saveReport.push({
+        kind: 'atlas',
+        path: importedLuxuryIconAtlasWrite.path,
+        applied: importedLuxuryIconAtlasWrite.assignments.length,
+        detail: `Added ${importedLuxuryIconAtlasWrite.assignments.length} imported Luxury city icon${importedLuxuryIconAtlasWrite.assignments.length === 1 ? '' : 's'}`,
+        warningNote: (importedLuxuryIconAtlasWrite.warnings || []).join(' ')
+      });
+    } else if (importedLuxuryIconAtlasWrite && Array.isArray(importedLuxuryIconAtlasWrite.warnings) && importedLuxuryIconAtlasWrite.warnings.length > 0) {
+      const biqReport = saveReport.find((entry) => String(entry && entry.kind || '').trim().toLowerCase() === 'biq');
+      if (biqReport) {
+        biqReport.warningNote = [biqReport.warningNote, importedLuxuryIconAtlasWrite.warnings.join(' ')].filter(Boolean).join(' ');
+      }
+    }
+
     if (importedUnitAtlasWrite && importedUnitAtlasWrite.changed) {
       const protectErr = failIfProtected(importedUnitAtlasWrite.path, 'scenario units_32.pcx target');
       if (protectErr) return { ok: false, error: protectErr };
@@ -8062,6 +11717,50 @@ function buildSavePlan(payload) {
         applied: importedUnitAtlasWrite.assignments.length,
         detail: `Added ${importedUnitAtlasWrite.assignments.length} imported unit icon${importedUnitAtlasWrite.assignments.length === 1 ? '' : 's'}`
       });
+    }
+
+    if (importedBuildingCityAtlasWrite && importedBuildingCityAtlasWrite.changed) {
+      const importedPaths = importedBuildingCityAtlasWrite.paths || {};
+      const importedSources = importedBuildingCityAtlasWrite.sourcePaths || {};
+      const importedData = importedBuildingCityAtlasWrite.data || {};
+      for (const size of ['large', 'small']) {
+        const targetPath = importedPaths[size];
+        const protectErr = failIfProtected(targetPath, `scenario buildings-${size}.pcx target`);
+        if (protectErr) return { ok: false, error: protectErr };
+        if (isProtectedBaseCiv3Path(civ3Path, targetPath)) {
+          return { ok: false, error: `Refusing to modify base Civilization III file (scenario buildings-${size}.pcx target): ${targetPath}` };
+        }
+        plannedWrites.push({
+          kind: 'atlas',
+          path: targetPath,
+          sourcePath: importedSources[size],
+          data: importedData[size]
+        });
+        saveReport.push({
+          kind: 'atlas',
+          path: targetPath,
+          applied: importedBuildingCityAtlasWrite.assignments.length,
+          detail: `Added ${importedBuildingCityAtlasWrite.assignments.length} imported improvement city icon row${importedBuildingCityAtlasWrite.assignments.length === 1 ? '' : 's'}`
+        });
+      }
+    }
+
+    if (payload.civColorPalettes && typeof payload.civColorPalettes === 'object') {
+      const civPaletteWrites = prepareScenarioCivColorPaletteWrites(payload);
+      if (!civPaletteWrites.ok) {
+        return { ok: false, error: civPaletteWrites.error || 'Failed to save custom civ color palettes.' };
+      }
+      for (const write of civPaletteWrites.writes || []) {
+        const protectErr = failIfProtected(write.path, 'civ color palette target');
+        if (protectErr) return { ok: false, error: protectErr };
+        if (isProtectedBaseCiv3Path(civ3Path, write.path)) {
+          return { ok: false, error: `Refusing to modify base Civilization III file (civ color palette target): ${write.path}` };
+        }
+        plannedWrites.push(write);
+      }
+      for (const report of civPaletteWrites.saveReport || []) {
+        saveReport.push(report);
+      }
     }
   }
 
@@ -8115,6 +11814,12 @@ function saveBundle(payload, options = {}) {
     if (!dirPath) return;
     fs.mkdirSync(dirPath, { recursive: true });
   });
+
+  invalidateDeferredMapBiqCacheForPath(resolveBiqPath({
+    mode,
+    civ3Path: payload && payload.civ3Path || '',
+    scenarioPath: payload && payload.scenarioPath || ''
+  }));
 
   return {
     ok: true,
@@ -8186,6 +11891,9 @@ function previewFileDiff(payload) {
     prevText = '';
     exists = false;
   }
+  const lineEndingsNormalized = hasNonCrlfLineEndings(prevText) && !hasNonCrlfLineEndings(nextText);
+  const lineEndingOnlyChange = lineEndingsNormalized
+    && normalizeTextLineEndingsToCrlf(prevText) === normalizeTextLineEndingsToCrlf(nextText);
   const diffRows = buildUnifiedDiffRows(prevText, nextText, { context: 3 });
   return {
     ok: true,
@@ -8196,6 +11904,8 @@ function previewFileDiff(payload) {
     encoding,
     oldText: prevText,
     newText: nextText,
+    lineEndingsNormalized,
+    lineEndingOnlyChange,
     diffRows
   };
 }
@@ -8536,8 +12246,16 @@ function getPlannedReferenceIndex(indexMaps, targetTabKey, target) {
 function getBiqRecordPlanningRef(record) {
   const key = String(getBiqRecordCivilopediaKey(record) || '').trim().toUpperCase();
   if (key) return key;
-  const idx = Number(record && record.index);
+  const idx = parseAssignedBiqIndex(record && record.index);
   return Number.isFinite(idx) && idx >= 0 ? `@INDEX:${idx}` : '';
+}
+
+function parseAssignedBiqIndex(raw) {
+  if (raw == null) return NaN;
+  if (typeof raw === 'string' && raw.trim() === '') return NaN;
+  if (typeof raw === 'boolean') return NaN;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : NaN;
 }
 
 function findPlannedRecordIndex(records, recordRef) {
@@ -8546,12 +12264,50 @@ function findPlannedRecordIndex(records, recordRef) {
   if (ref.startsWith('@INDEX:')) {
     const idx = Number.parseInt(ref.slice(7), 10);
     if (!Number.isFinite(idx)) return -1;
-    return records.findIndex((record) => Number(record && record.index) === idx);
+    return records.findIndex((record) => (
+      parseAssignedBiqIndex(record && record.originalIndex) === idx
+      || parseAssignedBiqIndex(record && record.index) === idx
+    ));
   }
   return records.findIndex((record) => (
     String(record && record.key || '').trim().toUpperCase() === ref
     || String(record && record.newRecordRef || '').trim().toUpperCase() === ref
   ));
+}
+
+function normalizePlannedReorderOrder(order) {
+  if (!Array.isArray(order)) return [];
+  return order
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+}
+
+function applyPlannedRecordReorder(planned, order) {
+  if (!Array.isArray(planned) || planned.length === 0) return false;
+  const normalized = normalizePlannedReorderOrder(order);
+  if (normalized.length === 0) return false;
+  const byOriginalIndex = new Map();
+  planned.forEach((record) => {
+    const originalIndex = parseAssignedBiqIndex(record && record.originalIndex);
+    if (Number.isFinite(originalIndex) && originalIndex >= 0) byOriginalIndex.set(originalIndex, record);
+  });
+  const used = new Set();
+  const next = [];
+  normalized.forEach((oldIndex) => {
+    const record = byOriginalIndex.get(oldIndex);
+    if (!record || used.has(record)) return;
+    used.add(record);
+    next.push(record);
+  });
+  planned.forEach((record) => {
+    if (used.has(record)) return;
+    used.add(record);
+    next.push(record);
+  });
+  if (next.length !== planned.length) return false;
+  planned.splice(0, planned.length, ...next);
+  planned.forEach((record, idx) => { record.index = idx; });
+  return true;
 }
 
 function getReferenceRecordOpsForPlanning(tabs, tabKey) {
@@ -8569,13 +12325,22 @@ function buildPlannedReferenceIndexMaps(tabs, biqTab) {
   const out = {};
   Object.entries(BIQ_SAVE_SECTION_TO_REFERENCE_TAB).forEach(([sectionCode, tabKey]) => {
     const originalRecords = getReferencePlanningRecordsForSection(biqTab, sectionCode);
-    const planned = (Array.isArray(originalRecords) ? originalRecords : []).map((record, idx) => ({
-      key: getBiqRecordPlanningRef(record),
-      index: Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx,
-      originalIndex: Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx
-    }));
-    getReferenceRecordOpsForPlanning(tabs, tabKey).forEach((op) => {
+    const planned = (Array.isArray(originalRecords) ? originalRecords : []).map((record, idx) => {
+      const recordIndex = parseAssignedBiqIndex(record && record.index);
+      return {
+        key: getBiqRecordPlanningRef(record),
+        index: Number.isFinite(recordIndex) ? recordIndex : idx,
+        originalIndex: Number.isFinite(recordIndex) ? recordIndex : idx
+      };
+    });
+    const planningOps = getReferenceRecordOpsForPlanning(tabs, tabKey);
+    const reorderOps = [];
+    planningOps.forEach((op) => {
       const kind = String(op && op.op || '').trim().toLowerCase();
+      if (kind === 'reorder') {
+        reorderOps.push(op);
+        return;
+      }
       if (kind === 'add' || kind === 'copy') {
         const newRecordRef = String(op && op.newRecordRef || '').trim().toUpperCase();
         if (!newRecordRef) return;
@@ -8597,20 +12362,24 @@ function buildPlannedReferenceIndexMaps(tabs, biqTab) {
         planned.forEach((record, idx) => { record.index = idx; });
       }
     });
+    const lastReorder = reorderOps.length > 0 ? reorderOps[reorderOps.length - 1] : null;
+    if (lastReorder && String(sectionCode || '').trim().toUpperCase() === 'PRTO') {
+      applyPlannedRecordReorder(planned, lastReorder.order);
+    }
     const byKey = new Map();
     planned.forEach((record, idx) => {
       const key = String(record && record.key || '').trim().toUpperCase();
       if (key) byKey.set(key, idx);
       const newRef = String(record && record.newRecordRef || '').trim().toUpperCase();
       if (newRef) byKey.set(newRef, idx);
-      const originalIndex = Number(record && record.originalIndex);
+      const originalIndex = parseAssignedBiqIndex(record && record.originalIndex);
       if (Number.isFinite(originalIndex) && originalIndex >= 0) byKey.set(`@INDEX:${originalIndex}`, idx);
       else byKey.set(`@INDEX:${idx}`, idx);
     });
     const tabEntries = tabs && tabs[tabKey] && Array.isArray(tabs[tabKey].entries) ? tabs[tabKey].entries : [];
     tabEntries.forEach((entry) => {
       const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-      const originalIndex = Number(entry && entry.biqIndex);
+      const originalIndex = parseAssignedBiqIndex(entry && entry.biqIndex);
       if (!key || !Number.isFinite(originalIndex) || originalIndex < 0) return;
       const plannedIndex = byKey.get(`@INDEX:${originalIndex}`);
       if (Number.isFinite(plannedIndex) && plannedIndex >= 0) byKey.set(key, plannedIndex);
@@ -8646,10 +12415,173 @@ function normalizeReferenceListFieldValueForSave(field, targetTabKey, indexMaps)
   return true;
 }
 
-function normalizePendingReferenceTargetsForSave({ tabs, biqTab }) {
-  const sourceTabs = tabs || {};
-  const indexMaps = buildPlannedReferenceIndexMaps(sourceTabs, biqTab);
+function prettifyGovernmentPlanningKey(key, fallbackIndex = 0) {
+  const raw = String(key || '').trim().toUpperCase();
+  const cleaned = raw.replace(/^GOVT_/, '').replace(/_/g, ' ').trim();
+  if (!cleaned) return `Government ${fallbackIndex + 1}`;
+  return cleaned.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildPlannedGovernmentNames({ tabs, biqTab, indexMaps }) {
+  const planned = indexMaps && indexMaps.governments && Array.isArray(indexMaps.governments.records)
+    ? indexMaps.governments.records
+    : [];
+  if (planned.length === 0) return [];
+
+  const namesByKey = new Map();
+  const namesByOriginalIndex = new Map();
+  const governmentEntries = tabs && tabs.governments && Array.isArray(tabs.governments.entries)
+    ? tabs.governments.entries
+    : [];
+  governmentEntries.forEach((entry) => {
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    const name = cleanDisplayText(entry && entry.name);
+    const originalIndex = parseAssignedBiqIndex(entry && entry.biqIndex);
+    if (key && name) namesByKey.set(key, name);
+    if (Number.isFinite(originalIndex) && originalIndex >= 0 && name) namesByOriginalIndex.set(originalIndex, name);
+  });
+
+  const originalRecords = getReferencePlanningRecordsForSection(biqTab, 'GOVT');
+  originalRecords.forEach((record, fallbackIdx) => {
+    const key = String(getBiqRecordPlanningRef(record) || '').trim().toUpperCase();
+    const name = cleanDisplayText(getBiqRecordDisplayName(record, key || `Government ${fallbackIdx + 1}`));
+    const originalIndex = parseAssignedBiqIndex(record && record.index);
+    if (key && name && !namesByKey.has(key)) namesByKey.set(key, name);
+    if (Number.isFinite(originalIndex) && originalIndex >= 0 && name && !namesByOriginalIndex.has(originalIndex)) {
+      namesByOriginalIndex.set(originalIndex, name);
+    }
+  });
+
+  return planned.map((record, fallbackIdx) => {
+    const key = String(record && (record.newRecordRef || record.key) || '').trim().toUpperCase();
+    const originalIndex = parseAssignedBiqIndex(record && record.originalIndex);
+    return namesByKey.get(key)
+      || (Number.isFinite(originalIndex) && originalIndex >= 0 ? namesByOriginalIndex.get(originalIndex) : '')
+      || prettifyGovernmentPlanningKey(key, fallbackIdx);
+  });
+}
+
+function normalizeGovernmentEntriesForSave({ tabs, biqTab, indexMaps }) {
+  const governmentTab = tabs && tabs.governments;
+  const entries = governmentTab && Array.isArray(governmentTab.entries) ? governmentTab.entries : [];
+  if (entries.length === 0) return 0;
+  const governmentNames = buildPlannedGovernmentNames({ tabs, biqTab, indexMaps });
+  const relationCount = governmentNames.length;
+  if (relationCount <= 0) return 0;
   let changed = 0;
+
+  entries.forEach((entry) => {
+    if (!entry || !Array.isArray(entry.biqFields)) return;
+    const relationRows = new Map();
+    const preservedFields = [];
+    let currentRowIndex = -1;
+    let skippingRelationTail = false;
+
+    entry.biqFields.forEach((field) => {
+      const baseKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+      const relationHeaderMatch = baseKey.match(/^performance_of_this_government_versus_government_(\d+)$/);
+      if (relationHeaderMatch) {
+        currentRowIndex = Number.parseInt(relationHeaderMatch[1], 10);
+        if (!relationRows.has(currentRowIndex)) {
+          relationRows.set(currentRowIndex, {
+            canBribe: '0',
+            canBribeOriginal: '0',
+            resistanceMod: '0',
+            resistanceModOriginal: '0',
+            briberyMod: '0',
+            briberyModOriginal: '0'
+          });
+        }
+        skippingRelationTail = true;
+        return;
+      }
+      if (skippingRelationTail && (baseKey === 'canbribe' || baseKey === 'resistancemodifier' || baseKey === 'briberymodifier')) {
+        const row = relationRows.get(currentRowIndex) || {
+          canBribe: '0',
+          canBribeOriginal: '0',
+          resistanceMod: '0',
+          resistanceModOriginal: '0',
+          briberyMod: '0',
+          briberyModOriginal: '0'
+        };
+        if (baseKey === 'canbribe') {
+          row.canBribe = String(field && field.value != null ? field.value : '0');
+          row.canBribeOriginal = String(field && field.originalValue != null ? field.originalValue : row.canBribe);
+        }
+        if (baseKey === 'resistancemodifier') {
+          row.resistanceMod = String(field && field.value != null ? field.value : '0');
+          row.resistanceModOriginal = String(field && field.originalValue != null ? field.originalValue : row.resistanceMod);
+        }
+        if (baseKey === 'briberymodifier') {
+          row.briberyMod = String(field && field.value != null ? field.value : '0');
+          row.briberyModOriginal = String(field && field.originalValue != null ? field.originalValue : row.briberyMod);
+        }
+        relationRows.set(currentRowIndex, row);
+        return;
+      }
+      skippingRelationTail = false;
+      preservedFields.push(field);
+    });
+
+    const nextFields = preservedFields.slice();
+    for (let idx = 0; idx < relationCount; idx += 1) {
+      const governmentName = String(governmentNames[idx] || `Government ${idx + 1}`).trim();
+      const row = relationRows.get(idx) || {
+        canBribe: '0',
+        canBribeOriginal: '0',
+        resistanceMod: '0',
+        resistanceModOriginal: '0',
+        briberyMod: '0',
+        briberyModOriginal: '0'
+      };
+      nextFields.push({
+        key: `performance_of_this_government_versus_government_${idx}`,
+        baseKey: `performance_of_this_government_versus_government_${idx}`,
+        label: `Performance Vs ${governmentName}`,
+        value: governmentName,
+        originalValue: governmentName,
+        editable: false
+      });
+      nextFields.push({
+        key: 'canbribe',
+        baseKey: 'canbribe',
+        label: 'Can Bribe',
+        value: String(row.canBribe),
+        originalValue: String(row.canBribeOriginal),
+        editable: true
+      });
+      nextFields.push({
+        key: 'resistancemodifier',
+        baseKey: 'resistancemodifier',
+        label: 'Resistance Modifier',
+        value: String(row.resistanceMod),
+        originalValue: String(row.resistanceModOriginal),
+        editable: true
+      });
+      nextFields.push({
+        key: 'briberymodifier',
+        baseKey: 'briberymodifier',
+        label: 'Propaganda',
+        value: String(row.briberyMod),
+        originalValue: String(row.briberyModOriginal),
+        editable: true
+      });
+    }
+    if (JSON.stringify(nextFields) !== JSON.stringify(entry.biqFields)) {
+      entry.biqFields = nextFields;
+      changed += 1;
+    }
+  });
+
+  return changed;
+}
+
+function normalizePendingReferenceTargetsForSave({ tabs, indexTabs, biqTab }) {
+  const sourceTabs = tabs || {};
+  const indexMaps = buildPlannedReferenceIndexMaps(indexTabs || sourceTabs, biqTab);
+  let changed = 0;
+
+  changed += normalizeGovernmentEntriesForSave({ tabs: sourceTabs, biqTab, indexMaps });
 
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = sourceTabs[spec.key];
@@ -8915,7 +12847,9 @@ function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
     if (!tab || !Array.isArray(tab.sections)) continue;
     tab.sections.forEach((section) => {
       const sectionCode = String(section && section.code || '').trim().toUpperCase();
-      const sourceLabel = cleanDisplayText(section && section.title) || getBiqSectionTitle(sectionCode);
+      const sourceLabel = sectionCode === 'LEAD'
+        ? getBiqSectionTitle(sectionCode)
+        : (cleanDisplayText(section && section.title) || getBiqSectionTitle(sectionCode));
       (Array.isArray(section && section.records) ? section.records : []).forEach((record) => {
         pushRecord(sectionCode, sourceLabel, getBiqRecordDisplayName(record, `${sourceLabel} Record`), record && record.fields);
       });
@@ -9057,8 +12991,89 @@ function getTabsForDirtyBiqCollection(tabs, options = {}) {
   return out;
 }
 
-function collectBiqReferenceEdits(tabs) {
+function getBiqEditableRecordListForSection(biqTab, sectionCode) {
+  const target = String(sectionCode || '').trim().toUpperCase();
+  if (!biqTab || !Array.isArray(biqTab.sections) || !target) return [];
+  const section = biqTab.sections.find((entry) => String(entry && entry.code || '').trim().toUpperCase() === target);
+  if (!section) return [];
+  if (Array.isArray(section.records) && section.records.length > 0) return section.records;
+  return Array.isArray(section.fullRecords) ? section.fullRecords : [];
+}
+
+function findEditableBiqRecordForReferenceEntry(biqTab, sectionCode, entry) {
+  const records = getBiqEditableRecordListForSection(biqTab, sectionCode);
+  if (!Array.isArray(records) || records.length === 0) return null;
+  const idx = Number(entry && entry.biqIndex);
+  if (Number.isFinite(idx) && idx >= 0) {
+    const indexed = records.find((record) => Number(record && record.index) === idx);
+    if (indexed) return indexed;
+    if (records[idx]) return records[idx];
+  }
+  const civKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+  if (!civKey) return null;
+  return records.find((record) => String(getBiqRecordCivilopediaKey(record) || '').trim().toUpperCase() === civKey) || null;
+}
+
+function getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey, entry }) {
+  const record = findEditableBiqRecordForReferenceEntry(biqTab, sectionCode, entry);
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  if (fields.length === 0) return null;
+  if (tabKey === 'improvements') {
+    const flavorCount = Number.isFinite(Number(entry && entry.improvementFlavorCount))
+      ? Number(entry.improvementFlavorCount)
+      : 0;
+    return collapseImprovementBiqFields(fields, flavorCount, 'value');
+  }
+  if (tabKey === 'technologies') {
+    const flavorCount = Number.isFinite(Number(entry && entry.technologyFlavorCount))
+      ? Number(entry.technologyFlavorCount)
+      : 0;
+    return collapseTechnologyBiqFields(fields, flavorCount, 'value');
+  }
+  if (tabKey === 'resources') return collapseResourceBiqFields(fields, 'value');
+  if (tabKey === 'governments') return collapseGovernmentBiqFields(fields, 'value');
+  if (tabKey === 'civilizations') {
+    const flavorCount = Number.isFinite(Number(entry && entry.civilizationFlavorCount))
+      ? Number(entry.civilizationFlavorCount)
+      : 0;
+    return collapseCivilizationBiqFields(fields, flavorCount, 'value');
+  }
+  if (tabKey === 'units') return collapseUnitBiqFields(fields, 'value');
+  return null;
+}
+
+function hasReferenceTargetMetaForRawKey(entry, rawKey) {
+  const targetCanon = canonicalFieldKey(rawKey);
+  if (!targetCanon || !Array.isArray(entry && entry.biqFields)) return false;
+  return entry.biqFields.some((field) => {
+    if (!field || canonicalFieldKey(field.baseKey || field.key) !== targetCanon) return false;
+    return !!getFieldReferenceTarget(field) || getFieldReferenceTargets(field).length > 0;
+  });
+}
+
+function collectCollapsedReferenceRawEdits({ edits, sectionCode, recordRef, entry, currentRaw, originalRaw, diskRaw }) {
+  Object.keys(currentRaw || {}).forEach((rawKey) => {
+    const value = cleanDisplayText(currentRaw[rawKey]);
+    let originalValue = cleanDisplayText(originalRaw && originalRaw[rawKey]);
+    if (value === originalValue
+      && hasReferenceTargetMetaForRawKey(entry, rawKey)
+      && diskRaw
+      && Object.prototype.hasOwnProperty.call(diskRaw, rawKey)) {
+      originalValue = cleanDisplayText(diskRaw[rawKey]);
+    }
+    if (value === originalValue) return;
+    edits.push({
+      sectionCode,
+      recordRef,
+      fieldKey: rawKey,
+      value
+    });
+  });
+}
+
+function collectBiqReferenceEdits(tabs, options = {}) {
   const edits = [];
+  const biqTab = options && options.biqTab;
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = tabs[spec.key];
     if (!tab || !Array.isArray(tab.entries)) continue;
@@ -9070,23 +13085,21 @@ function collectBiqReferenceEdits(tabs) {
       const recordRef = Number.isFinite(entry && entry.biqIndex)
         ? `@INDEX:${Number(entry.biqIndex)}`
         : civKey;
-      if (!civKey || !Array.isArray(entry.biqFields)) return;
+      if (!recordRef || !Array.isArray(entry.biqFields)) return;
       if (spec.key === 'improvements') {
         const flavorCount = Number.isFinite(Number(entry && entry.improvementFlavorCount))
           ? Number(entry.improvementFlavorCount)
           : 0;
         const currentRaw = collapseImprovementBiqFields(entry.biqFields, flavorCount, 'value');
         const originalRaw = collapseImprovementBiqFields(entry.biqFields, flavorCount, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
@@ -9096,48 +13109,42 @@ function collectBiqReferenceEdits(tabs) {
           : 0;
         const currentRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'value');
         const originalRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
       if (spec.key === 'resources') {
         const currentRaw = collapseResourceBiqFields(entry.biqFields, 'value');
         const originalRaw = collapseResourceBiqFields(entry.biqFields, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
       if (spec.key === 'governments') {
         const currentRaw = collapseGovernmentBiqFields(entry.biqFields, 'value');
         const originalRaw = collapseGovernmentBiqFields(entry.biqFields, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
@@ -9147,27 +13154,33 @@ function collectBiqReferenceEdits(tabs) {
           : 0;
         const currentRaw = collapseCivilizationBiqFields(entry.biqFields, flavorCount, 'value');
         const originalRaw = collapseCivilizationBiqFields(entry.biqFields, flavorCount, 'originalValue');
-        Object.keys(currentRaw).forEach((rawKey) => {
-          const value = cleanDisplayText(currentRaw[rawKey]);
-          const originalValue = cleanDisplayText(originalRaw[rawKey]);
-          if (value === originalValue) return;
-          edits.push({
-            sectionCode,
-            recordRef,
-            fieldKey: rawKey,
-            value
-          });
+        collectCollapsedReferenceRawEdits({
+          edits,
+          sectionCode,
+          recordRef,
+          entry,
+          currentRaw,
+          originalRaw,
+          diskRaw: getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry })
         });
         return;
       }
       if (spec.key === 'units') {
         const currentRaw = collapseUnitBiqFields(entry.biqFields, 'value');
         const originalRaw = collapseUnitBiqFields(entry.biqFields, 'originalValue');
+        const diskRaw = getDiskReferenceRawMapForEntry({ biqTab, sectionCode, tabKey: spec.key, entry });
         Object.keys(currentRaw).forEach((rawKey) => {
           const value = currentRaw[rawKey];
           const originalValue = originalRaw[rawKey];
           const valueText = Array.isArray(value) ? value.join(',') : cleanDisplayText(value);
-          const originalText = Array.isArray(originalValue) ? originalValue.join(',') : cleanDisplayText(originalValue);
+          let originalText = Array.isArray(originalValue) ? originalValue.join(',') : cleanDisplayText(originalValue);
+          if (valueText === originalText
+            && hasReferenceTargetMetaForRawKey(entry, rawKey)
+            && diskRaw
+            && Object.prototype.hasOwnProperty.call(diskRaw, rawKey)) {
+            const diskValue = diskRaw[rawKey];
+            originalText = Array.isArray(diskValue) ? diskValue.join(',') : cleanDisplayText(diskValue);
+          }
           if (valueText === originalText) return;
           edits.push({
             sectionCode,
@@ -9261,6 +13274,22 @@ function collectBiqReferenceRecordOps(tabs) {
           recordRef
         });
         log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=delete ${sectionCode} ref=${recordRef}`);
+        return;
+      }
+      if (kind === 'reorder') {
+        if (sectionCode !== 'PRTO') return;
+        const order = Array.isArray(op.order)
+          ? op.order
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 0)
+          : [];
+        if (order.length === 0) return;
+        ops.push({
+          op: 'reorder',
+          sectionCode,
+          order
+        });
+        log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=reorder ${sectionCode} count=${order.length}`);
       }
     });
   }
@@ -9845,7 +13874,8 @@ function collectPediaIconsReferenceEdits(tabs) {
         const prevKind = String(entry && entry.originalBuildingIconKind || '').trim();
         const nextIndex = String(entry && entry.buildingIconIndex || '').trim();
         const prevIndex = String(entry && entry.originalBuildingIconIndex || '').trim();
-        if ((nextKind !== prevKind || nextIndex !== prevIndex) && JSON.stringify(nextIconPaths) === JSON.stringify(prevIconPaths)) {
+        if ((shouldForceImportedPedia || shouldForcePediaIconsBlock || nextKind !== prevKind || nextIndex !== prevIndex)
+          && JSON.stringify(nextIconPaths) === JSON.stringify(prevIconPaths)) {
           edits.push({ blockKey: `ICON_${key}`, lines: buildBuildingIconLines(entry, nextIconPaths) });
         }
         const nextSplash = normalizeAssetReferencePath(entry && entry.wonderSplashPath);
@@ -9891,44 +13921,50 @@ function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, index = -1,
   const normalizedOriginal = normalizeAssetReferencePath(originalPath);
   const absSource = String(sourcePath || '').trim();
   const rawBaseName = path.basename(absSource || normalizedOriginal || '');
-  const baseName = forcePcx ? rawBaseName.replace(/\.[^.\\/]+$/i, '.pcx') : rawBaseName;
+  const baseName = applyReferenceArtDefaultFileNameSuffix(
+    forcePcx ? rawBaseName.replace(/\.[^.\\/]+$/i, '.pcx') : rawBaseName,
+    tabKey,
+    group,
+    index
+  );
   if (!baseName) return '';
+  const fit = (relativePath) => shortenPediaArtRelativePath(relativePath);
   if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
     const originalDir = normalizeRelativePath(path.posix.dirname(normalizedOriginal));
     const shouldPreserveOriginalDir = originalDir && originalDir !== '.' &&
       isExpectedReferenceArtDirectory(tabKey, group, index, originalDir);
     if (shouldPreserveOriginalDir) {
-      return normalizeRelativePath(path.posix.join(originalDir, baseName));
+      return fit(path.posix.join(originalDir, baseName));
     }
   }
   if (tabKey === 'civilizations' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Races', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Races', baseName));
   }
   if (tabKey === 'civilizations' && group === 'racePaths') {
     if (Number(index) === 0) {
-      return normalizeRelativePath(path.join('Art', 'Leaderheads', baseName));
+      return fit(path.join('Art', 'Leaderheads', baseName));
     }
-    return normalizeRelativePath(path.join('Art', 'Advisors', baseName));
+    return fit(path.join('Art', 'Advisors', baseName));
   }
   if (tabKey === 'improvements' && group === 'wonderSplashPath') {
-    return normalizeRelativePath(path.join('Art', 'Wonder Splash', baseName));
+    return fit(path.join('Art', 'Wonder Splash', baseName));
   }
   if (tabKey === 'improvements' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Buildings', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Buildings', baseName));
   }
   if (tabKey === 'technologies' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'tech chooser', 'Icons', baseName));
+    return fit(path.join('Art', 'tech chooser', 'Icons', baseName));
   }
   if (tabKey === 'units' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Units', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Units', baseName));
   }
   if (tabKey === 'resources' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Resources', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Resources', baseName));
   }
   if (tabKey === 'governments' && group === 'iconPaths') {
-    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Governments', baseName));
+    return fit(path.join('Art', 'Civilopedia', 'Icons', 'Governments', baseName));
   }
-  return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', baseName));
+  return fit(path.join('Art', 'Civilopedia', 'Icons', baseName));
 }
 
 function getExpectedReferenceArtDirectory(tabKey, group, index) {
@@ -10140,10 +14176,81 @@ function buildLocalizedArtBufferFromSource(sourcePath, targetSize = null) {
 function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWrites, saveReport }) {
   if (!targetContentRoot || !tabs) return { ok: true };
   const queued = new Map();
+  const queuedKeys = new Map();
+  const canonicalTargetKey = (targetPath) => path.resolve(String(targetPath || '')).toLowerCase();
+  const buffersEqual = (a, b) => {
+    const left = Buffer.isBuffer(a) ? a : Buffer.from(a || []);
+    const right = Buffer.isBuffer(b) ? b : Buffer.from(b || []);
+    return left.length === right.length && Buffer.compare(left, right) === 0;
+  };
+  const appendRelativePathSuffix = (relTarget, _suffix, attempt) => {
+    const suffix = String(_suffix || '').trim();
+    if (/^_icon\d+$/i.test(suffix)) {
+      const normalized = normalizeRelativePath(relTarget);
+      const ext = path.posix.extname(normalized) || '.pcx';
+      const dir = path.posix.dirname(normalized);
+      const stem = path.posix.basename(normalized, ext);
+      const numberedSuffix = attempt > 0 ? `${suffix}_${attempt + 1}` : suffix;
+      const nextBase = appendFileNameStemSuffix(`${stem}${ext}`, numberedSuffix);
+      return shortenPediaArtRelativePath(dir && dir !== '.' ? path.posix.join(dir, nextBase) : nextBase);
+    }
+    return appendNumericSuffixToPediaArtPath(relTarget, attempt);
+  };
+  const reserveRelativeArtTarget = (relTarget, data, context = {}) => {
+    let candidate = normalizeRelativePath(relTarget);
+    if (!candidate) return '';
+    const suffix = getReferenceArtCollisionSuffix(context.tabKey, context.group, context.index);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const targetPath = path.join(targetContentRoot, candidate.replace(/\//g, path.sep));
+      const key = canonicalTargetKey(targetPath);
+      const existingPath = queuedKeys.get(key);
+      if (!existingPath) {
+        if (fs.existsSync(targetPath)) {
+          let existingData = null;
+          try {
+            const stats = fs.statSync(targetPath);
+            if (stats && stats.isFile()) existingData = fs.readFileSync(targetPath);
+          } catch (_err) {
+            existingData = null;
+          }
+          if (existingData && buffersEqual(existingData, data)) return candidate;
+          candidate = appendRelativePathSuffix(relTarget, suffix, attempt);
+          continue;
+        }
+        queuedKeys.set(key, targetPath);
+        return candidate;
+      }
+      if (buffersEqual(queued.get(existingPath), data)) return candidate;
+      candidate = appendRelativePathSuffix(relTarget, suffix, attempt);
+    }
+    throw new Error(`Multiple referenced art files resolved to the same target path: ${relTarget}`);
+  };
   const queueFileWrite = (targetPath, data) => {
     const key = String(targetPath || '');
     if (!key) return;
     queued.set(key, data);
+  };
+  const replaceMatchingLocalizedReferences = (sourceValues, rawValue, originalValue, actualRelTarget, index, options = {}) => {
+    const allowRawDuplicates = !!(options && options.allowRawDuplicates);
+    const originalKey = normalizeAssetReferencePath(originalValue).toLowerCase();
+    const matchKeys = new Set([
+      allowRawDuplicates ? normalizeAssetReferencePath(rawValue).toLowerCase() : '',
+      originalKey
+    ].filter(Boolean));
+    let changed = false;
+    sourceValues.forEach((value, valueIndex) => {
+      const valueKey = normalizeAssetReferencePath(value).toLowerCase();
+      if (!valueKey || !matchKeys.has(valueKey)) return;
+      if (sourceValues[valueIndex] !== actualRelTarget) {
+        sourceValues[valueIndex] = actualRelTarget;
+        changed = true;
+      }
+    });
+    if (!changed && sourceValues[index] !== actualRelTarget) {
+      sourceValues[index] = actualRelTarget;
+      changed = true;
+    }
+    return changed;
   };
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = tabs[spec.key];
@@ -10157,6 +14264,9 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
         const sourceValues = Array.isArray(entry && entry[fieldKey]) ? [...entry[fieldKey]] : [];
         const originalValues = Array.isArray(entry && entry[originalFieldKey]) ? entry[originalFieldKey] : [];
         let changed = false;
+        const shouldLocalizeDuplicateReferences = spec.key === 'improvements' &&
+          fieldKey === 'iconPaths' &&
+          /^(ERA|CULTURE)$/i.test(String(entry && entry.buildingIconKind || '').trim());
         sourceValues.forEach((rawValue, index) => {
           const pendingConversion = getPendingReferenceArtConversion(entry, fieldKey, index);
           const pendingSource = getPendingReferenceArtSource(entry, fieldKey, index);
@@ -10192,12 +14302,16 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             if (!relTarget || !data) {
               throw new Error(`Could not convert referenced art file: ${String(pendingConversion.sourcePath || pendingSource || rawValue)}`);
             }
-            const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+            const actualRelTarget = reserveRelativeArtTarget(relTarget, data, {
+              tabKey: spec.key,
+              group: fieldKey,
+              index
+            });
+            const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
             queueFileWrite(targetPath, data);
-            if (sourceValues[index] !== relTarget) {
-              sourceValues[index] = relTarget;
-              changed = true;
-            }
+            changed = replaceMatchingLocalizedReferences(sourceValues, rawValue, originalValues[index], actualRelTarget, index, {
+              allowRawDuplicates: shouldLocalizeDuplicateReferences
+            }) || changed;
             return;
           }
           if (pendingSource && isAbsoluteFilesystemPath(pendingSource)) {
@@ -10228,17 +14342,22 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
             if (!relTarget) {
               throw new Error(`Could not determine scenario-relative target for art file: ${pendingSource}`);
             }
-            const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
-            queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(pendingSource, getReferenceArtTargetSizeForSave({
+            const data = buildLocalizedArtBufferFromSource(pendingSource, getReferenceArtTargetSizeForSave({
               tabKey: spec.key,
               group: fieldKey,
               index,
               entry
-            })));
-            if (sourceValues[index] !== relTarget) {
-              sourceValues[index] = relTarget;
-              changed = true;
-            }
+            }));
+            const actualRelTarget = reserveRelativeArtTarget(relTarget, data, {
+              tabKey: spec.key,
+              group: fieldKey,
+              index
+            });
+            const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
+            queueFileWrite(targetPath, data);
+            changed = replaceMatchingLocalizedReferences(sourceValues, rawValue, originalValues[index], actualRelTarget, index, {
+              allowRawDuplicates: shouldLocalizeDuplicateReferences
+            }) || changed;
             return;
           }
           if (!isAbsoluteFilesystemPath(normalized)) {
@@ -10269,14 +14388,20 @@ function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWr
           if (!relTarget) {
             throw new Error(`Could not determine scenario-relative target for art file: ${normalized}`);
           }
-          const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
-          queueFileWrite(targetPath, buildLocalizedArtBufferFromSource(normalized, getReferenceArtTargetSizeForSave({
+          const data = buildLocalizedArtBufferFromSource(normalized, getReferenceArtTargetSizeForSave({
             tabKey: spec.key,
             group: fieldKey,
             index,
             entry
-          })));
-          sourceValues[index] = relTarget;
+          }));
+          const actualRelTarget = reserveRelativeArtTarget(relTarget, data, {
+            tabKey: spec.key,
+            group: fieldKey,
+            index
+          });
+          const targetPath = path.join(targetContentRoot, actualRelTarget.replace(/\//g, path.sep));
+          queueFileWrite(targetPath, data);
+          sourceValues[index] = actualRelTarget;
           changed = true;
         });
         while (sourceValues.length > 0 && !String(sourceValues[sourceValues.length - 1] || '').trim()) {
@@ -10444,9 +14569,42 @@ function toWindowsRelativeAssetPath(rawPath) {
   return normalized.replace(/\//g, '\\');
 }
 
+function parseUnitArtFolderReference(rawPath) {
+  const normalized = normalizeAssetReferencePath(rawPath);
+  if (!normalized) return null;
+  const lower = normalized.toLowerCase();
+  const marker = '/art/units/';
+  let start = -1;
+  const idx = lower.lastIndexOf(marker);
+  if (idx >= 0) start = idx + marker.length;
+  else if (lower.startsWith('art/units/')) start = 'art/units/'.length;
+  if (start < 0) return null;
+  const rest = normalized.slice(start).replace(/^\/+/, '');
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  return {
+    folder: parts[0],
+    tail: parts.slice(1).join('/')
+  };
+}
+
+function normalizeUnitArtLogicalReferencePath(rawPath, animationName) {
+  const currentFolder = String(animationName || '').trim();
+  if (!currentFolder) return '';
+  const target = parseUnitArtFolderReference(rawPath);
+  if (!target || !target.folder || !target.tail) return '';
+  const rel = target.folder.toLowerCase() === currentFolder.toLowerCase()
+    ? target.tail
+    : `../${target.folder}/${target.tail}`;
+  return toWindowsRelativeAssetPath(rel);
+}
+
 function normalizeUnitIniAnimationReferencePath(rawPath, { entry, targetPath, scenarioDir }) {
   const normalized = normalizeAssetReferencePath(rawPath);
   if (!normalized) return '';
+  const animationName = String(entry && entry.animationName || '').trim();
+  const logicalUnitPath = normalizeUnitArtLogicalReferencePath(normalized, animationName);
+  if (logicalUnitPath) return logicalUnitPath;
   const targetDir = path.dirname(String(targetPath || '').trim());
   if (!targetDir) return toWindowsRelativeAssetPath(normalized);
   if (isAbsoluteFilesystemPath(normalized)) {
@@ -10460,7 +14618,6 @@ function normalizeUnitIniAnimationReferencePath(rawPath, { entry, targetPath, sc
       return toWindowsRelativeAssetPath(path.relative(targetDir, absolute));
     }
   }
-  const animationName = String(entry && entry.animationName || '').trim();
   if (animationName) {
     const prefix = `${animationName}/`;
     if (scenarioRelative.toLowerCase().startsWith(prefix.toLowerCase())) {
@@ -10476,14 +14633,15 @@ function normalizeUnitIniSectionsForSave(sections, { entry, targetPath, scenario
     const name = String(section && section.name || '').trim();
     if (!name) return;
     const fields = [];
-    const isAnimations = name.toUpperCase() === 'ANIMATIONS';
+    const sectionUpper = name.toUpperCase();
+    const isRuntimeReferenceSection = sectionUpper === 'ANIMATIONS' || sectionUpper === 'SOUND EFFECTS';
     (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
       const key = String(field && field.key || '').trim();
       if (!key) return;
       const rawValue = String(field && field.value || '');
       fields.push({
         key,
-        value: isAnimations
+        value: isRuntimeReferenceSection
           ? normalizeUnitIniAnimationReferencePath(rawValue, { entry, targetPath, scenarioDir })
           : rawValue
       });
@@ -10561,6 +14719,117 @@ function collectUnitIniReferenceEdits(tabs, scenarioDir) {
       targetPath,
       actions: nextRows,
       originalActions: prevRows
+    });
+  });
+  return out;
+}
+
+function getIniManifestSectionFields(manifest, sectionName) {
+  const target = String(sectionName || '').trim().toUpperCase();
+  const section = (Array.isArray(manifest && manifest.sections) ? manifest.sections : [])
+    .find((candidate) => String(candidate && candidate.name || '').trim().toUpperCase() === target);
+  return (Array.isArray(section && section.fields) ? section.fields : [])
+    .map((field) => ({
+      key: String(field && field.key || '').trim(),
+      keyUpper: String(field && (field.keyUpper || field.key) || '').trim().toUpperCase(),
+      value: String(field && field.value || '')
+    }))
+    .filter((field) => field.key);
+}
+
+function isSafeRelativeTileAnimationIniPath(value) {
+  const rel = normalizeRelativePath(value);
+  if (!rel) return false;
+  if (isAbsoluteFilesystemPath(value)) return false;
+  return !rel.split('/').some((part) => part === '..');
+}
+
+function normalizeTileAnimationIniRepairRelativePath(value) {
+  let rel = normalizeRelativePath(value);
+  if (rel.toLowerCase().startsWith('art/animations/')) rel = rel.slice('art/animations/'.length);
+  if (!rel) return '';
+  if (!/\.[A-Za-z0-9]+$/.test(path.basename(rel))) rel = `${rel}.INI`;
+  return rel;
+}
+
+function buildCanonicalTileAnimationIniBuffer({ sourcePath, flcFileName }) {
+  const flc = String(flcFileName || '').trim();
+  if (!/\.flc$/i.test(flc) || /[\\/]/.test(flc)) {
+    return { ok: false, error: `Invalid tile animation FLC file name: ${flc || '(empty)'}` };
+  }
+  const source = String(sourcePath || '').trim();
+  let lineEnding = '\r\n';
+  let manifest = null;
+  if (source && fs.existsSync(source)) {
+    const raw = fs.readFileSync(source);
+    const text = raw.toString('latin1');
+    lineEnding = text.includes('\r\n') ? '\r\n' : '\n';
+    manifest = parseUnitAnimationIni(source);
+  }
+  const speedFields = getIniManifestSectionFields(manifest, 'Speed');
+  const timingFields = getIniManifestSectionFields(manifest, 'Timing');
+  const versionFields = getIniManifestSectionFields(manifest, 'Version');
+  const paletteFields = getIniManifestSectionFields(manifest, 'Palette');
+  const lines = [];
+  const pushSection = (name, fields) => {
+    if (lines.length > 0) lines.push('');
+    lines.push(`[${name}]`);
+    fields.forEach((field) => {
+      lines.push(`${field.key}=${field.value}`);
+    });
+  };
+  pushSection('Speed', speedFields.length > 0 ? speedFields : [
+    { key: 'Normal Speed', value: '225' },
+    { key: 'Fast Speed', value: '225' }
+  ]);
+  pushSection('Animations', TILE_ANIMATION_INI_ANIMATION_KEYS.map((key) => ({
+    key,
+    value: String(key).toUpperCase() === 'DEFAULT' || String(key).toUpperCase() === 'ATTACK1' ? flc : ''
+  })));
+  if (timingFields.length > 0) pushSection('Timing', timingFields);
+  pushSection('Sound Effects', TILE_ANIMATION_INI_ANIMATION_KEYS.map((key) => ({ key, value: '' })));
+  pushSection('Version', versionFields.length > 0 ? versionFields : [{ key: 'VERSION', value: '1' }]);
+  pushSection('Palette', paletteFields.length > 0 ? paletteFields : [{ key: 'PALETTE', value: '' }]);
+  const text = `${lines.join(lineEnding).replace(/\r?\n$/g, '')}${lineEnding}`;
+  return { ok: true, buffer: Buffer.from(text, 'latin1') };
+}
+
+function collectTileAnimationIniRepairs(tabs, { mode, c3xPath, scenarioContentRoot }) {
+  const out = [];
+  const sections = (((tabs || {}).animations || {}).model || {}).sections;
+  if (!Array.isArray(sections)) return out;
+  sections.forEach((section) => {
+    const pending = section && section.pendingTileAnimationIniRepair;
+    if (!pending || typeof pending !== 'object') return;
+    if (mode !== 'scenario') {
+      out.push({ ok: false, error: 'Tile Animation INI repairs can only be staged in Scenario mode.' });
+      return;
+    }
+    const rawIniPath = pending.iniPath || getSectionFieldDisplayName(section, 'ini_path', '') || '';
+    const rel = normalizeTileAnimationIniRepairRelativePath(rawIniPath);
+    if (!rel || !isSafeRelativeTileAnimationIniPath(rel)) {
+      out.push({ ok: false, error: `Unsafe tile animation INI path: ${String(rawIniPath || '').trim() || '(empty)'}` });
+      return;
+    }
+    const root = mode === 'scenario' ? String(scenarioContentRoot || '').trim() : String(c3xPath || '').trim();
+    if (!root) {
+      out.push({ ok: false, error: 'Could not resolve the Tile Animation INI repair target root.' });
+      return;
+    }
+    const targetPath = path.join(root, 'Art', 'Animations', rel.replace(/\//g, path.sep));
+    const built = buildCanonicalTileAnimationIniBuffer({
+      sourcePath: String(pending.sourcePath || '').trim(),
+      flcFileName: String(pending.flcFileName || '').trim()
+    });
+    if (!built.ok) {
+      out.push({ ok: false, error: built.error || 'Failed to build Tile Animation INI repair.' });
+      return;
+    }
+    out.push({
+      ok: true,
+      targetPath,
+      sourcePath: String(pending.sourcePath || '').trim(),
+      buffer: built.buffer
     });
   });
   return out;
@@ -10808,6 +15077,7 @@ function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath, textEnco
 module.exports = {
   FILE_SPECS,
   normalizeTextFileEncoding,
+  encodeTextBuffer,
   detectTextFileEncodingFromBuffer,
   detectBiqTextEncodingFromBuffer,
   readTextFileWithEncodingInfoIfExists,
@@ -10822,11 +15092,13 @@ module.exports = {
   parseIniSectionMap,
   parseSectionFieldDocs,
   buildScenarioCivilopediaEditResult,
+  buildScenarioCivilopediaRepairResult,
   parseCivilopediaDocumentWithOrder,
   serializeCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder,
   serializePediaIconsDocumentWithOrder,
   buildScenarioPediaIconsEditResult,
+  buildScenarioPediaIconsRepairResult,
   buildScenarioDiplomacyEditResult,
   collectPediaIconsReferenceEdits,
   pickScenarioReferenceArtTargetRelativePath,
@@ -10837,11 +15109,17 @@ module.exports = {
   buildEffectiveReferenceTabs,
   resolveScenarioDir,
   resolveBiqPath,
+  inspectScenarioCivColorPalettes,
   createScenario,
   deleteScenario,
+  loadMapImport,
   materializeMapTab,
   parseBiqSectionsFromBuffer,
   resolvePaths,
+  loadMusicTab,
+  normalizeMusicRelativePath,
+  inferStockMusicCellFromPath,
+  inspectAudioFileBasic,
   loadBundle,
   saveBundle,
   previewSavePlan,
@@ -10854,13 +15132,30 @@ module.exports = {
   getNextResourceAtlasAssignmentSlot,
   appendResourceIconToResourcesPcx,
   applyImportedResourceIconAtlasAssignments,
+  getIndexedLuxuryIconsSmallAtlas,
+  findNextLuxuryIconsSmallAtlasSlot,
+  getResourceLuxuryOrdinal,
+  appendLuxuryIconToLuxuryIconsSmallPcx,
+  applyImportedLuxuryIconAtlasAssignments,
   findNextUnitAtlasSlot,
   getNextUnitAtlasAssignmentSlot,
   appendUnitIconToUnits32Pcx,
   applyImportedUnitIconAtlasAssignments,
+  findNextBuildingCityAtlasRow,
+  findNextBuildingCityAtlasPairRow,
+  getNextBuildingCityAtlasAssignmentRow,
+  appendBuildingCityIconRowToAtlas,
+  appendBuildingCityIconRowToAtlases,
+  applyImportedBuildingCityIconAtlasAssignments,
+  buildScienceAdvisorArrowRoutesForEra,
+  prepareScienceAdvisorArrowArtWrites,
+  loadScienceAdvisorArrowMetadata,
+  buildScienceAdvisorArrowMetadataWrite,
+  countScienceAdvisorUnlockIconsForTech,
   previewFileDiff,
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,
   isPrtoStrategyMapRecord,
-  buildPrtoStrategyMapAliases
+  buildPrtoStrategyMapAliases,
+  collectUnitRuntimeDependencyCopiesForImportedAnimation
 };

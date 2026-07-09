@@ -628,6 +628,27 @@ function parseEditInt(value, fallback = NaN) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseEditBoolish(value) {
+  const raw = String(value == null ? '' : value).trim().toLowerCase();
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on' || raw === 'enabled') return true;
+  if (raw === '' || raw === '0' || raw === 'false' || raw === 'no' || raw === 'off' || raw === 'disabled') return false;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed !== 0 : false;
+}
+
+function parseLeadCivilizationValue(value, fallback = -3) {
+  const raw = String(value == null ? '' : value).trim();
+  if (/^any(?:\s*\(|$)/i.test(raw)) return -3;
+  if (/^random(?:\s*\(|$)/i.test(raw)) return -2;
+  return parseEditInt(raw, fallback);
+}
+
+function parseLeadDifficultyValue(value, fallback = -2) {
+  const raw = String(value == null ? '' : value).trim();
+  if (/^any(?:\s*\(|$)/i.test(raw)) return -2;
+  return parseEditInt(raw, fallback);
+}
+
 function ensureArraySize(arr, size, fillValue) {
   const next = Array.isArray(arr) ? arr.slice() : [];
   while (next.length < size) next.push(fillValue);
@@ -1127,7 +1148,7 @@ function serializeGAME(rec, io) {
   writeStr(w, rec.scenarioSearchFolders || '', 5200);
 
   const cpa = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
-  for (let i = 0; i < civIds.length; i++) w.writeInt((cpa[i] != null ? cpa[i] : 4) | 0);
+  for (let i = 0; i < civIds.length; i++) w.writeInt((cpa[i] != null ? cpa[i] : 0) | 0);
 
   w.writeInt(rec.victoryPointLimit | 0);
   w.writeInt(rec.cityEliminationCount | 0);
@@ -1255,7 +1276,17 @@ function toEnglishGAME(rec, io) {
   pairs.push(['alliance4', rec.alliance4 || '']);
   pairs.push(['allianceVictoryType', String(rec.allianceVictoryType | 0)]);
 
-  // warWith flags (display only, not writable)
+  const allianceAssignments = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
+  civIds.forEach((id, pos) => {
+    const civId = Number.parseInt(String(id), 10);
+    if (!Number.isFinite(civId) || civId < 0) return;
+    const allianceIdx = Number.parseInt(String(allianceAssignments[pos]), 10);
+    for (let k = 0; k < 5; k++) {
+      pairs.push([`alliance${k}_member_${civId}`, String(allianceIdx === k ? 1 : 0)]);
+    }
+  });
+
+  // warWith flags
   const ww = Array.isArray(rec.warWith) ? rec.warWith : [[], [], [], [], []];
   for (let k = 0; k < 5; k++) {
     const arr = Array.isArray(ww[k]) ? ww[k] : [];
@@ -1287,8 +1318,10 @@ function toEnglishGAME(rec, io) {
   return lines(pairs);
 }
 
-// scenarioSearchFolders and warWith are read-only; all other named fields are writable
+// GAME scenarioSearchFolders is writable so scenario save/reload can persist
+// explicit user search-root changes and auto-localized search folders.
 const WRITABLE_GAME = [
+  'scenario_search_folders',
   'use_default_rules', 'default_victory_conditions',
   'domination_enabled', 'space_race_enabled', 'diplomactic_enabled',
   'conquest_enabled', 'cultural_enabled', 'civ_specific_abilities_enabled',
@@ -2144,6 +2177,11 @@ function toEnglishRULE(rec, io) {
   for (const sn of RULE_VISIBLE_SCALAR_NAMES) {
     pairs.push([sn, String((rec[sn] != null ? rec[sn] : 0) | 0)]);
   }
+  const cultureLevels = Array.isArray(rec.culturalLevelNames) ? rec.culturalLevelNames : [];
+  pairs.push(['numCultureLevels', String(cultureLevels.length)]);
+  cultureLevels.forEach((name, i) => {
+    pairs.push([`cultural_level_${i}`, name || '']);
+  });
   pairs.push(['borderExpansionMultiplier', String((rec.borderExpansionMultiplier != null ? rec.borderExpansionMultiplier : 0) | 0)]);
   pairs.push(['borderFactor', String((rec.borderFactor != null ? rec.borderFactor : 10) | 0)]);
   for (const sn of RULE_TRAILING_SCALAR_NAMES) {
@@ -2752,6 +2790,11 @@ function getPrtoStrategyBits(value) {
   return bits;
 }
 
+function isPrtoPrimaryRecord(record) {
+  const otherStrategy = Number(record && record.otherStrategy);
+  return !Number.isFinite(otherStrategy) || otherStrategy < 0;
+}
+
 function buildQuintPrtoOutputRecords(records) {
   const source = Array.isArray(records) ? records : [];
   const duplicatesByPrimary = new Map();
@@ -2799,6 +2842,278 @@ function buildQuintPrtoOutputRecords(records) {
   });
 
   return output;
+}
+
+function normalizeReorderIndexList(order) {
+  if (!Array.isArray(order)) return [];
+  return order
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+}
+
+function summarizeIndexListForLog(values, limit = 12) {
+  const normalized = (Array.isArray(values) ? values : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  const cap = Math.max(1, Number(limit) || 12);
+  const head = normalized.slice(0, cap).join(',');
+  const tail = normalized.length > cap ? normalized.slice(-cap).join(',') : '';
+  let checksum = 0;
+  normalized.forEach((value, index) => {
+    checksum = (checksum + ((value + 1) * (index + 17))) % 1000000007;
+  });
+  return `count:${normalized.length};head:${head || '(empty)'}${tail ? `;tail:${tail}` : ''};checksum:${checksum}`;
+}
+
+function summarizeRemapChangedPairsForLog(remap, limit = 16) {
+  const oldToNew = remap && remap.oldToNew;
+  if (!oldToNew || typeof oldToNew.forEach !== 'function') return 'count:0;sample:(none)';
+  const cap = Math.max(1, Number(limit) || 16);
+  const samples = [];
+  let changed = 0;
+  oldToNew.forEach((nextIndex, oldIndex) => {
+    if (Number(oldIndex) === Number(nextIndex)) return;
+    changed += 1;
+    if (samples.length < cap) samples.push(`${oldIndex}->${nextIndex}`);
+  });
+  return `count:${changed};sample:${samples.join(',') || '(none)'}`;
+}
+
+function countRemappedIndexForLog(value, remap, fallback = -1) {
+  const current = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(current) || current < 0) return 0;
+  const next = remapDeletedSectionIndex(current, remap, fallback);
+  return Number(next) !== current ? 1 : 0;
+}
+
+function countRemappedIndexListForLog(values, remap) {
+  return (Array.isArray(values) ? values : [])
+    .reduce((count, value) => count + countRemappedIndexForLog(value, remap, null), 0);
+}
+
+function summarizePrtoReferenceRemapTouchesForLog(parsed, prtoRemap) {
+  if (!prtoRemap) return '(none)';
+  const touched = [];
+  const countSectionField = (sectionCode, fieldKey, fallback = -1) => {
+    const section = getSectionByCode(parsed, sectionCode);
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    return records.reduce((count, rec) => count + countRemappedIndexForLog(rec && rec[fieldKey], prtoRemap, fallback), 0);
+  };
+  const add = (label, count) => {
+    if (count > 0) touched.push(`${label}:${count}`);
+  };
+  add('RACE.kingUnit', countSectionField('RACE', 'kingUnit', -1));
+  add('BLDG.unitProduced', countSectionField('BLDG', 'unitProduced', -1));
+  const prtoSection = getSectionByCode(parsed, 'PRTO');
+  const prtoRecords = Array.isArray(prtoSection && prtoSection.records) ? prtoSection.records : [];
+  add('PRTO.upgradeTo', prtoRecords.reduce((count, rec) => count + countRemappedIndexForLog(rec && rec.upgradeTo, prtoRemap, -1), 0));
+  add('PRTO.enslaveResultsIn', prtoRecords.reduce((count, rec) => count + countRemappedIndexForLog(rec && rec.enslaveResultsIn, prtoRemap, -1), 0));
+  add('PRTO.legalUnitTelepads', prtoRecords.reduce((count, rec) => count + countRemappedIndexListForLog(rec && rec.legalUnitTelepads, prtoRemap), 0));
+  add('PRTO.stealthTargets', prtoRecords.reduce((count, rec) => count + countRemappedIndexListForLog(rec && rec.stealthTargets, prtoRemap), 0));
+  const ruleFields = [
+    'advancedBarbarian', 'basicBarbarian', 'barbarianSeaUnit', 'battleCreatedUnit',
+    'buildArmyUnit', 'scout', 'slave', 'startUnit1', 'startUnit2', 'flagUnit'
+  ];
+  const ruleSection = getSectionByCode(parsed, 'RULE');
+  const ruleRecords = Array.isArray(ruleSection && ruleSection.records) ? ruleSection.records : [];
+  add('RULE.defaultUnits', ruleRecords.reduce((count, rec) => {
+    return count + ruleFields.reduce((fieldCount, key) => fieldCount + countRemappedIndexForLog(rec && rec[key], prtoRemap, -1), 0);
+  }, 0));
+  add('UNIT.pRTONumber', countSectionField('UNIT', 'pRTONumber', -1));
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const leadRecords = Array.isArray(leadSection && leadSection.records) ? leadSection.records : [];
+  add('LEAD.startUnits', leadRecords.reduce((count, rec) => {
+    const startUnits = Array.isArray(rec && rec.startUnits) ? rec.startUnits : [];
+    return count + startUnits.reduce((unitCount, entry) => unitCount + countRemappedIndexForLog(entry && entry.startUnitIndex, prtoRemap, -1), 0);
+  }, 0));
+  return touched.join(',') || '(none)';
+}
+
+function buildReorderRemap(order, expectedCount = NaN) {
+  const normalized = normalizeReorderIndexList(order);
+  const count = Number.isFinite(Number(expectedCount)) ? Number(expectedCount) : normalized.length;
+  if (normalized.length !== count) {
+    return { ok: false, error: `Reorder expected ${count} index(es), got ${normalized.length}.` };
+  }
+  const seen = new Set();
+  const oldToNew = new Map();
+  for (let newIndex = 0; newIndex < normalized.length; newIndex += 1) {
+    const oldIndex = normalized[newIndex];
+    if (oldIndex < 0 || oldIndex >= count) {
+      return { ok: false, error: `Reorder index ${oldIndex} is outside 0..${Math.max(0, count - 1)}.` };
+    }
+    if (seen.has(oldIndex)) {
+      return { ok: false, error: `Reorder contains duplicate index ${oldIndex}.` };
+    }
+    seen.add(oldIndex);
+    oldToNew.set(oldIndex, newIndex);
+  }
+  return {
+    ok: true,
+    remap: {
+      oldCount: count,
+      finalCount: count,
+      oldToNew
+    },
+    order: normalized
+  };
+}
+
+function buildPrtoPrimaryReorderRemap(order, oldCount, deletedIndices = []) {
+  const normalized = normalizeReorderIndexList(order);
+  const count = Number(oldCount);
+  if (!Number.isInteger(count) || count < 0) {
+    return { ok: false, error: 'PRTO reorder could not determine the original unit count.' };
+  }
+  const deletedSet = new Set((Array.isArray(deletedIndices) ? deletedIndices : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value < count));
+  const expectedLength = Math.max(0, count - deletedSet.size);
+  if (normalized.length !== expectedLength) {
+    return { ok: false, error: `Reorder expected ${expectedLength} surviving PRTO index(es), got ${normalized.length}.` };
+  }
+  const seen = new Set();
+  const oldToNew = new Map();
+  for (let newIndex = 0; newIndex < normalized.length; newIndex += 1) {
+    const oldIndex = normalized[newIndex];
+    if (oldIndex < 0 || oldIndex >= count) {
+      return { ok: false, error: `Reorder index ${oldIndex} is outside 0..${Math.max(0, count - 1)}.` };
+    }
+    if (deletedSet.has(oldIndex)) {
+      return { ok: false, error: `Reorder still includes deleted PRTO index ${oldIndex}.` };
+    }
+    if (seen.has(oldIndex)) {
+      return { ok: false, error: `Reorder contains duplicate PRTO index ${oldIndex}.` };
+    }
+    seen.add(oldIndex);
+    oldToNew.set(oldIndex, newIndex);
+  }
+  for (let oldIndex = 0; oldIndex < count; oldIndex += 1) {
+    if (deletedSet.has(oldIndex)) continue;
+    if (!seen.has(oldIndex)) {
+      return { ok: false, error: `Reorder is missing surviving PRTO index ${oldIndex}.` };
+    }
+  }
+  return {
+    ok: true,
+    remap: {
+      oldCount: count,
+      finalCount: normalized.length,
+      oldToNew
+    },
+    order: normalized
+  };
+}
+
+function getPrtoRecordOriginalPrimaryIndex(record) {
+  const original = Number(record && record._originalPrimaryIndex);
+  if (Number.isInteger(original) && original >= 0) return original;
+  const current = Number(record && record.index);
+  return Number.isInteger(current) && current >= 0 ? current : NaN;
+}
+
+function getPrtoRecordOriginalOtherStrategy(record) {
+  const original = Number(record && record._originalOtherStrategy);
+  if (Number.isInteger(original) && original >= 0) return original;
+  const current = Number(record && record.otherStrategy);
+  return Number.isInteger(current) && current >= 0 ? current : NaN;
+}
+
+function applyPrtoPrimaryReorder(section, order) {
+  if (!section || !Array.isArray(section.records)) {
+    return { ok: false, error: 'PRTO section is missing records.' };
+  }
+  const records = section.records;
+  const primaries = records.filter(isPrtoPrimaryRecord);
+  const normalizedOrder = normalizeReorderIndexList(order);
+
+  const primaryByOldIndex = new Map();
+  primaries.forEach((record) => {
+    const oldIndex = getPrtoRecordOriginalPrimaryIndex(record);
+    if (Number.isInteger(oldIndex) && oldIndex >= 0) primaryByOldIndex.set(oldIndex, record);
+  });
+
+  const nextPrimaries = [];
+  const usedPrimaries = new Set();
+  const oldToNew = new Map();
+  for (const oldIndex of normalizedOrder) {
+    const record = primaryByOldIndex.get(oldIndex);
+    if (!record) {
+      return { ok: false, error: `PRTO reorder could not find primary unit index ${oldIndex}.` };
+    }
+    if (usedPrimaries.has(record)) {
+      return { ok: false, error: `PRTO reorder contains duplicate primary unit index ${oldIndex}.` };
+    }
+    oldToNew.set(oldIndex, nextPrimaries.length);
+    usedPrimaries.add(record);
+    nextPrimaries.push(record);
+  }
+  primaries.forEach((record) => {
+    if (usedPrimaries.has(record)) return;
+    const oldIndex = getPrtoRecordOriginalPrimaryIndex(record);
+    if (Number.isInteger(oldIndex) && oldIndex >= 0) oldToNew.set(oldIndex, nextPrimaries.length);
+    nextPrimaries.push(record);
+  });
+
+  const beforeOrder = primaries.map((record) => Number(record && record.index)).join(',');
+  const afterOrder = nextPrimaries.map((record) => Number(record && record.index)).join(',');
+  if (beforeOrder === afterOrder) {
+    log.debug('BiqApplyEdits', `op=reorder PRTO plan unchanged primaryCount=${primaries.length} childRows=${records.length - primaries.length} order=${summarizeIndexListForLog(normalizedOrder)} changedPrimaries=${summarizeRemapChangedPairsForLog({ oldToNew })}`);
+    return {
+      ok: true,
+      changed: false,
+      remap: {
+        oldCount: primaries.length,
+        finalCount: primaries.length,
+        oldToNew
+      }
+    };
+  }
+
+  nextPrimaries.forEach((record, newIndex) => {
+    record.index = newIndex;
+    if (record._rawData) delete record._rawData;
+    if (record._rawRecord) delete record._rawRecord;
+  });
+
+  const children = records.filter((record) => !isPrtoPrimaryRecord(record));
+  let childOtherStrategyRemaps = 0;
+  let childRowsWithoutPrimary = 0;
+  const childRemapSamples = [];
+  children.forEach((record) => {
+    const oldOther = getPrtoRecordOriginalOtherStrategy(record);
+    if (oldToNew.has(oldOther)) {
+      const nextOther = oldToNew.get(oldOther);
+      if (Number(nextOther) !== Number(oldOther)) {
+        childOtherStrategyRemaps += 1;
+        if (childRemapSamples.length < 16) {
+          childRemapSamples.push(`${record && record.index}:${oldOther}->${nextOther}`);
+        }
+      }
+      record.otherStrategy = nextOther;
+    } else {
+      childRowsWithoutPrimary += 1;
+    }
+    if (record._rawData) delete record._rawData;
+    if (record._rawRecord) delete record._rawRecord;
+  });
+  log.debug('BiqApplyEdits', `op=reorder PRTO plan primaryCount=${primaries.length} childRows=${children.length} order=${summarizeIndexListForLog(normalizedOrder)} changedPrimaries=${summarizeRemapChangedPairsForLog({ oldToNew })} childOtherStrategyRemaps=${childOtherStrategyRemaps}/${children.length} childSamples=${childRemapSamples.join(',') || '(none)'} childRowsWithoutPrimary=${childRowsWithoutPrimary}`);
+
+  section.records = nextPrimaries.concat(children);
+  section.records.forEach((record, index) => {
+    if (!record) return;
+    if (!isPrtoPrimaryRecord(record)) record.index = index;
+  });
+  section._modified = true;
+  return {
+    ok: true,
+    changed: true,
+    remap: {
+      oldCount: primaryByOldIndex.size,
+      finalCount: nextPrimaries.length,
+      oldToNew
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2885,6 +3200,48 @@ function dropPrtoStrategyMapDuplicates(records, primaryIndex, keepRecord) {
   }
   if (changed) records.forEach((record, idx) => { if (record) record.index = idx; });
   return changed;
+}
+
+function reconcilePrtoStrategyMapAfterPrimaryDelete(records, deletedPrimaryIndex, deletedRecord) {
+  if (!Array.isArray(records) || !Number.isFinite(deletedPrimaryIndex) || deletedPrimaryIndex < 0) {
+    return { removed: 0, shifted: 0 };
+  }
+  let removed = 0;
+  let shifted = 0;
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const record = records[i];
+    if (!record || record === deletedRecord) continue;
+    const otherStrategy = Number(record && record.otherStrategy);
+    if (!Number.isFinite(otherStrategy) || otherStrategy < 0) continue;
+    if (otherStrategy === deletedPrimaryIndex) {
+      records.splice(i, 1);
+      removed += 1;
+      continue;
+    }
+    if (otherStrategy > deletedPrimaryIndex) {
+      record.otherStrategy = otherStrategy - 1;
+      shifted += 1;
+    }
+  }
+  return { removed, shifted };
+}
+
+function mergePrtoStrategyMapRowsForCopy(records, sourceRecord, copiedRecord) {
+  if (!Array.isArray(records) || !sourceRecord || !copiedRecord) return false;
+  const sourceOtherStrategy = Number(sourceRecord && sourceRecord.otherStrategy);
+  if (Number.isFinite(sourceOtherStrategy) && sourceOtherStrategy >= 0) return false;
+  const sourceIndex = Number(sourceRecord && sourceRecord.index);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) return false;
+  let merged = Number(copiedRecord && copiedRecord.AIStrategy) | 0;
+  records.forEach((record) => {
+    if (!record || record === sourceRecord) return;
+    const otherStrategy = Number(record && record.otherStrategy);
+    if (!Number.isFinite(otherStrategy) || otherStrategy !== sourceIndex) return;
+    merged |= Number(record && record.AIStrategy) | 0;
+  });
+  if ((Number(copiedRecord && copiedRecord.AIStrategy) | 0) === merged) return false;
+  copiedRecord.AIStrategy = merged;
+  return true;
 }
 
 function applySetToRecord(rec, fieldKey, value, code, io) {
@@ -3076,7 +3433,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     if (ck === 'numberofplayablecivs') {
       const n = Math.max(0, parseEditInt(value, 0));
       rec.playableCivIds = ensureArraySize(rec.playableCivIds, n, -1).slice(0, n);
-      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, n, 4).slice(0, n);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, n, 0).slice(0, n);
       rec.numPlayableCivs = n;
       return true;
     }
@@ -3086,7 +3443,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
         .map((part) => parseEditInt(part, NaN))
         .filter((part) => Number.isFinite(part) && part >= 0);
       rec.playableCivIds = ids;
-      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, ids.length, 4).slice(0, ids.length);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, ids.length, 0).slice(0, ids.length);
       rec.numPlayableCivs = ids.length;
       return true;
     }
@@ -3096,7 +3453,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
       if (!Number.isFinite(idx) || idx < 0) return false;
       rec.playableCivIds = ensureArraySize(rec.playableCivIds, idx + 1, -1);
       rec.playableCivIds[idx] = parseEditInt(value, -1);
-      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, rec.playableCivIds.length, 4).slice(0, rec.playableCivIds.length);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, rec.playableCivIds.length, 0).slice(0, rec.playableCivIds.length);
       rec.numPlayableCivs = rec.playableCivIds.length;
       return true;
     }
@@ -3116,6 +3473,32 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
       rec.timeUnitsPerTurn[idx] = parseEditInt(value, 0);
       return true;
     }
+    const allianceMemberMatch = ck.match(/^alliance(\d+)member(\d+)$/);
+    if (allianceMemberMatch) {
+      const allianceIdx = Number.parseInt(allianceMemberMatch[1], 10);
+      const civId = Number.parseInt(allianceMemberMatch[2], 10);
+      if (!Number.isFinite(allianceIdx) || allianceIdx < 0 || allianceIdx > 4 || !Number.isFinite(civId) || civId < 0) return true;
+      const playableIds = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
+      const civPos = playableIds.findIndex((id) => Number.parseInt(String(id), 10) === civId);
+      if (civPos < 0) return true;
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, playableIds.length, 0).slice(0, playableIds.length);
+      if (parseEditBoolish(value)) {
+        rec.civPartOfWhichAlliance[civPos] = allianceIdx;
+      } else if (Number.parseInt(String(rec.civPartOfWhichAlliance[civPos]), 10) === allianceIdx) {
+        rec.civPartOfWhichAlliance[civPos] = 0;
+      }
+      return true;
+    }
+    const allianceWarMatch = ck.match(/^alliance(\d+)isatwarwithalliance([0-4])(?:\d+)?$/);
+    if (allianceWarMatch) {
+      const allianceIdx = Number.parseInt(allianceWarMatch[1], 10);
+      const enemyIdx = Number.parseInt(allianceWarMatch[2], 10);
+      if (!Number.isFinite(allianceIdx) || allianceIdx < 0 || allianceIdx > 4 || !Number.isFinite(enemyIdx) || enemyIdx < 0 || enemyIdx > 4) return true;
+      rec.warWith = ensureArraySize(rec.warWith, 5, null).slice(0, 5);
+      rec.warWith[allianceIdx] = ensureArraySize(rec.warWith[allianceIdx], 5, 0).slice(0, 5);
+      rec.warWith[allianceIdx][enemyIdx] = parseEditBoolish(value) ? 1 : 0;
+      return true;
+    }
     const VCR_FLAG_BITS = {
       dominationenabled: 0, spaceraceenabled: 1, diplomacticenabled: 2,
       conquestenabled: 3, culturalenabled: 4, civspecificabilitiesenabled: 5,
@@ -3130,6 +3513,46 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
       const on = value === '1' || value === 'true';
       const cur = rec.victoryConditionsAndRules | 0;
       rec.victoryConditionsAndRules = on ? (cur | (1 << bit)) : (cur & ~(1 << bit));
+      return true;
+    }
+  }
+
+  if (code === 'RULE') {
+    if (ck === 'numspaceshipparts') return true;
+    if (ck === 'numculturelevels') {
+      const n = Math.max(0, parseEditInt(value, 0));
+      rec.culturalLevelNames = ensureArraySize(rec.culturalLevelNames, n, '').slice(0, n);
+      rec.numCultureLevels = rec.culturalLevelNames.length;
+      return true;
+    }
+    const partReqMatch = ck.match(/^numberofparts(\d+)required$/);
+    if (partReqMatch) {
+      const idx = Number.parseInt(partReqMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.numberOfPartsRequired = ensureArraySize(rec.numberOfPartsRequired, idx + 1, 0);
+      rec.numberOfPartsRequired[idx] = parseEditInt(value, 0);
+      rec.numSSParts = rec.numberOfPartsRequired.length;
+      return true;
+    }
+    const cultureLevelMatch = ck.match(/^culturallevel(\d+)$/);
+    if (cultureLevelMatch) {
+      const idx = Number.parseInt(cultureLevelMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.culturalLevelNames = ensureArraySize(rec.culturalLevelNames, idx + 1, '');
+      rec.culturalLevelNames[idx] = String(value == null ? '' : value);
+      rec.numCultureLevels = rec.culturalLevelNames.length;
+      return true;
+    }
+  }
+
+  if (code === 'FLAV') {
+    const relationMatch = ck.match(/^relationwithflavor(\d+)$/);
+    if (relationMatch) {
+      const idx = Number.parseInt(relationMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.relations = ensureArraySize(rec.relations, idx + 1, 0);
+      rec.relations[idx] = parseEditInt(value, 0);
+      rec.numRelations = rec.relations.length;
       return true;
     }
   }
@@ -3199,6 +3622,17 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     }
     if (ck === 'improvementtype') {
       rec.improvementType = parseEditInt(value, 0);
+      return true;
+    }
+  }
+
+  if (code === 'LEAD') {
+    if (ck === 'civ') {
+      rec.civ = parseLeadCivilizationValue(value, -3);
+      return true;
+    }
+    if (ck === 'difficulty') {
+      rec.difficulty = parseLeadDifficultyValue(value, -2);
       return true;
     }
   }
@@ -3277,9 +3711,9 @@ function createDefaultRecord(code, civKey, io) {
         name, leaderTitle: '', civilopediaEntry: civKey, adjective: name, civilizationName: name, noun: name,
         forwardFilenames: Array(io.numEras).fill(''), reverseFilenames: Array(io.numEras).fill(''),
         cultureGroup: 0, leaderGender: 0, civilizationGender: 0, aggressionLevel: 0,
-        uniqueCivCounter: 0, shunnedGovernment: -1, favoriteGovernment: 0, defaultColor: 0, uniqueColor: 0,
+        uniqueCivCounter: 0, shunnedGovernment: -1, favoriteGovernment: -1, defaultColor: 0, uniqueColor: 0,
         freeTechs: [-1, -1, -1, -1], bonuses: 0, governorSettings: 0, buildNever: 0, buildOften: 0, plurality: 0,
-        kingUnit: -1, flavors: 0, questionMark: 0, diplomacyTextIndex: 0, numScientificLeaders: 0, scientificLeaderNames: []
+        kingUnit: -1, flavors: 0, questionMark: 0, diplomacyTextIndex: -1, numScientificLeaders: 0, scientificLeaderNames: []
       };
     }
     case 'PRTO': {
@@ -3313,12 +3747,15 @@ function createDefaultRecord(code, civKey, io) {
         leaderName: '',
         questionMark1: 0,
         questionMark2: 0,
-        numStartUnits: 0,
-        startUnits: [],
+        numStartUnits: 2,
+        startUnits: [
+          { startUnitCount: 1, startUnitIndex: 0 },
+          { startUnitCount: 1, startUnitIndex: 1 }
+        ],
         genderOfLeaderName: 0,
         numStartTechs: 0,
         techIndices: [],
-        difficulty: -1,
+        difficulty: -2,
         initialEra: 0,
         startCash: 10,
         government: 1,
@@ -3349,19 +3786,430 @@ function createDefaultRecord(code, civKey, io) {
 // copyRecord: deep clone a record
 // ---------------------------------------------------------------------------
 
-function copyRecord(src) {
-  const clone = {};
-  for (const [k, v] of Object.entries(src)) {
-    if (Buffer.isBuffer(v)) clone[k] = Buffer.from(v);
-    else if (Array.isArray(v)) clone[k] = v.map((x) => (Buffer.isBuffer(x) ? Buffer.from(x) : x));
-    else clone[k] = v;
+function cloneRecordValue(value) {
+  if (Buffer.isBuffer(value)) return Buffer.from(value);
+  if (Array.isArray(value)) return value.map((entry) => cloneRecordValue(entry));
+  if (value && typeof value === 'object') {
+    const clone = {};
+    Object.entries(value).forEach(([key, entry]) => {
+      clone[key] = cloneRecordValue(entry);
+    });
+    return clone;
   }
-  return clone;
+  return value;
+}
+
+function copyRecord(src) {
+  return cloneRecordValue(src || {});
+}
+
+function makeDefaultGovernmentRelation() {
+  return { canBribe: 0, briberyMod: 0, resistanceMod: 0 };
+}
+
+function normalizeGovernmentRelationMatrices(parsed) {
+  const govtSection = getSectionByCode(parsed, 'GOVT');
+  if (!govtSection || !Array.isArray(govtSection.records)) return 0;
+  const finalCount = govtSection.records.length;
+  let changed = 0;
+  govtSection.records.forEach((rec) => {
+    const relations = Array.isArray(rec && rec.relations) ? rec.relations : [];
+    const nextRelations = [];
+    for (let i = 0; i < finalCount; i += 1) {
+      const relation = relations[i];
+      if (relation && typeof relation === 'object' && !Buffer.isBuffer(relation)) {
+        nextRelations.push({
+          canBribe: Number.parseInt(String(relation.canBribe), 10) || 0,
+          briberyMod: Number.parseInt(String(relation.briberyMod), 10) || 0,
+          resistanceMod: Number.parseInt(String(relation.resistanceMod), 10) || 0
+        });
+      } else {
+        nextRelations.push(makeDefaultGovernmentRelation());
+      }
+    }
+    if (relations.length !== finalCount || Number(rec && rec.numGovts) !== finalCount) changed += 1;
+    rec.relations = nextRelations;
+    rec.numGovts = finalCount;
+    rec.index = Number.isFinite(Number(rec.index)) ? Number(rec.index) : govtSection.records.indexOf(rec);
+  });
+  if (changed > 0) govtSection._modified = true;
+  return changed;
 }
 
 function getSectionByCode(parsed, sectionCode) {
   const code = String(sectionCode || '').trim().toUpperCase();
   return ((parsed && parsed.sections) || []).find((section) => String(section && section.code || '').trim().toUpperCase() === code) || null;
+}
+
+const TILE_PLAYER_START_MASK = 0x00000008;
+
+function getRecordIntValue(record, key, fallback = -1) {
+  const value = record ? record[key] : undefined;
+  const n = Number.parseInt(String(value), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getTileCoordsKey(x, y) {
+  const nx = Number.parseInt(String(x), 10);
+  const ny = Number.parseInt(String(y), 10);
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return '';
+  return `${nx},${ny}`;
+}
+
+function findTileRecordByCoords(parsed, x, y) {
+  const key = getTileCoordsKey(x, y);
+  if (!key) return null;
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return null;
+  return tileSection.records.find((record) => getTileCoordsKey(record && record.xpos, record && record.ypos) === key) || null;
+}
+
+function setTileStartFlagByCoords(parsed, x, y, enabled) {
+  const tile = findTileRecordByCoords(parsed, x, y);
+  if (!tile) return false;
+  const current = getRecordIntValue(tile, 'c3cBonuses', 0) >>> 0;
+  const next = enabled ? (current | TILE_PLAYER_START_MASK) : (current & (~TILE_PLAYER_START_MASK));
+  if (next === current) return false;
+  setTileRecordFieldValue(tile, 'c3cBonuses', next);
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (tileSection) tileSection._modified = true;
+  return true;
+}
+
+function hasSlocAtCoords(section, x, y, excludeRecord = null) {
+  const key = getTileCoordsKey(x, y);
+  if (!key || !section || !Array.isArray(section.records)) return false;
+  return section.records.some((record) => record !== excludeRecord && getTileCoordsKey(record && record.x, record && record.y) === key);
+}
+
+function syncSLocRecordTileStartFlag(parsed, record) {
+  if (!record) return false;
+  return setTileStartFlagByCoords(parsed, record.x, record.y, true);
+}
+
+function normalizeSLocTileStartFlags(parsed) {
+  const slocSection = getSectionByCode(parsed, 'SLOC');
+  if (!slocSection || !Array.isArray(slocSection.records)) return 0;
+  let changed = 0;
+  slocSection.records.forEach((record) => {
+    if (syncSLocRecordTileStartFlag(parsed, record)) changed += 1;
+  });
+  return changed;
+}
+
+function syncWmapNumCivsToLeadCount(parsed) {
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (!wmapSection || !Array.isArray(wmapSection.records) || !wmapSection.records[0]) return false;
+  if (!leadSection || !Array.isArray(leadSection.records)) return false;
+  const count = leadSection.records.length;
+  if (getRecordIntValue(wmapSection.records[0], 'numCivs', 0) === count) return false;
+  wmapSection.records[0].numCivs = count;
+  wmapSection._modified = true;
+  return true;
+}
+
+function normalizeLeadDifficultySentinels(parsed) {
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (!leadSection || !Array.isArray(leadSection.records)) return 0;
+  let changed = 0;
+  leadSection.records.forEach((record) => {
+    if (getRecordIntValue(record, 'difficulty', -2) === -1) {
+      record.difficulty = -2;
+      changed += 1;
+    }
+  });
+  if (changed > 0) leadSection._modified = true;
+  return changed;
+}
+
+function getFixedLeadCivilizations(parsed) {
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const leadRecords = leadSection && Array.isArray(leadSection.records) ? leadSection.records : [];
+  return leadRecords.map((record) => getRecordIntValue(record, 'civ', -3));
+}
+
+function getFixedPlayableLeadContext(parsed) {
+  const leadCivs = getFixedLeadCivilizations(parsed);
+  if (leadCivs.length === 0 || leadCivs.some((civ) => civ < 0)) return null;
+  const playableCivIds = collectPlayableCivilizationIds(parsed);
+  if (playableCivIds.length === 0) return null;
+  const fixedSet = new Set(leadCivs);
+  if (playableCivIds.some((civ) => !fixedSet.has(civ))) return null;
+  return { leadCivs, playableCivIds, fixedSet };
+}
+
+function normalizeFixedPlayerPreplacedCityOwnership(parsed) {
+  const context = getFixedPlayableLeadContext(parsed);
+  if (!context) return 0;
+  const citySection = getSectionByCode(parsed, 'CITY');
+  if (!citySection || !Array.isArray(citySection.records) || citySection.records.length === 0) return 0;
+
+  const playerOwnedCities = citySection.records.filter((record) => getRecordIntValue(record, 'ownerType', -1) === 3);
+  if (playerOwnedCities.length === 0) return 0;
+
+  const citySlots = new Set();
+  playerOwnedCities.forEach((record) => {
+    const owner = getRecordIntValue(record, 'owner', -1);
+    if (owner >= 0 && owner < context.leadCivs.length) citySlots.add(owner);
+  });
+  if (citySlots.size < context.leadCivs.length) return 0;
+
+  let changed = 0;
+  citySection.records.forEach((record) => {
+    if (getRecordIntValue(record, 'ownerType', -1) !== 3) return;
+    const playerOwner = getRecordIntValue(record, 'owner', -1);
+    const civOwner = context.leadCivs[playerOwner];
+    if (!Number.isFinite(civOwner) || civOwner < 0) return;
+    record.ownerType = 2;
+    record.owner = civOwner;
+    changed += 1;
+  });
+  if (changed > 0) citySection._modified = true;
+  return changed;
+}
+
+function normalizePreplacedCityScenarioStartFlags(parsed) {
+  const context = getFixedPlayableLeadContext(parsed);
+  if (!context) return 0;
+  const slocSection = getSectionByCode(parsed, 'SLOC');
+  const slocRecords = slocSection && Array.isArray(slocSection.records) ? slocSection.records : [];
+  if (slocRecords.length > 0) return 0;
+
+  const citySection = getSectionByCode(parsed, 'CITY');
+  const cityRecords = citySection && Array.isArray(citySection.records) ? citySection.records : [];
+  if (cityRecords.length === 0) return 0;
+
+  const civsWithCities = new Set();
+  cityRecords.forEach((record) => {
+    const ownerType = getRecordIntValue(record, 'ownerType', -1);
+    const owner = getRecordIntValue(record, 'owner', -1);
+    if (ownerType === 2 && context.fixedSet.has(owner)) {
+      civsWithCities.add(owner);
+    } else if (ownerType === 3 && owner >= 0 && owner < context.leadCivs.length) {
+      const civ = context.leadCivs[owner];
+      if (context.fixedSet.has(civ)) civsWithCities.add(civ);
+    }
+  });
+  if (context.leadCivs.some((civ) => !civsWithCities.has(civ))) return 0;
+
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return 0;
+  let changed = 0;
+  tileSection.records.forEach((record) => {
+    const current = getRecordIntValue(record, 'c3cBonuses', 0) >>> 0;
+    if ((current & TILE_PLAYER_START_MASK) === 0) return;
+    setTileRecordFieldValue(record, 'c3cBonuses', current & (~TILE_PLAYER_START_MASK));
+    changed += 1;
+  });
+  if (changed > 0) tileSection._modified = true;
+  return changed;
+}
+
+function getRaceDisplayName(parsed, civIndex) {
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  const records = raceSection && Array.isArray(raceSection.records) ? raceSection.records : [];
+  const record = records[civIndex];
+  if (!record) return `RACE #${civIndex}`;
+  return String(record.civilizationName || record.name || record.civilopediaEntry || `RACE #${civIndex}`).trim() || `RACE #${civIndex}`;
+}
+
+function collectPlayableCivilizationIds(parsed) {
+  const gameSection = getSectionByCode(parsed, 'GAME');
+  const gameRecord = gameSection && Array.isArray(gameSection.records) ? gameSection.records[0] : null;
+  if (!gameRecord) return [];
+  const explicitIds = Array.isArray(gameRecord.playableCivIds) ? gameRecord.playableCivIds : [];
+  const cleanedExplicitIds = Array.from(new Set(explicitIds
+    .map((id) => Number.parseInt(id, 10))
+    .filter((id) => Number.isFinite(id) && id >= 0)));
+  const numPlayable = getRecordIntValue(gameRecord, 'numPlayableCivs', cleanedExplicitIds.length);
+  if (numPlayable !== 0 || cleanedExplicitIds.length > 0) return cleanedExplicitIds;
+
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  const records = raceSection && Array.isArray(raceSection.records) ? raceSection.records : [];
+  return records
+    .map((_record, idx) => idx)
+    .filter((idx) => idx > 0);
+}
+
+function collectScenarioPlayerLoadabilityIssues(parsed) {
+  const issues = [];
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (!leadSection || !Array.isArray(leadSection.records)) return issues;
+  const diffSection = getSectionByCode(parsed, 'DIFF');
+  const diffCount = diffSection && Array.isArray(diffSection.records) ? diffSection.records.length : 0;
+  leadSection.records.forEach((record, playerIndex) => {
+    const difficulty = getRecordIntValue(record, 'difficulty', -2);
+    const valid = difficulty === -2 || (difficulty >= 0 && (!diffCount || difficulty < diffCount));
+    if (!valid) {
+      issues.push({ kind: 'lead-difficulty', playerIndex, difficulty, diffCount });
+    }
+  });
+
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!wmapSection || !Array.isArray(wmapSection.records) || !wmapSection.records[0] || !tileSection || !Array.isArray(tileSection.records)) {
+    return issues;
+  }
+  const numCivs = getRecordIntValue(wmapSection.records[0], 'numCivs', leadSection.records.length);
+  if (numCivs !== leadSection.records.length) {
+    issues.push({ kind: 'wmap-lead-count', numCivs, leadCount: leadSection.records.length });
+  }
+  const playableCivIds = collectPlayableCivilizationIds(parsed);
+  if (playableCivIds.length > 0) {
+    const fixedLeadCivs = new Set();
+    let hasHumanWildcard = false;
+    leadSection.records.forEach((record) => {
+      const civ = getRecordIntValue(record, 'civ', -3);
+      if (civ >= 0) fixedLeadCivs.add(civ);
+      if (getRecordIntValue(record, 'humanPlayer', 0) === 1 && (civ === -3 || civ === -2)) {
+        hasHumanWildcard = true;
+      }
+    });
+    if (!hasHumanWildcard) {
+      const unsupportedPlayableCivs = playableCivIds.filter((civ) => !fixedLeadCivs.has(civ));
+      if (unsupportedPlayableCivs.length > 0) {
+        issues.push({
+          kind: 'playable-civ-without-lead-slot',
+          unsupportedCount: unsupportedPlayableCivs.length,
+          unsupportedCivIds: unsupportedPlayableCivs.slice(0, 12),
+          unsupportedNames: unsupportedPlayableCivs.slice(0, 6).map((civ) => getRaceDisplayName(parsed, civ)),
+          fixedCivIds: Array.from(fixedLeadCivs).sort((a, b) => a - b),
+          fixedNames: Array.from(fixedLeadCivs).sort((a, b) => a - b).map((civ) => getRaceDisplayName(parsed, civ)),
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+function collectStartingLocationCoherenceWarnings(parsed, limit = 8) {
+  const warnings = [];
+  const tileSection = getSectionByCode(parsed, 'TILE');
+  if (!tileSection || !Array.isArray(tileSection.records)) return warnings;
+  const slocSection = getSectionByCode(parsed, 'SLOC');
+  const slocCoords = new Set();
+  if (slocSection && Array.isArray(slocSection.records)) {
+    slocSection.records.forEach((record) => {
+      const key = getTileCoordsKey(record && record.x, record && record.y);
+      if (key) slocCoords.add(key);
+    });
+  }
+  for (const record of tileSection.records) {
+    if (((getRecordIntValue(record, 'c3cBonuses', 0) >>> 0) & TILE_PLAYER_START_MASK) === 0) continue;
+    const key = getTileCoordsKey(record && record.xpos, record && record.ypos);
+    if (!key || slocCoords.has(key)) continue;
+    warnings.push(`starting location ${key} has no SLOC owner record`);
+    if (warnings.length >= limit) break;
+  }
+  const wmapSection = getSectionByCode(parsed, 'WMAP');
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  if (wmapRecord && leadSection && Array.isArray(leadSection.records)) {
+    const numCivs = getRecordIntValue(wmapRecord, 'numCivs', leadSection.records.length);
+    const startFlagCount = tileSection.records.filter((record) => ((getRecordIntValue(record, 'c3cBonuses', 0) >>> 0) & TILE_PLAYER_START_MASK) !== 0).length;
+    const materialPlayers = new Set();
+    ['CITY', 'UNIT'].forEach((code) => {
+      const section = getSectionByCode(parsed, code);
+      if (!section || !Array.isArray(section.records)) return;
+      section.records.forEach((record) => {
+        if (getRecordIntValue(record, 'ownerType', -1) !== 3) return;
+        const owner = getRecordIntValue(record, 'owner', -1);
+        if (owner >= 0) materialPlayers.add(owner);
+      });
+    });
+    if (startFlagCount > 0 && numCivs > startFlagCount + materialPlayers.size && warnings.length < limit) {
+      warnings.push(`map has ${numCivs} active player(s) but only ${startFlagCount} starting-position tile flag(s) and ${materialPlayers.size} player-owned placed-material owner(s)`);
+    }
+  }
+  return warnings;
+}
+
+function formatScenarioPlayerLoadabilityIssue(issue) {
+  if (!issue) return 'Scenario player data is not game-loadable.';
+  if (issue.kind === 'lead-difficulty') {
+    return `Scenario -> Players: Player ${issue.playerIndex + 1} has invalid Difficulty value ${issue.difficulty}. Set Difficulty to Any or to one of the scenario's Difficulty records, then save again.`;
+  }
+  if (issue.kind === 'wmap-lead-count') {
+    return `Scenario -> Players: the custom map expects ${issue.numCivs} active player(s), but the BIQ has ${issue.leadCount} LEAD player record(s). Adjust the player count, or reload and save again so the editor can resync WMAP.numCivs.`;
+  }
+  if (issue.kind === 'playable-civ-without-lead-slot') {
+    const firstNames = Array.isArray(issue.unsupportedNames) && issue.unsupportedNames.length > 0
+      ? issue.unsupportedNames.join(', ')
+      : 'one or more selected civilizations';
+    const fixedNames = Array.isArray(issue.fixedNames) && issue.fixedNames.length > 0
+      ? issue.fixedNames.join(', ')
+      : 'the fixed Scenario Player civilizations';
+    return `Scenario -> Players: Playable Civilizations includes ${issue.unsupportedCount} civ(s) that do not have a fixed Scenario Player slot (${firstNames}). Civ3 can freeze while configuring AI players if one is chosen. Restrict Playable Civilizations to the player-slot civs (${fixedNames}), add fixed player slots for those civs, or set a Human Player slot's Civilization to Any/Random.`;
+  }
+  return `Scenario -> Players contains unsupported player data (${issue.kind}).`;
+}
+
+function formatMapReferenceIntegrityIssue(issue) {
+  if (!issue) return 'The custom map contains broken BIQ references.';
+  const sectionLabel = String(issue.sectionCode || '').trim().toUpperCase();
+  if (issue.kind === 'tile-city-ref') {
+    return `Map tile #${issue.tileIndex} points to deleted CITY #${issue.cityRef}; only ${issue.cityCount} city record(s) remain. Open Map and remove or recreate the city on that tile.`;
+  }
+  if (issue.kind === 'tile-colony-ref') {
+    return `Map tile #${issue.tileIndex} points to deleted CLNY #${issue.colonyRef}; only ${issue.colonyCount} colony record(s) remain. Open Map and remove or recreate the colony on that tile.`;
+  }
+  if (issue.kind === 'tile-city-coords') {
+    return `Map tile #${issue.tileIndex} links CITY #${issue.cityRef}, but the tile is at ${issue.tileX},${issue.tileY} and the city record is at ${issue.cityX},${issue.cityY}. Open Map and move, delete, or recreate that city.`;
+  }
+  if (issue.kind === 'tile-colony-coords') {
+    return `Map tile #${issue.tileIndex} links CLNY #${issue.colonyRef}, but the tile is at ${issue.tileX},${issue.tileY} and the colony record is at ${issue.colonyX},${issue.colonyY}. Open Map and move, delete, or recreate that colony.`;
+  }
+  if (issue.kind === 'city-tile-backref') {
+    return `CITY #${issue.cityRef} is at ${issue.cityX},${issue.cityY}, but that tile links CITY #${issue.tileCityRef}. Open Map and recreate or move the city so the city and tile agree.`;
+  }
+  if (issue.kind === 'colony-tile-backref') {
+    return `CLNY #${issue.colonyRef} is at ${issue.colonyX},${issue.colonyY}, but that tile links CLNY #${issue.tileColonyRef}. Open Map and recreate or move the colony so the colony and tile agree.`;
+  }
+  if (issue.kind === 'city-ref-count') {
+    return `CITY #${issue.cityRef} is linked by ${issue.count} map tile(s), but exactly one tile must point to each city. Open Map and recreate or delete the duplicate/missing city placement.`;
+  }
+  if (issue.kind === 'colony-ref-count') {
+    return `CLNY #${issue.colonyRef} is linked by ${issue.count} map tile(s), but exactly one tile must point to each colony. Open Map and recreate or delete the duplicate/missing colony placement.`;
+  }
+  if (issue.kind === 'city-out-of-bounds') {
+    return `CITY #${issue.cityRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.cityX},${issue.cityY}. Open Map and move/delete the city, or undo the map resize that moved it outside the map.`;
+  }
+  if (issue.kind === 'colony-out-of-bounds') {
+    return `CLNY #${issue.colonyRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.colonyX},${issue.colonyY}. Open Map and move/delete the colony, or undo the map resize that moved it outside the map.`;
+  }
+  if (issue.kind === 'unit-out-of-bounds') {
+    return `UNIT #${issue.unitRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.unitX},${issue.unitY}. Open Map and move/delete the unit, or undo the map resize that moved it outside the map.`;
+  }
+  if (issue.kind === 'city-missing-tile') {
+    return `CITY #${issue.cityRef} points to missing tile ${issue.cityX},${issue.cityY}. Open Map and move/delete the city, or undo the resize.`;
+  }
+  if (issue.kind === 'colony-missing-tile') {
+    return `CLNY #${issue.colonyRef} points to missing tile ${issue.colonyX},${issue.colonyY}. Open Map and move/delete the colony, or undo the resize.`;
+  }
+  if (issue.kind === 'unit-missing-tile') {
+    return `UNIT #${issue.unitRef} points to missing tile ${issue.unitX},${issue.unitY}. Open Map and move/delete the unit, or undo the resize.`;
+  }
+  if (/^(city|unit|clny|sloc)-owner-ref$/.test(issue.kind)) {
+    const ownerLabel = Number(issue.ownerType) === 3 ? 'player' : 'civilization';
+    const maxLabel = Number(issue.ownerType) === 3 ? issue.playerCount : issue.raceCount;
+    return `${sectionLabel} #${issue.recordRef} has invalid ${ownerLabel} owner index ${issue.owner}; only ${maxLabel} ${ownerLabel}(s) exist. Open Map and choose a valid owner, or restore the deleted ${ownerLabel}.`;
+  }
+  if (/^(city|unit|clny|sloc)-owner-type$/.test(issue.kind)) {
+    return `${sectionLabel} #${issue.recordRef} has unsupported owner type ${issue.ownerType}. Open Map and choose Civilization, Player, or Barbarians ownership again.`;
+  }
+  if (issue.kind === 'sloc-out-of-bounds') {
+    return `Starting location #${issue.slocRef} is outside the ${issue.mapWidth}x${issue.mapHeight} map at ${issue.slocX},${issue.slocY}. Open Map and move/delete that starting location.`;
+  }
+  if (issue.kind === 'sloc-missing-tile') {
+    return `Starting location #${issue.slocRef} points to missing tile ${issue.slocX},${issue.slocY}. Open Map and move/delete that starting location.`;
+  }
+  return `The custom map contains unsupported broken reference state (${issue.kind}).`;
+}
+
+function formatColonyOverlayCoherenceIssue(issue) {
+  if (!issue) return 'A colony overlay does not match its colony record.';
+  return `Map tile #${issue.tileIndex} links CLNY #${issue.colonyRef}, but the colony type (${issue.improvementType}) does not match the tile overlay (${issue.overlayType}). Open Map and remove/reapply that colony.`;
 }
 
 function getRecordCivilopediaRef(record) {
@@ -3391,7 +4239,6 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
       error: 'Civilization III supports at most 32 civilizations total, including Barbarians. Delete a civilization before adding or importing another one.'
     };
   }
-
   raceSection.records.forEach((record, index) => {
     record.index = index;
     if (Object.prototype.hasOwnProperty.call(record || {}, 'uniqueCivCounter')) record.uniqueCivCounter = index;
@@ -3464,7 +4311,7 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
       }
       if (!Number.isFinite(nextId) || nextId < 0 || nextId >= finalRaceCount) return;
       nextIds.push(nextId);
-      nextAlliance.push(Number.isFinite(Number(currentAlliance[idx])) ? Number(currentAlliance[idx]) : 4);
+      nextAlliance.push(Number.isFinite(Number(currentAlliance[idx])) ? Number(currentAlliance[idx]) : 0);
     });
     gameRecord.playableCivIds = nextIds;
     gameRecord.civPartOfWhichAlliance = nextAlliance;
@@ -3608,19 +4455,145 @@ function remapDeletedCivilizationAvailabilityMask(maskValue, remap) {
   return nextMask | 0;
 }
 
+function getOriginalRefIndex(originalRefs, recordRef) {
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return -1;
+  if (ref.startsWith('@INDEX:')) {
+    const idx = Number.parseInt(ref.slice(7), 10);
+    return Number.isInteger(idx) && idx >= 0 ? idx : -1;
+  }
+  return (Array.isArray(originalRefs) ? originalRefs : []).indexOf(ref);
+}
+
+function collectCopiedCivilizationAvailabilityPairs(edits, originalRaceRefs, finalRaceRefs) {
+  const pairs = [];
+  (Array.isArray(edits) ? edits : []).forEach((edit) => {
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    const op = String(edit && edit.op || '').trim().toLowerCase();
+    if (code !== 'RACE' || op !== 'copy') return;
+    const sourceRef = String(edit && (edit.sourceRef || edit.copyFromRef) || '').trim().toUpperCase();
+    const newRef = String(edit && edit.newRecordRef || '').trim().toUpperCase();
+    const sourceIndex = getOriginalRefIndex(originalRaceRefs, sourceRef);
+    const newIndex = (Array.isArray(finalRaceRefs) ? finalRaceRefs : []).indexOf(newRef);
+    if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= 32) return;
+    if (!Number.isInteger(newIndex) || newIndex < 0 || newIndex >= 32) return;
+    pairs.push({ sourceIndex, newIndex });
+  });
+  return pairs;
+}
+
+function addCopiedCivilizationAvailabilityBits(originalMaskValue, currentMaskValue, pairs) {
+  if (!Array.isArray(pairs) || pairs.length === 0) return currentMaskValue | 0;
+  const originalParsed = Number.parseInt(String(originalMaskValue), 10);
+  const originalMask = Number.isFinite(originalParsed) ? (originalParsed >>> 0) : 0;
+  const currentParsed = Number.parseInt(String(currentMaskValue), 10);
+  let nextMask = Number.isFinite(currentParsed) ? (currentParsed >>> 0) : 0;
+  pairs.forEach(({ sourceIndex, newIndex }) => {
+    if (((originalMask >>> sourceIndex) & 1) !== 1) return;
+    nextMask = (nextMask | ((1 << newIndex) >>> 0)) >>> 0;
+  });
+  return nextMask | 0;
+}
+
+function remapDeletedBitmask(maskValue, remap, maxBits = 32) {
+  const parsedMask = Number.parseInt(String(maskValue), 10);
+  const unsignedMask = Number.isFinite(parsedMask) ? (parsedMask >>> 0) : 0;
+  if (!remap) return unsignedMask | 0;
+  let nextMask = 0 >>> 0;
+  const upperBound = Math.min(Math.max(0, Number(maxBits) || 0), Number.isFinite(remap.oldCount) ? remap.oldCount : 32);
+  for (let oldIndex = 0; oldIndex < upperBound; oldIndex += 1) {
+    if (((unsignedMask >>> oldIndex) & 1) !== 1) continue;
+    const nextIndex = remapDeletedSectionIndex(oldIndex, remap, null);
+    if (!Number.isFinite(nextIndex) || nextIndex < 0 || nextIndex >= 32) continue;
+    nextMask = (nextMask | ((1 << nextIndex) >>> 0)) >>> 0;
+  }
+  for (let bit = upperBound; bit < 32; bit += 1) {
+    if (((unsignedMask >>> bit) & 1) !== 1) continue;
+    nextMask = (nextMask | ((1 << bit) >>> 0)) >>> 0;
+  }
+  return nextMask | 0;
+}
+
+function getLastReorderEditForCode(edits, code) {
+  const targetCode = String(code || '').trim().toUpperCase();
+  let hit = null;
+  (Array.isArray(edits) ? edits : []).forEach((edit) => {
+    const op = String(edit && edit.op || '').trim().toLowerCase();
+    const sectionCode = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    if (op === 'reorder' && sectionCode === targetCode) hit = edit;
+  });
+  return hit;
+}
+
+function getDeletedOriginalIndexesForCode(edits, code, originalRefs, oldCount = NaN) {
+  const targetCode = String(code || '').trim().toUpperCase();
+  const refs = Array.isArray(originalRefs) ? originalRefs : [];
+  const count = Number(oldCount);
+  const out = [];
+  (Array.isArray(edits) ? edits : []).forEach((edit) => {
+    if (String(edit && edit.op || '').trim().toLowerCase() !== 'delete') return;
+    if (String(edit && edit.sectionCode || '').trim().toUpperCase() !== targetCode) return;
+    const ref = String(edit && edit.recordRef || '').trim().toUpperCase();
+    if (!ref) return;
+    if (ref.startsWith('@INDEX:')) {
+      const idx = Number.parseInt(ref.slice(7), 10);
+      if (Number.isInteger(idx) && idx >= 0 && (!Number.isInteger(count) || idx < count)) out.push(idx);
+      return;
+    }
+    const idx = refs.indexOf(ref);
+    if (idx >= 0 && (!Number.isInteger(count) || idx < count)) out.push(idx);
+  });
+  return Array.from(new Set(out)).sort((a, b) => a - b);
+}
+
 function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection) {
-  const deleteTouchedCodes = new Set((Array.isArray(edits) ? edits : [])
+  const sourceEdits = Array.isArray(edits) ? edits : [];
+  const deleteTouchedCodes = new Set(sourceEdits
     .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete')
     .map((edit) => String(edit && edit.sectionCode || '').trim().toUpperCase())
     .filter(Boolean));
-  if (deleteTouchedCodes.size === 0) return { ok: true };
+  const reorderTouchedCodes = new Set(sourceEdits
+    .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'reorder')
+    .map((edit) => String(edit && edit.sectionCode || '').trim().toUpperCase())
+    .filter(Boolean));
+  const copyTouchedCodes = new Set(sourceEdits
+    .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'copy'
+      && String(edit && edit.sectionCode || '').trim().toUpperCase() === 'RACE')
+    .map(() => 'RACE'));
+  const touchedCodes = new Set([...deleteTouchedCodes, ...reorderTouchedCodes, ...copyTouchedCodes]);
+  if (touchedCodes.size === 0) return { ok: true };
 
   const sections = ((parsed && parsed.sections) || []);
   const remaps = new Map();
-  deleteTouchedCodes.forEach((code) => {
+  for (const code of touchedCodes) {
     const section = getSectionByCode(parsed, code);
+    const reorderEdit = getLastReorderEditForCode(sourceEdits, code);
+    if (reorderEdit) {
+      if (code !== 'PRTO') {
+        return { ok: false, error: `Reordering ${code} records is not supported.` };
+      }
+      const primaryCounts = (originalRefsBySection && originalRefsBySection.__primaryCounts) || {};
+      let oldPrimaryCount = Number(primaryCounts.PRTO);
+      if (!Number.isInteger(oldPrimaryCount) || oldPrimaryCount < 0) {
+        oldPrimaryCount = normalizeReorderIndexList(reorderEdit.order).length;
+      }
+      const deletedIndices = getDeletedOriginalIndexesForCode(
+        sourceEdits,
+        code,
+        (originalRefsBySection && originalRefsBySection[code]) || [],
+        oldPrimaryCount
+      );
+      const remapResult = buildPrtoPrimaryReorderRemap(reorderEdit.order, oldPrimaryCount, deletedIndices);
+      if (!remapResult.ok) return { ok: false, error: remapResult.error || `Invalid ${code} reorder.` };
+      const finalPrimaryCount = section && Array.isArray(section.records)
+        ? section.records.filter(isPrtoPrimaryRecord).length
+        : remapResult.remap.finalCount;
+      remapResult.remap.finalCount = finalPrimaryCount;
+      remaps.set(code, remapResult.remap);
+      continue;
+    }
     const originalRefs = (originalRefsBySection && originalRefsBySection[code]) || [];
-    const deletedIndices = (Array.isArray(edits) ? edits : [])
+    const deletedIndices = sourceEdits
       .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete'
         && String(edit && edit.sectionCode || '').trim().toUpperCase() === code)
       .map((edit) => originalRefs.indexOf(String(edit && edit.recordRef || '').trim().toUpperCase()))
@@ -3629,7 +4602,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       ? section.records.map((record) => getRecordStructureRef(record))
       : [];
     remaps.set(code, buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices));
-  });
+  }
 
   const techRemap = remaps.get('TECH');
   const goodRemap = remaps.get('GOOD');
@@ -3644,6 +4617,20 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const tfrmRemap = remaps.get('TFRM');
   const terrRemap = remaps.get('TERR');
   const leadRemap = remaps.get('LEAD');
+  const flavRemap = remaps.get('FLAV');
+  const prtoReorderEdit = getLastReorderEditForCode(sourceEdits, 'PRTO');
+  if (prtoRemap && prtoReorderEdit) {
+    log.debug('BiqReferenceNormalize', `PRTO reorder remap oldCount=${prtoRemap.oldCount} finalCount=${prtoRemap.finalCount} order=${summarizeIndexListForLog(prtoReorderEdit.order)} changedPrimaries=${summarizeRemapChangedPairsForLog(prtoRemap)} affectedReferenceFields=${summarizePrtoReferenceRemapTouchesForLog(parsed, prtoRemap)}`);
+  }
+  const raceCopySection = getSectionByCode(parsed, 'RACE');
+  const finalRaceRefsForCopies = raceCopySection && Array.isArray(raceCopySection.records)
+    ? raceCopySection.records.map((record) => getRecordCivilopediaRef(record))
+    : [];
+  const copiedCivilizationAvailabilityPairs = collectCopiedCivilizationAvailabilityPairs(
+    sourceEdits,
+    (originalRefsBySection && originalRefsBySection.RACE) || [],
+    finalRaceRefsForCopies
+  );
   const markModified = (section) => {
     if (section) section._modified = true;
   };
@@ -3708,8 +4695,11 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
         rec.shunnedGovernment = remapDeletedSectionIndex(rec.shunnedGovernment, govtRemap, -1);
       }
       if (prtoRemap) rec.kingUnit = remapDeletedSectionIndex(rec.kingUnit, prtoRemap, -1);
+      if (flavRemap && Object.prototype.hasOwnProperty.call(rec, 'flavors')) {
+        rec.flavors = remapDeletedBitmask(rec.flavors, flavRemap);
+      }
     });
-    if (techRemap || govtRemap || prtoRemap) markModified(raceSection);
+    if (techRemap || govtRemap || prtoRemap || flavRemap) markModified(raceSection);
   }
 
   const goodSection = getSectionByCode(parsed, 'GOOD');
@@ -3725,9 +4715,12 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     techSection.records.forEach((rec, index) => {
       if (techRemap) rec.prerequisites = remapDeletedSectionList(ensureArraySize(rec.prerequisites, 4, -1), techRemap, -1);
       if (erasRemap) rec.era = remapDeletedSectionIndex(rec.era, erasRemap, -1);
+      if (flavRemap && Object.prototype.hasOwnProperty.call(rec, 'flavors')) {
+        rec.flavors = remapDeletedBitmask(rec.flavors, flavRemap);
+      }
       rec.index = index;
     });
-    if (techRemap || erasRemap) markModified(techSection);
+    if (techRemap || erasRemap || flavRemap) markModified(techSection);
   }
 
   const govtSection = getSectionByCode(parsed, 'GOVT');
@@ -3766,25 +4759,53 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
 
   const bldgSection = getSectionByCode(parsed, 'BLDG');
   if (bldgSection && Array.isArray(bldgSection.records)) {
+    let bldgChanged = false;
     bldgSection.records.forEach((rec) => {
+      const setRemappedScalar = (key, nextValue) => {
+        if (Number(rec[key]) !== Number(nextValue)) bldgChanged = true;
+        rec[key] = nextValue;
+      };
       if (techRemap) {
-        rec.reqAdvance = remapDeletedSectionIndex(rec.reqAdvance, techRemap, -1);
-        rec.obsoleteBy = remapDeletedSectionIndex(rec.obsoleteBy, techRemap, -1);
+        setRemappedScalar('reqAdvance', remapDeletedSectionIndex(rec.reqAdvance, techRemap, -1));
+        setRemappedScalar('obsoleteBy', remapDeletedSectionIndex(rec.obsoleteBy, techRemap, -1));
       }
       if (goodRemap) {
-        rec.reqResource1 = remapDeletedSectionIndex(rec.reqResource1, goodRemap, -1);
-        rec.reqResource2 = remapDeletedSectionIndex(rec.reqResource2, goodRemap, -1);
+        setRemappedScalar('reqResource1', remapDeletedSectionIndex(rec.reqResource1, goodRemap, -1));
+        setRemappedScalar('reqResource2', remapDeletedSectionIndex(rec.reqResource2, goodRemap, -1));
       }
-      if (govtRemap) rec.reqGovernment = remapDeletedSectionIndex(rec.reqGovernment, govtRemap, -1);
+      if (govtRemap) setRemappedScalar('reqGovernment', remapDeletedSectionIndex(rec.reqGovernment, govtRemap, -1));
       if (bldgRemap) {
-        rec.gainInEveryCity = remapDeletedSectionIndex(rec.gainInEveryCity, bldgRemap, 0);
-        rec.gainOnContinent = remapDeletedSectionIndex(rec.gainOnContinent, bldgRemap, 0);
-        rec.reqImprovement = remapDeletedSectionIndex(rec.reqImprovement, bldgRemap, 0);
-        rec.doublesHappiness = remapDeletedSectionIndex(rec.doublesHappiness, bldgRemap, 0);
+        setRemappedScalar('gainInEveryCity', remapDeletedSectionIndex(rec.gainInEveryCity, bldgRemap, 0));
+        setRemappedScalar('gainOnContinent', remapDeletedSectionIndex(rec.gainOnContinent, bldgRemap, 0));
+        setRemappedScalar('reqImprovement', remapDeletedSectionIndex(rec.reqImprovement, bldgRemap, 0));
+        setRemappedScalar('doublesHappiness', remapDeletedSectionIndex(rec.doublesHappiness, bldgRemap, 0));
       }
-      if (prtoRemap) rec.unitProduced = remapDeletedSectionIndex(rec.unitProduced, prtoRemap, -1);
+      if (prtoRemap) setRemappedScalar('unitProduced', remapDeletedSectionIndex(rec.unitProduced, prtoRemap, -1));
+      if (flavRemap && Object.prototype.hasOwnProperty.call(rec, 'flavors')) {
+        const nextFlavors = remapDeletedBitmask(rec.flavors, flavRemap);
+        if ((Number(rec.flavors) | 0) !== (Number(nextFlavors) | 0)) bldgChanged = true;
+        rec.flavors = nextFlavors;
+      }
     });
-    if (techRemap || goodRemap || govtRemap || bldgRemap || prtoRemap) markModified(bldgSection);
+    if (bldgChanged) markModified(bldgSection);
+  }
+
+  const flavSection = getSectionByCode(parsed, 'FLAV');
+  if (flavSection && Array.isArray(flavSection.records) && flavRemap) {
+    flavSection.records.forEach((rec, index) => {
+      const relations = Array.isArray(rec.relations) ? rec.relations : [];
+      const nextRelations = [];
+      for (let oldIndex = 0; oldIndex < relations.length; oldIndex += 1) {
+        const nextIndex = remapDeletedSectionIndex(oldIndex, flavRemap, null);
+        if (!Number.isFinite(nextIndex) || nextIndex < 0) continue;
+        nextRelations[nextIndex] = relations[oldIndex];
+      }
+      rec.relations = [];
+      for (let i = 0; i < flavRemap.finalCount; i += 1) rec.relations.push(nextRelations[i] || 0);
+      rec.numRelations = rec.relations.length;
+      rec.index = index;
+    });
+    markModified(flavSection);
   }
 
   const gameSection = getSectionByCode(parsed, 'GAME');
@@ -3794,7 +4815,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       rec.playableCivIds = remapDeletedSectionListRemovingDeleted(currentIds, raceRemap);
       rec.numPlayableCivs = rec.playableCivIds.length;
       const currentAlliances = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
-      rec.civPartOfWhichAlliance = ensureArraySize(currentAlliances, rec.playableCivIds.length, 4)
+      rec.civPartOfWhichAlliance = ensureArraySize(currentAlliances, rec.playableCivIds.length, 0)
         .slice(0, rec.playableCivIds.length);
     });
     markModified(gameSection);
@@ -3803,7 +4824,17 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const prtoSection = getSectionByCode(parsed, 'PRTO');
   if (prtoSection && Array.isArray(prtoSection.records)) {
     prtoSection.records.forEach((rec) => {
-      if (raceRemap) rec.availableTo = remapDeletedCivilizationAvailabilityMask(rec.availableTo, raceRemap);
+      if (raceRemap || copiedCivilizationAvailabilityPairs.length > 0) {
+        const originalAvailableTo = rec.availableTo;
+        if (raceRemap) rec.availableTo = remapDeletedCivilizationAvailabilityMask(rec.availableTo, raceRemap);
+        if (copiedCivilizationAvailabilityPairs.length > 0) {
+          rec.availableTo = addCopiedCivilizationAvailabilityBits(
+            originalAvailableTo,
+            rec.availableTo,
+            copiedCivilizationAvailabilityPairs
+          );
+        }
+      }
       if (goodRemap) {
         rec.requiredResource1 = remapDeletedSectionIndex(rec.requiredResource1, goodRemap, -1);
         rec.requiredResource2 = remapDeletedSectionIndex(rec.requiredResource2, goodRemap, -1);
@@ -3818,7 +4849,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (bldgRemap) rec.legalBuildingTelepads = remapDeletedSectionListRemovingDeleted(rec.legalBuildingTelepads, bldgRemap);
     });
-    if (raceRemap || goodRemap || techRemap || prtoRemap || bldgRemap) markModified(prtoSection);
+    if (raceRemap || copiedCivilizationAvailabilityPairs.length > 0 || goodRemap || techRemap || prtoRemap || bldgRemap) markModified(prtoSection);
   }
 
   const ruleSection = getSectionByCode(parsed, 'RULE');
@@ -3920,7 +4951,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       if (raceRemap && !raceDependentSectionsAlreadyNormalized) rec.civ = remapDeletedSectionIndex(rec.civ, raceRemap, -1);
       if (techRemap) rec.techIndices = remapDeletedSectionList(Array.isArray(rec.techIndices) ? rec.techIndices : [], techRemap, -1).filter((value) => Number.isFinite(value) && value >= 0);
       if (govtRemap) rec.government = remapDeletedSectionIndex(rec.government, govtRemap, -1);
-      if (diffRemap) rec.difficulty = remapDeletedSectionIndex(rec.difficulty, diffRemap, -1);
+      if (diffRemap) rec.difficulty = remapDeletedSectionIndex(rec.difficulty, diffRemap, -2);
       if (erasRemap) rec.initialEra = remapDeletedSectionIndex(rec.initialEra, erasRemap, -1);
       if (prtoRemap) {
         rec.startUnits = (Array.isArray(rec.startUnits) ? rec.startUnits : [])
@@ -3957,8 +4988,10 @@ function collectMapReferenceIntegrityIssues(parsed) {
   const cityCount = citySection && Array.isArray(citySection.records) ? citySection.records.length : 0;
   const unitCount = unitSection && Array.isArray(unitSection.records) ? unitSection.records.length : 0;
   const clnyCount = clnySection && Array.isArray(clnySection.records) ? clnySection.records.length : 0;
-  const raceCount = raceSection && Array.isArray(raceSection.records) ? raceSection.records.length : 0;
-  const playerCount = leadSection && Array.isArray(leadSection.records) ? leadSection.records.length : 0;
+  const hasRaceSection = !!(raceSection && Array.isArray(raceSection.records));
+  const hasLeadSection = !!(leadSection && Array.isArray(leadSection.records));
+  const raceCount = hasRaceSection ? raceSection.records.length : 0;
+  const playerCount = hasLeadSection ? leadSection.records.length : 0;
   const normalizeRef = (value) => {
     const parsedValue = Number.parseInt(String(value), 10);
     return Number.isFinite(parsedValue) ? parsedValue : -1;
@@ -3987,6 +5020,7 @@ function collectMapReferenceIntegrityIssues(parsed) {
     const owner = normalizeRef(record && record.owner);
     if (ownerType === 0 || ownerType === 1) return;
     if (ownerType === 2) {
+      if (!hasRaceSection) return;
       if (owner < 0 || owner >= raceCount) {
         issues.push({
           kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,
@@ -4001,6 +5035,7 @@ function collectMapReferenceIntegrityIssues(parsed) {
       return;
     }
     if (ownerType === 3) {
+      if (!hasLeadSection) return;
       if (owner < 0 || owner >= playerCount) {
         issues.push({
           kind: `${String(sectionCode || '').toLowerCase()}-owner-ref`,
@@ -4423,7 +5458,7 @@ function removeCustomPlayerDataSectionsFromParsed(parsed) {
   parsed.sections = parsed.sections.filter((section) => String(section && section.code || '').toUpperCase() !== 'LEAD');
 }
 
-function addCustomPlayerDataSectionToParsed(parsed) {
+function addCustomPlayerDataSectionToParsed(parsed, options = {}) {
   removeCustomPlayerDataSectionsFromParsed(parsed);
   const leadSection = {
     code: 'LEAD',
@@ -4431,6 +5466,15 @@ function addCustomPlayerDataSectionToParsed(parsed) {
     records: [],
     _modified: true
   };
+  if (options.seedDefaultPlayers) {
+    for (let i = 0; i < 8; i += 1) {
+      const record = createDefaultRecord('LEAD', `LEAD_QUINT_DEFAULT_${i + 1}`, parsed && parsed.io);
+      record.index = i;
+      record.humanPlayer = i === 0 ? 1 : 0;
+      record.newRecordRef = `LEAD_QUINT_DEFAULT_${i + 1}`;
+      leadSection.records.push(record);
+    }
+  }
   const insertAt = parsed.sections.findIndex((section) => String(section && section.code || '').toUpperCase() === 'GAME');
   if (insertAt >= 0) parsed.sections.splice(insertAt + 1, 0, leadSection);
   else parsed.sections.push(leadSection);
@@ -4933,6 +5977,115 @@ function setCustomRulesSectionsOnParsed(parsed, uiSections) {
 // applyEdits: apply SET/ADD/COPY/DELETE edits to a buffer, return new buffer
 // ---------------------------------------------------------------------------
 
+function parseIndexRecordRef(recordRef) {
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref.startsWith('@INDEX:')) return NaN;
+  const idx = Number.parseInt(ref.slice(7), 10);
+  return Number.isFinite(idx) ? idx : NaN;
+}
+
+function findOriginalDeleteRecordIndex(section, recordRef) {
+  if (!section || !Array.isArray(section.records)) return -1;
+  const explicitIndex = parseIndexRecordRef(recordRef);
+  if (Number.isFinite(explicitIndex) && explicitIndex >= 0) {
+    return section.records.findIndex((record) => Number(record && record.index) === explicitIndex);
+  }
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return -1;
+  return section.records.findIndex((record) => {
+    const ce = String(record && record.civilopediaEntry || '').trim().toUpperCase();
+    if (ce === ref) return true;
+    const newRef = String(record && record.newRecordRef || '').trim().toUpperCase();
+    return newRef === ref;
+  });
+}
+
+function makeOriginalRecordSnapshots(records) {
+  return (Array.isArray(records) ? records : []).map((record, position) => ({
+    record,
+    originalIndex: Number(record && record.index),
+    originalPosition: position,
+    civilopediaEntry: String(record && record.civilopediaEntry || '').trim().toUpperCase(),
+    newRecordRef: String(record && record.newRecordRef || '').trim().toUpperCase()
+  }));
+}
+
+function findOriginalRecordByRef(originalSnapshots, recordRef) {
+  if (!Array.isArray(originalSnapshots)) return null;
+  const explicitIndex = parseIndexRecordRef(recordRef);
+  if (Number.isFinite(explicitIndex) && explicitIndex >= 0) {
+    const match = originalSnapshots.find((snapshot) => Number(snapshot && snapshot.originalIndex) === explicitIndex)
+      || originalSnapshots.find((snapshot) => Number(snapshot && snapshot.originalPosition) === explicitIndex);
+    return match ? match.record : null;
+  }
+  const ref = String(recordRef || '').trim().toUpperCase();
+  if (!ref) return null;
+  const match = originalSnapshots.find((snapshot) => snapshot && (snapshot.civilopediaEntry === ref || snapshot.newRecordRef === ref));
+  return match ? match.record : null;
+}
+
+function findRecordByStableRef(section, originalSnapshots, recordRef) {
+  if (!section || !Array.isArray(section.records)) return null;
+  const original = findOriginalRecordByRef(originalSnapshots, recordRef);
+  if (original && section.records.includes(original)) return original;
+  return findRecordByRef(section.records, recordRef);
+}
+
+function remapSetEditRecordRefsAfterDeletes(parsed, edits) {
+  if (!parsed || !Array.isArray(edits) || edits.length === 0) return edits;
+  const deletedByCode = new Map();
+  edits.forEach((edit) => {
+    if (String(edit && edit.op || '').trim().toLowerCase() !== 'delete') return;
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    if (!code) return;
+    const section = getSectionByCode(parsed, code);
+    const deletedIndex = findOriginalDeleteRecordIndex(section, edit && edit.recordRef);
+    if (!Number.isFinite(deletedIndex) || deletedIndex < 0) return;
+    if (!deletedByCode.has(code)) deletedByCode.set(code, new Set());
+    deletedByCode.get(code).add(deletedIndex);
+  });
+  if (deletedByCode.size === 0) return edits;
+
+  let remapped = 0;
+  let dropped = 0;
+  const out = [];
+  edits.forEach((edit) => {
+    if (String(edit && edit.op || 'set').trim().toLowerCase() !== 'set') {
+      out.push(edit);
+      return;
+    }
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    const deleted = deletedByCode.get(code);
+    if (!deleted || deleted.size === 0) {
+      out.push(edit);
+      return;
+    }
+    const originalIndex = parseIndexRecordRef(edit && edit.recordRef);
+    if (!Number.isFinite(originalIndex) || originalIndex < 0) {
+      out.push(edit);
+      return;
+    }
+    if (deleted.has(originalIndex)) {
+      dropped += 1;
+      return;
+    }
+    const deletedBefore = Array.from(deleted).filter((idx) => idx < originalIndex).length;
+    if (deletedBefore > 0) {
+      out.push({
+        ...edit,
+        recordRef: `@INDEX:${originalIndex - deletedBefore}`
+      });
+      remapped += 1;
+      return;
+    }
+    out.push(edit);
+  });
+  if (remapped > 0 || dropped > 0) {
+    log.debug('BiqApplyEdits', `remapped set edit record refs after deletes: remapped=${remapped} droppedDeletedRecordSets=${dropped}`);
+  }
+  return out;
+}
+
 function applyEdits(buf, edits, options = {}) {
   if (!Array.isArray(edits) || edits.length === 0) {
     return { ok: true, buffer: buf, applied: 0, skipped: 0, warning: '' };
@@ -4948,24 +6101,47 @@ function applyEdits(buf, edits, options = {}) {
 
   const { io } = parsed;
   const originalRefsBySection = {};
-  ['RACE', 'TECH', 'GOOD', 'BLDG', 'GOVT', 'PRTO', 'CITY', 'CLNY'].forEach((code) => {
-    const section = getSectionByCode(parsed, code);
-    originalRefsBySection[code] = section && Array.isArray(section.records)
+  const originalPrimaryCountsBySection = {};
+  (Array.isArray(parsed.sections) ? parsed.sections : []).forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!code) return;
+    if (code === 'PRTO' && Array.isArray(section.records)) {
+      section.records.forEach((record) => {
+        if (!record) return;
+        if (isPrtoPrimaryRecord(record)) record._originalPrimaryIndex = Number(record.index);
+        else record._originalOtherStrategy = Number(record.otherStrategy);
+      });
+      originalPrimaryCountsBySection[code] = section.records.filter(isPrtoPrimaryRecord).length;
+    }
+    originalRefsBySection[code] = Array.isArray(section.records)
       ? section.records.map((record) => getRecordStructureRef(record))
       : [];
   });
+  originalRefsBySection.__primaryCounts = originalPrimaryCountsBySection;
   const originalRaceSection = getSectionByCode(parsed, 'RACE');
   const originalRaceRefs = originalRaceSection && Array.isArray(originalRaceSection.records)
     ? originalRaceSection.records.map((record) => getRecordCivilopediaRef(record))
     : [];
+  const originalRecordsBySection = new Map();
+  (Array.isArray(parsed.sections) ? parsed.sections : []).forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!code || !Array.isArray(section.records)) return;
+    originalRecordsBySection.set(code, makeOriginalRecordSnapshots(section.records));
+  });
+  const effectiveEdits = remapSetEditRecordRefsAfterDeletes(parsed, edits);
   let sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
 
   let applied = 0;
   let skipped = 0;
   const warnings = [];
+  const deferredReorderEdits = [];
 
-  for (const edit of edits) {
+  for (const edit of effectiveEdits) {
     const op = String(edit.op || 'set').toLowerCase();
+    if (op === 'reorder') {
+      deferredReorderEdits.push(edit);
+      continue;
+    }
     if (op === 'removemap') {
       log.debug('BiqApplyEdits', 'op=removemap: removing all map sections');
       removeMapSectionsFromParsed(parsed);
@@ -5020,8 +6196,13 @@ function applyEdits(buf, edits, options = {}) {
       continue;
     }
     if (op === 'addcustomplayerdata') {
-      log.debug('BiqApplyEdits', 'op=addcustomplayerdata: inserting empty LEAD section');
-      addCustomPlayerDataSectionToParsed(parsed);
+      const hasLeadAddOps = edits.some((candidate) => {
+        const candidateOp = String(candidate && candidate.op || '').toLowerCase();
+        const candidateCode = String(candidate && candidate.sectionCode || '').toUpperCase();
+        return candidateCode === 'LEAD' && (candidateOp === 'add' || candidateOp === 'copy');
+      });
+      log.debug('BiqApplyEdits', `op=addcustomplayerdata: inserting ${hasLeadAddOps ? 'empty' : 'seeded'} LEAD section`);
+      addCustomPlayerDataSectionToParsed(parsed, { seedDefaultPlayers: !hasLeadAddOps });
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
       continue;
@@ -5067,9 +6248,12 @@ function applyEdits(buf, edits, options = {}) {
 
       let newRec;
       if (op === 'copy' && sourceRef) {
-        const src = findRecordByRef(section.records, sourceRef);
+        const src = findRecordByStableRef(section, originalRecordsBySection.get(code), sourceRef);
         if (src) {
           newRec = copyRecord(src);
+          if (code === 'PRTO' && mergePrtoStrategyMapRowsForCopy(section.records, src, newRec)) {
+            log.debug('BiqApplyEdits', `op=copy PRTO: merged strategy-map rows from ${sourceRef} into copied primary ${newRef}`);
+          }
           newRec.civilopediaEntry = newRef;
           if (newRec._rawData) delete newRec._rawData;
           if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
@@ -5090,8 +6274,11 @@ function applyEdits(buf, edits, options = {}) {
         newRec = createDefaultRecord(code, newRef, io);
       }
       newRec.newRecordRef = newRef;
+      delete newRec._originalPrimaryIndex;
+      delete newRec._originalOtherStrategy;
       newRec.index = section.records.length;
       section.records.push(newRec);
+      if (code === 'SLOC') syncSLocRecordTileStartFlag(parsed, newRec);
       section._modified = true;
       applied++;
       continue;
@@ -5100,26 +6287,36 @@ function applyEdits(buf, edits, options = {}) {
     if (op === 'delete') {
       const ref = String(edit.recordRef || '').trim().toUpperCase();
       if (!section) { skipped++; continue; }
-      const idx = section.records.findIndex((r) => {
-        if (ref.startsWith('@INDEX:')) {
-          const n = Number.parseInt(ref.slice(7), 10);
-          return Number.isFinite(n) && r.index === n;
-        }
-        const ce = String(r && r.civilopediaEntry || '').trim().toUpperCase();
-        if (ce === ref) return true;
-        const newRef = String(r && r.newRecordRef || '').trim().toUpperCase();
-        return newRef === ref;
-      });
+      const deleteRecord = findRecordByStableRef(section, originalRecordsBySection.get(code), ref);
+      const idx = deleteRecord ? section.records.indexOf(deleteRecord) : -1;
       if (idx < 0) {
         skipped++;
         warnings.push(`delete: ${ref} not found in ${code}`);
         log.warn('BiqApplyEdits', `op=delete SKIPPED: ${ref} not found in ${code}`);
         continue;
       }
-      log.debug('BiqApplyEdits', `op=delete ${code}: removed record ${ref} (was at index ${idx})`);
-      section.records.splice(idx, 1);
+      const removedRecord = section.records[idx];
+      let deleteIdx = idx;
+      if (code === 'PRTO') {
+        const deletedPrimaryIndex = Number(removedRecord && removedRecord.index);
+        const deletedOtherStrategy = Number(removedRecord && removedRecord.otherStrategy);
+        const isPrimary = !Number.isFinite(deletedOtherStrategy) || deletedOtherStrategy < 0;
+        if (isPrimary) {
+          const reconciled = reconcilePrtoStrategyMapAfterPrimaryDelete(section.records, deletedPrimaryIndex, removedRecord);
+          if (reconciled.removed > 0 || reconciled.shifted > 0) {
+            log.debug('BiqApplyEdits', `op=delete PRTO: reconciled strategy-map rows for deleted primary ${deletedPrimaryIndex} (removed=${reconciled.removed}, shifted=${reconciled.shifted})`);
+          }
+          const currentIdx = section.records.indexOf(removedRecord);
+          if (currentIdx >= 0) deleteIdx = currentIdx;
+        }
+      }
+      log.debug('BiqApplyEdits', `op=delete ${code}: removed record ${ref} (was at index ${deleteIdx})`);
+      section.records.splice(deleteIdx, 1);
       // Re-number indices
       section.records.forEach((r, i) => { r.index = i; });
+      if (code === 'SLOC' && removedRecord && !hasSlocAtCoords(section, removedRecord.x, removedRecord.y)) {
+        setTileStartFlagByCoords(parsed, removedRecord.x, removedRecord.y, false);
+      }
       section._modified = true;
       applied++;
       continue;
@@ -5142,8 +6339,19 @@ function applyEdits(buf, edits, options = {}) {
     // But in the Java path, values are base64-encoded in the TSV and decoded by Java.
     // In our JS path, configCore.js calls applyBiqEdits directly with plain strings.
 
+    const oldSlocCoords = code === 'SLOC'
+      ? { x: getRecordIntValue(rec, 'x', NaN), y: getRecordIntValue(rec, 'y', NaN) }
+      : null;
     const ok = applySetToRecord(rec, fieldKey, value, code, io);
     if (ok) {
+      if (code === 'SLOC') {
+        syncSLocRecordTileStartFlag(parsed, rec);
+        const nextX = getRecordIntValue(rec, 'x', NaN);
+        const nextY = getRecordIntValue(rec, 'y', NaN);
+        if (oldSlocCoords && (oldSlocCoords.x !== nextX || oldSlocCoords.y !== nextY) && !hasSlocAtCoords(section, oldSlocCoords.x, oldSlocCoords.y)) {
+          setTileStartFlagByCoords(parsed, oldSlocCoords.x, oldSlocCoords.y, false);
+        }
+      }
       if (code === 'PRTO' && canonicalKey(fieldKey) === 'aistrategy') {
         const primaryIndex = Number(rec && rec.index);
         const isPrimary = !Number.isFinite(Number(rec && rec.otherStrategy)) || Number(rec && rec.otherStrategy) < 0;
@@ -5161,7 +6369,54 @@ function applyEdits(buf, edits, options = {}) {
     }
   }
 
+  for (const edit of deferredReorderEdits) {
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    const section = sectionByCode.get(code);
+    if (!section) {
+      skipped++;
+      warnings.push(`reorder: section ${code} not found`);
+      log.warn('BiqApplyEdits', `op=reorder SKIPPED: section ${code} not found`);
+      continue;
+    }
+    if (code !== 'PRTO') {
+      skipped++;
+      warnings.push(`reorder: ${code} is not supported`);
+      log.warn('BiqApplyEdits', `op=reorder SKIPPED: ${code} is not supported`);
+      continue;
+    }
+    const result = applyPrtoPrimaryReorder(section, edit && edit.order);
+    if (!result.ok) {
+      const errorText = result.error || 'Invalid PRTO reorder.';
+      log.error('BiqApplyEdits', `op=reorder PRTO rejected: ${errorText}`);
+      return { ok: false, error: errorText };
+    }
+    if (result.changed) {
+      log.debug('BiqApplyEdits', `op=reorder PRTO: applied ${Array.isArray(edit && edit.order) ? edit.order.length : 0} primary unit index(es)`);
+    }
+    applied++;
+  }
+
   log.debug('BiqApplyEdits', `loop complete: applied=${applied} skipped=${skipped}`);
+
+  const repairedLeadDifficultyCount = normalizeLeadDifficultySentinels(parsed);
+  if (repairedLeadDifficultyCount > 0) {
+    log.debug('BiqApplyEdits', `normalized ${repairedLeadDifficultyCount} LEAD Any difficulty sentinel(s) to -2`);
+  }
+  if (syncWmapNumCivsToLeadCount(parsed)) {
+    log.debug('BiqApplyEdits', 'synced WMAP civilization count to LEAD player count');
+  }
+  const repairedSlocFlagCount = normalizeSLocTileStartFlags(parsed);
+  if (repairedSlocFlagCount > 0) {
+    log.debug('BiqApplyEdits', `synced ${repairedSlocFlagCount} SLOC starting-location tile flag(s)`);
+  }
+  const normalizedFixedCityOwners = normalizeFixedPlayerPreplacedCityOwnership(parsed);
+  if (normalizedFixedCityOwners > 0) {
+    log.debug('BiqApplyEdits', `converted ${normalizedFixedCityOwners} fixed-player preplaced city owner(s) to civilization ownership`);
+  }
+  const clearedOrphanStartFlags = normalizePreplacedCityScenarioStartFlags(parsed);
+  if (clearedOrphanStartFlags > 0) {
+    log.debug('BiqApplyEdits', `cleared ${clearedOrphanStartFlags} orphan TILE starting-location flag(s) for preplaced-city scenario`);
+  }
 
   const normalizeRaceResult = normalizeRaceDependentSections(parsed, edits, originalRaceRefs);
   if (!normalizeRaceResult.ok) {
@@ -5173,49 +6428,27 @@ function applyEdits(buf, edits, options = {}) {
     log.error('BiqApplyEdits', `normalizeDeletedReferenceSections failed: ${normalizeDeleteResult.error || 'unknown'}`);
     return { ok: false, error: normalizeDeleteResult.error || 'Failed to normalize deleted BIQ references.' };
   }
+  const normalizedGovernmentRelationCount = normalizeGovernmentRelationMatrices(parsed);
+  if (normalizedGovernmentRelationCount > 0) {
+    log.debug('BiqApplyEdits', `normalized ${normalizedGovernmentRelationCount} GOVT relation matrix record(s) to the final government count`);
+  }
+  const playerLoadIssues = collectScenarioPlayerLoadabilityIssues(parsed);
+  if (playerLoadIssues.length > 0) {
+    const issue = playerLoadIssues[0];
+    const detail = formatScenarioPlayerLoadabilityIssue(issue);
+    log.error('BiqApplyEdits', `collectScenarioPlayerLoadabilityIssues failed: ${detail}`);
+    return { ok: false, error: `Save blocked to protect the BIQ. ${detail}` };
+  }
+  const startingLocationWarnings = collectStartingLocationCoherenceWarnings(parsed);
+  if (startingLocationWarnings.length > 0) {
+    log.debug('BiqApplyEdits', `starting-location coherence note(s): ${startingLocationWarnings.join('; ')}`);
+  }
   const mapReferenceIssues = collectMapReferenceIntegrityIssues(parsed);
   if (mapReferenceIssues.length > 0) {
     const issue = mapReferenceIssues[0];
-    let detail = `map integrity issue ${issue.kind}`;
-    if (issue.kind === 'tile-city-ref') {
-      detail = `tile ${issue.tileIndex} references CITY ${issue.cityRef} but only ${issue.cityCount} city record(s) remain`;
-    } else if (issue.kind === 'tile-colony-ref') {
-      detail = `tile ${issue.tileIndex} references CLNY ${issue.colonyRef} but only ${issue.colonyCount} colony record(s) remain`;
-    } else if (issue.kind === 'tile-city-coords') {
-      detail = `tile ${issue.tileIndex} points at CITY ${issue.cityRef}, but tile ${issue.tileX},${issue.tileY} does not match city ${issue.cityX},${issue.cityY}`;
-    } else if (issue.kind === 'tile-colony-coords') {
-      detail = `tile ${issue.tileIndex} points at CLNY ${issue.colonyRef}, but tile ${issue.tileX},${issue.tileY} does not match colony ${issue.colonyX},${issue.colonyY}`;
-    } else if (issue.kind === 'city-tile-backref') {
-      detail = `CITY ${issue.cityRef} at ${issue.cityX},${issue.cityY} is not linked back from its tile (tile has CITY ${issue.tileCityRef})`;
-    } else if (issue.kind === 'colony-tile-backref') {
-      detail = `CLNY ${issue.colonyRef} at ${issue.colonyX},${issue.colonyY} is not linked back from its tile (tile has CLNY ${issue.tileColonyRef})`;
-    } else if (issue.kind === 'city-ref-count') {
-      detail = `CITY ${issue.cityRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
-    } else if (issue.kind === 'colony-ref-count') {
-      detail = `CLNY ${issue.colonyRef} is referenced by ${issue.count} tile(s) instead of exactly 1`;
-    } else if (issue.kind === 'city-out-of-bounds') {
-      detail = `CITY ${issue.cityRef} is out of bounds at ${issue.cityX},${issue.cityY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'colony-out-of-bounds') {
-      detail = `CLNY ${issue.colonyRef} is out of bounds at ${issue.colonyX},${issue.colonyY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'unit-out-of-bounds') {
-      detail = `UNIT ${issue.unitRef} is out of bounds at ${issue.unitX},${issue.unitY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'city-missing-tile') {
-      detail = `CITY ${issue.cityRef} points to missing tile ${issue.cityX},${issue.cityY}`;
-    } else if (issue.kind === 'colony-missing-tile') {
-      detail = `CLNY ${issue.colonyRef} points to missing tile ${issue.colonyX},${issue.colonyY}`;
-    } else if (issue.kind === 'unit-missing-tile') {
-      detail = `UNIT ${issue.unitRef} points to missing tile ${issue.unitX},${issue.unitY}`;
-    } else if (/^(city|unit|clny|sloc)-owner-ref$/.test(issue.kind)) {
-      detail = `${issue.sectionCode} ${issue.recordRef} has invalid owner ${issue.owner} for ownerType ${issue.ownerType} (races=${issue.raceCount}, players=${issue.playerCount})`;
-    } else if (/^(city|unit|clny|sloc)-owner-type$/.test(issue.kind)) {
-      detail = `${issue.sectionCode} ${issue.recordRef} has unsupported ownerType ${issue.ownerType}`;
-    } else if (issue.kind === 'sloc-out-of-bounds') {
-      detail = `SLOC ${issue.slocRef} is out of bounds at ${issue.slocX},${issue.slocY} for map ${issue.mapWidth}x${issue.mapHeight}`;
-    } else if (issue.kind === 'sloc-missing-tile') {
-      detail = `SLOC ${issue.slocRef} points to missing tile ${issue.slocX},${issue.slocY}`;
-    }
+    const detail = formatMapReferenceIntegrityIssue(issue);
     log.error('BiqApplyEdits', `collectMapReferenceIntegrityIssues failed: ${detail}`);
-    return { ok: false, error: `Map reference integrity check failed after BIQ edits: ${detail}.` };
+    return { ok: false, error: `Save blocked to protect the BIQ. ${detail}` };
   }
   const touchedColonyLikeState = edits.some((edit) => {
     const op = String(edit && edit.op || 'set').toLowerCase();
@@ -5230,9 +6463,9 @@ function applyEdits(buf, edits, options = {}) {
     const colonyOverlayIssues = collectColonyOverlayCoherenceIssues(parsed);
     if (colonyOverlayIssues.length > 0) {
       const issue = colonyOverlayIssues[0];
-      const detail = `tile ${issue.tileIndex} links CLNY ${issue.colonyRef} with improvementType ${issue.improvementType}, but tile overlay state resolves to ${issue.overlayType}`;
+      const detail = formatColonyOverlayCoherenceIssue(issue);
       log.error('BiqApplyEdits', `collectColonyOverlayCoherenceIssues failed: ${detail}`);
-      return { ok: false, error: `Colony overlay coherence check failed after BIQ edits: ${detail}.` };
+      return { ok: false, error: `Save blocked to protect the BIQ. ${detail}` };
     }
   }
 
@@ -5287,6 +6520,12 @@ module.exports = {
   getTileRecordLength,
   normalizeRaceDependentSections,
   normalizeDeletedReferenceSections,
+  normalizeGovernmentRelationMatrices,
+  normalizeFixedPlayerPreplacedCityOwnership,
+  normalizePreplacedCityScenarioStartFlags,
   collectMapReferenceIntegrityIssues,
+  collectScenarioPlayerLoadabilityIssues,
+  collectStartingLocationCoherenceWarnings,
+  formatScenarioPlayerLoadabilityIssue,
   collectColonyOverlayCoherenceIssues,
 };

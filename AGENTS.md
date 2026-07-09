@@ -113,6 +113,7 @@ Behavior follows C3X parsing semantics from `injected_code.c`.
 - Save feedback is in-app (snackbar + details modal), not OS confirmation popups.
 - Save details states: `Saving`, `Saved`, `Rolled Back`, `Failed`.
 - Save transaction remains atomic with rollback on failure.
+- Main and modal Save/Undo/Undo All controls share one dirty/undo state contract; keep details in `docs/UIInvariants.md`.
 
 ## Art Preview Contract
 - Supported previews:
@@ -153,6 +154,7 @@ npm test
 - `docs/biq/sections/*.md` for per-section BIQ model deep dives.
 - `docs/biq/tabs/*.md` for per-tab BIQ mapping and dependencies.
 - `docs/Editing.md` for extended Civ3 data/storage notes.
+- `docs/Civ3Music.md` for Civ3 music layout, scenario playlist behavior, and Music-tab UX implications.
 - If a topic here grows beyond stable rules, move detail to `docs/` and keep only a short summary here.
 
 ## Maintenance Rules for This File

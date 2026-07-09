@@ -307,7 +307,9 @@ for (const item of IMPORT_REFERENCE_INVENTORY.filter((entry) => entry.status ===
       const values = imported.biqFields
         .filter((field) => field.baseKey === 'canbribe' || field.baseKey === 'resistancemodifier' || field.baseKey === 'briberymodifier')
         .map((field) => field.value);
-      assert.deepEqual(Array.from(values), ['1', '2', '3']);
+      assert.deepEqual(Array.from(values.slice(0, 3)), ['1', '2', '3']);
+      assert.equal(values.length % 3, 0, 'relation rows should serialize as canbribe/resistance/bribery triples');
+      assert.deepEqual(Array.from(values.slice(3)), Array(values.length - 3).fill('0'));
       return;
     }
     if (item.kind === 'list') {

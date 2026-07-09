@@ -2,12 +2,14 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = requir
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
-const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab } = require('./src/configCore');
+const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes, inspectAudioFileBasic } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
+const { handleFlicWorkshop } = require('./src/flcWorkshop');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
 const APP_NAME = 'Civ 3 C3X Modern Editor';
+const SUPPORTED_C3X_RELEASE = 'R28';
 const DEV_APP_ICON_PATH = path.join(__dirname, 'build', 'icon.png');
 app.setName(APP_NAME);
 app.name = APP_NAME;
@@ -64,6 +66,34 @@ function readStartupReloadAfterSave() {
   }
 }
 
+function normalizeTooltipDelay(value) {
+  const raw = String(value || 'medium').trim().toLowerCase();
+  const aliases = {
+    instant: 'none',
+    immediate: 'none',
+    none: 'none',
+    'no-delay': 'none',
+    short: 'short',
+    medium: 'medium',
+    long: 'long',
+    never: 'off',
+    off: 'off',
+    disabled: 'off'
+  };
+  return aliases[raw] || 'medium';
+}
+
+function readStartupTooltipDelay() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return 'medium';
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeTooltipDelay(raw && raw.tooltipDelay);
+  } catch (_err) {
+    return 'medium';
+  }
+}
+
 function readStartupAutoAddImportedResourceIcons() {
   try {
     const settingsPath = getSettingsPathUnsafe();
@@ -83,6 +113,61 @@ function readStartupAutoAddImportedUnitIcons() {
     return normalizeAutoAddImportedUnitIcons(raw && raw.autoAddImportedUnitIcons);
   } catch (_err) {
     return true;
+  }
+}
+
+function readStartupShowUnitBiqIndices() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return false;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeShowUnitBiqIndices(raw && raw.showUnitBiqIndices);
+  } catch (_err) {
+    return false;
+  }
+}
+
+function readStartupShowUnitBiqIndexTooltips() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeShowUnitBiqIndexTooltips(raw && raw.showUnitBiqIndexTooltips);
+  } catch (_err) {
+    return true;
+  }
+}
+
+function readStartupEnableUnitReordering() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeEnableUnitReordering(raw && raw.enableUnitReordering);
+  } catch (_err) {
+    return true;
+  }
+}
+
+function readStartupAutoAddImportedBuildingCityIcons() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return true;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeAutoAddImportedBuildingCityIcons(raw && raw.autoAddImportedBuildingCityIcons);
+  } catch (_err) {
+    return true;
+  }
+}
+
+function readStartupAutoUpdateScienceAdvisorArrows() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return false;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeAutoUpdateScienceAdvisorArrows(raw && raw.autoUpdateScienceAdvisorArrows);
+  } catch (_err) {
+    return false;
   }
 }
 
@@ -172,6 +257,26 @@ function normalizeAutoAddImportedUnitIcons(value) {
   return value !== false;
 }
 
+function normalizeShowUnitBiqIndices(value) {
+  return value === true;
+}
+
+function normalizeShowUnitBiqIndexTooltips(value) {
+  return value !== false;
+}
+
+function normalizeEnableUnitReordering(value) {
+  return value !== false;
+}
+
+function normalizeAutoAddImportedBuildingCityIcons(value) {
+  return value !== false;
+}
+
+function normalizeAutoUpdateScienceAdvisorArrows(value) {
+  return value === true;
+}
+
 function normalizeTextFileEncoding(value) {
   const raw = String(value || 'auto').trim().toLowerCase();
   const aliases = {
@@ -197,11 +302,54 @@ function normalizeTextFileEncoding(value) {
   return aliases[raw] || 'auto';
 }
 
+function normalizeBiqByteEncoding(value) {
+  const normalized = normalizeTextFileEncoding(value);
+  return normalized === 'auto' ? 'windows-1252' : normalized;
+}
+
+function getEncodedByteLength(text, encoding) {
+  return encodeTextBuffer(String(text || ''), normalizeBiqByteEncoding(encoding)).length;
+}
+
+function clipTextToEncodedByteLimit(text, maxBytes, encoding) {
+  const limit = Math.max(0, Number(maxBytes) || 0);
+  const source = String(text || '');
+  if (getEncodedByteLength(source, encoding) <= limit) return source;
+  const chars = Array.from(source);
+  let lo = 0;
+  let hi = chars.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (getEncodedByteLength(chars.slice(0, mid).join(''), encoding) <= limit) lo = mid;
+    else hi = mid - 1;
+  }
+  return chars.slice(0, lo).join('');
+}
+
+function parseReleaseNum(value) {
+  const n = parseInt(String(value || '').replace(/^R/i, ''), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function normalizeC3xVersion(value) {
+  const raw = String(value || SUPPORTED_C3X_RELEASE).trim() || SUPPORTED_C3X_RELEASE;
+  const supported = parseReleaseNum(SUPPORTED_C3X_RELEASE);
+  const parsed = parseReleaseNum(raw);
+  if (supported > 0 && parsed !== supported) return SUPPORTED_C3X_RELEASE;
+  return raw;
+}
+
 const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
 const startupReloadAfterSave = readStartupReloadAfterSave();
+const startupTooltipDelay = readStartupTooltipDelay();
 const startupAutoAddImportedResourceIcons = readStartupAutoAddImportedResourceIcons();
 const startupAutoAddImportedUnitIcons = readStartupAutoAddImportedUnitIcons();
+const startupShowUnitBiqIndices = readStartupShowUnitBiqIndices();
+const startupShowUnitBiqIndexTooltips = readStartupShowUnitBiqIndexTooltips();
+const startupEnableUnitReordering = readStartupEnableUnitReordering();
+const startupAutoAddImportedBuildingCityIcons = readStartupAutoAddImportedBuildingCityIcons();
+const startupAutoUpdateScienceAdvisorArrows = readStartupAutoUpdateScienceAdvisorArrows();
 const startupTextFileEncoding = readStartupTextFileEncoding();
 const startupMapAutoDockTileInfoLeft = readStartupMapAutoDockTileInfoLeft();
 const startupWriteLogFiles = readStartupWriteLogFiles();
@@ -209,8 +357,14 @@ const startupLogFolder = readStartupLogFolder();
 let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentReloadAfterSave = startupReloadAfterSave;
+let currentTooltipDelay = startupTooltipDelay;
 let currentAutoAddImportedResourceIcons = startupAutoAddImportedResourceIcons;
 let currentAutoAddImportedUnitIcons = startupAutoAddImportedUnitIcons;
+let currentShowUnitBiqIndices = startupShowUnitBiqIndices;
+let currentShowUnitBiqIndexTooltips = startupShowUnitBiqIndexTooltips;
+let currentEnableUnitReordering = startupEnableUnitReordering;
+let currentAutoAddImportedBuildingCityIcons = startupAutoAddImportedBuildingCityIcons;
+let currentAutoUpdateScienceAdvisorArrows = startupAutoUpdateScienceAdvisorArrows;
 let currentTextFileEncoding = startupTextFileEncoding;
 let currentMapAutoDockTileInfoLeft = startupMapAutoDockTileInfoLeft;
 let currentWriteLogFiles = startupWriteLogFiles;
@@ -466,9 +620,9 @@ function createWindow() {
 
   // Forward main-process log entries to the renderer's in-app debug log panel.
   win.webContents.on('did-finish-load', () => {
-    log.setForwarder((level, category, msg) => {
+    log.setForwarder((entry) => {
       if (!win.isDestroyed()) {
-        win.webContents.send('manager:log', { level, category, msg });
+        win.webContents.send('manager:log', entry);
       }
     });
   });
@@ -587,6 +741,19 @@ function sendReloadAfterSaveSelection(enabled) {
   target.webContents.send('manager:reload-after-save-selected', currentReloadAfterSave);
 }
 
+function sendTooltipDelaySelection(value) {
+  currentTooltipDelay = normalizeTooltipDelay(value);
+  try {
+    persistSettingsPatch({ tooltipDelay: currentTooltipDelay });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:tooltip-delay-selected', currentTooltipDelay);
+}
+
 function sendAutoAddImportedResourceIconsSelection(enabled) {
   currentAutoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(enabled);
   try {
@@ -614,6 +781,66 @@ function sendAutoAddImportedUnitIconsSelection(enabled) {
   if (!target || target.isDestroyed()) return;
   target.webContents.send('manager:unit-settings-selected', {
     autoAddImportedUnitIcons: currentAutoAddImportedUnitIcons
+  });
+}
+
+function sendShowUnitBiqIndicesSelection(enabled) {
+  currentShowUnitBiqIndices = normalizeShowUnitBiqIndices(enabled);
+  try {
+    persistSettingsPatch({ showUnitBiqIndices: currentShowUnitBiqIndices });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:unit-settings-selected', {
+    showUnitBiqIndices: currentShowUnitBiqIndices
+  });
+}
+
+function sendShowUnitBiqIndexTooltipsSelection(enabled) {
+  currentShowUnitBiqIndexTooltips = normalizeShowUnitBiqIndexTooltips(enabled);
+  try {
+    persistSettingsPatch({ showUnitBiqIndexTooltips: currentShowUnitBiqIndexTooltips });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:unit-settings-selected', {
+    showUnitBiqIndexTooltips: currentShowUnitBiqIndexTooltips
+  });
+}
+
+function sendEnableUnitReorderingSelection(enabled) {
+  currentEnableUnitReordering = normalizeEnableUnitReordering(enabled);
+  try {
+    persistSettingsPatch({ enableUnitReordering: currentEnableUnitReordering });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:unit-settings-selected', {
+    enableUnitReordering: currentEnableUnitReordering
+  });
+}
+
+function sendAutoAddImportedBuildingCityIconsSelection(enabled) {
+  currentAutoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(enabled);
+  try {
+    persistSettingsPatch({ autoAddImportedBuildingCityIcons: currentAutoAddImportedBuildingCityIcons });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:improvement-settings-selected', {
+    autoAddImportedBuildingCityIcons: currentAutoAddImportedBuildingCityIcons
   });
 }
 
@@ -740,10 +967,22 @@ function sendScenarioOptionToggle(channel) {
   target.webContents.send(channel);
 }
 
+function sendAppCommand(command) {
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:app-command', { command });
+}
+
 function buildAppMenu() {
   const fileMenu = {
     label: 'File',
     submenu: [
+      {
+        label: 'Save',
+        accelerator: 'CommandOrControl+S',
+        click: () => sendAppCommand('save')
+      },
+      { type: 'separator' },
       {
         label: 'Enable Custom Rules',
         type: 'checkbox',
@@ -777,6 +1016,16 @@ function buildAppMenu() {
             click: (item) => sendReloadAfterSaveSelection(item && item.checked)
           },
           {
+            label: 'Tooltips',
+            submenu: [
+              { label: 'No Delay', type: 'radio', checked: currentTooltipDelay === 'none', click: () => sendTooltipDelaySelection('none') },
+              { label: 'Short Delay - 300ms', type: 'radio', checked: currentTooltipDelay === 'short', click: () => sendTooltipDelaySelection('short') },
+              { label: 'Medium Delay - 800ms', type: 'radio', checked: currentTooltipDelay === 'medium', click: () => sendTooltipDelaySelection('medium') },
+              { label: 'Long Delay - 2s', type: 'radio', checked: currentTooltipDelay === 'long', click: () => sendTooltipDelaySelection('long') },
+              { label: 'Never Show', type: 'radio', checked: currentTooltipDelay === 'off', click: () => sendTooltipDelaySelection('off') }
+            ]
+          },
+          {
             label: 'Logging',
             submenu: buildLogMenuItems()
           },
@@ -795,7 +1044,7 @@ function buildAppMenu() {
             label: 'Resources',
             submenu: [
               {
-                label: 'Automatically Add Imported Resource Icons to resources.pcx',
+                label: 'Automatically Add Imported Resource Art',
                 type: 'checkbox',
                 checked: currentAutoAddImportedResourceIcons,
                 click: (item) => sendAutoAddImportedResourceIconsSelection(item && item.checked)
@@ -810,6 +1059,35 @@ function buildAppMenu() {
                 type: 'checkbox',
                 checked: currentAutoAddImportedUnitIcons,
                 click: (item) => sendAutoAddImportedUnitIconsSelection(item && item.checked)
+              },
+              {
+                label: 'Show Unit BIQ Indices',
+                type: 'checkbox',
+                checked: currentShowUnitBiqIndices,
+                click: (item) => sendShowUnitBiqIndicesSelection(item && item.checked)
+              },
+              {
+                label: 'Show Unit BIQ Index Details on Hover',
+                type: 'checkbox',
+                checked: currentShowUnitBiqIndexTooltips,
+                click: (item) => sendShowUnitBiqIndexTooltipsSelection(item && item.checked)
+              },
+              {
+                label: 'Enable Unit Reordering',
+                type: 'checkbox',
+                checked: currentEnableUnitReordering,
+                click: (item) => sendEnableUnitReorderingSelection(item && item.checked)
+              }
+            ]
+          },
+          {
+            label: 'Improvements',
+            submenu: [
+              {
+                label: 'Automatically Add Imported City Icons to buildings PCX Files',
+                type: 'checkbox',
+                checked: currentAutoAddImportedBuildingCityIcons,
+                click: (item) => sendAutoAddImportedBuildingCityIconsSelection(item && item.checked)
               }
             ]
           },
@@ -897,6 +1175,22 @@ app.on('window-all-closed', () => {
   }
 });
 
+ipcMain.on('manager:get-encoded-byte-length', (event, payload) => {
+  try {
+    event.returnValue = getEncodedByteLength(payload && payload.text, payload && payload.encoding);
+  } catch (_err) {
+    event.returnValue = String(payload && payload.text || '').length;
+  }
+});
+
+ipcMain.on('manager:clip-text-to-encoded-byte-limit', (event, payload) => {
+  try {
+    event.returnValue = clipTextToEncodedByteLimit(payload && payload.text, payload && payload.maxBytes, payload && payload.encoding);
+  } catch (_err) {
+    event.returnValue = String(payload && payload.text || '').slice(0, Math.max(0, Number(payload && payload.maxBytes) || 0));
+  }
+});
+
 ipcMain.handle('manager:get-settings', async () => {
   const defaults = {
     c3xPath: '',
@@ -907,34 +1201,51 @@ ipcMain.handle('manager:get-settings', async () => {
     performanceMode: 'high',
     runQualityChecks: true,
     reloadAfterSave: false,
+    tooltipDelay: 'medium',
     autoAddImportedResourceIcons: true,
     autoAddImportedUnitIcons: true,
+    showUnitBiqIndices: false,
+    showUnitBiqIndexTooltips: true,
+    enableUnitReordering: true,
+    autoAddImportedBuildingCityIcons: true,
+    autoUpdateScienceAdvisorArrows: false,
     mapAutoDockTileInfoLeft: true,
     writeLogFiles: true,
     logFolder: getDefaultLogFolderUnsafe(),
     uiFontScale: 1,
     uiStateByContext: {},
-    c3xVersion: 'R28'
+    c3xVersion: SUPPORTED_C3X_RELEASE
   };
   const saved = readJsonIfExists(getSettingsPath(), defaults);
   const merged = { ...defaults, ...(saved || {}) };
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.reloadAfterSave = normalizeReloadAfterSave(merged.reloadAfterSave);
+  merged.tooltipDelay = normalizeTooltipDelay(merged.tooltipDelay);
   merged.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(merged.autoAddImportedResourceIcons);
   merged.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(merged.autoAddImportedUnitIcons);
+  merged.showUnitBiqIndices = normalizeShowUnitBiqIndices(merged.showUnitBiqIndices);
+  merged.showUnitBiqIndexTooltips = normalizeShowUnitBiqIndexTooltips(merged.showUnitBiqIndexTooltips);
+  merged.enableUnitReordering = normalizeEnableUnitReordering(merged.enableUnitReordering);
+  merged.autoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(merged.autoAddImportedBuildingCityIcons);
+  merged.autoUpdateScienceAdvisorArrows = normalizeAutoUpdateScienceAdvisorArrows(merged.autoUpdateScienceAdvisorArrows);
   merged.textFileEncoding = normalizeTextFileEncoding(merged.textFileEncoding);
   merged.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(merged.mapAutoDockTileInfoLeft);
   merged.writeLogFiles = normalizeWriteLogFiles(merged.writeLogFiles);
   merged.logFolder = normalizeLogFolder(merged.logFolder);
-  const parseReleaseNum = (v) => { const n = parseInt(String(v || '').replace(/^R/i, ''), 10); return isNaN(n) ? 0 : n; };
-  if (parseReleaseNum(merged.c3xVersion) < parseReleaseNum(defaults.c3xVersion)) merged.c3xVersion = defaults.c3xVersion;
+  merged.c3xVersion = normalizeC3xVersion(merged.c3xVersion);
   const inferred = inferDefaultPaths(merged);
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.reloadAfterSave = normalizeReloadAfterSave(inferred.reloadAfterSave);
+  inferred.tooltipDelay = normalizeTooltipDelay(inferred.tooltipDelay);
   inferred.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(inferred.autoAddImportedResourceIcons);
   inferred.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(inferred.autoAddImportedUnitIcons);
+  inferred.showUnitBiqIndices = normalizeShowUnitBiqIndices(inferred.showUnitBiqIndices);
+  inferred.showUnitBiqIndexTooltips = normalizeShowUnitBiqIndexTooltips(inferred.showUnitBiqIndexTooltips);
+  inferred.enableUnitReordering = normalizeEnableUnitReordering(inferred.enableUnitReordering);
+  inferred.autoAddImportedBuildingCityIcons = normalizeAutoAddImportedBuildingCityIcons(inferred.autoAddImportedBuildingCityIcons);
+  inferred.autoUpdateScienceAdvisorArrows = normalizeAutoUpdateScienceAdvisorArrows(inferred.autoUpdateScienceAdvisorArrows);
   inferred.textFileEncoding = normalizeTextFileEncoding(inferred.textFileEncoding);
   inferred.mapAutoDockTileInfoLeft = normalizeMapAutoDockTileInfoLeft(inferred.mapAutoDockTileInfoLeft);
   inferred.writeLogFiles = normalizeWriteLogFiles(inferred.writeLogFiles);
@@ -942,8 +1253,14 @@ ipcMain.handle('manager:get-settings', async () => {
   currentPerformanceMode = inferred.performanceMode;
   currentRunQualityChecks = inferred.runQualityChecks;
   currentReloadAfterSave = inferred.reloadAfterSave;
+  currentTooltipDelay = inferred.tooltipDelay;
   currentAutoAddImportedResourceIcons = inferred.autoAddImportedResourceIcons;
   currentAutoAddImportedUnitIcons = inferred.autoAddImportedUnitIcons;
+  currentShowUnitBiqIndices = inferred.showUnitBiqIndices;
+  currentShowUnitBiqIndexTooltips = inferred.showUnitBiqIndexTooltips;
+  currentEnableUnitReordering = inferred.enableUnitReordering;
+  currentAutoAddImportedBuildingCityIcons = inferred.autoAddImportedBuildingCityIcons;
+  currentAutoUpdateScienceAdvisorArrows = inferred.autoUpdateScienceAdvisorArrows;
   currentTextFileEncoding = inferred.textFileEncoding;
   currentMapAutoDockTileInfoLeft = inferred.mapAutoDockTileInfoLeft;
   currentWriteLogFiles = inferred.writeLogFiles;
@@ -956,7 +1273,7 @@ ipcMain.handle('manager:get-settings', async () => {
   applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
-  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}`);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${inferred.tooltipDelay}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${inferred.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${inferred.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${inferred.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
   log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
   if (inferred.mode === 'scenario') {
@@ -975,9 +1292,16 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode),
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
     reloadAfterSave: normalizeReloadAfterSave(settings && settings.reloadAfterSave),
+    tooltipDelay: normalizeTooltipDelay(settings && settings.tooltipDelay),
     autoAddImportedResourceIcons: normalizeAutoAddImportedResourceIcons(settings && settings.autoAddImportedResourceIcons),
     autoAddImportedUnitIcons: normalizeAutoAddImportedUnitIcons(settings && settings.autoAddImportedUnitIcons),
+    showUnitBiqIndices: normalizeShowUnitBiqIndices(settings && settings.showUnitBiqIndices),
+    showUnitBiqIndexTooltips: normalizeShowUnitBiqIndexTooltips(settings && settings.showUnitBiqIndexTooltips),
+    enableUnitReordering: normalizeEnableUnitReordering(settings && settings.enableUnitReordering),
+    autoAddImportedBuildingCityIcons: normalizeAutoAddImportedBuildingCityIcons(settings && settings.autoAddImportedBuildingCityIcons),
+    autoUpdateScienceAdvisorArrows: normalizeAutoUpdateScienceAdvisorArrows(settings && settings.autoUpdateScienceAdvisorArrows),
     textFileEncoding: normalizeTextFileEncoding(settings && settings.textFileEncoding),
+    c3xVersion: normalizeC3xVersion(settings && settings.c3xVersion),
     mapAutoDockTileInfoLeft: normalizeMapAutoDockTileInfoLeft(settings && settings.mapAutoDockTileInfoLeft),
     writeLogFiles: normalizeWriteLogFiles(settings && settings.writeLogFiles),
     logFolder: normalizeLogFolder(settings && settings.logFolder)
@@ -985,7 +1309,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   log.setCiv3Root(normalized.civ3Path || '');
   applyLogContextFromPayload(normalized);
   log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
-  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}`);
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${normalized.tooltipDelay}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${normalized.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${normalized.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${normalized.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
     log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
@@ -1004,12 +1328,36 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     currentReloadAfterSave = normalized.reloadAfterSave;
     buildAppMenu();
   }
+  if (currentTooltipDelay !== normalized.tooltipDelay) {
+    currentTooltipDelay = normalized.tooltipDelay;
+    buildAppMenu();
+  }
   if (currentAutoAddImportedResourceIcons !== normalized.autoAddImportedResourceIcons) {
     currentAutoAddImportedResourceIcons = normalized.autoAddImportedResourceIcons;
     buildAppMenu();
   }
   if (currentAutoAddImportedUnitIcons !== normalized.autoAddImportedUnitIcons) {
     currentAutoAddImportedUnitIcons = normalized.autoAddImportedUnitIcons;
+    buildAppMenu();
+  }
+  if (currentShowUnitBiqIndices !== normalized.showUnitBiqIndices) {
+    currentShowUnitBiqIndices = normalized.showUnitBiqIndices;
+    buildAppMenu();
+  }
+  if (currentShowUnitBiqIndexTooltips !== normalized.showUnitBiqIndexTooltips) {
+    currentShowUnitBiqIndexTooltips = normalized.showUnitBiqIndexTooltips;
+    buildAppMenu();
+  }
+  if (currentEnableUnitReordering !== normalized.enableUnitReordering) {
+    currentEnableUnitReordering = normalized.enableUnitReordering;
+    buildAppMenu();
+  }
+  if (currentAutoAddImportedBuildingCityIcons !== normalized.autoAddImportedBuildingCityIcons) {
+    currentAutoAddImportedBuildingCityIcons = normalized.autoAddImportedBuildingCityIcons;
+    buildAppMenu();
+  }
+  if (currentAutoUpdateScienceAdvisorArrows !== normalized.autoUpdateScienceAdvisorArrows) {
+    currentAutoUpdateScienceAdvisorArrows = normalized.autoUpdateScienceAdvisorArrows;
     buildAppMenu();
   }
   if (currentTextFileEncoding !== normalized.textFileEncoding) {
@@ -1029,10 +1377,14 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   return { ok: true };
 });
 
-ipcMain.handle('manager:pick-directory', async () => {
-  const result = await dialog.showOpenDialog({
+ipcMain.handle('manager:pick-directory', async (_event, options) => {
+  const dialogOptions = {
     properties: ['openDirectory']
-  });
+  };
+  if (options && typeof options.defaultPath === 'string' && options.defaultPath.trim()) {
+    dialogOptions.defaultPath = options.defaultPath.trim();
+  }
+  const result = await dialog.showOpenDialog(dialogOptions);
   if (result.canceled || result.filePaths.length === 0) {
     return null;
   }
@@ -1229,6 +1581,21 @@ ipcMain.handle('manager:materialize-map-tab', async (_event, payload) => {
   }
 });
 
+ipcMain.handle('manager:load-map-import', async (_event, payload) => {
+  const mode = 'scenario';
+  log.setCiv3Root(payload && payload.civ3Path || '');
+  applyLogContextFromPayload({ ...(payload || {}), mode });
+  log.info('loadMapImport', `scenario=${log.rel(payload && payload.scenarioPath)}`);
+  try {
+    const result = await runWorkerTask('loadMapImport', { ...(payload || {}), mode });
+    log.info('loadMapImport', `OK — ${result && result.width || 0}x${result && result.height || 0}, tiles=${result && result.tileCount || 0}, durationMs=${result && result.durationMs || 0}`);
+    return result;
+  } catch (err) {
+    log.error('loadMapImport', `Threw: ${err.message}`);
+    throw err;
+  }
+});
+
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
   const mode = (payload && payload.mode) || 'global';
   log.setCiv3Root(payload && payload.civ3Path || '');
@@ -1289,6 +1656,25 @@ ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
   return previewFileDiff(payload || {});
 });
 
+ipcMain.handle('manager:inspect-audio-file', async (_event, filePath) => {
+  try {
+    return { ok: true, info: inspectAudioFileBasic(filePath) };
+  } catch (err) {
+    log.warn('inspectAudioFile', `Threw: ${err && err.message ? err.message : err}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not inspect audio file.' };
+  }
+});
+
+ipcMain.handle('manager:inspect-civ-color-palettes', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  try {
+    return inspectScenarioCivColorPalettes(payload || {});
+  } catch (err) {
+    log.error('inspectCivColorPalettes', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not inspect civ color palettes.' };
+  }
+});
+
 ipcMain.handle('manager:get-preview', async (_event, payload) => {
   applyLogContextFromPayload(payload || {});
   const kind = payload && payload.kind;
@@ -1304,16 +1690,30 @@ ipcMain.handle('manager:get-preview', async (_event, payload) => {
   }
 });
 
+ipcMain.handle('manager:flic-workshop', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  const action = payload && payload.action;
+  try {
+    const result = handleFlicWorkshop(payload || {});
+    if (!result || !result.ok) {
+      log.warn('flicWorkshop', `action=${action} failed: ${result && result.error}`);
+    }
+    return result;
+  } catch (err) {
+    log.error('flicWorkshop', `action=${action} threw: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.on('manager:renderer-debug-log', (_event, entry) => {
   try {
     const payload = entry && typeof entry === 'object' ? entry : {};
     const level = String(payload.level || 'debug').trim().toLowerCase();
-    const category = String(payload.category || 'renderer-debug').trim() || 'renderer-debug';
-    const msg = String(payload.msg || '').trim();
-    if (!msg) return;
-    if (level === 'error') log.error(category, msg);
-    else if (level === 'warn' || level === 'warning') log.warn(category, msg);
-    else if (level === 'info') log.info(category, msg);
-    else log.debug(category, msg);
+    const formatted = String(payload.formatted || payload.msg || '').trimEnd();
+    if (!formatted) return;
+    if (level === 'error') log.writeFormatted(formatted, 'ERR');
+    else if (level === 'warn' || level === 'warning') log.writeFormatted(formatted, 'WRN');
+    else if (level === 'info') log.writeFormatted(formatted, 'INF');
+    else log.writeFormatted(formatted, 'DBG');
   } catch (_err) {}
 });

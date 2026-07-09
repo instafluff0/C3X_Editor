@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { parseSectionedConfig, resolvePaths, loadBundle } = require('../src/configCore');
+const { parseSectionedConfig, serializeSectionedConfig, resolvePaths, loadBundle } = require('../src/configCore');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-district-reg-'));
@@ -73,6 +73,26 @@ test('parseSectionedConfig preserves comma-separated quoted list', () => {
   assert.equal(field.value, raw, 'fully-quoted list must be preserved as-is');
 });
 
+test('serializeSectionedConfig writes natural wonder animation specs unquoted with internal commas intact', () => {
+  const raw = 'ini=NaturalWonders\\Yellowstone\\Yellowstone.INI; hours=7-17; seasons=spring, summer, fall, winter; offsets=28,0; direction=southwest; frame_time_seconds=0.2';
+  const model = parseSectionedConfig(['#Wonder', 'name = Yellowstone', `animation = ${raw}`].join('\n'), '#Wonder');
+
+  const serialized = serializeSectionedConfig(model, '#Wonder', { kind: 'naturalWonders' });
+
+  assert.match(serialized, /animation\s*=\s*ini=NaturalWonders\\Yellowstone\\Yellowstone\.INI; hours=7-17; seasons=spring, summer, fall, winter; offsets=28,0; direction=southwest; frame_time_seconds=0\.2/);
+  assert.doesNotMatch(serialized, /animation\s*=\s*"/);
+});
+
+test('serializeSectionedConfig repairs quoted natural wonder animation fragments from prior saves', () => {
+  const broken = '"ini=NaturalWonders\\Yellowstone\\Yellowstone.INI;       hours=7-17; seasons=spring", "summer", "fall", "winter; offsets=28", "0; direction=southwest; frame_time_seconds=0.2"';
+  const model = parseSectionedConfig(['#Wonder', 'name = Yellowstone', `animation = ${broken}`].join('\n'), '#Wonder');
+
+  const serialized = serializeSectionedConfig(model, '#Wonder', { kind: 'naturalWonders' });
+
+  assert.match(serialized, /animation\s*=\s*ini=NaturalWonders\\Yellowstone\\Yellowstone\.INI;\s+hours=7-17; seasons=spring, summer, fall, winter; offsets=28, 0; direction=southwest; frame_time_seconds=0\.2/);
+  assert.doesNotMatch(serialized, /animation\s*=\s*"/);
+});
+
 // ---------------------------------------------------------------------------
 // Bug 2: effectiveSource gates applySpecialDistrictDefaultsToSections in renderer
 // The renderer only injects specials when effectiveSource === 'default'.
@@ -130,6 +150,108 @@ test('resolvePaths districts effectiveSource is scenario when scenario file exis
     paths.districts.effectiveSource,
     'scenario',
     'effectiveSource must be scenario when scenario.districts_config.txt exists'
+  );
+});
+
+test('resolvePaths reads scenario config from later BIQ search roots but writes to primary root', () => {
+  const c3xPath = mkTmpDir();
+  const primaryRoot = mkTmpDir();
+  const sharedRoot = mkTmpDir();
+  seedDefaultFiles(c3xPath);
+  fs.writeFileSync(
+    path.join(sharedRoot, 'scenario.districts_config.txt'),
+    '#District\nname = Shared Search Root\n',
+    'utf8'
+  );
+
+  const paths = resolvePaths({
+    c3xPath,
+    scenarioPath: primaryRoot,
+    scenarioPaths: [primaryRoot, sharedRoot],
+    mode: 'scenario'
+  });
+
+  assert.equal(paths.districts.effectiveSource, 'scenario');
+  assert.equal(
+    path.normalize(paths.districts.scenarioPath),
+    path.normalize(path.join(sharedRoot, 'scenario.districts_config.txt')),
+    'scenario source should follow BIQ search-folder order and find later roots'
+  );
+  assert.equal(
+    path.normalize(paths.districts.targetPath),
+    path.normalize(path.join(primaryRoot, 'scenario.districts_config.txt')),
+    'scenario writes should still target the primary content root'
+  );
+});
+
+test('resolvePaths preserves BIQ search order when write root differs from first search root', () => {
+  const c3xPath = mkTmpDir();
+  const firstSearchRoot = mkTmpDir();
+  const writeRoot = mkTmpDir();
+  seedDefaultFiles(c3xPath);
+  fs.writeFileSync(
+    path.join(firstSearchRoot, 'scenario.districts_config.txt'),
+    '#District\nname = First Search Root\n',
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(writeRoot, 'scenario.districts_config.txt'),
+    '#District\nname = Write Root\n',
+    'utf8'
+  );
+
+  const paths = resolvePaths({
+    c3xPath,
+    scenarioPath: writeRoot,
+    scenarioPaths: [firstSearchRoot, writeRoot],
+    mode: 'scenario'
+  });
+
+  assert.equal(
+    path.normalize(paths.districts.scenarioPath),
+    path.normalize(path.join(firstSearchRoot, 'scenario.districts_config.txt')),
+    'read discovery should follow BIQ search order before the chosen write root'
+  );
+  assert.equal(
+    path.normalize(paths.districts.targetPath),
+    path.normalize(path.join(writeRoot, 'scenario.districts_config.txt'))
+  );
+});
+
+test('loadBundle reads scenario base and sectioned configs from later BIQ search roots', () => {
+  const c3xPath = mkTmpDir();
+  const primaryRoot = mkTmpDir();
+  const sharedRoot = mkTmpDir();
+  seedDefaultFiles(c3xPath);
+  fs.writeFileSync(path.join(sharedRoot, 'scenario.c3x_config.ini'), 'flag = shared-base\n', 'utf8');
+  fs.writeFileSync(
+    path.join(sharedRoot, 'scenario.districts_config.txt'),
+    '#District\nname = Shared Search Root\n',
+    'utf8'
+  );
+
+  const bundle = loadBundle({
+    mode: 'scenario',
+    c3xPath,
+    civ3Path: '',
+    scenarioPath: primaryRoot,
+    scenarioSearchFolderOverride: [primaryRoot, sharedRoot]
+  });
+
+  const flagRow = bundle.tabs.base.rows.find((row) => row.key === 'flag');
+  assert.equal(flagRow && flagRow.scenarioValue, 'shared-base');
+  assert.equal(
+    path.normalize(bundle.tabs.base.targetPath),
+    path.normalize(path.join(primaryRoot, 'scenario.c3x_config.ini'))
+  );
+  assert.equal(bundle.tabs.districts.model.sections[0].fields[0].value, 'Shared Search Root');
+  assert.equal(
+    path.normalize(bundle.tabs.districts.sourceDetails.effectivePath),
+    path.normalize(path.join(sharedRoot, 'scenario.districts_config.txt'))
+  );
+  assert.equal(
+    path.normalize(bundle.tabs.districts.targetPath),
+    path.normalize(path.join(primaryRoot, 'scenario.districts_config.txt'))
   );
 });
 

@@ -6,8 +6,10 @@ const os = require('node:os');
 
 const {
   saveBundle,
+  previewSavePlan,
   buildReferenceTabs,
   buildScenarioCivilopediaEditResult,
+  buildScenarioCivilopediaRepairResult,
   buildScenarioPediaIconsEditResult,
   parseCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder
@@ -51,6 +53,17 @@ function encodeTruecolorPcx({ width, height, rgbAt }) {
   return Buffer.concat([header, Buffer.from(body)]);
 }
 
+function solidRgba(width, height, r, g, b, a = 255) {
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    rgba[i * 4] = r;
+    rgba[i * 4 + 1] = g;
+    rgba[i * 4 + 2] = b;
+    rgba[i * 4 + 3] = a;
+  }
+  return rgba;
+}
+
 function docTextByKey(doc, key) {
   const upper = String(key || '').trim().toUpperCase();
   const sec = doc.sections[upper];
@@ -63,6 +76,13 @@ function normPediaLines(lines) {
     .map((line) => String(line || '').trim())
     .filter(Boolean)
     .map((line) => line.replace(/\\/g, '/'));
+}
+
+function writeScenarioTextEditResult(targetPath, result, label) {
+  assert.equal(result.ok, true, String(result.error || `${label} failed`));
+  assert.ok(result.buffer, `expected ${label} to produce a buffer`);
+  fs.writeFileSync(targetPath, result.buffer);
+  return result.buffer.toString('latin1');
 }
 
 function setupScenarioTextFiles() {
@@ -360,6 +380,8 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
 
   const civilopediaSaved = fs.readFileSync(civilopediaPath).toString('latin1');
   const pediaSaved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.equal((civilopediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
+  assert.equal((pediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
   const civDoc = parseCivilopediaDocumentWithOrder(civilopediaSaved);
   const pediaDoc = parsePediaIconsDocumentWithOrder(pediaSaved);
 
@@ -406,6 +428,74 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
     'art/civilopedia/icons/races/untouched-large.pcx',
     'art/civilopedia/icons/races/untouched-small.pcx'
   ]);
+});
+
+test('scenario Civilopedia save normalizes existing LF-only files without content edits', () => {
+  const { root, scenario, civilopediaPath } = setupScenarioTextFiles();
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civilopediaPath
+        }
+      }
+    }
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal((result.saveReport || []).some((row) => row.kind === 'civilopedia' && row.lineEndingsNormalized), true);
+  const saved = fs.readFileSync(civilopediaPath).toString('latin1');
+  assert.equal((saved.match(/(?<!\r)\n/g) || []).length, 0);
+  assert.match(saved, /^#RACE_TEST_CIV\r\nOriginal civ overview line\./);
+
+  const second = buildScenarioCivilopediaRepairResult({ targetPath: civilopediaPath });
+  assert.equal(second.ok, true, String(second.error || 'repair failed'));
+  assert.equal(second.applied, 0);
+  assert.equal(second.buffer, null);
+});
+
+test('scenario text save plan skips PediaIcons and Civilopedia when generated output already matches disk', () => {
+  const { root, scenario, civilopediaPath, pediaIconsPath } = setupScenarioTextFiles();
+
+  const first = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civilopediaPath,
+          pediaIconsScenarioWrite: pediaIconsPath
+        }
+      }
+    }
+  });
+  assert.equal(first.ok, true, String(first.error || 'first save failed'));
+
+  const plan = previewSavePlan({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        sourceDetails: {
+          civilopediaScenario: civilopediaPath,
+          pediaIconsScenarioWrite: pediaIconsPath
+        }
+      }
+    }
+  });
+
+  assert.equal(plan.ok, true, String(plan.error || 'preview failed'));
+  const textWrites = (plan.writes || []).filter((row) => /(?:PediaIcons|Civilopedia)\.txt$/i.test(String(row.path || '')));
+  assert.deepEqual(textWrites, []);
 });
 
 test('large Civilopedia file: single-entry edit keeps all other entries parseable and unchanged', () => {
@@ -531,6 +621,74 @@ test('new Civilopedia and PediaIcons entries insert before terminal markers', ()
   assert.ok(pediaSaved.indexOf('#ICON_BLDG_AFTER_END') > pediaSaved.indexOf('#END CIVILOPEDIA ART'));
 });
 
+test('new scenario-local Civilopedia and PediaIcons files start from fallback source text', () => {
+  const scenario = mkTmpDir();
+  const sourceDir = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaSourcePath = path.join(sourceDir, 'Civilopedia.txt');
+  const pediaIconsSourcePath = path.join(sourceDir, 'PediaIcons.txt');
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(civilopediaSourcePath, [
+    '#BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock article.',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock description.',
+    '#EOF',
+    ''
+  ].join('\r\n'), 'latin1');
+  fs.writeFileSync(pediaIconsSourcePath, [
+    '#ERA_SPLASH_ERAS_Middle_Ages',
+    'art\\erasplash\\middle.pcx',
+    '#ICON_SS_Planetary_Party_Lounge',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_large.pcx',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_small.pcx',
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART',
+    ''
+  ].join('\r\n'), 'latin1');
+  assert.equal(fs.existsSync(civilopediaPath), false);
+  assert.equal(fs.existsSync(pediaIconsPath), false);
+
+  const civSaved = writeScenarioTextEditResult(civilopediaPath, buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    sourcePath: civilopediaSourcePath,
+    edits: [{ sectionKey: 'PRTO_JET_FIGHTER', value: 'Jet Fighter article.' }]
+  }), 'fallback Civilopedia save');
+  const pediaSaved = writeScenarioTextEditResult(pediaIconsPath, buildScenarioPediaIconsEditResult({
+    targetPath: pediaIconsPath,
+    sourcePath: pediaIconsSourcePath,
+    edits: [{ blockKey: 'ANIMNAME_PRTO_JET_FIGHTER', lines: ['Jet Fighter'] }]
+  }), 'fallback PediaIcons save');
+
+  const civDoc = parseCivilopediaDocumentWithOrder(civSaved);
+  const pediaDoc = parsePediaIconsDocumentWithOrder(pediaSaved);
+  assert.equal(docTextByKey(civDoc, 'BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock article.');
+  assert.equal(docTextByKey(civDoc, 'DESC_BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock description.');
+  assert.equal(docTextByKey(civDoc, 'PRTO_JET_FIGHTER'), 'Jet Fighter article.');
+  assert.ok(civSaved.indexOf('#PRTO_JET_FIGHTER') < civSaved.indexOf('#EOF'));
+  assert.equal((civSaved.match(/(?<!\r)\n/g) || []).length, 0);
+
+  assert.deepEqual(normPediaLines(pediaDoc.blocks['ERA_SPLASH_ERAS_MIDDLE_AGES']), ['art/erasplash/middle.pcx']);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_SS_PLANETARY_PARTY_LOUNGE), [
+    'art/civilopedia/icons/spaceship/party_lounge_large.pcx',
+    'art/civilopedia/icons/spaceship/party_lounge_small.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ANIMNAME_PRTO_JET_FIGHTER), ['Jet Fighter']);
+  assert.ok(pediaSaved.indexOf('#ANIMNAME_PRTO_JET_FIGHTER') < pediaSaved.indexOf('#HomelessIcons'));
+  assert.ok(pediaSaved.includes('#HomelessIcons\r\n#\r\nart\\civilopedia\\icons\\terrain\\borderslarge.pcx'));
+  assert.equal((pediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
+});
+
 test('new mixed-case Civilopedia section keeps user-entered header and terminal EOF', () => {
   const scenario = mkTmpDir();
   const textDir = path.join(scenario, 'Text');
@@ -554,11 +712,192 @@ test('new mixed-case Civilopedia section keeps user-entered header and terminal 
 
   assert.equal(result.ok, true, String(result.error || 'civilopedia edit failed'));
   const saved = result.buffer.toString('latin1');
-  assert.equal(saved.includes('#BLDG_Resin_Shop\nHere is the Resin shop.'), true);
-  assert.equal(saved.includes('#BLDG_RESIN_SHOP\nHere is the Resin shop.'), false);
+  assert.equal(saved.includes('#BLDG_Resin_Shop\r\nHere is the Resin shop.'), true);
+  assert.equal(saved.includes('#BLDG_RESIN_SHOP\r\nHere is the Resin shop.'), false);
   assert.equal((saved.match(/^#EOF$/gm) || []).length, 1);
   assert.ok(saved.indexOf('#BLDG_Resin_Shop') < saved.indexOf('#EOF'));
   assert.ok(saved.trimEnd().endsWith('#EOF'));
+});
+
+test('Civilopedia unit edits preserve spaceship articles', () => {
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  fs.writeFileSync(civilopediaPath, [
+    '#BLDG_SS_Planetary_Party_Lounge',
+    'The Planetary Party Lounge lets future citizens celebrate in orbit.',
+    '',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    'This spaceship component is required for launch.',
+    '',
+    '#PRTO_EXISTING_FIGHTER',
+    'Existing fighter article.',
+    '#DESC_PRTO_EXISTING_FIGHTER',
+    'Existing fighter description.',
+    '#EOF',
+    ''
+  ].join('\n'), 'latin1');
+
+  const result = buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [{
+      sectionKey: 'PRTO_JET_FIGHTER',
+      value: 'Jet Fighter article.\n^Fast attack aircraft.'
+    }]
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'civilopedia edit failed'));
+  const saved = result.buffer.toString('latin1');
+  const doc = parseCivilopediaDocumentWithOrder(saved);
+  assert.equal(
+    docTextByKey(doc, 'BLDG_SS_Planetary_Party_Lounge'),
+    'The Planetary Party Lounge lets future citizens celebrate in orbit.'
+  );
+  assert.equal(
+    docTextByKey(doc, 'DESC_BLDG_SS_Planetary_Party_Lounge'),
+    'This spaceship component is required for launch.'
+  );
+  assert.equal(docTextByKey(doc, 'PRTO_JET_FIGHTER'), 'Jet Fighter article.\n^Fast attack aircraft.');
+  assert.ok(saved.indexOf('#BLDG_SS_Planetary_Party_Lounge') < saved.indexOf('#PRTO_JET_FIGHTER'));
+  assert.ok(saved.indexOf('#PRTO_JET_FIGHTER') < saved.indexOf('#EOF'));
+  assert.equal((saved.match(/^#EOF$/gm) || []).length, 1);
+});
+
+test('multi-save Civilopedia and PediaIcons workflow preserves stock and unknown sections', () => {
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const civilopediaPath = path.join(textDir, 'Civilopedia.txt');
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  const homelessBlock = [
+    '#HomelessIcons',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\borderssmall.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverslarge.pcx',
+    '#',
+    'art\\civilopedia\\icons\\terrain\\riverssmall.pcx',
+    '#END CIVILOPEDIA ART'
+  ];
+
+  fs.writeFileSync(civilopediaPath, [
+    '; Spaceship articles',
+    '#BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock article.',
+    '',
+    '#DESC_BLDG_SS_Planetary_Party_Lounge',
+    'Planetary Party Lounge stock description.',
+    '',
+    '#PRTO_OLD_ATTACKER',
+    'Old attacker article.',
+    '#DESC_PRTO_OLD_ATTACKER',
+    'Old attacker description.',
+    '#EOF',
+    ''
+  ].join('\n'), 'latin1');
+  fs.writeFileSync(pediaIconsPath, [
+    '######################################################################',
+    '#ERA_SPLASH_ERAS_Ancient_Times',
+    'art\\erasplash\\ancient.pcx',
+    '#ERA_SPLASH_ERAS_Middle_Ages',
+    'art\\erasplash\\middle.pcx',
+    '######################################################################',
+    '#ICON_PRTO_OLD_ATTACKER',
+    'art\\civilopedia\\icons\\units\\old_attacker_large.pcx',
+    'art\\civilopedia\\icons\\units\\old_attacker_small.pcx',
+    '#ANIMNAME_PRTO_OLD_ATTACKER',
+    'Old Attacker',
+    '#ICON_SS_Planetary_Party_Lounge',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_large.pcx',
+    'art\\civilopedia\\icons\\spaceship\\party_lounge_small.pcx',
+    ...homelessBlock,
+    '#WON_SPLASH_BLDG_EXISTING_WONDER',
+    'art\\wonder splash\\existing.pcx',
+    ''
+  ].join('\r\n'), 'latin1');
+
+  writeScenarioTextEditResult(civilopediaPath, buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [
+      { sectionKey: 'PRTO_JET_FIGHTER', value: 'Jet Fighter article.\n^Fast attack aircraft.' },
+      { sectionKey: 'DESC_PRTO_JET_FIGHTER', value: 'Jet Fighter description.' },
+      { sectionKey: 'BLDG_ORBITAL_LOUNGE', value: 'Orbital Lounge article.' },
+      { sectionKey: 'DESC_BLDG_ORBITAL_LOUNGE', value: 'Orbital Lounge description.' }
+    ]
+  }), 'first Civilopedia save');
+  writeScenarioTextEditResult(pediaIconsPath, buildScenarioPediaIconsEditResult({
+    targetPath: pediaIconsPath,
+    edits: [
+      {
+        blockKey: 'ICON_PRTO_JET_FIGHTER',
+        lines: ['Art/Civilopedia/Icons/Units/JetFighterLarge.pcx', 'Art/Civilopedia/Icons/Units/JetFighterSmall.pcx']
+      },
+      { blockKey: 'ANIMNAME_PRTO_JET_FIGHTER', lines: ['Jet Fighter'] },
+      {
+        blockKey: 'ICON_BLDG_ORBITAL_LOUNGE',
+        lines: ['SINGLE', '245', 'Art/Civilopedia/Icons/Buildings/OrbitalLoungeLarge.pcx', 'Art/Civilopedia/Icons/Buildings/OrbitalLoungeSmall.pcx']
+      },
+      { blockKey: 'WON_SPLASH_BLDG_ORBITAL_LOUNGE', lines: ['Art/Wonder Splash/OrbitalLounge.pcx'] }
+    ]
+  }), 'first PediaIcons save');
+
+  const secondCivSaved = writeScenarioTextEditResult(civilopediaPath, buildScenarioCivilopediaEditResult({
+    targetPath: civilopediaPath,
+    edits: [
+      { sectionKey: 'PRTO_JET_FIGHTER', value: 'Jet Fighter revised article.\n^Updated sortie doctrine.' },
+      { sectionKey: 'DESC_PRTO_JET_FIGHTER', value: 'Jet Fighter revised description.' },
+      { op: 'delete', sectionKey: 'PRTO_OLD_ATTACKER' },
+      { op: 'delete', sectionKey: 'DESC_PRTO_OLD_ATTACKER' }
+    ]
+  }), 'second Civilopedia save');
+  const secondPediaSaved = writeScenarioTextEditResult(pediaIconsPath, buildScenarioPediaIconsEditResult({
+    targetPath: pediaIconsPath,
+    edits: [
+      {
+        blockKey: 'ICON_PRTO_JET_FIGHTER',
+        lines: ['Art/Civilopedia/Icons/Units/JetFighterXLarge.pcx', 'Art/Civilopedia/Icons/Units/JetFighterXSmall.pcx']
+      },
+      { op: 'delete', blockKey: 'ICON_PRTO_OLD_ATTACKER' },
+      { op: 'delete', blockKey: 'ANIMNAME_PRTO_OLD_ATTACKER' }
+    ]
+  }), 'second PediaIcons save');
+
+  const civDoc = parseCivilopediaDocumentWithOrder(secondCivSaved);
+  const pediaDoc = parsePediaIconsDocumentWithOrder(secondPediaSaved);
+  assert.equal(docTextByKey(civDoc, 'BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock article.');
+  assert.equal(docTextByKey(civDoc, 'DESC_BLDG_SS_Planetary_Party_Lounge'), 'Planetary Party Lounge stock description.');
+  assert.equal(docTextByKey(civDoc, 'PRTO_JET_FIGHTER'), 'Jet Fighter revised article.\n^Updated sortie doctrine.');
+  assert.equal(docTextByKey(civDoc, 'DESC_PRTO_JET_FIGHTER'), 'Jet Fighter revised description.');
+  assert.equal(docTextByKey(civDoc, 'BLDG_ORBITAL_LOUNGE'), 'Orbital Lounge article.');
+  assert.equal(docTextByKey(civDoc, 'PRTO_OLD_ATTACKER'), '');
+  assert.equal(docTextByKey(civDoc, 'DESC_PRTO_OLD_ATTACKER'), '');
+  assert.equal((secondCivSaved.match(/^#EOF$/gm) || []).length, 1);
+  assert.ok(secondCivSaved.trimEnd().endsWith('#EOF'));
+
+  assert.equal((secondPediaSaved.match(/^######################################################################$/gm) || []).length, 2);
+  assert.match(secondPediaSaved, /#ERA_SPLASH_ERAS_Ancient_Times\r\nart\\erasplash\\ancient\.pcx/);
+  assert.match(secondPediaSaved, /#ICON_SS_Planetary_Party_Lounge\r\nart\\civilopedia\\icons\\spaceship\\party_lounge_large\.pcx\r\nart\\civilopedia\\icons\\spaceship\\party_lounge_small\.pcx/);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_PRTO_JET_FIGHTER), [
+    'Art/Civilopedia/Icons/Units/JetFighterXLarge.pcx',
+    'Art/Civilopedia/Icons/Units/JetFighterXSmall.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ANIMNAME_PRTO_JET_FIGHTER), ['Jet Fighter']);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_ORBITAL_LOUNGE), [
+    'SINGLE',
+    '245',
+    'Art/Civilopedia/Icons/Buildings/OrbitalLoungeLarge.pcx',
+    'Art/Civilopedia/Icons/Buildings/OrbitalLoungeSmall.pcx'
+  ]);
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.WON_SPLASH_BLDG_ORBITAL_LOUNGE), ['Art/Wonder Splash/OrbitalLounge.pcx']);
+  assert.equal(Object.prototype.hasOwnProperty.call(pediaDoc.blocks, 'ICON_PRTO_OLD_ATTACKER'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(pediaDoc.blocks, 'ANIMNAME_PRTO_OLD_ATTACKER'), false);
+  assert.ok(secondPediaSaved.includes(homelessBlock.join('\r\n')));
+  assert.ok(secondPediaSaved.indexOf('#ICON_BLDG_ORBITAL_LOUNGE') < secondPediaSaved.indexOf('#HomelessIcons'));
+  assert.ok(secondPediaSaved.indexOf('#WON_SPLASH_BLDG_ORBITAL_LOUNGE') > secondPediaSaved.indexOf('#END CIVILOPEDIA ART'));
+  assert.equal((secondPediaSaved.match(/(?<!\r)\n/g) || []).length, 0);
 });
 
 test('building PediaIcons structured blocks load metadata and save complete Resin Shop small wonder art', () => {
@@ -608,7 +947,8 @@ test('building PediaIcons structured blocks load metadata and save complete Resi
     }
   });
   assert.equal(unchanged.ok, true, String(unchanged.error || 'unchanged save failed'));
-  assert.equal((unchanged.saveReport || []).some((row) => /PediaIcons\.txt$/i.test(String(row.path || ''))), false);
+  assert.equal((unchanged.saveReport || []).some((row) => /PediaIcons\.txt$/i.test(String(row.path || '')) && row.lineEndingsNormalized), true);
+  assert.equal((fs.readFileSync(pediaIconsPath).toString('latin1').match(/(?<!\r)\n/g) || []).length, 0);
 
   const edited = {
     ...JSON.parse(JSON.stringify(resin)),
@@ -991,6 +1331,337 @@ test('scenario save localizes uploaded tech icons into tech chooser folder', () 
   ]);
 });
 
+test('scenario save shortens uploaded technology icon paths to Civ3-safe length', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largeSource = path.join(external, 'algorithmic_governance_with_extra_descriptive_words_large_icon_upload.pcx');
+  const smallSource = path.join(external, 'algorithmic_governance_with_extra_descriptive_words_small_icon_upload.pcx');
+  fs.writeFileSync(largeSource, 'large');
+  fs.writeFileSync(smallSource, 'small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_ALGORITHMIC_GOVERNANCE',
+        iconPaths: [largeSource, smallSource],
+        originalIconPaths: [],
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const [largePath, smallPath] = tabs.technologies.entries[0].iconPaths;
+  assert.match(largePath, /^Art\/tech chooser\/Icons\//);
+  assert.match(smallPath, /^Art\/tech chooser\/Icons\//);
+  assert.ok(largePath.replace(/\//g, '\\').length <= 65, largePath);
+  assert.ok(smallPath.replace(/\//g, '\\').length <= 65, smallPath);
+  assert.equal(fs.existsSync(path.join(scenario, ...largePath.split('/'))), true);
+  assert.equal(fs.existsSync(path.join(scenario, ...smallPath.split('/'))), true);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  const escapedSmall = smallPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\//g, '\\\\');
+  const escapedLarge = largePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\//g, '\\\\');
+  assert.match(saved, new RegExp(`#TECH_ALGORITHMIC_GOVERNANCE\\r?\\n${escapedSmall}`));
+  assert.match(saved, new RegExp(`#TECH_ALGORITHMIC_GOVERNANCE_LARGE\\r?\\n${escapedLarge}`));
+});
+
+test('scenario save avoids overwriting existing art when a staged shortened path collides on disk', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const largePath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute.pcx';
+  const oldSmallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_institute_small.pcx';
+  const stagedSmallPath = 'Art/Civilopedia/Icons/Buildings/superintelligence_ins_small.pcx';
+  fs.mkdirSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings'), { recursive: true });
+  fs.writeFileSync(path.join(scenario, ...largePath.split('/')), 'large');
+  fs.writeFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'existing-short-name');
+  const smallSource = path.join(external, 'replacement-small.pcx');
+  fs.writeFileSync(smallSource, 'replacement-small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_SUPERINTELLIGENCE_INSTITUTE',
+        iconPaths: [largePath, stagedSmallPath],
+        originalIconPaths: [largePath, oldSmallPath],
+        pendingArtSources: {
+          'iconPaths:1': smallSource
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: 'SINGLE',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.readFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'latin1'), 'existing-short-name');
+  assert.equal(tabs.improvements.entries[0].iconPaths[1], 'Art/Civilopedia/Icons/Buildings/superintelligence_ins_1_small.pcx');
+  assert.equal(fs.readFileSync(path.join(scenario, ...tabs.improvements.entries[0].iconPaths[1].split('/')), 'latin1'), 'replacement-small');
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_BLDG_SUPERINTELLIGENCE_INSTITUTE\r?\nSINGLE\r?\nArt\\Civilopedia\\Icons\\Buildings\\superintelligence_institute\.pcx\r?\nArt\\Civilopedia\\Icons\\Buildings\\superintelligence_ins_1_small\.pcx/);
+});
+
+test('scenario save reuses an existing staged shortened art path when the file already matches', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const oldSmallPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatformsmall.pcx';
+  const stagedSmallPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatf_small.pcx';
+  fs.mkdirSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings'), { recursive: true });
+  fs.writeFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'replacement-small');
+  const smallSource = path.join(external, 'replacement-small.pcx');
+  fs.writeFileSync(smallSource, 'replacement-small');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+        iconPaths: [stagedSmallPath],
+        originalIconPaths: [oldSmallPath],
+        pendingArtSources: {
+          'iconPaths:0': smallSource
+        },
+        buildingIconKind: 'SINGLE',
+        originalBuildingIconKind: 'SINGLE',
+        buildingIconIndex: '',
+        originalBuildingIconIndex: '',
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(tabs.improvements.entries[0].iconPaths[0], stagedSmallPath);
+  assert.equal(fs.readFileSync(path.join(scenario, ...stagedSmallPath.split('/')), 'latin1'), 'replacement-small');
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#ICON_BLDG_OFFSHORE_PLATFORM\r?\nSINGLE\r?\nArt\\Civilopedia\\Icons\\Buildings\\offshoredrillingplatf_small\.pcx/);
+});
+
+test('scenario save applies a staged shortened art path to repeated ERA building icon lines', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const external = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  const longPath = 'art/civilopedia/icons/buildings/offshoredrillingplatformlarge.pcx';
+  const stagedPath = 'Art/Civilopedia/Icons/Buildings/offshoredrillingplatf_large.pcx';
+  fs.writeFileSync(pediaIconsPath, [
+    '#ICON_BLDG_OFFSHORE_PLATFORM',
+    'ERA',
+    '26',
+    stagedPath,
+    longPath,
+    longPath,
+    longPath,
+    ''
+  ].join('\n'), 'latin1');
+  fs.mkdirSync(path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Buildings'), { recursive: true });
+  fs.writeFileSync(path.join(scenario, ...stagedPath.split('/')), 'same-large');
+  const source = path.join(external, 'offshore-large.pcx');
+  fs.writeFileSync(source, 'same-large');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    improvements: {
+      entries: [{
+        civilopediaKey: 'BLDG_OFFSHORE_PLATFORM',
+        buildingIconKind: 'ERA',
+        originalBuildingIconKind: 'ERA',
+        buildingIconIndex: '26',
+        originalBuildingIconIndex: '26',
+        iconPaths: [stagedPath, longPath, longPath, longPath],
+        originalIconPaths: [longPath, longPath, longPath, longPath],
+        pendingArtSources: {
+          'iconPaths:0': source
+        },
+        wonderSplashPath: '',
+        originalWonderSplashPath: '',
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.deepEqual(tabs.improvements.entries[0].iconPaths, [stagedPath, stagedPath, stagedPath, stagedPath]);
+  const pediaDoc = parsePediaIconsDocumentWithOrder(fs.readFileSync(pediaIconsPath).toString('latin1'));
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_BLDG_OFFSHORE_PLATFORM), [
+    'ERA',
+    '26',
+    stagedPath,
+    stagedPath,
+    stagedPath,
+    stagedPath
+  ]);
+});
+
+test('scenario save writes generated blank tech placeholder PCXs into tech chooser folder', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const whiteRgbaBase64 = (width, height) => Buffer.alloc(width * height * 4, 255).toString('base64');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      }
+    },
+    technologies: {
+      entries: [{
+        civilopediaKey: 'TECH_CITYSTATE',
+        iconPaths: [
+          'Art/tech chooser/Icons/CITYSTATE_blank_large.pcx',
+          'Art/tech chooser/Icons/CITYSTATE_blank_small.pcx'
+        ],
+        originalIconPaths: [],
+        pendingArtConversions: {
+          'iconPaths:0': {
+            sourcePath: 'Art/tech chooser/Icons/CITYSTATE_blank_large.pcx',
+            width: 128,
+            height: 128,
+            rgbaBase64: whiteRgbaBase64(128, 128)
+          },
+          'iconPaths:1': {
+            sourcePath: 'Art/tech chooser/Icons/CITYSTATE_blank_small.pcx',
+            width: 32,
+            height: 32,
+            rgbaBase64: whiteRgbaBase64(32, 32)
+          }
+        },
+        racePaths: [],
+        originalRacePaths: [],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const largePath = path.join(scenario, 'Art', 'tech chooser', 'Icons', 'CITYSTATE_blank_large.pcx');
+  const smallPath = path.join(scenario, 'Art', 'tech chooser', 'Icons', 'CITYSTATE_blank_small.pcx');
+  const largeDecoded = decodePcx(largePath, { returnIndexed: true, transparentIndexes: [] });
+  const smallDecoded = decodePcx(smallPath, { returnIndexed: true, transparentIndexes: [] });
+  assert.equal(largeDecoded.width, 128);
+  assert.equal(largeDecoded.height, 128);
+  assert.equal(smallDecoded.width, 32);
+  assert.equal(smallDecoded.height, 32);
+  assert.deepEqual(Array.from(largeDecoded.rgba.slice(0, 3)), [255, 255, 255]);
+  assert.deepEqual(Array.from(smallDecoded.rgba.slice(0, 3)), [255, 255, 255]);
+  const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
+  assert.match(saved, /#TECH_CITYSTATE\r?\nArt\\tech chooser\\Icons\\CITYSTATE_blank_small\.pcx/);
+  assert.match(saved, /#TECH_CITYSTATE_LARGE\r?\nArt\\tech chooser\\Icons\\CITYSTATE_blank_large\.pcx/);
+});
+
 test('scenario save resizes rectangular Civilopedia icons by cover-cropping instead of padding', () => {
   const root = mkTmpDir();
   const scenario = path.join(root, 'MyScenario');
@@ -1234,14 +1905,101 @@ test('scenario save localizes pending art selected from scenario work folders', 
 
   assert.equal(result.ok, true, String(result.error || 'save failed'));
   assert.equal(fs.existsSync(path.join(scenario, 'Art-dev', 'vatican.pcx')), false);
-  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican.pcx');
+  const pcxPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican_icon4.pcx');
   assert.equal(fs.existsSync(pcxPath), true);
   const decoded = decodePcx(pcxPath);
   assert.equal(decoded.width, 461);
   assert.equal(decoded.height, 346);
   const saved = fs.readFileSync(pediaIconsPath).toString('latin1');
-  assert.match(saved, /Art\\Civilopedia\\Icons\\Races\\vatican\.pcx/);
-  assert.equal(tabs.civilizations.entries[0].iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican.pcx');
+  assert.match(saved, /Art\\Civilopedia\\Icons\\Races\\vatican_icon4\.pcx/);
+  assert.equal(tabs.civilizations.entries[0].iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican_icon4.pcx');
+});
+
+test('scenario save keeps same-basename civilization icon slots distinct across save and reload', () => {
+  const root = mkTmpDir();
+  const scenario = path.join(root, 'MyScenario');
+  const workDir = path.join(scenario, 'Art-dev');
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(workDir, { recursive: true });
+  fs.mkdirSync(textDir, { recursive: true });
+
+  const pediaIconsPath = path.join(textDir, 'PediaIcons.txt');
+  fs.writeFileSync(pediaIconsPath, '', 'latin1');
+  const sourcePath = path.join(workDir, 'vatican.png');
+  fs.writeFileSync(sourcePath, 'source placeholder');
+
+  const tabs = {
+    civilizations: {
+      sourceDetails: {
+        pediaIconsScenarioWrite: pediaIconsPath
+      },
+      entries: [{
+        civilopediaKey: 'RACE_VATICAN',
+        iconPaths: [
+          'Art/Civilopedia/Icons/Races/vatican.pcx',
+          'Art/Civilopedia/Icons/Races/vatican_small.pcx',
+          'Art/Leaderheads/vatican.pcx',
+          'Art/Civilopedia/Icons/Races/vatican.pcx'
+        ],
+        originalIconPaths: [],
+        pendingArtConversions: {
+          'iconPaths:0': {
+            sourcePath,
+            width: 128,
+            height: 128,
+            rgbaBase64: solidRgba(128, 128, 20, 40, 60).toString('base64')
+          },
+          'iconPaths:3': {
+            sourcePath,
+            width: 461,
+            height: 346,
+            rgbaBase64: solidRgba(461, 346, 200, 170, 90).toString('base64')
+          }
+        },
+        racePaths: ['Art/Leaderheads/vatican.pcx', 'Art/Advisors/vatican.pcx'],
+        originalRacePaths: ['Art/Leaderheads/vatican.pcx', 'Art/Advisors/vatican.pcx'],
+        animationName: '',
+        originalAnimationName: '',
+        biqFields: []
+      }],
+      recordOps: []
+    }
+  };
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: root,
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(tabs.civilizations.entries[0].iconPaths[0], 'Art/Civilopedia/Icons/Races/vatican.pcx');
+  assert.equal(tabs.civilizations.entries[0].iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican_icon4.pcx');
+
+  const largePath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican.pcx');
+  const sheetPath = path.join(scenario, 'Art', 'Civilopedia', 'Icons', 'Races', 'vatican_icon4.pcx');
+  const largeDecoded = decodePcx(largePath);
+  const sheetDecoded = decodePcx(sheetPath);
+  assert.equal(largeDecoded.width, 128);
+  assert.equal(largeDecoded.height, 128);
+  assert.equal(sheetDecoded.width, 461);
+  assert.equal(sheetDecoded.height, 346);
+
+  const pediaDoc = parsePediaIconsDocumentWithOrder(fs.readFileSync(pediaIconsPath).toString('latin1'));
+  assert.deepEqual(normPediaLines(pediaDoc.blocks.ICON_RACE_VATICAN), [
+    'Art/Civilopedia/Icons/Races/vatican.pcx',
+    'Art/Civilopedia/Icons/Races/vatican_small.pcx',
+    'Art/Leaderheads/vatican.pcx',
+    'Art/Civilopedia/Icons/Races/vatican_icon4.pcx'
+  ]);
+
+  const reloaded = buildReferenceTabs(root, { mode: 'scenario', civ3Path: root, scenarioPath: scenario });
+  const entry = reloaded.civilizations.entries.find((item) => item.civilopediaKey === 'RACE_VATICAN');
+  assert.ok(entry, 'expected saved civilization to reload from PediaIcons');
+  assert.equal(entry.iconPaths[0], 'Art/Civilopedia/Icons/Races/vatican.pcx');
+  assert.equal(entry.iconPaths[3], 'Art/Civilopedia/Icons/Races/vatican_icon4.pcx');
 });
 
 test('scenario save converts pending truecolor PCX art to indexed Civ3 PCX', () => {
