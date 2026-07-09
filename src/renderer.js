@@ -442,6 +442,49 @@ const civColorPaletteModal = {
   undoAllBtn: null,
   lastConfig: null
 };
+const flicWorkshopModal = {
+  node: null,
+  body: null,
+  title: null,
+  tabs: null,
+  activeTab: 'preview',
+  preview: null,
+  request: null,
+  actionBar: null,
+  actionRows: [],
+  currentActionKey: '',
+  sourceKind: 'flc',
+  direction: 0,
+  civIndex: '-1',
+  civSlot: 'default',
+  alpha: true,
+  frameDelay: 100,
+  zoomScale: 1,
+  hour: 12,
+  frameWidth: 0,
+  frameHeight: 0,
+  exportSizeMode: 'original',
+  exportWidth: 0,
+  exportHeight: 0,
+  exportFrameCountMode: 'original',
+  exportFrameCount: 0,
+  exportPaletteMode: 'original',
+  exportPaletteCivIndex: '-1',
+  exportPaletteCivSlot: 'default',
+  exportDelayMode: 'original',
+  exportDelay: 100,
+  exportEditor: '',
+  displayPreviewCache: null,
+  sourcePath: '',
+  sourceLabel: '',
+  storyboard: null,
+  status: ''
+};
+const flicWorkshopToast = {
+  node: null,
+  timer: null,
+  folderPath: ''
+};
 const civilizationAnimationPreviewQueue = {
   active: 0,
   limit: 2,
@@ -11757,22 +11800,70 @@ function makeReferencePreviewTasks(tabKey, entry) {
   return tasks;
 }
 
+function getPreviewCiv3Meta(preview) {
+  const civ3 = preview && preview.meta && preview.meta.civ3 ? preview.meta.civ3 : {};
+  return {
+    numAnims: Number(civ3.numAnims || preview && preview.civ3NumAnims || 0),
+    animLength: Number(civ3.animLength || preview && preview.civ3AnimLength || 0),
+    directions: Number(civ3.directions || preview && preview.civ3Directions || 0)
+  };
+}
+
+function getPreviewAvailableDirectionIndexes(preview) {
+  const civ3 = getPreviewCiv3Meta(preview);
+  const directionCount = Math.max(1, Math.min(8, Math.round(Number(civ3.numAnims) || 1)));
+  const mask = Number(civ3.directions);
+  if (Number.isFinite(mask) && mask > 0) {
+    const dirs = UNIT_FACING_OPTIONS
+      .filter((opt) => (mask & (1 << opt.index)) !== 0)
+      .map((opt) => opt.index);
+    if (dirs.length) return dirs.slice(0, directionCount);
+  }
+  return UNIT_FACING_OPTIONS.slice(0, directionCount).map((opt) => opt.index);
+}
+
+function getPreviewFallbackDirectionIndex(preview, preferredIndex = 0) {
+  const available = getPreviewAvailableDirectionIndexes(preview);
+  const normalized = ((Number(preferredIndex) % 8) + 8) % 8;
+  return available.includes(normalized) ? normalized : (available[0] ?? 0);
+}
+
+function getPreviewDirectionPosition(preview, directionIndex) {
+  const available = getPreviewAvailableDirectionIndexes(preview);
+  const normalized = getPreviewFallbackDirectionIndex(preview, directionIndex);
+  const pos = available.indexOf(normalized);
+  return pos >= 0 ? pos : 0;
+}
+
+function sliceBase64FramesByDirection(frames, preview, directionIndex) {
+  if (!Array.isArray(frames) || frames.length < 1) return frames;
+  const civ3 = getPreviewCiv3Meta(preview);
+  const directionCount = Math.max(1, Math.min(8, Math.round(Number(civ3.numAnims) || 0)));
+  const explicitPerDir = Math.round(Number(civ3.animLength) || 0);
+  const decodedBlockSize = explicitPerDir > 0 && directionCount > 0 && frames.length >= directionCount * (explicitPerDir + 1)
+    ? explicitPerDir + 1
+    : (explicitPerDir > 0 ? explicitPerDir : Math.floor(frames.length / Math.max(1, directionCount || 8)));
+  const displayFrameCount = explicitPerDir > 0 ? explicitPerDir : decodedBlockSize;
+  if (decodedBlockSize < 1 || displayFrameCount < 1 || frames.length < decodedBlockSize * Math.max(1, directionCount)) return frames;
+  const dirPosition = getPreviewDirectionPosition(preview, directionIndex);
+  const start = dirPosition * decodedBlockSize;
+  const end = Math.min(frames.length, start + displayFrameCount);
+  const subset = frames.slice(start, end);
+  return subset.length ? subset : frames;
+}
+
 function sliceUnitPreviewByDirection(preview, directionIndex) {
   if (!preview || !preview.animated || !Array.isArray(preview.framesBase64)) return preview;
-  const frames = preview.framesBase64;
-  if (frames.length < 8) return preview;
-  const perDir = Math.floor(frames.length / 8);
-  if (perDir < 1) return preview;
-  const dirBase = ((Number(directionIndex) % 8) + 8) % 8;
-  const dir = (dirBase + UNIT_DIRECTION_SLICE_OFFSET) % 8;
-  const start = dir * perDir;
-  const end = dir === 7 ? frames.length : Math.min(frames.length, start + perDir);
-  const subset = frames.slice(start, end);
-  if (!subset.length) return preview;
-  return {
+  const framesBase64 = sliceBase64FramesByDirection(preview.framesBase64, preview, directionIndex);
+  if (framesBase64 === preview.framesBase64) return preview;
+  const next = {
     ...preview,
-    framesBase64: subset
+    framesBase64
   };
+  if (Array.isArray(preview.indexedFramesBase64)) {
+    next.indexedFramesBase64 = sliceBase64FramesByDirection(preview.indexedFramesBase64, preview, directionIndex);
+  }
+  return next;
 }
 
 function getUnitAnimationUiState(entry) {
@@ -12126,8 +12217,87 @@ function toUnitIniRelativePath(filePath, iniPath, fallbackIniPath = '') {
   if (!full) return '';
   const baseIniPath = toSlashPath(iniPath || fallbackIniPath || '').trim();
   const baseDir = getParentPath(baseIniPath);
+  const logicalRel = makeUnitArtLogicalRelativePath(full, baseDir);
+  if (logicalRel) return logicalRel;
   if (baseDir && full.startsWith(`${baseDir}/`)) return full.slice(baseDir.length + 1);
+  const baseUnitRoot = getUnitArtRootPath(baseDir);
+  const fullUnitRoot = getUnitArtRootPath(full);
+  if (baseDir && baseUnitRoot && fullUnitRoot && sameSlashPath(baseUnitRoot, fullUnitRoot)) {
+    const rel = makeSlashRelativePath(baseDir, full);
+    if (rel && !rel.startsWith('../../..')) return rel.replace(/\//g, '\\');
+  }
   return full;
+}
+
+function makeUnitArtLogicalRelativePath(filePath, baseDir) {
+  const baseFolder = getPathBaseName(baseDir);
+  if (!baseFolder) return '';
+  const target = getUnitArtFolderReference(filePath);
+  if (!target || !target.folder || !target.tail) return '';
+  const rel = sameText(target.folder, baseFolder)
+    ? target.tail
+    : `../${target.folder}/${target.tail}`;
+  return rel.replace(/\//g, '\\');
+}
+
+function getUnitArtFolderReference(value) {
+  const p = toSlashPath(value).replace(/^["']|["']$/g, '').trim();
+  const marker = '/art/units/';
+  const lower = p.toLowerCase();
+  let idx = lower.lastIndexOf(marker);
+  let start = idx >= 0 ? idx + marker.length : -1;
+  if (start < 0 && lower.startsWith('art/units/')) start = 'art/units/'.length;
+  if (start < 0) return null;
+  const rest = p.slice(start).replace(/^\/+/, '');
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  return {
+    folder: parts[0],
+    tail: parts.slice(1).join('/')
+  };
+}
+
+function sameText(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+function sameSlashPath(a, b) {
+  return toSlashPath(a).replace(/\/+$/, '').toLowerCase() === toSlashPath(b).replace(/\/+$/, '').toLowerCase();
+}
+
+function getUnitArtRootPath(value) {
+  const p = toSlashPath(value).replace(/\/+$/, '');
+  const marker = '/art/units';
+  const idx = p.toLowerCase().lastIndexOf(marker);
+  if (idx < 0) return '';
+  return p.slice(0, idx + marker.length);
+}
+
+function getAbsoluteRootKey(value) {
+  const p = toSlashPath(value).trim();
+  const drive = p.match(/^([a-zA-Z]:)\//);
+  if (drive) return drive[1].toLowerCase();
+  if (p.startsWith('/')) return '/';
+  return '';
+}
+
+function makeSlashRelativePath(fromDir, toPath) {
+  const from = toSlashPath(fromDir).replace(/\/+$/, '');
+  const to = toSlashPath(toPath).replace(/\/+$/, '');
+  if (!from || !to || getAbsoluteRootKey(from) !== getAbsoluteRootKey(to)) return '';
+  const fromParts = from.replace(/^[a-zA-Z]:\//, '').replace(/^\//, '').split('/').filter(Boolean);
+  const toParts = to.replace(/^[a-zA-Z]:\//, '').replace(/^\//, '').split('/').filter(Boolean);
+  let common = 0;
+  while (
+    common < fromParts.length
+    && common < toParts.length
+    && fromParts[common].toLowerCase() === toParts[common].toLowerCase()
+  ) {
+    common += 1;
+  }
+  const up = fromParts.slice(common).map(() => '..');
+  const down = toParts.slice(common);
+  return up.concat(down).join('/') || '.';
 }
 
 function toFileUrlFromPath(filePath) {
@@ -12138,20 +12308,30 @@ function toFileUrlFromPath(filePath) {
   return encodeURI(`file://${p.startsWith('/') ? '' : '/'}${p}`);
 }
 
-async function resolvePlayableUnitSoundPath(soundPath) {
+async function resolvePlayableUnitSoundPath(soundPath, unitIniPath = '') {
   const raw = toSlashPath(soundPath).trim();
   if (!raw) return '';
-  if (/\.wav$/i.test(raw) || /\.mp3$/i.test(raw) || /\.ogg$/i.test(raw)) return raw;
-  if (!/\.amb$/i.test(raw)) return '';
+  if (!/\.amb$/i.test(raw)) {
+    return {
+      kind: 'file',
+      soundPath: raw,
+      playablePath: raw,
+      samples: [{ name: raw.split('/').pop() || raw, path: raw, startSeconds: 0 }],
+      missingSamples: []
+    };
+  }
   try {
-    const absAmb = raw;
-    const parent = getParentPath(absAmb);
-    const bytes = await fetch(toFileUrlFromPath(absAmb)).then((res) => (res.ok ? res.arrayBuffer() : null));
-    if (!bytes) return '';
-    const text = new TextDecoder('latin1').decode(bytes);
-    const match = text.match(/([A-Za-z0-9 _-]+\.wav)/i);
-    if (!match || !match[1]) return '';
-    return `${parent}/${match[1]}`;
+    if (!window.c3xManager || typeof window.c3xManager.getPreview !== 'function') return '';
+    const res = await window.c3xManager.getPreview({
+      kind: 'unitSoundPreview',
+      soundPath: raw,
+      unitIniPath,
+      civ3Path: state.settings.civ3Path,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths()
+    });
+    if (!res || !res.ok) return '';
+    return res;
   } catch (_err) {
     return '';
   }
@@ -12199,26 +12379,2124 @@ function getEraVariantEntries(tab, entry) {
   return variants;
 }
 
-function makeUnitDirectionPad(selectedIndex, onPick) {
+function makeUnitDirectionPad(selectedIndex, onPick, options = {}) {
   const pad = document.createElement('div');
   pad.className = 'unit-direction-pad';
+  const available = options && options.availableDirections instanceof Set
+    ? options.availableDirections
+    : null;
   UNIT_FACING_OPTIONS.forEach((opt) => {
+    const disabled = available ? !available.has(opt.index) : false;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'unit-direction-btn';
     btn.classList.add(`dir-${opt.key}`);
     btn.classList.toggle('active', Number(selectedIndex) === opt.index);
+    btn.disabled = disabled;
     btn.dataset.dir = String(opt.index);
-    btn.title = `${opt.label} facing`;
-    btn.setAttribute('aria-label', `${opt.label} facing`);
+    btn.title = disabled ? `${opt.label} facing unavailable` : `${opt.label} facing`;
+    btn.setAttribute('aria-label', disabled ? `${opt.label} facing unavailable` : `${opt.label} facing`);
     btn.innerHTML = `<span>${opt.glyph}</span><small>${opt.label}</small>`;
     btn.addEventListener('click', (ev) => {
       ev.preventDefault();
+      if (disabled) return;
       if (typeof onPick === 'function') onPick(opt.index);
     });
     pad.appendChild(btn);
   });
   return pad;
+}
+
+function isFlicWorkshopModalVisible() {
+  return isModalVisible(flicWorkshopModal);
+}
+
+function closeFlicWorkshopModal() {
+  if (!flicWorkshopModal.node) return;
+  flicWorkshopModal.exportEditor = '';
+  hideFlicWorkshopToast();
+  flicWorkshopModal.node.classList.add('hidden');
+}
+
+function getFlicWorkshopToastHost() {
+  if (flicWorkshopModal.node) {
+    const panel = flicWorkshopModal.node.querySelector('.flic-workshop-modal-panel');
+    if (panel) return panel;
+  }
+  return document.body;
+}
+
+function ensureFlicWorkshopToast() {
+  if (flicWorkshopToast.node) {
+    const host = getFlicWorkshopToastHost();
+    if (flicWorkshopToast.node.parentNode !== host) host.appendChild(flicWorkshopToast.node);
+    return flicWorkshopToast.node;
+  }
+  const toast = document.createElement('div');
+  toast.className = 'flic-workshop-toast hidden';
+  toast.innerHTML = `
+    <div class="flic-workshop-toast-shell">
+      <button type="button" class="flic-workshop-toast-button">
+        <span class="flic-workshop-toast-icon">✓</span>
+        <span class="flic-workshop-toast-copy">
+          <strong class="flic-workshop-toast-title"></strong>
+          <span class="flic-workshop-toast-body"></span>
+        </span>
+      </button>
+      <button type="button" class="flic-workshop-toast-dismiss" aria-label="Dismiss">x</button>
+    </div>
+  `;
+  getFlicWorkshopToastHost().appendChild(toast);
+  flicWorkshopToast.node = toast;
+  toast.querySelector('.flic-workshop-toast-button').addEventListener('click', async () => {
+    const folder = String(flicWorkshopToast.folderPath || '').trim();
+    if (!folder || !window.c3xManager || typeof window.c3xManager.openFilePath !== 'function') return;
+    await window.c3xManager.openFilePath(folder);
+  });
+  toast.querySelector('.flic-workshop-toast-dismiss').addEventListener('click', hideFlicWorkshopToast);
+  return toast;
+}
+
+function hideFlicWorkshopToast() {
+  if (flicWorkshopToast.timer) {
+    window.clearTimeout(flicWorkshopToast.timer);
+    flicWorkshopToast.timer = null;
+  }
+  if (flicWorkshopToast.node) flicWorkshopToast.node.classList.add('hidden');
+}
+
+function showFlicWorkshopToast({ title, body, folderPath, autoHideMs = 10000 }) {
+  const toast = ensureFlicWorkshopToast();
+  if (flicWorkshopToast.timer) window.clearTimeout(flicWorkshopToast.timer);
+  flicWorkshopToast.folderPath = String(folderPath || '').trim();
+  const titleNode = toast.querySelector('.flic-workshop-toast-title');
+  const bodyNode = toast.querySelector('.flic-workshop-toast-body');
+  if (titleNode) titleNode.textContent = title || 'Export complete';
+  if (bodyNode) bodyNode.textContent = body || '';
+  toast.classList.remove('hidden');
+  if (autoHideMs > 0) {
+    flicWorkshopToast.timer = window.setTimeout(hideFlicWorkshopToast, autoHideMs);
+  }
+}
+
+function normalizeFlicWorkshopActionRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      key: String(row && row.key || '').trim().toUpperCase(),
+      relativePath: String(row && row.relativePath || '').trim()
+    }))
+    .filter((row, idx, all) => row.key && row.relativePath && all.findIndex((candidate) => candidate.key === row.key) === idx);
+}
+
+function ensureFlicWorkshopModal() {
+  if (flicWorkshopModal.node) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'flic-workshop-modal-overlay hidden';
+  overlay.innerHTML = `
+    <div class="flic-workshop-modal-panel" role="dialog" aria-modal="true" aria-label="FLC Workshop">
+      <div class="flic-workshop-modal-header">
+        <strong id="flic-workshop-title">FLC Workshop</strong>
+        <div class="flic-workshop-header-source"></div>
+        <button type="button" class="ghost flic-workshop-close" aria-label="Close">Close</button>
+      </div>
+      <div class="flic-workshop-tabs"></div>
+      <div class="flic-workshop-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  flicWorkshopModal.node = overlay;
+  flicWorkshopModal.title = overlay.querySelector('#flic-workshop-title');
+  flicWorkshopModal.tabs = overlay.querySelector('.flic-workshop-tabs');
+  flicWorkshopModal.actionBar = overlay.querySelector('.flic-workshop-header-source');
+  flicWorkshopModal.body = overlay.querySelector('.flic-workshop-body');
+  overlay.querySelector('.flic-workshop-close').addEventListener('click', closeFlicWorkshopModal);
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closeFlicWorkshopModal();
+  });
+}
+
+function getFlicWorkshopCivPalette(slotValue) {
+  const raw = String(slotValue || '').trim();
+  if (!raw || raw === 'default' || raw === '-1') return null;
+  const civMatch = raw.match(/^civ:(\d+)$/i);
+  let slot = Number.parseInt(raw, 10);
+  if (civMatch) {
+    const civIndex = Number.parseInt(civMatch[1], 10);
+    const civTab = state && state.bundle && state.bundle.tabs ? state.bundle.tabs.civilizations : null;
+    const entries = Array.isArray(civTab && civTab.entries) ? civTab.entries : [];
+    slot = parseCivilizationColorSlot(entries[civIndex], 'defaultcolor');
+  }
+  if (!Number.isInteger(slot)) return null;
+  const entry = (Array.isArray(state.civColorPaletteSlots) ? state.civColorPaletteSlots : [])
+    .find((item) => Number(item && item.slot) === slot);
+  const palette = Array.isArray(entry && entry.palette) ? entry.palette : null;
+  return palette && palette.length >= 768 ? Uint8Array.from(palette) : null;
+}
+
+function getFlicWorkshopCivilizationColorOptions() {
+  const civTab = state && state.bundle && state.bundle.tabs ? state.bundle.tabs.civilizations : null;
+  const entries = Array.isArray(civTab && civTab.entries) ? civTab.entries : [];
+  return entries.map((entry, idx) => {
+    const slot = parseCivilizationColorSlot(entry, 'defaultcolor');
+    if (!Number.isInteger(slot)) return null;
+    const label = getReferenceEntryDisplayName('civilizations', entry) || `Civilization ${idx + 1}`;
+    return {
+      value: String(idx),
+      label,
+      displayLabel: label,
+      entry,
+      baseIndex: idx,
+      colorSlot: slot
+    };
+  }).filter(Boolean);
+}
+
+function renderFlicWorkshopCivOptionThumb({ holder, option }) {
+  if (!holder || !option) return false;
+  if (!Number.isInteger(option.colorSlot)) return false;
+  holder.classList.add('flic-workshop-civ-thumb');
+  const entry = option.entry || null;
+  const appendChip = () => {
+    if (!holder || !holder.isConnected || holder.querySelector('.flic-workshop-civ-color-chip')) return;
+    const chip = document.createElement('span');
+    chip.className = 'flic-workshop-civ-color-chip';
+    const slotEntry = getCivColorPaletteSlotEntry(option.colorSlot);
+    const rgb = slotEntry && slotEntry.representativeColor
+      ? slotEntry.representativeColor
+      : getCivColorPaletteColor(slotEntry, 7);
+    chip.style.background = rgbToCss(rgb);
+    chip.title = `Default Color ${option.colorSlot}`;
+    holder.appendChild(chip);
+  };
+  if (entry) {
+    Promise.resolve(loadReferenceListThumbnail('civilizations', entry, holder))
+      .then(appendChip)
+      .catch(appendChip);
+  } else {
+    appendChip();
+  }
+  return true;
+}
+
+function renderFlicWorkshopCivColorPicker(parent) {
+  const field = document.createElement('label');
+  field.className = 'flic-workshop-field flic-workshop-civ-field';
+  const title = document.createElement('span');
+  title.textContent = 'Civilization Color';
+  field.appendChild(title);
+  const options = getFlicWorkshopCivilizationColorOptions();
+  const picker = createReferencePicker({
+    options,
+    currentValue: String(flicWorkshopModal.civIndex || '-1'),
+    includeNone: true,
+    noneLabel: 'Default palette',
+    searchPlaceholder: 'Search civilizations',
+    pickerClassName: 'flic-workshop-civ-picker',
+    menuClassName: 'flic-workshop-civ-picker-menu',
+    thumbClassName: 'flic-workshop-civ-thumb',
+    showOptionThumbs: true,
+    renderOptionThumb: renderFlicWorkshopCivOptionThumb,
+    getOptionMetaText: (option) => Number.isInteger(option && option.colorSlot)
+      ? `Default Color ${option.colorSlot}`
+      : '',
+    menuPortalRoot: () => flicWorkshopModal.node || document.body,
+    onSelect: (value, option) => {
+      flicWorkshopModal.civIndex = String(value || '-1');
+      flicWorkshopModal.civSlot = String(value || '') === '-1' ? 'default' : String(option && option.colorSlot);
+      renderFlicWorkshopModal();
+    }
+  });
+  field.appendChild(picker);
+  parent.appendChild(field);
+}
+
+function renderFlicWorkshopExportPalettePicker(parent) {
+  const field = document.createElement('div');
+  field.className = 'flic-workshop-export-picker';
+  const options = getFlicWorkshopCivilizationColorOptions();
+  const picker = createReferencePicker({
+    options,
+    currentValue: String(flicWorkshopModal.exportPaletteCivIndex || '-1'),
+    includeNone: true,
+    noneLabel: 'Default palette',
+    searchPlaceholder: 'Search civilizations',
+    pickerClassName: 'flic-workshop-civ-picker',
+    menuClassName: 'flic-workshop-civ-picker-menu',
+    thumbClassName: 'flic-workshop-civ-thumb',
+    showOptionThumbs: true,
+    renderOptionThumb: renderFlicWorkshopCivOptionThumb,
+    getOptionMetaText: (option) => Number.isInteger(option && option.colorSlot)
+      ? `Default Color ${option.colorSlot}`
+      : '',
+    menuPortalRoot: () => flicWorkshopModal.node || document.body,
+    onSelect: (value, option) => {
+      flicWorkshopModal.exportPaletteCivIndex = String(value || '-1');
+      flicWorkshopModal.exportPaletteCivSlot = String(value || '') === '-1' ? 'default' : String(option && option.colorSlot);
+      renderFlicWorkshopModal();
+    }
+  });
+  field.appendChild(picker);
+  parent.appendChild(field);
+}
+
+function isFlicWorkshopCivColorIndex(idx) {
+  return idx <= 14 || (idx >= 16 && idx <= 62 && (idx & 1) === 0);
+}
+
+function clampFlicWorkshopByte(value) {
+  return Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
+}
+
+function clampFlicWorkshopZoomScale(value) {
+  const parsed = Number.parseFloat(String(value ?? '').trim());
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(0.5, Math.min(1.5, parsed));
+}
+
+function clampFlicWorkshopHour(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isFinite(parsed)) return 12;
+  return Math.max(0, Math.min(24, parsed));
+}
+
+function isFlicWorkshopProtectedPaletteIndex(index) {
+  return index >= 0 && index <= 62 || index >= 236 && index <= 255;
+}
+
+function isFlicWorkshopMagentaLike(r, g, b) {
+  return r >= 248 && b >= 248 && g <= 12;
+}
+
+function getFlicWorkshopUsedIndices(frames) {
+  const used = new Set();
+  (Array.isArray(frames) ? frames : []).forEach((frame) => {
+    for (let i = 0; i < frame.length; i += 1) used.add(frame[i]);
+  });
+  return used;
+}
+
+function flicWorkshopGauss(x, mu, sigma) {
+  if (sigma <= 0) return 0;
+  return Math.exp(-0.5 * ((x - mu) / sigma) ** 2);
+}
+
+function flicWorkshopSmoothstep01(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t * t * (3 - 2 * t);
+}
+
+function flicWorkshopIntervalMembership(x, a, b, soft) {
+  const h = ((x % 24) + 24) % 24;
+  const start = ((a % 24) + 24) % 24;
+  const end = ((b % 24) + 24) % 24;
+  const edge = Math.max(0, Number(soft) || 0);
+  const segment = (value, s, e) => {
+    if (edge <= 0) return value >= s && value <= e ? 1 : 0;
+    if (value >= s - edge && value < s) return flicWorkshopSmoothstep01((value - (s - edge)) / edge);
+    if (value >= s && value <= e) return 1;
+    if (value > e && value <= e + edge) return 1 - flicWorkshopSmoothstep01((value - e) / edge);
+    return 0;
+  };
+  if (start <= end) return segment(h, start, end);
+  return Math.max(segment(h, start, 24), segment(h, 0, end));
+}
+
+function getFlicWorkshopNoonWeight(hour, blend = 0.85, sigma = 1.1, start = 10, end = 14, soft = 0.7) {
+  if (blend <= 0) return 0;
+  const h = ((hour % 24) + 24) % 24;
+  const d = Math.min(Math.abs(h - 12), 24 - Math.abs(h - 12));
+  const gaussian = sigma > 0 ? Math.exp(-0.5 * (d / sigma) ** 2) * blend : 0;
+  const windowWeight = flicWorkshopIntervalMembership(h, start, end, soft) * blend;
+  return Math.max(0, Math.min(1, Math.max(gaussian, windowWeight)));
+}
+
+function getFlicWorkshopHourAdjustments(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  const daylight = Math.max(0, Math.cos(Math.PI * (h - 12) / 12));
+  const night = 1 - daylight;
+  const warmthScale = 1.10;
+  const blueScale = 1.12;
+  const darknessScale = 1.08;
+  const desatScale = 0.85;
+  let warmth = 0.85 * (flicWorkshopGauss(h, 6, 1.8) + flicWorkshopGauss(h, 18, 1.8));
+  warmth *= warmthScale;
+  const brightness = (0.60 + 0.40 * daylight) * (1 - (0.12 * (darknessScale - 1) * night));
+  return {
+    brightness,
+    rMul: Math.max(0.65, Math.min(1.45, 0.97 + 0.12 * daylight + 0.30 * warmth)),
+    gMul: Math.max(0.65, Math.min(1.40, 0.97 + 0.12 * daylight + 0.12 * warmth)),
+    bMul: Math.max(0.65, Math.min(1.55, 0.97 + 0.12 * daylight - 0.18 * warmth + (0.28 * blueScale) * night)),
+    grayBlend: Math.max(0, Math.min(0.85, (0.10 + 0.50 * night) * desatScale)),
+    bluePush: Math.max(0, blueScale - 1) * night
+  };
+}
+
+function tintFlicWorkshopRgbForHour(rgb, params, satBoost, contrast) {
+  let r = rgb[0] * params.rMul * params.brightness;
+  let g = rgb[1] * params.gMul * params.brightness;
+  let b = rgb[2] * params.bMul * params.brightness;
+  const gray = (r + g + b) / 3;
+  r = (1 - params.grayBlend) * r + params.grayBlend * gray;
+  g = (1 - params.grayBlend) * g + params.grayBlend * gray;
+  b = (1 - params.grayBlend) * b + params.grayBlend * gray;
+  const satGray = (r + g + b) / 3;
+  r = satGray + (r - satGray) * satBoost;
+  g = satGray + (g - satGray) * satBoost;
+  b = satGray + (b - satGray) * satBoost;
+  if (params.bluePush > 0) {
+    r *= 1 - 0.15 * params.bluePush;
+    g *= 1 - 0.10 * params.bluePush;
+    b *= 1 + 0.35 * params.bluePush;
+  }
+  r = 128 + (r - 128) * contrast;
+  g = 128 + (g - 128) * contrast;
+  b = 128 + (b - 128) * contrast;
+  return [clampFlicWorkshopByte(r), clampFlicWorkshopByte(g), clampFlicWorkshopByte(b)];
+}
+
+function getFlicWorkshopPaletteForHour(palette, frames) {
+  const source = palette instanceof Uint8Array ? palette : Uint8Array.from(palette || []);
+  if (source.length < 768) return source;
+  const hour = clampFlicWorkshopHour(flicWorkshopModal.hour);
+  if (hour === 12) return source;
+  const out = new Uint8Array(source);
+  const used = getFlicWorkshopUsedIndices(frames);
+  const params = getFlicWorkshopHourAdjustments(hour);
+  const noonWeight = getFlicWorkshopNoonWeight(hour);
+  const satBoost = 1 + (1.05 - 1) * (1 - noonWeight);
+  const contrast = 1 + (1.03 - 1) * (1 - noonWeight);
+  for (let i = 0; i < 256; i += 1) {
+    if (!used.has(i) || isFlicWorkshopProtectedPaletteIndex(i)) continue;
+    const off = i * 3;
+    const rgb = [source[off] || 0, source[off + 1] || 0, source[off + 2] || 0];
+    if (isFlicWorkshopMagentaLike(rgb[0], rgb[1], rgb[2])) continue;
+    let next = tintFlicWorkshopRgbForHour(rgb, params, satBoost, contrast);
+    if (noonWeight > 0) {
+      next = [
+        clampFlicWorkshopByte((1 - noonWeight) * next[0] + noonWeight * rgb[0]),
+        clampFlicWorkshopByte((1 - noonWeight) * next[1] + noonWeight * rgb[1]),
+        clampFlicWorkshopByte((1 - noonWeight) * next[2] + noonWeight * rgb[2])
+      ];
+    }
+    out[off] = next[0];
+    out[off + 1] = next[1];
+    out[off + 2] = next[2];
+  }
+  return out;
+}
+
+function getFlicWorkshopDisplayPalette(palette, civPalette, frames) {
+  const base = getFlicWorkshopPaletteForHour(palette, frames);
+  if (!civPalette || civPalette.length < 768) return base;
+  const civ = getFlicWorkshopPaletteForHour(civPalette, frames);
+  const out = new Uint8Array(base);
+  for (let i = 0; i < 256; i += 1) {
+    if (!isFlicWorkshopCivColorIndex(i)) continue;
+    out[i * 3] = civ[i * 3] || 0;
+    out[i * 3 + 1] = civ[i * 3 + 1] || 0;
+    out[i * 3 + 2] = civ[i * 3 + 2] || 0;
+  }
+  return out;
+}
+
+function chooseFlicWorkshopBackgroundIndex(frames, width, height) {
+  const counts = new Map();
+  const add = (idx) => counts.set(idx, (counts.get(idx) || 0) + 1);
+  (Array.isArray(frames) ? frames : []).forEach((frame) => {
+    if (!frame || frame.length < width * height) return;
+    for (let x = 0; x < width; x += 1) {
+      add(frame[x]);
+      add(frame[(height - 1) * width + x]);
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      add(frame[y * width]);
+      add(frame[y * width + width - 1]);
+    }
+  });
+  let best = 255;
+  let bestCount = -1;
+  counts.forEach((count, idx) => {
+    if (count > bestCount) {
+      best = idx;
+      bestCount = count;
+    }
+  });
+  return best;
+}
+
+function getFlicWorkshopContentBox(frame, width, height, backgroundIndex) {
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      if (frame[row + x] === backgroundIndex) continue;
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+    }
+  }
+  return x1 < x0 || y1 < y0 ? null : { x0, y0, x1: x1 + 1, y1: y1 + 1 };
+}
+
+function getFlicWorkshopUnionBox(frames, width, height, backgroundIndex) {
+  const boxes = (Array.isArray(frames) ? frames : [])
+    .map((frame) => getFlicWorkshopContentBox(frame, width, height, backgroundIndex))
+    .filter(Boolean);
+  if (!boxes.length) return null;
+  return {
+    x0: Math.min(...boxes.map((box) => box.x0)),
+    y0: Math.min(...boxes.map((box) => box.y0)),
+    x1: Math.max(...boxes.map((box) => box.x1)),
+    y1: Math.max(...boxes.map((box) => box.y1))
+  };
+}
+
+function getFlicWorkshopZoomGeometry(width, height, scale, box) {
+  const srcW = box.x1 - box.x0;
+  const srcH = box.y1 - box.y0;
+  const dstW = Math.max(1, Math.round(srcW * scale));
+  const dstH = Math.max(1, Math.round(srcH * scale));
+  const dstX0 = Math.round((box.x0 + srcW / 2) - dstW / 2);
+  const dstY0 = Math.round((box.y0 + srcH / 2) - dstH / 2);
+  const padLeft = Math.max(0, -dstX0);
+  const padTop = Math.max(0, -dstY0);
+  const padRight = Math.max(0, dstX0 + dstW - width);
+  const padBottom = Math.max(0, dstY0 + dstH - height);
+  return {
+    dstW,
+    dstH,
+    dstX0,
+    dstY0,
+    padLeft,
+    padTop,
+    outputWidth: width + padLeft + padRight,
+    outputHeight: height + padTop + padBottom
+  };
+}
+
+function scaleFlicWorkshopIndexedFrame(frame, width, height, scale, backgroundIndex, box, geometry) {
+  if (!box || !frame || frame.length < width * height) return frame;
+  const srcW = box.x1 - box.x0;
+  const srcH = box.y1 - box.y0;
+  const outputWidth = Math.max(width, Number(geometry && geometry.outputWidth) || width);
+  const outputHeight = Math.max(height, Number(geometry && geometry.outputHeight) || height);
+  const dstW = Math.max(1, Number(geometry && geometry.dstW) || Math.round(srcW * scale));
+  const dstH = Math.max(1, Number(geometry && geometry.dstH) || Math.round(srcH * scale));
+  const dstX0 = Number(geometry && geometry.dstX0) || 0;
+  const dstY0 = Number(geometry && geometry.dstY0) || 0;
+  const padLeft = Number(geometry && geometry.padLeft) || 0;
+  const padTop = Number(geometry && geometry.padTop) || 0;
+  const out = new Uint8Array(outputWidth * outputHeight);
+  out.fill(backgroundIndex);
+  for (let dy = 0; dy < dstH; dy += 1) {
+    const oy = dstY0 + padTop + dy;
+    if (oy < 0 || oy >= outputHeight) continue;
+    const sy = box.y0 + Math.min(srcH - 1, Math.floor(dy * srcH / dstH));
+    for (let dx = 0; dx < dstW; dx += 1) {
+      const ox = dstX0 + padLeft + dx;
+      if (ox < 0 || ox >= outputWidth) continue;
+      const sx = box.x0 + Math.min(srcW - 1, Math.floor(dx * srcW / dstW));
+      out[oy * outputWidth + ox] = frame[sy * width + sx];
+    }
+  }
+  return out;
+}
+
+function scaleFlicWorkshopFullIndexedFrame(frame, width, height, scale, backgroundIndex) {
+  const srcW = Math.max(1, Math.round(Number(width) || 1));
+  const srcH = Math.max(1, Math.round(Number(height) || 1));
+  const dstW = Math.max(1, Math.round(srcW * scale));
+  const dstH = Math.max(1, Math.round(srcH * scale));
+  const out = new Uint8Array(dstW * dstH);
+  out.fill(backgroundIndex);
+  for (let y = 0; y < dstH; y += 1) {
+    const sy = Math.min(srcH - 1, Math.floor(y * srcH / dstH));
+    for (let x = 0; x < dstW; x += 1) {
+      const sx = Math.min(srcW - 1, Math.floor(x * srcW / dstW));
+      out[y * dstW + x] = frame[sy * srcW + sx];
+    }
+  }
+  return out;
+}
+
+function getFlicWorkshopFramesForZoom(frames, width, height) {
+  const scale = clampFlicWorkshopZoomScale(flicWorkshopModal.zoomScale);
+  const base = {
+    frames,
+    width,
+    height
+  };
+  if (Math.abs(scale - 1) < 0.001 || width <= 0 || height <= 0) return base;
+  const bg = chooseFlicWorkshopBackgroundIndex(frames, width, height);
+  if (scale < 1) {
+    const outputWidth = Math.max(1, Math.round(width * scale));
+    const outputHeight = Math.max(1, Math.round(height * scale));
+    return {
+      frames: frames.map((frame) => scaleFlicWorkshopFullIndexedFrame(frame, width, height, scale, bg)),
+      width: outputWidth,
+      height: outputHeight
+    };
+  }
+  const box = getFlicWorkshopUnionBox(frames, width, height, bg);
+  if (!box) return base;
+  const geometry = getFlicWorkshopZoomGeometry(width, height, scale, box);
+  return {
+    frames: frames.map((frame) => scaleFlicWorkshopIndexedFrame(frame, width, height, scale, bg, box, geometry)),
+    width: Math.max(width, geometry.outputWidth),
+    height: Math.max(height, geometry.outputHeight)
+  };
+}
+
+function getFlicWorkshopOriginalFrameWidth() {
+  const preview = flicWorkshopModal.preview || {};
+  const meta = preview.meta || {};
+  return Math.max(1, Math.round(Number(meta.width || preview.width) || 1));
+}
+
+function getFlicWorkshopOriginalFrameHeight() {
+  const preview = flicWorkshopModal.preview || {};
+  const meta = preview.meta || {};
+  return Math.max(1, Math.round(Number(meta.height || preview.height) || 1));
+}
+
+function getFlicWorkshopMaxFrameWidth() {
+  const preview = flicWorkshopModal.preview || {};
+  const civ3 = preview.meta && preview.meta.civ3 ? preview.meta.civ3 : {};
+  const source = getFlicWorkshopOriginalFrameWidth();
+  return Math.max(source, Math.min(512, Math.round(Math.max(source * 2, Number(civ3.xsOrig) || 0, source + 32))));
+}
+
+function getFlicWorkshopMaxFrameHeight() {
+  const preview = flicWorkshopModal.preview || {};
+  const civ3 = preview.meta && preview.meta.civ3 ? preview.meta.civ3 : {};
+  const source = getFlicWorkshopOriginalFrameHeight();
+  return Math.max(source, Math.min(512, Math.round(Math.max(source * 2, Number(civ3.ysOrig) || 0, source + 32))));
+}
+
+function getFlicWorkshopMinFrameWidth() {
+  const source = getFlicWorkshopOriginalFrameWidth();
+  const scale = clampFlicWorkshopZoomScale(flicWorkshopModal.zoomScale);
+  return Math.max(1, Math.round(source * Math.min(1, scale)));
+}
+
+function getFlicWorkshopMinFrameHeight() {
+  const source = getFlicWorkshopOriginalFrameHeight();
+  const scale = clampFlicWorkshopZoomScale(flicWorkshopModal.zoomScale);
+  return Math.max(1, Math.round(source * Math.min(1, scale)));
+}
+
+function getFlicWorkshopFrameWidth() {
+  const source = getFlicWorkshopMinFrameWidth();
+  const max = getFlicWorkshopMaxFrameWidth();
+  const value = Math.round(Number(flicWorkshopModal.frameWidth) || source);
+  return Math.max(source, Math.min(max, value));
+}
+
+function getFlicWorkshopFrameHeight() {
+  const source = getFlicWorkshopMinFrameHeight();
+  const max = getFlicWorkshopMaxFrameHeight();
+  const value = Math.round(Number(flicWorkshopModal.frameHeight) || source);
+  return Math.max(source, Math.min(max, value));
+}
+
+function padFlicWorkshopIndexedFrames(frames, width, height, targetWidth, targetHeight, backgroundIndex = 255) {
+  const srcW = Math.max(1, Math.round(Number(width) || 1));
+  const srcH = Math.max(1, Math.round(Number(height) || 1));
+  const dstW = Math.max(srcW, Math.round(Number(targetWidth) || srcW));
+  const dstH = Math.max(srcH, Math.round(Number(targetHeight) || srcH));
+  if (srcW === dstW && srcH === dstH) return frames;
+  const offsetX = Math.floor((dstW - srcW) / 2);
+  const offsetY = Math.floor((dstH - srcH) / 2);
+  return frames.map((frame) => {
+    const out = new Uint8Array(dstW * dstH);
+    out.fill(backgroundIndex);
+    for (let y = 0; y < srcH; y += 1) {
+      const srcStart = y * srcW;
+      const dstStart = (y + offsetY) * dstW + offsetX;
+      out.set(frame.subarray(srcStart, srcStart + srcW), dstStart);
+    }
+    return out;
+  });
+}
+
+function renderFlicIndexedFrameToRgba(indices, palette, civPalette, alphaEnabled) {
+  const rgba = new Uint8Array(indices.length * 4);
+  for (let i = 0; i < indices.length; i += 1) {
+    const idx = indices[i];
+    let pal = palette;
+    let a = 255;
+    if (alphaEnabled && idx === 255) {
+      a = 0;
+    } else if (alphaEnabled && idx >= 240 && idx <= 254) {
+      rgba[i * 4] = 0;
+      rgba[i * 4 + 1] = 0;
+      rgba[i * 4 + 2] = 0;
+      rgba[i * 4 + 3] = Math.min(255, (255 - idx) * 16);
+      continue;
+    } else if (alphaEnabled && idx >= 224 && idx <= 239) {
+      rgba[i * 4] = 255;
+      rgba[i * 4 + 1] = 255;
+      rgba[i * 4 + 2] = 255;
+      rgba[i * 4 + 3] = Math.min(255, (idx - 224) * 16);
+      continue;
+    } else if (civPalette && isFlicWorkshopCivColorIndex(idx)) {
+      pal = civPalette;
+    }
+    rgba[i * 4] = pal[idx * 3] || 0;
+    rgba[i * 4 + 1] = pal[idx * 3 + 1] || 0;
+    rgba[i * 4 + 2] = pal[idx * 3 + 2] || 0;
+    rgba[i * 4 + 3] = a;
+  }
+  return rgba;
+}
+
+function getFlicWorkshopDisplayCacheKey(directionIndex = null) {
+  const preview = flicWorkshopModal.preview || {};
+  return JSON.stringify({
+    sourcePath: preview.sourcePath || flicWorkshopModal.sourcePath || '',
+    sourceKind: flicWorkshopModal.sourceKind || '',
+    direction: Number.isInteger(directionIndex) ? getPreviewFallbackDirectionIndex(preview, directionIndex) : null,
+    frames: Array.isArray(preview.indexedFramesBase64) ? preview.indexedFramesBase64.length : 0,
+    width: preview.width || 0,
+    height: preview.height || 0,
+    civSlot: flicWorkshopModal.civSlot || 'default',
+    alpha: !!flicWorkshopModal.alpha,
+    zoom: clampFlicWorkshopZoomScale(flicWorkshopModal.zoomScale),
+    hour: clampFlicWorkshopHour(flicWorkshopModal.hour),
+    frameWidth: getFlicWorkshopFrameWidth(),
+    frameHeight: getFlicWorkshopFrameHeight()
+  });
+}
+
+function getFlicWorkshopPreviewForDisplay(directionIndex = null) {
+  const preview = flicWorkshopModal.preview;
+  if (!preview || !Array.isArray(preview.indexedFramesBase64) || !preview.paletteBase64) return preview;
+  const cacheKey = getFlicWorkshopDisplayCacheKey(directionIndex);
+  if (
+    flicWorkshopModal.displayPreviewCache
+    && flicWorkshopModal.displayPreviewCache.key === cacheKey
+    && flicWorkshopModal.displayPreviewCache.preview
+  ) {
+    return flicWorkshopModal.displayPreviewCache.preview;
+  }
+  const palette = fromBase64ToUint8(preview.paletteBase64);
+  const civPalette = getFlicWorkshopCivPalette(flicWorkshopModal.civSlot);
+  const sourceFrameB64 = Number.isInteger(directionIndex)
+    ? sliceBase64FramesByDirection(preview.indexedFramesBase64, preview, directionIndex)
+    : preview.indexedFramesBase64;
+  const indexedFrames = sourceFrameB64.map((frameB64) => fromBase64ToUint8(frameB64));
+  const zoomResult = getFlicWorkshopFramesForZoom(indexedFrames, Number(preview.width) || 0, Number(preview.height) || 0);
+  const targetWidth = Math.max(getFlicWorkshopFrameWidth(), zoomResult.width);
+  const targetHeight = Math.max(getFlicWorkshopFrameHeight(), zoomResult.height);
+  const framedFrames = padFlicWorkshopIndexedFrames(zoomResult.frames, zoomResult.width, zoomResult.height, targetWidth, targetHeight);
+  const displayPalette = getFlicWorkshopDisplayPalette(palette, civPalette, indexedFrames);
+  const framesBase64 = framedFrames.map((indices) => {
+    return toBase64FromUint8(renderFlicIndexedFrameToRgba(indices, displayPalette, null, !!flicWorkshopModal.alpha));
+  });
+  const displayPreview = {
+    ...preview,
+    width: targetWidth,
+    height: targetHeight,
+    framesBase64,
+    indexedFramesBase64: framedFrames.map((indices) => toBase64FromUint8(indices)),
+    paletteBase64: toBase64FromUint8(displayPalette),
+    animated: framesBase64.length > 1
+  };
+  flicWorkshopModal.displayPreviewCache = { key: cacheKey, preview: displayPreview };
+  return displayPreview;
+}
+
+function getFlicWorkshopViewerFramePayload() {
+  const displayPreview = getFlicWorkshopPreviewForDisplay(null);
+  if (!displayPreview || !Array.isArray(displayPreview.indexedFramesBase64)) return null;
+  return {
+    framesBase64: displayPreview.indexedFramesBase64,
+    paletteBase64: displayPreview.paletteBase64 || getFlicWorkshopViewerPaletteBase64(),
+    frameWidth: Math.max(1, Math.round(Number(displayPreview.width) || getFlicWorkshopFrameWidth())),
+    frameHeight: Math.max(1, Math.round(Number(displayPreview.height) || getFlicWorkshopFrameHeight())),
+    delay: clampFlicWorkshopFrameDelay(flicWorkshopModal.frameDelay)
+  };
+}
+
+function getFlicWorkshopViewerPaletteBase64() {
+  const preview = flicWorkshopModal.preview;
+  if (!preview || !Array.isArray(preview.indexedFramesBase64) || !preview.paletteBase64) return '';
+  const palette = fromBase64ToUint8(preview.paletteBase64);
+  const civPalette = getFlicWorkshopCivPalette(flicWorkshopModal.civSlot);
+  const indexedFrames = preview.indexedFramesBase64.map((frameB64) => fromBase64ToUint8(frameB64));
+  return toBase64FromUint8(getFlicWorkshopDisplayPalette(palette, civPalette, indexedFrames));
+}
+
+function renderFlicWorkshopTabs() {
+  const storyboardTabLabel = flicWorkshopModal.sourceKind === 'storyboard' ? 'Save as FLC' : 'Export Storyboard';
+  const tabs = [
+    ['preview', 'Preview', '▶'],
+    ['info', 'Info', 'i'],
+    ['palette', 'Palette', '▦'],
+    ['storyboard', storyboardTabLabel, '▥']
+  ];
+  flicWorkshopModal.tabs.innerHTML = '';
+  tabs.forEach(([key, label, icon]) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'flic-workshop-tab';
+    btn.dataset.tab = key;
+    btn.classList.toggle('active', flicWorkshopModal.activeTab === key);
+    btn.innerHTML = `<span class="btn-icon">${icon}</span>${label}`;
+    btn.addEventListener('click', () => {
+      flicWorkshopModal.activeTab = key;
+      if (key !== 'storyboard') flicWorkshopModal.exportEditor = '';
+      renderFlicWorkshopModal();
+    });
+    flicWorkshopModal.tabs.appendChild(btn);
+  });
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'ghost flic-workshop-reset-btn';
+  resetBtn.textContent = 'Reset';
+  resetBtn.disabled = !flicWorkshopModal.preview;
+  resetBtn.title = 'Reset Workshop values to the opened file';
+  resetBtn.addEventListener('click', resetFlicWorkshopViewerToDisk);
+  flicWorkshopModal.tabs.appendChild(resetBtn);
+}
+
+function resetFlicWorkshopExportDefaults(res) {
+  flicWorkshopModal.frameDelay = getFlicWorkshopDefaultFrameDelay();
+  flicWorkshopModal.frameWidth = Number(res.meta && res.meta.width) || Number(res.width) || 0;
+  flicWorkshopModal.frameHeight = Number(res.meta && res.meta.height) || Number(res.height) || 0;
+  flicWorkshopModal.exportSizeMode = 'viewer';
+  flicWorkshopModal.exportWidth = Number(res.meta && res.meta.width) || 0;
+  flicWorkshopModal.exportHeight = Number(res.meta && res.meta.height) || 0;
+  flicWorkshopModal.exportFrameCountMode = 'original';
+  flicWorkshopModal.exportFrameCount = Number(res.meta && res.meta.civ3 && res.meta.civ3.animLength) || 0;
+  flicWorkshopModal.exportPaletteMode = 'viewer';
+  flicWorkshopModal.exportPaletteCivIndex = '-1';
+  flicWorkshopModal.exportPaletteCivSlot = 'default';
+  flicWorkshopModal.exportDelayMode = 'viewer';
+  flicWorkshopModal.exportDelay = flicWorkshopModal.frameDelay;
+  flicWorkshopModal.exportEditor = '';
+  flicWorkshopModal.displayPreviewCache = null;
+}
+
+function resetFlicWorkshopViewerToDisk() {
+  const preview = flicWorkshopModal.preview;
+  if (!preview) return;
+  flicWorkshopModal.direction = getPreviewFallbackDirectionIndex(preview, 0);
+  flicWorkshopModal.civIndex = '-1';
+  flicWorkshopModal.civSlot = 'default';
+  flicWorkshopModal.alpha = true;
+  flicWorkshopModal.zoomScale = 1;
+  flicWorkshopModal.hour = 12;
+  resetFlicWorkshopExportDefaults(preview);
+  flicWorkshopModal.status = '';
+  flicWorkshopModal.displayPreviewCache = null;
+  renderFlicWorkshopModal();
+}
+
+function getFlicWorkshopSourceLabelFromPath(filePath, fallback = '') {
+  const base = getPathBaseName(filePath);
+  return base || fallback || 'Untitled';
+}
+
+function getFlicWorkshopDisplayPath(filePath) {
+  const text = String(filePath || '').trim();
+  if (!text) return '';
+  const full = normalizeSlashes(text).trim();
+  const configured = normalizeSlashes((state.settings && state.settings.civ3Path) || '').trim();
+  if (!full || !configured) return text;
+  const configuredName = getPathTail(configured).toLowerCase();
+  const civRoot = configuredName === 'conquests' || configuredName === 'civ3ptw'
+    ? getPathDirName(configured)
+    : configured;
+  const root = normalizeSlashes(civRoot).replace(/\/+$/, '');
+  const fullLower = full.toLowerCase();
+  const rootLower = root.toLowerCase();
+  if (fullLower === rootLower) return '.';
+  if (fullLower.startsWith(`${rootLower}/`)) return full.slice(root.length + 1);
+  return text;
+}
+
+function getFlicWorkshopDefaultOutputDir() {
+  return getPathDirName(flicWorkshopModal.sourcePath);
+}
+
+function setFlicWorkshopOutputDirectoryInput(input, outputDir) {
+  if (!input) return;
+  const clean = String(outputDir || '').trim();
+  input.dataset.outputDir = clean;
+  input.value = clean ? getFlicWorkshopDisplayPath(clean) : '';
+}
+
+function getFlicWorkshopOutputDirectoryInput(input) {
+  if (!input) return '';
+  return String((input.dataset && input.dataset.outputDir) || input.value || '').trim();
+}
+
+function getFlicWorkshopOutputPath(outputDir, fileName) {
+  return joinLocalPath(outputDir, fileName);
+}
+
+async function confirmFlicWorkshopOverwrite(paths) {
+  if (!window.c3xManager || typeof window.c3xManager.pathExists !== 'function') return true;
+  const existing = [];
+  for (const filePath of paths) {
+    try {
+      if (await window.c3xManager.pathExists(filePath)) existing.push(filePath);
+    } catch (_err) {
+      // Ignore existence checks that cannot be completed.
+    }
+  }
+  if (existing.length <= 0) return true;
+  return promptFlicWorkshopOverwriteModal(existing);
+}
+
+function promptFlicWorkshopOverwriteModal(paths) {
+  const panel = flicWorkshopModal.node
+    ? flicWorkshopModal.node.querySelector('.flic-workshop-modal-panel')
+    : null;
+  if (!panel) return Promise.resolve(false);
+  const existing = (Array.isArray(paths) ? paths : [])
+    .map((filePath) => String(filePath || '').trim())
+    .filter(Boolean);
+  if (existing.length <= 0) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const layer = document.createElement('div');
+    layer.className = 'flic-workshop-confirm-layer';
+    const modal = document.createElement('div');
+    modal.className = 'confirm-modal flic-workshop-overwrite-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Overwrite existing files');
+
+    const hero = document.createElement('div');
+    hero.className = 'flic-workshop-overwrite-hero';
+    const icon = document.createElement('span');
+    icon.className = 'flic-workshop-overwrite-icon';
+    icon.textContent = '!';
+    const head = document.createElement('div');
+    head.className = 'flic-workshop-overwrite-head';
+    const title = document.createElement('h3');
+    title.textContent = existing.length === 1 ? 'Overwrite Existing File' : 'Overwrite Existing Files';
+    const desc = document.createElement('p');
+    desc.textContent = existing.length === 1
+      ? 'This export will replace the existing file below.'
+      : 'This export will replace the existing files below.';
+    head.appendChild(title);
+    head.appendChild(desc);
+    hero.appendChild(icon);
+    hero.appendChild(head);
+    modal.appendChild(hero);
+
+    const pathList = document.createElement('div');
+    pathList.className = 'delete-scenario-modal-paths flic-workshop-overwrite-paths';
+    existing.forEach((filePath) => {
+      const line = document.createElement('div');
+      line.textContent = `Overwrite: ${getFlicWorkshopDisplayPath(filePath)}`;
+      pathList.appendChild(line);
+    });
+    modal.appendChild(pathList);
+
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'ghost';
+    cancelBtn.textContent = 'Cancel';
+    const overwriteBtn = document.createElement('button');
+    overwriteBtn.type = 'button';
+    overwriteBtn.className = 'danger-ghost flic-workshop-overwrite-confirm';
+    overwriteBtn.textContent = 'Overwrite';
+    actions.appendChild(cancelBtn);
+    actions.appendChild(overwriteBtn);
+    modal.appendChild(actions);
+
+    const finish = (confirmed) => {
+      layer.remove();
+      resolve(!!confirmed);
+    };
+    layer.addEventListener('click', (ev) => {
+      if (ev.target === layer) finish(false);
+    });
+    modal.addEventListener('click', (ev) => ev.stopPropagation());
+    cancelBtn.addEventListener('click', () => finish(false));
+    overwriteBtn.addEventListener('click', () => finish(true));
+    layer.appendChild(modal);
+    panel.appendChild(layer);
+    window.setTimeout(() => cancelBtn.focus({ preventScroll: true }), 0);
+  });
+}
+
+async function loadFlicWorkshopFlc(source = {}, options = {}) {
+  const actionRow = source || {};
+  const unitIniPath = String(actionRow.unitIniPath || flicWorkshopModal.request && flicWorkshopModal.request.unitIniPath || '').trim();
+  const flcPath = String(actionRow.relativePath || actionRow.flcPath || flicWorkshopModal.request && flicWorkshopModal.request.flcPath || '').trim();
+  const actionKey = String(actionRow.key || flicWorkshopModal.request && flicWorkshopModal.request.actionKey || '').trim().toUpperCase();
+  if (!flcPath) {
+    flicWorkshopModal.status = 'Choose an FLC file to open.';
+    flicWorkshopModal.preview = null;
+    renderFlicWorkshopModal();
+    return;
+  }
+  flicWorkshopModal.currentActionKey = actionKey;
+  flicWorkshopModal.sourceKind = 'flc';
+  flicWorkshopModal.storyboard = null;
+  flicWorkshopModal.preview = null;
+  flicWorkshopModal.displayPreviewCache = null;
+  flicWorkshopModal.sourcePath = '';
+  flicWorkshopModal.sourceLabel = getFlicWorkshopSourceLabelFromPath(flcPath, actionKey || 'FLC');
+  flicWorkshopModal.request = unitIniPath
+    ? {
+        ...(flicWorkshopModal.request || {}),
+        unitIniPath,
+        flcPath,
+        actionKey
+      }
+    : {
+        ...(flicWorkshopModal.request || {}),
+        flcPath,
+        actionKey: ''
+      };
+  if (options.resetStatus !== false) flicWorkshopModal.status = '';
+  renderFlicWorkshopModal();
+  try {
+    const payload = unitIniPath
+      ? { action: 'inspectUnitFlc', unitIniPath, flcPath }
+      : { action: 'inspectFlc', flcPath };
+    const res = await window.c3xManager.flicWorkshop(payload);
+    if (!res || !res.ok) {
+      flicWorkshopModal.status = `Could not open FLC: ${res && res.error ? res.error : 'unknown error'}`;
+      flicWorkshopModal.preview = null;
+      renderFlicWorkshopModal();
+      return;
+    }
+    flicWorkshopModal.preview = res;
+    flicWorkshopModal.sourcePath = String(res.sourcePath || '');
+    flicWorkshopModal.sourceLabel = getFlicWorkshopSourceLabelFromPath(flicWorkshopModal.sourcePath, flicWorkshopModal.sourceLabel);
+    resetFlicWorkshopExportDefaults(res);
+    renderFlicWorkshopModal();
+  } catch (err) {
+    flicWorkshopModal.status = `Could not open FLC: ${err && err.message ? err.message : err}`;
+    flicWorkshopModal.preview = null;
+    renderFlicWorkshopModal();
+  }
+}
+
+async function loadFlicWorkshopStoryboard(fxmPath, options = {}) {
+  const cleanPath = String(fxmPath || '').trim();
+  if (!cleanPath) return;
+  flicWorkshopModal.sourceKind = 'storyboard';
+  flicWorkshopModal.currentActionKey = '';
+  flicWorkshopModal.preview = null;
+  flicWorkshopModal.storyboard = null;
+  flicWorkshopModal.displayPreviewCache = null;
+  flicWorkshopModal.sourcePath = cleanPath;
+  flicWorkshopModal.sourceLabel = getFlicWorkshopSourceLabelFromPath(cleanPath, 'Storyboard');
+  if (options.resetStatus !== false) flicWorkshopModal.status = '';
+  renderFlicWorkshopModal();
+  try {
+    const res = await window.c3xManager.flicWorkshop({ action: 'inspectStoryboard', fxmPath: cleanPath });
+    if (!res || !res.ok) {
+      flicWorkshopModal.status = `Storyboard failed validation: ${res && res.error ? res.error : 'unknown error'}`;
+      flicWorkshopModal.preview = null;
+      renderFlicWorkshopModal();
+      return;
+    }
+    flicWorkshopModal.preview = res;
+    flicWorkshopModal.storyboard = { fxmPath: cleanPath, ...res };
+    flicWorkshopModal.sourcePath = cleanPath;
+    flicWorkshopModal.sourceLabel = getFlicWorkshopSourceLabelFromPath(cleanPath, flicWorkshopModal.sourceLabel);
+    resetFlicWorkshopExportDefaults(res);
+    renderFlicWorkshopModal();
+  } catch (err) {
+    flicWorkshopModal.status = `Storyboard failed validation: ${err && err.message ? err.message : err}`;
+    flicWorkshopModal.preview = null;
+    renderFlicWorkshopModal();
+  }
+}
+
+async function browseFlicWorkshopFlc() {
+  const flcPath = await window.c3xManager.pickFile({
+    filters: [{ name: 'FLC animation', extensions: ['flc'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (flcPath) await loadFlicWorkshopFlc({ flcPath }, { resetStatus: true });
+}
+
+async function browseFlicWorkshopStoryboard() {
+  const fxmPath = await window.c3xManager.pickFile({
+    filters: [{ name: 'Storyboard', extensions: ['fxm'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (fxmPath) await loadFlicWorkshopStoryboard(fxmPath, { resetStatus: true });
+}
+
+async function browseFlicWorkshopSource() {
+  const filePath = await window.c3xManager.pickFile({
+    filters: [
+      { name: 'FLC or Storyboard', extensions: ['flc', 'fxm'] },
+      { name: 'FLC animation', extensions: ['flc'] },
+      { name: 'Storyboard', extensions: ['fxm'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  const clean = String(filePath || '').trim();
+  if (!clean) return;
+  if (/\.fxm$/i.test(clean)) await loadFlicWorkshopStoryboard(clean, { resetStatus: true });
+  else await loadFlicWorkshopFlc({ flcPath: clean }, { resetStatus: true });
+}
+
+function renderFlicWorkshopActionBar() {
+  if (!flicWorkshopModal.actionBar) return;
+  const rows = normalizeFlicWorkshopActionRows(flicWorkshopModal.actionRows);
+  flicWorkshopModal.actionBar.innerHTML = '';
+  flicWorkshopModal.actionBar.classList.remove('hidden');
+  const bar = document.createElement('div');
+  bar.className = 'flic-workshop-sourcebar in-header';
+  const value = document.createElement('div');
+  value.className = 'flic-workshop-sourcebar-value';
+  const name = document.createElement('strong');
+  name.textContent = flicWorkshopModal.sourceLabel || getFlicWorkshopSourceLabelFromPath(flicWorkshopModal.sourcePath, 'Choose a file');
+  const path = document.createElement('span');
+  path.textContent = flicWorkshopModal.sourcePath ? getFlicWorkshopDisplayPath(flicWorkshopModal.sourcePath) : 'No file opened';
+  value.appendChild(name);
+  value.appendChild(path);
+  const changeBtn = document.createElement('button');
+  changeBtn.type = 'button';
+  changeBtn.className = 'ghost flic-workshop-sourcebar-change';
+  changeBtn.textContent = 'Open...';
+  const chooser = document.createElement('select');
+  chooser.className = 'flic-workshop-source-native-select';
+  chooser.setAttribute('aria-label', 'Open FLC or storyboard');
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Open...';
+  chooser.appendChild(placeholder);
+  if (rows.length > 0) {
+    const knownGroup = document.createElement('optgroup');
+    knownGroup.label = 'Known FLCs';
+    rows.forEach((row, idx) => {
+      const option = document.createElement('option');
+      option.value = `flc:${idx}`;
+      const fileName = getPathBaseName(row.relativePath) || row.relativePath;
+      option.textContent = `${row.key} - ${fileName}`;
+      option.title = row.relativePath;
+      knownGroup.appendChild(option);
+    });
+    chooser.appendChild(knownGroup);
+    const separator = document.createElement('option');
+    separator.value = '__separator__';
+    separator.textContent = '────────────';
+    separator.disabled = true;
+    chooser.appendChild(separator);
+  }
+  const browseGroup = document.createElement('optgroup');
+  browseGroup.label = 'Other';
+  const browseSource = document.createElement('option');
+  browseSource.value = '__browse__';
+  browseSource.textContent = 'Browse FLC or Storyboard';
+  browseGroup.appendChild(browseSource);
+  chooser.appendChild(browseGroup);
+  chooser.addEventListener('change', () => {
+    const selected = String(chooser.value || '');
+    chooser.value = '';
+    if (selected === '__browse__') {
+      void browseFlicWorkshopSource();
+      return;
+    }
+    const match = selected.match(/^flc:(\d+)$/);
+    if (match) {
+      const row = rows[Number.parseInt(match[1], 10)];
+      if (row) void loadFlicWorkshopFlc(row, { resetStatus: true });
+    }
+  });
+  const openNativeChooser = () => {
+    if (typeof chooser.showPicker === 'function') {
+      try {
+        chooser.showPicker();
+        return;
+      } catch (_err) {
+        // Fall through for platforms that restrict programmatic picker display.
+      }
+    }
+    chooser.focus();
+    chooser.click();
+  };
+  changeBtn.addEventListener('click', openNativeChooser);
+  changeBtn.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      openNativeChooser();
+    }
+  });
+  bar.appendChild(value);
+  const openWrap = document.createElement('span');
+  openWrap.className = 'flic-workshop-sourcebar-open';
+  openWrap.appendChild(changeBtn);
+  openWrap.appendChild(chooser);
+  bar.appendChild(openWrap);
+  flicWorkshopModal.actionBar.appendChild(bar);
+}
+
+function appendFlicWorkshopStatus(parent) {
+  if (!flicWorkshopModal.status) return;
+  const status = document.createElement('div');
+  status.className = 'flic-workshop-status';
+  status.textContent = flicWorkshopModal.status;
+  parent.appendChild(status);
+}
+
+function getFlicWorkshopDefaultFrameDelay() {
+  const speed = Number(flicWorkshopModal.preview && flicWorkshopModal.preview.meta && flicWorkshopModal.preview.meta.speed);
+  return Number.isFinite(speed) && speed > 0 ? speed : 100;
+}
+
+function clampFlicWorkshopFrameDelay(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isFinite(parsed)) return Math.max(20, Math.min(170, getFlicWorkshopDefaultFrameDelay()));
+  return Math.max(20, Math.min(170, parsed));
+}
+
+function renderFlicWorkshopPreviewTab(body) {
+  const layout = document.createElement('div');
+  layout.className = 'flic-workshop-preview-layout';
+  const controls = document.createElement('div');
+  controls.className = 'flic-workshop-controls flic-workshop-preview-controls';
+  const makeControlGroup = (label) => {
+    const group = document.createElement('div');
+    group.className = 'flic-workshop-control-group';
+    const title = document.createElement('div');
+    title.className = 'flic-workshop-control-group-title';
+    title.textContent = label;
+    const content = document.createElement('div');
+    content.className = 'flic-workshop-control-group-body';
+    group.appendChild(title);
+    group.appendChild(content);
+    controls.appendChild(group);
+    return content;
+  };
+  const displayControls = makeControlGroup('Display');
+  const playbackControls = makeControlGroup('Playback');
+  const transformControls = makeControlGroup('Transform');
+  const makeSliderField = ({ label, value, min, max, step, suffix, onInput, onChange }) => {
+    const field = document.createElement('label');
+    field.className = 'flic-workshop-field flic-workshop-delay-field flic-workshop-size-field';
+    const text = document.createElement('span');
+    text.textContent = label;
+    const valueNode = document.createElement('strong');
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.value = String(value);
+    const updateText = () => {
+      valueNode.textContent = `${input.value}${suffix ? ` ${suffix}` : ''}`;
+    };
+    updateText();
+    input.addEventListener('input', () => {
+      updateText();
+      onInput(input.value);
+    });
+    input.addEventListener('change', () => {
+      onChange(input.value);
+      renderFlicWorkshopModal();
+    });
+    const head = document.createElement('span');
+    head.className = 'flic-workshop-delay-head';
+    head.appendChild(text);
+    head.appendChild(valueNode);
+    field.appendChild(head);
+    field.appendChild(input);
+    return field;
+  };
+  renderFlicWorkshopCivColorPicker(displayControls);
+
+  const alphaLabel = document.createElement('label');
+  alphaLabel.className = 'flic-workshop-field flic-workshop-check';
+  const alphaText = document.createElement('span');
+  alphaText.textContent = 'Alpha/shadow';
+  const alphaControl = document.createElement('span');
+  alphaControl.className = 'flic-workshop-checkbox-control';
+  const alphaInput = document.createElement('input');
+  alphaInput.type = 'checkbox';
+  alphaInput.checked = !!flicWorkshopModal.alpha;
+  alphaInput.addEventListener('change', () => {
+    flicWorkshopModal.alpha = alphaInput.checked;
+    renderFlicWorkshopModal();
+  });
+  alphaLabel.appendChild(alphaText);
+  alphaControl.appendChild(alphaInput);
+  alphaLabel.appendChild(alphaControl);
+  displayControls.appendChild(alphaLabel);
+
+  const originalWidth = getFlicWorkshopMinFrameWidth();
+  const originalHeight = getFlicWorkshopMinFrameHeight();
+  const maxWidth = getFlicWorkshopMaxFrameWidth();
+  const maxHeight = getFlicWorkshopMaxFrameHeight();
+  displayControls.appendChild(makeSliderField({
+    label: 'Width',
+    value: getFlicWorkshopFrameWidth(),
+    min: originalWidth,
+    max: maxWidth,
+    step: 1,
+    suffix: 'px',
+    onInput: (value) => { flicWorkshopModal.frameWidth = Math.max(originalWidth, Math.min(maxWidth, Math.round(Number(value) || originalWidth))); },
+    onChange: (value) => { flicWorkshopModal.frameWidth = Math.max(originalWidth, Math.min(maxWidth, Math.round(Number(value) || originalWidth))); }
+  }));
+  displayControls.appendChild(makeSliderField({
+    label: 'Height',
+    value: getFlicWorkshopFrameHeight(),
+    min: originalHeight,
+    max: maxHeight,
+    step: 1,
+    suffix: 'px',
+    onInput: (value) => { flicWorkshopModal.frameHeight = Math.max(originalHeight, Math.min(maxHeight, Math.round(Number(value) || originalHeight))); },
+    onChange: (value) => { flicWorkshopModal.frameHeight = Math.max(originalHeight, Math.min(maxHeight, Math.round(Number(value) || originalHeight))); }
+  }));
+
+  const delayLabel = document.createElement('label');
+  delayLabel.className = 'flic-workshop-field flic-workshop-delay-field';
+  const delayText = document.createElement('span');
+  delayText.textContent = 'Frame Delay';
+  const delayValue = document.createElement('strong');
+  const delayInput = document.createElement('input');
+  delayInput.type = 'range';
+  delayInput.min = '20';
+  delayInput.max = '170';
+  delayInput.step = '10';
+  delayInput.value = String(clampFlicWorkshopFrameDelay(flicWorkshopModal.frameDelay));
+  delayValue.textContent = `${delayInput.value} ms`;
+  delayInput.addEventListener('input', () => {
+    flicWorkshopModal.frameDelay = clampFlicWorkshopFrameDelay(delayInput.value);
+    delayValue.textContent = `${flicWorkshopModal.frameDelay} ms`;
+  });
+  delayInput.addEventListener('change', () => {
+    flicWorkshopModal.frameDelay = clampFlicWorkshopFrameDelay(delayInput.value);
+    renderFlicWorkshopModal();
+  });
+  const delayHead = document.createElement('span');
+  delayHead.className = 'flic-workshop-delay-head';
+  delayHead.appendChild(delayText);
+  delayHead.appendChild(delayValue);
+  delayLabel.appendChild(delayHead);
+  delayLabel.appendChild(delayInput);
+  playbackControls.appendChild(delayLabel);
+
+  const zoomLabel = document.createElement('label');
+  zoomLabel.className = 'flic-workshop-field flic-workshop-delay-field';
+  const zoomText = document.createElement('span');
+  zoomText.textContent = 'Zoom';
+  const zoomValue = document.createElement('strong');
+  const zoomInput = document.createElement('input');
+  zoomInput.type = 'range';
+  zoomInput.min = '0.5';
+  zoomInput.max = '1.5';
+  zoomInput.step = '0.05';
+  zoomInput.value = clampFlicWorkshopZoomScale(flicWorkshopModal.zoomScale).toFixed(2);
+  zoomValue.textContent = `${Number(zoomInput.value).toFixed(2)}x`;
+  zoomInput.addEventListener('input', () => {
+    const next = clampFlicWorkshopZoomScale(zoomInput.value);
+    flicWorkshopModal.zoomScale = next;
+    zoomValue.textContent = `${next.toFixed(2)}x`;
+  });
+  zoomInput.addEventListener('change', () => {
+    flicWorkshopModal.zoomScale = clampFlicWorkshopZoomScale(zoomInput.value);
+    renderFlicWorkshopModal();
+  });
+  const zoomHead = document.createElement('span');
+  zoomHead.className = 'flic-workshop-delay-head';
+  zoomHead.appendChild(zoomText);
+  zoomHead.appendChild(zoomValue);
+  zoomLabel.appendChild(zoomHead);
+  zoomLabel.appendChild(zoomInput);
+  transformControls.appendChild(zoomLabel);
+
+  const hourLabel = document.createElement('label');
+  hourLabel.className = 'flic-workshop-field flic-workshop-delay-field';
+  const hourText = document.createElement('span');
+  hourText.textContent = 'Day/Night';
+  const hourValue = document.createElement('strong');
+  const hourInput = document.createElement('input');
+  hourInput.type = 'range';
+  hourInput.min = '0';
+  hourInput.max = '24';
+  hourInput.step = '1';
+  hourInput.value = String(clampFlicWorkshopHour(flicWorkshopModal.hour));
+  hourValue.textContent = `${hourInput.value}:00`;
+  hourInput.addEventListener('input', () => {
+    flicWorkshopModal.hour = clampFlicWorkshopHour(hourInput.value);
+    hourValue.textContent = `${flicWorkshopModal.hour}:00`;
+  });
+  hourInput.addEventListener('change', () => {
+    flicWorkshopModal.hour = clampFlicWorkshopHour(hourInput.value);
+    renderFlicWorkshopModal();
+  });
+  const hourHead = document.createElement('span');
+  hourHead.className = 'flic-workshop-delay-head';
+  hourHead.appendChild(hourText);
+  hourHead.appendChild(hourValue);
+  hourLabel.appendChild(hourHead);
+  hourLabel.appendChild(hourInput);
+  transformControls.appendChild(hourLabel);
+
+  layout.appendChild(controls);
+
+  const previewRow = document.createElement('div');
+  previewRow.className = 'flic-workshop-preview-row';
+  const previewWrap = document.createElement('div');
+  previewWrap.className = 'flic-workshop-preview';
+  const dirWrap = document.createElement('div');
+  const activeDirection = getPreviewFallbackDirectionIndex(flicWorkshopModal.preview, flicWorkshopModal.direction);
+  flicWorkshopModal.direction = activeDirection;
+  const availableDirections = new Set(getPreviewAvailableDirectionIndexes(flicWorkshopModal.preview));
+  dirWrap.appendChild(makeUnitDirectionPad(activeDirection, (nextDir) => {
+    flicWorkshopModal.direction = nextDir;
+    renderFlicWorkshopModal();
+  }, { availableDirections }));
+  previewRow.appendChild(previewWrap);
+  previewRow.appendChild(dirWrap);
+  layout.appendChild(previewRow);
+  body.appendChild(layout);
+
+  const displayPreview = getFlicWorkshopPreviewForDisplay(activeDirection);
+  const dirLabel = (UNIT_FACING_OPTIONS.find((d) => d.index === activeDirection) || UNIT_FACING_OPTIONS[0]).label;
+  renderRgbaPreview(previewWrap, displayPreview, `Animation - ${dirLabel}`, () => clampFlicWorkshopFrameDelay(flicWorkshopModal.frameDelay), Math.min(Number(displayPreview.width) || 220, 320), {
+    sampleMaxFrames: 0
+  });
+}
+
+function renderFlicWorkshopInfoTab(body) {
+  const preview = flicWorkshopModal.preview || {};
+  const meta = preview.meta || {};
+  const civ3 = meta.civ3 || {};
+  const rows = [
+    ['File', flicWorkshopModal.sourcePath ? getFlicWorkshopDisplayPath(flicWorkshopModal.sourcePath) : '(none)'],
+    ['Type', meta.magic === 0xaf12 ? 'Civ III custom FLC' : `FLC 0x${Number(meta.magic || 0).toString(16)}`],
+    ['Frame Size', `${meta.width || 0} x ${meta.height || 0}`],
+    ['Color Depth', `${meta.depth || 0} bit`],
+    ['Header Frames', meta.frameCountHeader],
+    ['Directions', civ3.numAnims],
+    ['Frames per Direction', civ3.animLength],
+    ['Frame Delay', `${meta.speed || 0} ms`],
+    ['Animation Time', civ3.animTime],
+    ['Original Geometry', `${civ3.xsOrig || 0} x ${civ3.ysOrig || 0}`],
+    ['Offset', `${civ3.xOffset || 0}, ${civ3.yOffset || 0}`]
+  ];
+  const table = document.createElement('div');
+  table.className = 'flic-workshop-info-grid';
+  rows.forEach(([label, value]) => {
+    const k = document.createElement('div');
+    k.className = 'field-meta';
+    k.textContent = label;
+    const v = document.createElement('div');
+    v.textContent = String(value == null ? '' : value);
+    table.appendChild(k);
+    table.appendChild(v);
+  });
+  body.appendChild(table);
+}
+
+function renderFlicWorkshopPaletteTab(body) {
+  const preview = flicWorkshopModal.preview || {};
+  if (!preview.paletteBase64) {
+    body.innerHTML = '<div class="hint">No palette data available.</div>';
+    return;
+  }
+  const controls = document.createElement('div');
+  controls.className = 'flic-workshop-controls flic-workshop-palette-controls';
+  renderFlicWorkshopCivColorPicker(controls);
+  body.appendChild(controls);
+  const palette = fromBase64ToUint8(preview.paletteBase64);
+  const civPalette = getFlicWorkshopCivPalette(flicWorkshopModal.civSlot);
+  const indexedFrames = Array.isArray(preview.indexedFramesBase64)
+    ? preview.indexedFramesBase64.map((frameB64) => fromBase64ToUint8(frameB64))
+    : [];
+  const displayPalette = getFlicWorkshopDisplayPalette(palette, civPalette, indexedFrames);
+  const grid = document.createElement('div');
+  grid.className = 'flic-workshop-palette-grid';
+  for (let i = 0; i < 256; i += 1) {
+    const swatch = document.createElement('div');
+    swatch.className = 'flic-workshop-palette-swatch';
+    swatch.style.background = `rgb(${displayPalette[i * 3]}, ${displayPalette[i * 3 + 1]}, ${displayPalette[i * 3 + 2]})`;
+    swatch.title = i >= 224 && i <= 239 ? `${i}: smoke/haze`
+      : i >= 240 && i <= 254 ? `${i}: shadow`
+        : i === 255 ? '255: transparent'
+          : `${i}`;
+    if (isFlicWorkshopCivColorIndex(i)) swatch.classList.add('civ');
+    if (i >= 224) swatch.classList.add('special');
+    grid.appendChild(swatch);
+  }
+  body.appendChild(grid);
+}
+
+function getFlicWorkshopStoryboardStem(filePath) {
+  return getPathBaseName(filePath).replace(/_StoryBoard\.FXM$/i, '').replace(/\.[^.]+$/, '') || 'animation';
+}
+
+function finiteNumberOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getFlicWorkshopStoryboardBuildMeta(storyboard) {
+  const source = storyboard || {};
+  const flat = source.storyboardMeta || {};
+  const previewMeta = source.meta || {};
+  const civ3 = previewMeta.civ3 || {};
+  const frameWidth = Math.max(1, Math.round(finiteNumberOr(flat.frameWidth, previewMeta.width || 1)));
+  const frameHeight = Math.max(1, Math.round(finiteNumberOr(flat.frameHeight, previewMeta.height || 1)));
+  const directionCount = Math.max(1, Math.round(finiteNumberOr(flat.directionCount, civ3.numAnims || 1)));
+  const framesPerDirection = Math.max(1, Math.round(finiteNumberOr(flat.framesPerDirection, civ3.animLength || 1)));
+  const delay = Math.max(1, Math.round(finiteNumberOr(flat.delay, previewMeta.speed || flicWorkshopModal.frameDelay || 100)));
+  return {
+    frameWidth,
+    frameHeight,
+    directionCount,
+    framesPerDirection,
+    delay,
+    xOffset: Math.max(0, Math.round(finiteNumberOr(flat.xOffset, civ3.xOffset || 0))),
+    yOffset: Math.max(0, Math.round(finiteNumberOr(flat.yOffset, civ3.yOffset || 0))),
+    xsOrig: Math.max(frameWidth, Math.round(finiteNumberOr(flat.xsOrig, civ3.xsOrig || frameWidth))),
+    ysOrig: Math.max(frameHeight, Math.round(finiteNumberOr(flat.ysOrig, civ3.ysOrig || frameHeight))),
+    directions: Math.max(0, Math.round(finiteNumberOr(flat.directions, civ3.directions || (directionCount === 8 ? 255 : 1))))
+  };
+}
+
+function renderFlicWorkshopSaveAsFlcTab(body) {
+  const storyboard = flicWorkshopModal.storyboard || flicWorkshopModal.preview || {};
+  const meta = getFlicWorkshopStoryboardBuildMeta(storyboard);
+  const story = storyboard.storyboard || {};
+  const stem = getFlicWorkshopStoryboardStem(flicWorkshopModal.sourcePath);
+  const form = document.createElement('div');
+  form.className = 'flic-workshop-export-form compact';
+
+  const sourceRow = document.createElement('div');
+  sourceRow.className = 'flic-workshop-export-row';
+  const sourceLabel = document.createElement('span');
+  sourceLabel.className = 'field-meta';
+  sourceLabel.textContent = 'Source';
+  const sourceValue = document.createElement('div');
+  sourceValue.className = 'flic-workshop-source-summary';
+  sourceValue.textContent = getFlicWorkshopDisplayPath(flicWorkshopModal.sourcePath);
+  sourceRow.appendChild(sourceLabel);
+  sourceRow.appendChild(sourceValue);
+  form.appendChild(sourceRow);
+
+  const infoRow = document.createElement('div');
+  infoRow.className = 'flic-workshop-export-row';
+  const infoLabel = document.createElement('span');
+  infoLabel.className = 'field-meta';
+  infoLabel.textContent = 'Storyboard';
+  const infoValue = document.createElement('div');
+  infoValue.className = 'flic-workshop-source-summary';
+  infoValue.textContent = `${story.width || 0} x ${story.height || 0}; ${meta.frameWidth} x ${meta.frameHeight}; ${meta.directionCount} directions; ${meta.framesPerDirection} frames`;
+  infoRow.appendChild(infoLabel);
+  infoRow.appendChild(infoValue);
+  form.appendChild(infoRow);
+
+  const baseRow = document.createElement('label');
+  baseRow.className = 'flic-workshop-export-row';
+  const baseLabel = document.createElement('span');
+  baseLabel.className = 'field-meta';
+  baseLabel.textContent = 'Base File Name';
+  const baseInput = document.createElement('input');
+  baseInput.type = 'text';
+  baseInput.value = stem;
+  baseRow.appendChild(baseLabel);
+  baseRow.appendChild(baseInput);
+  form.appendChild(baseRow);
+
+  const outputRow = document.createElement('div');
+  outputRow.className = 'flic-workshop-export-row flic-workshop-export-path-row';
+  const outputLabel = document.createElement('span');
+  outputLabel.className = 'field-meta';
+  outputLabel.textContent = 'Output Directory';
+  const outputValue = document.createElement('input');
+  outputValue.type = 'text';
+  outputValue.readOnly = true;
+  setFlicWorkshopOutputDirectoryInput(outputValue, getFlicWorkshopDefaultOutputDir());
+  outputValue.placeholder = 'Choose output folder';
+  const browseBtn = document.createElement('button');
+  browseBtn.type = 'button';
+  browseBtn.className = 'ghost';
+  browseBtn.textContent = '...';
+  browseBtn.addEventListener('click', async () => {
+    const outputDir = await window.c3xManager.pickDirectory({ defaultPath: getFlicWorkshopOutputDirectoryInput(outputValue) || getFlicWorkshopDefaultOutputDir() });
+    if (outputDir) {
+      setFlicWorkshopOutputDirectoryInput(outputValue, outputDir);
+      saveBtn.disabled = !getFlicWorkshopOutputDirectoryInput(outputValue);
+    }
+  });
+  const pathWrap = document.createElement('span');
+  pathWrap.className = 'flic-workshop-export-path';
+  pathWrap.appendChild(outputValue);
+  pathWrap.appendChild(browseBtn);
+  outputRow.appendChild(outputLabel);
+  outputRow.appendChild(pathWrap);
+  form.appendChild(outputRow);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'secondary flic-workshop-export-submit';
+  saveBtn.textContent = 'Save as FLC';
+  saveBtn.disabled = !flicWorkshopModal.sourcePath || !getFlicWorkshopOutputDirectoryInput(outputValue) || !window.c3xManager || typeof window.c3xManager.flicWorkshop !== 'function';
+  saveBtn.addEventListener('click', async () => {
+    const outputDir = getFlicWorkshopOutputDirectoryInput(outputValue);
+    if (!outputDir) {
+      flicWorkshopModal.status = 'Choose an output directory before saving.';
+      renderFlicWorkshopModal();
+      return;
+    }
+    const cleanBase = String(baseInput.value || '').trim() || stem;
+    const outputPath = getFlicWorkshopOutputPath(outputDir, `${cleanBase.replace(/\.flc$/i, '')}.flc`);
+    if (!await confirmFlicWorkshopOverwrite([outputPath])) return;
+    const viewerPayload = getFlicWorkshopViewerFramePayload();
+    const frameWidth = viewerPayload ? viewerPayload.frameWidth : meta.frameWidth;
+    const frameHeight = viewerPayload ? viewerPayload.frameHeight : meta.frameHeight;
+    const xsOrig = Math.max(frameWidth, meta.xsOrig);
+    const ysOrig = Math.max(frameHeight, meta.ysOrig);
+    const frameSizeChanged = frameWidth !== meta.frameWidth || frameHeight !== meta.frameHeight;
+    const res = await window.c3xManager.flicWorkshop({
+      action: 'buildFlc',
+      fxmPath: flicWorkshopModal.sourcePath,
+      outputPath,
+      framesBase64: viewerPayload && viewerPayload.framesBase64,
+      paletteBase64: viewerPayload && viewerPayload.paletteBase64,
+      frameWidth,
+      frameHeight,
+      directionCount: meta.directionCount,
+      framesPerDirection: meta.framesPerDirection,
+      delay: viewerPayload ? viewerPayload.delay : clampFlicWorkshopFrameDelay(meta.delay),
+      xOffset: frameSizeChanged ? Math.max(0, Math.round((xsOrig - frameWidth) / 2)) : meta.xOffset,
+      yOffset: frameSizeChanged ? Math.max(0, Math.round((ysOrig - frameHeight) / 2)) : meta.yOffset,
+      xsOrig,
+      ysOrig,
+      directions: meta.directions
+    });
+    if (res && res.ok) {
+      flicWorkshopModal.status = '';
+      showFlicWorkshopToast({
+        title: `Saved ${getPathBaseName(outputPath)}`,
+        body: `Click to open ${getFlicWorkshopDisplayPath(outputDir)}`,
+        folderPath: outputDir
+      });
+    } else {
+      flicWorkshopModal.status = `Save failed: ${res && res.error ? res.error : 'unknown error'}`;
+    }
+    renderFlicWorkshopModal();
+  });
+  form.appendChild(saveBtn);
+  body.appendChild(form);
+}
+
+function renderFlicWorkshopStoryboardTab(body) {
+  if (flicWorkshopModal.sourceKind === 'storyboard') {
+    renderFlicWorkshopSaveAsFlcTab(body);
+    return;
+  }
+  const meta = flicWorkshopModal.preview && flicWorkshopModal.preview.meta ? flicWorkshopModal.preview.meta : {};
+  const civ3 = meta.civ3 || {};
+  const sourceName = getPathBaseName(flicWorkshopModal.sourcePath).replace(/\.[^.]+$/, '') || 'animation';
+  const fileWidth = Math.max(1, Number(meta.width) || 1);
+  const fileHeight = Math.max(1, Number(meta.height) || 1);
+  const sourceWidth = getFlicWorkshopFrameWidth();
+  const sourceHeight = getFlicWorkshopFrameHeight();
+  const originalFrameCount = Math.max(1, Number(civ3.animLength) || 1);
+  const directionCount = Math.max(1, Number(civ3.numAnims) || 1);
+  const maxWidth = Math.max(sourceWidth, Math.min(255, Number(civ3.xsOrig) || fileWidth));
+  const maxHeight = Math.max(sourceHeight, Math.min(255, Number(civ3.ysOrig) || fileHeight));
+  if (
+    !Number.isFinite(Number(flicWorkshopModal.exportWidth))
+    || Number(flicWorkshopModal.exportWidth) <= 0
+  ) {
+    flicWorkshopModal.exportWidth = fileWidth;
+  }
+  if (
+    !Number.isFinite(Number(flicWorkshopModal.exportHeight))
+    || Number(flicWorkshopModal.exportHeight) <= 0
+  ) {
+    flicWorkshopModal.exportHeight = fileHeight;
+  }
+  if (!Number.isFinite(Number(flicWorkshopModal.exportFrameCount)) || Number(flicWorkshopModal.exportFrameCount) <= 0) {
+    flicWorkshopModal.exportFrameCount = originalFrameCount;
+  }
+  if (!Number.isFinite(Number(flicWorkshopModal.exportDelay)) || Number(flicWorkshopModal.exportDelay) <= 0) {
+    flicWorkshopModal.exportDelay = clampFlicWorkshopFrameDelay(flicWorkshopModal.frameDelay);
+  }
+  const getTargetWidth = () => {
+    if (flicWorkshopModal.exportSizeMode === 'max') return maxWidth;
+    if (flicWorkshopModal.exportSizeMode === 'custom') return Math.max(sourceWidth, Math.min(maxWidth, Math.round(Number(flicWorkshopModal.exportWidth) || sourceWidth)));
+    if (flicWorkshopModal.exportSizeMode === 'viewer') return sourceWidth;
+    return fileWidth;
+  };
+  const getTargetHeight = () => {
+    if (flicWorkshopModal.exportSizeMode === 'max') return maxHeight;
+    if (flicWorkshopModal.exportSizeMode === 'custom') return Math.max(sourceHeight, Math.min(maxHeight, Math.round(Number(flicWorkshopModal.exportHeight) || sourceHeight)));
+    if (flicWorkshopModal.exportSizeMode === 'viewer') return sourceHeight;
+    return fileHeight;
+  };
+  const getTargetFrameCount = () => {
+    if (flicWorkshopModal.exportFrameCountMode === 'max') return 64;
+    if (flicWorkshopModal.exportFrameCountMode === 'custom') return Math.max(1, Math.min(64, Math.round(Number(flicWorkshopModal.exportFrameCount) || originalFrameCount)));
+    return originalFrameCount;
+  };
+  const getTargetDelay = () => {
+    if (flicWorkshopModal.exportDelayMode === 'viewer') return clampFlicWorkshopFrameDelay(flicWorkshopModal.frameDelay);
+    if (flicWorkshopModal.exportDelayMode === 'custom') return clampFlicWorkshopFrameDelay(flicWorkshopModal.exportDelay);
+    return Number(meta.speed || 0);
+  };
+  const targetWidth = getTargetWidth();
+  const targetHeight = getTargetHeight();
+  const targetFrameCount = getTargetFrameCount();
+  const form = document.createElement('div');
+  form.className = 'flic-workshop-export-form compact';
+  const closeExportEditor = () => {
+    if (!flicWorkshopModal.exportEditor) return;
+    flicWorkshopModal.exportEditor = '';
+    renderFlicWorkshopModal();
+  };
+  const getSizeLabel = () => {
+    if (flicWorkshopModal.exportSizeMode === 'viewer') return `Current Viewer Size (${sourceWidth} x ${sourceHeight})`;
+    if (flicWorkshopModal.exportSizeMode === 'custom') return `Selected Size (${targetWidth} x ${targetHeight})`;
+    if (flicWorkshopModal.exportSizeMode === 'max') return `Maximum Size (${maxWidth} x ${maxHeight})`;
+    return `Original Size (${fileWidth} x ${fileHeight})`;
+  };
+  const getFrameCountLabel = () => {
+    if (flicWorkshopModal.exportFrameCountMode === 'custom') return `Change Frame Count (${targetFrameCount})`;
+    if (flicWorkshopModal.exportFrameCountMode === 'max') return 'Maximum Frame Count (64)';
+    return `Current Frame Count (${originalFrameCount})`;
+  };
+  const getPaletteLabel = () => {
+    if (flicWorkshopModal.exportPaletteMode === 'viewer') return 'Current Viewer Palette';
+    if (flicWorkshopModal.exportPaletteMode === 'select') {
+      const options = getFlicWorkshopCivilizationColorOptions();
+      const match = options.find((option) => String(option.value) === String(flicWorkshopModal.exportPaletteCivIndex));
+      return match && match.label ? `Selected Palette (${match.label})` : 'Selected Palette';
+    }
+    return 'Original Palette';
+  };
+  const getDelayLabel = () => {
+    if (flicWorkshopModal.exportDelayMode === 'viewer') return `Current Viewer Delay (${clampFlicWorkshopFrameDelay(flicWorkshopModal.frameDelay)} ms)`;
+    if (flicWorkshopModal.exportDelayMode === 'custom') return `Selected Delay (${getTargetDelay()} ms)`;
+    return `Original Delay (${meta.speed || 0} ms)`;
+  };
+  const makeSummaryRow = (key, label, value) => {
+    const row = document.createElement('div');
+    row.className = 'flic-workshop-export-row';
+    const labelNode = document.createElement('span');
+    labelNode.className = 'field-meta';
+    labelNode.textContent = label;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'flic-workshop-export-choice';
+    btn.textContent = value;
+    btn.addEventListener('click', () => {
+      flicWorkshopModal.exportEditor = flicWorkshopModal.exportEditor === key ? '' : key;
+      renderFlicWorkshopModal();
+    });
+    row.appendChild(labelNode);
+    row.appendChild(btn);
+    form.appendChild(row);
+  };
+  makeSummaryRow('type', 'Export Type', 'Storyboard PCX with borders');
+  makeSummaryRow('size', 'Frame Size', getSizeLabel());
+  makeSummaryRow('count', 'Frame Count', getFrameCountLabel());
+  makeSummaryRow('palette', 'Palette', getPaletteLabel());
+  makeSummaryRow('delay', 'Frame Delay', getDelayLabel());
+
+  const baseRow = document.createElement('label');
+  baseRow.className = 'flic-workshop-export-row';
+  const baseLabel = document.createElement('span');
+  baseLabel.className = 'field-meta';
+  baseLabel.textContent = 'Base File Name';
+  const baseInput = document.createElement('input');
+  baseInput.type = 'text';
+  baseInput.value = sourceName;
+  baseRow.appendChild(baseLabel);
+  baseRow.appendChild(baseInput);
+  form.appendChild(baseRow);
+
+  const outputRow = document.createElement('div');
+  outputRow.className = 'flic-workshop-export-row flic-workshop-export-path-row';
+  const outputLabel = document.createElement('span');
+  outputLabel.className = 'field-meta';
+  outputLabel.textContent = 'Output Directory';
+  const outputValue = document.createElement('input');
+  outputValue.type = 'text';
+  outputValue.readOnly = true;
+  setFlicWorkshopOutputDirectoryInput(outputValue, getFlicWorkshopDefaultOutputDir());
+  outputValue.placeholder = 'Choose output folder';
+  const browseBtn = document.createElement('button');
+  browseBtn.type = 'button';
+  browseBtn.className = 'ghost';
+  browseBtn.textContent = '...';
+  browseBtn.addEventListener('click', async () => {
+    const outputDir = await window.c3xManager.pickDirectory({ defaultPath: getFlicWorkshopOutputDirectoryInput(outputValue) || getFlicWorkshopDefaultOutputDir() });
+    if (outputDir) {
+      setFlicWorkshopOutputDirectoryInput(outputValue, outputDir);
+      exportBtn.disabled = !getFlicWorkshopOutputDirectoryInput(outputValue);
+    }
+  });
+  const pathWrap = document.createElement('span');
+  pathWrap.className = 'flic-workshop-export-path';
+  pathWrap.appendChild(outputValue);
+  pathWrap.appendChild(browseBtn);
+  outputRow.appendChild(outputLabel);
+  outputRow.appendChild(pathWrap);
+  form.appendChild(outputRow);
+
+  const renderEditorOption = (parent, name, value, label, inlineBuilder = null) => {
+    const optionLabel = document.createElement('label');
+    optionLabel.className = 'flic-workshop-export-editor-option';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = name;
+    radio.value = value;
+    const text = document.createElement('span');
+    text.textContent = label;
+    optionLabel.appendChild(radio);
+    optionLabel.appendChild(text);
+    if (typeof inlineBuilder === 'function') inlineBuilder(optionLabel, radio);
+    parent.appendChild(optionLabel);
+    return radio;
+  };
+  const activeEditor = String(flicWorkshopModal.exportEditor || '');
+  if (activeEditor) {
+    const layer = document.createElement('div');
+    layer.className = 'flic-workshop-export-popover-layer';
+    layer.addEventListener('click', (ev) => {
+      if (ev.target === layer) closeExportEditor();
+    });
+    const panel = document.createElement('div');
+    panel.className = 'flic-workshop-export-popover';
+    panel.addEventListener('click', (ev) => ev.stopPropagation());
+    const header = document.createElement('div');
+    header.className = 'flic-workshop-export-popover-header';
+    const title = document.createElement('h4');
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'ghost flic-workshop-export-popover-close';
+    closeBtn.textContent = 'x';
+    closeBtn.setAttribute('aria-label', 'Close export option editor');
+    closeBtn.addEventListener('click', closeExportEditor);
+    const editorBody = document.createElement('div');
+    editorBody.className = 'flic-workshop-export-editor-body';
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+    panel.appendChild(header);
+    panel.appendChild(editorBody);
+    if (activeEditor === 'type') {
+      title.textContent = 'Export Type';
+      const radio = renderEditorOption(editorBody, 'flic-workshop-export-type', 'storyboard-border', 'Storyboard PCX with borders');
+      radio.checked = true;
+    } else if (activeEditor === 'size') {
+      title.textContent = 'Animation Frame Size';
+      [
+        ['original', `Original Size (${fileWidth} x ${fileHeight})`],
+        ['viewer', `Current Viewer Size (${sourceWidth} x ${sourceHeight})`],
+        ['custom', 'Select Size'],
+        ['max', `Maximum Size (${maxWidth} x ${maxHeight})`]
+      ].forEach(([value, label]) => {
+        const radio = renderEditorOption(editorBody, 'flic-workshop-export-size', value, label, value === 'custom' ? (optionLabel) => {
+          const custom = document.createElement('div');
+          custom.className = 'flic-workshop-export-editor-inline flic-workshop-export-size-select';
+          const widthInput = document.createElement('input');
+          widthInput.type = 'number';
+          widthInput.min = String(sourceWidth);
+          widthInput.max = String(maxWidth);
+          widthInput.step = '1';
+          widthInput.value = String(Math.max(sourceWidth, Math.min(maxWidth, Math.round(Number(flicWorkshopModal.exportWidth) || sourceWidth))));
+          const heightInput = document.createElement('input');
+          heightInput.type = 'number';
+          heightInput.min = String(sourceHeight);
+          heightInput.max = String(maxHeight);
+          heightInput.step = '1';
+          heightInput.value = String(Math.max(sourceHeight, Math.min(maxHeight, Math.round(Number(flicWorkshopModal.exportHeight) || sourceHeight))));
+          widthInput.disabled = flicWorkshopModal.exportSizeMode !== 'custom';
+          heightInput.disabled = flicWorkshopModal.exportSizeMode !== 'custom';
+          widthInput.addEventListener('input', () => { flicWorkshopModal.exportWidth = Number(widthInput.value) || sourceWidth; });
+          heightInput.addEventListener('input', () => { flicWorkshopModal.exportHeight = Number(heightInput.value) || sourceHeight; });
+          custom.append('width', widthInput, 'height', heightInput);
+          optionLabel.appendChild(custom);
+        } : null);
+        radio.checked = flicWorkshopModal.exportSizeMode === value;
+        radio.addEventListener('change', () => {
+          flicWorkshopModal.exportSizeMode = value;
+          renderFlicWorkshopModal();
+        });
+      });
+    } else if (activeEditor === 'count') {
+      title.textContent = 'Animation Frames';
+      [
+        ['original', `Current Frame Count (${originalFrameCount})`],
+        ['custom', 'Change Frame Count'],
+        ['max', 'Maximum Frame Count (64)']
+      ].forEach(([value, label]) => {
+        const radio = renderEditorOption(editorBody, 'flic-workshop-export-count', value, label, value === 'custom' ? (optionLabel) => {
+          const custom = document.createElement('div');
+          custom.className = 'flic-workshop-export-editor-inline';
+          const countInput = document.createElement('input');
+          countInput.type = 'number';
+          countInput.min = '1';
+          countInput.max = '64';
+          countInput.step = '1';
+          countInput.value = String(Math.max(1, Math.min(64, Math.round(Number(flicWorkshopModal.exportFrameCount) || originalFrameCount))));
+          countInput.disabled = flicWorkshopModal.exportFrameCountMode !== 'custom';
+          countInput.addEventListener('input', () => { flicWorkshopModal.exportFrameCount = Number(countInput.value) || originalFrameCount; });
+          custom.append(countInput, 'frames');
+          optionLabel.appendChild(custom);
+        } : null);
+        radio.checked = flicWorkshopModal.exportFrameCountMode === value;
+        radio.addEventListener('change', () => {
+          flicWorkshopModal.exportFrameCountMode = value;
+          renderFlicWorkshopModal();
+        });
+      });
+    } else if (activeEditor === 'palette') {
+      title.textContent = 'Export Palette';
+      [
+        ['original', 'Original Palette'],
+        ['viewer', 'Current Viewer Palette'],
+        ['select', 'Select Civilization Palette']
+      ].forEach(([value, label]) => {
+        const radio = renderEditorOption(editorBody, 'flic-workshop-export-palette', value, label, value === 'select' ? (optionLabel) => {
+          const pickerWrap = document.createElement('div');
+          pickerWrap.className = 'flic-workshop-export-palette-select';
+          pickerWrap.classList.toggle('hidden', flicWorkshopModal.exportPaletteMode !== 'select');
+          renderFlicWorkshopExportPalettePicker(pickerWrap);
+          optionLabel.appendChild(pickerWrap);
+        } : null);
+        radio.checked = flicWorkshopModal.exportPaletteMode === value;
+        radio.addEventListener('change', () => {
+          flicWorkshopModal.exportPaletteMode = value;
+          renderFlicWorkshopModal();
+        });
+      });
+    } else if (activeEditor === 'delay') {
+      title.textContent = 'Animation Frame Delay';
+      [
+        ['original', `Original Delay (${meta.speed || 0} ms)`],
+        ['viewer', `Current Viewer Delay (${clampFlicWorkshopFrameDelay(flicWorkshopModal.frameDelay)} ms)`],
+        ['custom', 'Select Delay']
+      ].forEach(([value, label]) => {
+        const radio = renderEditorOption(editorBody, 'flic-workshop-export-delay', value, label, value === 'custom' ? (optionLabel) => {
+          const custom = document.createElement('div');
+          custom.className = 'flic-workshop-export-editor-inline wide';
+          const delayInput = document.createElement('input');
+          delayInput.type = 'range';
+          delayInput.min = '20';
+          delayInput.max = '170';
+          delayInput.step = '10';
+          delayInput.value = String(clampFlicWorkshopFrameDelay(flicWorkshopModal.exportDelay));
+          const delayNumber = document.createElement('input');
+          delayNumber.type = 'number';
+          delayNumber.min = '20';
+          delayNumber.max = '170';
+          delayNumber.step = '10';
+          delayNumber.value = delayInput.value;
+          const disabled = flicWorkshopModal.exportDelayMode !== 'custom';
+          delayInput.disabled = disabled;
+          delayNumber.disabled = disabled;
+          const syncDelay = (nextValue) => {
+            flicWorkshopModal.exportDelay = clampFlicWorkshopFrameDelay(nextValue);
+            delayInput.value = String(flicWorkshopModal.exportDelay);
+            delayNumber.value = String(flicWorkshopModal.exportDelay);
+          };
+          delayInput.addEventListener('input', () => syncDelay(delayInput.value));
+          delayNumber.addEventListener('input', () => syncDelay(delayNumber.value));
+          custom.append(delayInput, delayNumber, 'ms');
+          optionLabel.appendChild(custom);
+        } : null);
+        radio.checked = flicWorkshopModal.exportDelayMode === value;
+        radio.addEventListener('change', () => {
+          flicWorkshopModal.exportDelayMode = value;
+          renderFlicWorkshopModal();
+        });
+      });
+    }
+    layer.appendChild(panel);
+    body.appendChild(layer);
+  }
+
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.className = 'secondary flic-workshop-export-submit';
+  exportBtn.textContent = 'Export Storyboard';
+  exportBtn.disabled = !flicWorkshopModal.sourcePath || !getFlicWorkshopOutputDirectoryInput(outputValue) || !window.c3xManager || typeof window.c3xManager.flicWorkshop !== 'function';
+  exportBtn.addEventListener('click', async () => {
+    const outputDir = getFlicWorkshopOutputDirectoryInput(outputValue);
+    if (!outputDir) {
+      flicWorkshopModal.status = 'Choose an output directory before exporting.';
+      renderFlicWorkshopModal();
+      return;
+    }
+    const cleanBase = String(baseInput.value || '').trim() || sourceName;
+    const outputPaths = [
+      getFlicWorkshopOutputPath(outputDir, `${cleanBase}.pcx`),
+      getFlicWorkshopOutputPath(outputDir, `${cleanBase}.pal`),
+      getFlicWorkshopOutputPath(outputDir, `${cleanBase}_Alpha.pal`),
+      getFlicWorkshopOutputPath(outputDir, `${cleanBase}_StoryBoard.FXM`)
+    ];
+    if (!await confirmFlicWorkshopOverwrite(outputPaths)) return;
+    const selectedPalette = flicWorkshopModal.exportPaletteMode === 'viewer'
+      ? getFlicWorkshopViewerPaletteBase64()
+      : flicWorkshopModal.exportPaletteMode === 'select' && flicWorkshopModal.exportPaletteCivSlot !== 'default'
+        ? toBase64FromUint8(getFlicWorkshopCivPalette(flicWorkshopModal.exportPaletteCivSlot) || new Uint8Array())
+        : '';
+    const viewerPayload = getFlicWorkshopViewerFramePayload();
+    const useViewerFrames = flicWorkshopModal.exportSizeMode === 'viewer'
+      || flicWorkshopModal.exportPaletteMode === 'viewer'
+      || flicWorkshopModal.exportDelayMode === 'viewer';
+    const res = await window.c3xManager.flicWorkshop({
+      action: 'exportStoryboard',
+      flcPath: flicWorkshopModal.sourcePath,
+      outputDir,
+      baseName: cleanBase,
+      paletteBase64: selectedPalette,
+      framesBase64: useViewerFrames && viewerPayload ? viewerPayload.framesBase64 : null,
+      sourceFrameWidth: useViewerFrames && viewerPayload ? viewerPayload.frameWidth : 0,
+      sourceFrameHeight: useViewerFrames && viewerPayload ? viewerPayload.frameHeight : 0,
+      delay: getTargetDelay(),
+      frameWidth: getTargetWidth(),
+      frameHeight: getTargetHeight(),
+      framesPerDirection: getTargetFrameCount()
+    });
+    if (res && res.ok) {
+      flicWorkshopModal.status = '';
+      showFlicWorkshopToast({
+        title: `Exported ${cleanBase}_StoryBoard.FXM`,
+        body: `Click to open ${getFlicWorkshopDisplayPath(outputDir)}`,
+        folderPath: outputDir
+      });
+    } else {
+      flicWorkshopModal.status = `Export failed: ${res && res.error ? res.error : 'unknown error'}`;
+    }
+    renderFlicWorkshopModal();
+  });
+  form.appendChild(exportBtn);
+  body.appendChild(form);
+}
+
+function renderFlicWorkshopModal() {
+  ensureFlicWorkshopModal();
+  renderFlicWorkshopTabs();
+  renderFlicWorkshopActionBar();
+  flicWorkshopModal.body.innerHTML = '';
+  appendFlicWorkshopStatus(flicWorkshopModal.body);
+  if (!flicWorkshopModal.preview) {
+    flicWorkshopModal.body.innerHTML += '<div class="hint">Loading FLC Workshop data...</div>';
+    return;
+  }
+  if (flicWorkshopModal.activeTab === 'info') renderFlicWorkshopInfoTab(flicWorkshopModal.body);
+  else if (flicWorkshopModal.activeTab === 'palette') renderFlicWorkshopPaletteTab(flicWorkshopModal.body);
+  else if (flicWorkshopModal.activeTab === 'storyboard') renderFlicWorkshopStoryboardTab(flicWorkshopModal.body);
+  else renderFlicWorkshopPreviewTab(flicWorkshopModal.body);
+}
+
+async function openFlicWorkshopModal(request) {
+  ensureFlicWorkshopModal();
+  flicWorkshopModal.node.classList.remove('hidden');
+  flicWorkshopModal.preview = null;
+  flicWorkshopModal.request = request || {};
+  flicWorkshopModal.actionRows = normalizeFlicWorkshopActionRows(request && request.actionRows);
+  flicWorkshopModal.currentActionKey = String(request && request.actionKey || '').trim().toUpperCase();
+  flicWorkshopModal.activeTab = 'preview';
+  flicWorkshopModal.direction = Number.isFinite(flicWorkshopModal.direction) ? flicWorkshopModal.direction : 0;
+  flicWorkshopModal.civIndex = '-1';
+  flicWorkshopModal.civSlot = 'default';
+  flicWorkshopModal.alpha = true;
+  flicWorkshopModal.frameDelay = 100;
+  flicWorkshopModal.zoomScale = 1;
+  flicWorkshopModal.hour = 12;
+  flicWorkshopModal.frameWidth = 0;
+  flicWorkshopModal.frameHeight = 0;
+  flicWorkshopModal.exportSizeMode = 'viewer';
+  flicWorkshopModal.exportWidth = 0;
+  flicWorkshopModal.exportHeight = 0;
+  flicWorkshopModal.exportFrameCountMode = 'original';
+  flicWorkshopModal.exportFrameCount = 0;
+  flicWorkshopModal.exportPaletteMode = 'viewer';
+  flicWorkshopModal.exportPaletteCivIndex = '-1';
+  flicWorkshopModal.exportPaletteCivSlot = 'default';
+  flicWorkshopModal.exportDelayMode = 'viewer';
+  flicWorkshopModal.exportDelay = 100;
+  flicWorkshopModal.storyboard = null;
+  flicWorkshopModal.status = '';
+  flicWorkshopModal.sourcePath = '';
+  flicWorkshopModal.sourceLabel = '';
+  flicWorkshopModal.sourceKind = 'flc';
+  flicWorkshopModal.displayPreviewCache = null;
+  flicWorkshopModal.title.textContent = 'FLC Workshop';
+  renderFlicWorkshopModal();
+  if (!Array.isArray(state.civColorPaletteSlots) || state.civColorPaletteSlots.length === 0) {
+    loadCivColorPaletteSlotsIntoState({ preserveSelection: true }).then(() => {
+      if (isFlicWorkshopModalVisible()) renderFlicWorkshopModal();
+    }).catch(() => {});
+  }
+  const selectedRow = flicWorkshopModal.actionRows.find((row) => row.key === flicWorkshopModal.currentActionKey)
+    || flicWorkshopModal.actionRows.find((row) => String(row.relativePath || '').trim() === String(request && request.flcPath || '').trim())
+    || { key: flicWorkshopModal.currentActionKey, relativePath: String(request && request.flcPath || '').trim() };
+  await loadFlicWorkshopFlc(selectedRow, { resetStatus: false });
+}
+
+function openFlicWorkshopForUnitAnimationModel(model, preferredKey = '') {
+  const activeModel = model || {};
+  const rows = Array.isArray(activeModel.typeRows) ? activeModel.typeRows : [];
+  const selectedKey = String(preferredKey || activeModel.defaultActionKey || '').trim().toUpperCase();
+  const row = rows.find((candidate) => String(candidate.key || '').trim().toUpperCase() === selectedKey && String(candidate.relativePath || '').trim())
+    || rows.find((candidate) => String(candidate.relativePath || '').trim());
+  const relativeFlc = String(row && row.relativePath || '').trim();
+  const unitIniPath = String(activeModel.iniPath || '').trim();
+  if (!relativeFlc || !unitIniPath) {
+    setStatus('Choose a unit animation FLC before opening the FLC Workshop.', true);
+    return false;
+  }
+  void openFlicWorkshopModal({
+    unitIniPath,
+    flcPath: relativeFlc,
+    actionKey: String(row.key || selectedKey || 'Animation'),
+    actionRows: rows
+  });
+  return true;
+}
+
+async function openFlicWorkshopForUnitEntry(entry, preferredKey = '') {
+  const animationName = String(entry && entry.animationName || '').trim();
+  if (!animationName) {
+    setStatus('Set an animation folder key before opening the FLC Workshop.', true);
+    return false;
+  }
+  if (entry && entry.unitIniEditor && Array.isArray(entry.unitIniEditor.typeRows)) {
+    return openFlicWorkshopForUnitAnimationModel(entry.unitIniEditor, preferredKey);
+  }
+  if (!window.c3xManager || typeof window.c3xManager.getPreview !== 'function') {
+    setStatus('Preview service is not available.', true);
+    return false;
+  }
+  const resolvedScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
+  const resolvedScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
+  const res = await window.c3xManager.getPreview({
+    kind: 'unitAnimationManifest',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths,
+    animationName
+  });
+  if (!res || !res.ok) {
+    setStatus(`Unable to load unit INI for FLC Workshop: ${res && res.error ? res.error : 'unknown error'}`, true);
+    return false;
+  }
+  const sourceSections = cloneUnitIniSections(res.sections);
+  const model = {
+    animationName,
+    iniPath: String(res.iniPath || getUnitIniTargetPath(animationName)),
+    typeRows: cloneUnitTypeRows(buildUnitTypeRowsFromSections(sourceSections)),
+    defaultActionKey: String(res.defaultActionKey || '')
+  };
+  return openFlicWorkshopForUnitAnimationModel(model, preferredKey || res.defaultActionKey);
 }
 
 async function loadPreviewsForReferenceEntry(tabKey, entry, previewWrap) {
@@ -12734,6 +15012,12 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
   playPauseToggle.type = 'button';
   playPauseToggle.className = 'ghost unit-preview-play-toggle';
   controls.appendChild(playPauseToggle);
+  const workshopBtn = document.createElement('button');
+  workshopBtn.type = 'button';
+  workshopBtn.className = 'ghost unit-preview-workshop-toggle';
+  workshopBtn.textContent = 'FLC Workshop';
+  workshopBtn.title = 'Open the selected FLC in the animation workshop';
+  controls.appendChild(workshopBtn);
   const previewWrap = document.createElement('div');
   previewWrap.className = 'unit-animation-preview';
   const typesWrap = document.createElement('div');
@@ -12766,6 +15050,8 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
   let activePlayableSoundPath = '';
   let previewSoundAudio = null;
   let previewSoundUrl = '';
+  let previewSoundAmbAudios = [];
+  let previewSoundAmbTimers = [];
   let previewSoundPlayToken = 0;
   let activeSoundPreviewButton = null;
   const entryUndoKey = buildReferenceEntryUndoKey('units', entry);
@@ -12859,6 +15145,17 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
 
   const stopPreviewSound = (resetTime = false) => {
     clearActiveSoundPreviewButton();
+    previewSoundAmbTimers.forEach((timerId) => {
+      try { window.clearTimeout(timerId); } catch (_err) {}
+    });
+    previewSoundAmbTimers = [];
+    previewSoundAmbAudios.forEach((audio) => {
+      try {
+        audio.pause();
+        if (resetTime) audio.currentTime = 0;
+      } catch (_err) {}
+    });
+    previewSoundAmbAudios = [];
     if (!previewSoundAudio) return;
     try {
       previewSoundAudio.pause();
@@ -12866,10 +15163,84 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
     } catch (_err) {}
   };
 
+  const playAmbSoundPreview = async (soundSpec, options = {}) => {
+    const statusLabel = String(options && options.statusLabel || 'AMB sound preview');
+    const sourceButton = options && options.sourceButton ? options.sourceButton : null;
+    const samples = (Array.isArray(soundSpec && soundSpec.samples) ? soundSpec.samples : [])
+      .map((sample, idx) => ({
+        name: String(sample && sample.name || '').trim() || `sample ${idx + 1}`,
+        path: toSlashPath(sample && sample.path || '').trim(),
+        startSeconds: Number.isFinite(Number(sample && sample.startSeconds)) ? Math.max(0, Number(sample.startSeconds)) : idx * 0.08
+      }))
+      .filter((sample) => sample.path);
+    if (samples.length === 0) {
+      if (sourceButton) clearActiveSoundPreviewButton();
+      setStatus(`No playable WAV samples resolved for ${statusLabel}.`, true);
+      return false;
+    }
+    const token = ++previewSoundPlayToken;
+    try {
+      stopPreviewSound(true);
+      if (sourceButton) {
+        activeSoundPreviewButton = sourceButton;
+        setPreviewButtonPlayingState(sourceButton, true);
+      }
+      let remaining = samples.length;
+      const finishSample = () => {
+        remaining -= 1;
+        if (remaining <= 0 && previewSoundPlayToken === token) {
+          clearActiveSoundPreviewButton();
+          previewSoundAmbAudios = [];
+          previewSoundAmbTimers = [];
+        }
+      };
+      samples.forEach((sample) => {
+        const audio = new Audio(toFileUrlFromPath(sample.path));
+        audio.preload = 'auto';
+        let sampleFinished = false;
+        const finishThisSample = () => {
+          if (sampleFinished) return;
+          sampleFinished = true;
+          finishSample();
+        };
+        audio.onended = finishThisSample;
+        audio.onpause = () => {
+          if (audio.ended) return;
+          finishThisSample();
+        };
+        previewSoundAmbAudios.push(audio);
+        const delayMs = Math.round(sample.startSeconds * 1000);
+        const timerId = window.setTimeout(() => {
+          if (previewSoundPlayToken !== token) return;
+          const promise = audio.play();
+          if (promise && typeof promise.catch === 'function') {
+            promise.catch(() => {
+              finishThisSample();
+            });
+          }
+        }, delayMs);
+        previewSoundAmbTimers.push(timerId);
+      });
+      const missingCount = Array.isArray(soundSpec && soundSpec.missingSamples) ? soundSpec.missingSamples.length : 0;
+      const suffix = missingCount > 0 ? ` (${missingCount} missing sample${missingCount === 1 ? '' : 's'})` : '';
+      setStatus(`Playing ${statusLabel}${suffix}.`);
+      return true;
+    } catch (_err) {
+      clearActiveSoundPreviewButton();
+      setStatus(`Could not play ${statusLabel}.`, true);
+      return false;
+    }
+  };
+
   const playResolvedSoundPath = async (playablePath, options = {}) => {
     const statusLabel = String(options && options.statusLabel || 'sound preview');
     const sourceButton = options && options.sourceButton ? options.sourceButton : null;
-    const normalizedPath = toSlashPath(playablePath).trim();
+    if (playablePath && typeof playablePath === 'object' && String(playablePath.kind || '').toLowerCase() === 'amb') {
+      return playAmbSoundPreview(playablePath, options);
+    }
+    const normalizedPath = toSlashPath(playablePath && typeof playablePath === 'object'
+      ? (playablePath.playablePath || playablePath.soundPath || '')
+      : playablePath).trim();
     if (!normalizedPath) {
       if (sourceButton) clearActiveSoundPreviewButton();
       setStatus(`No playable file resolved for ${statusLabel}.`, true);
@@ -12991,7 +15362,7 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
       return;
     }
     const resolvedPath = resolveUnitIniValuePath(targetIniPath, soundRel, getUnitIniTargetPath(entry.animationName));
-    const playablePath = await resolvePlayableUnitSoundPath(resolvedPath);
+    const playablePath = await resolvePlayableUnitSoundPath(resolvedPath, targetIniPath);
     if (!playablePath) {
       setStatus(`Could not resolve a playable sound for ${row.key}.`, true);
       return;
@@ -13015,7 +15386,7 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
     }
     const unitIniPath = String((model && model.iniPath) || (manifest && manifest.iniPath) || '').trim();
     activeSoundPath = resolveUnitIniValuePath(unitIniPath, soundRel, getUnitIniTargetPath(entry.animationName));
-    activePlayableSoundPath = await resolvePlayableUnitSoundPath(activeSoundPath);
+    activePlayableSoundPath = await resolvePlayableUnitSoundPath(activeSoundPath, unitIniPath);
     const cacheKey = JSON.stringify({ kind: 'unitAnimationPath', unitIniPath, flcPath: relativeFlc });
     let res = state.previewCache.get(cacheKey);
     if (!res) {
@@ -13030,6 +15401,11 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
     activePreview = res;
     renderPreview();
   };
+
+  workshopBtn.addEventListener('click', () => {
+    const activeModel = ensureEditorModel();
+    void openFlicWorkshopForUnitAnimationModel(activeModel, String(activeAction || ui.actionKey || '').trim().toUpperCase());
+  });
 
   const renderPreviewPicker = () => {
     actionSelect.innerHTML = '';
@@ -13143,6 +15519,18 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable, options = {}) {
       flcGroup.appendChild(flcChip);
       const flcActions = document.createElement('div');
       flcActions.className = 'unit-type-control-actions';
+      const flcEdit = document.createElement('button');
+      flcEdit.type = 'button';
+      flcEdit.className = 'ghost unit-ini-browse-btn unit-ini-edit-flc-btn';
+      flcEdit.innerHTML = '<span class="btn-icon">🎞</span>Edit';
+      flcEdit.setAttribute('aria-label', 'Open this FLC in the Workshop.');
+      attachRichTooltip(flcEdit, 'Action: Open this FLC in the Workshop\nEffect: Does not change the INI reference');
+      flcEdit.disabled = !String(row.relativePath || '').trim();
+      flcEdit.addEventListener('click', () => {
+        const activeModelForRow = ensureEditorModel();
+        void openFlicWorkshopForUnitAnimationModel(activeModelForRow, row.key);
+      });
+      flcActions.appendChild(flcEdit);
       const flcBrowse = document.createElement('button');
       flcBrowse.type = 'button';
       flcBrowse.className = 'ghost unit-ini-browse-btn';
@@ -42253,6 +44641,7 @@ function renderReferenceTab(tab, tabKey) {
   let resourceTypeFilterControl = null;
   let unitSortSelect = null;
   let unitAvailabilityBtn = null;
+  let unitFlicWorkshopBtn = null;
   let unitTableBtn = null;
   if (tabKey === 'resources') {
     resourceTypeFilterControl = document.createElement('div');
@@ -42299,6 +44688,19 @@ function renderReferenceTab(tab, tabKey) {
       ? 'Edit unit availability by civilization'
       : 'View unit availability by civilization';
     controlsRight.appendChild(unitAvailabilityBtn);
+
+    unitFlicWorkshopBtn = document.createElement('button');
+    unitFlicWorkshopBtn.type = 'button';
+    unitFlicWorkshopBtn.className = 'ghost unit-flic-workshop-action-btn';
+    const unitFlicWorkshopIcon = document.createElement('span');
+    unitFlicWorkshopIcon.className = 'btn-icon unit-flic-workshop-action-icon';
+    unitFlicWorkshopIcon.textContent = '🎞';
+    const unitFlicWorkshopLabel = document.createElement('span');
+    unitFlicWorkshopLabel.textContent = 'FLC Workshop';
+    unitFlicWorkshopBtn.appendChild(unitFlicWorkshopIcon);
+    unitFlicWorkshopBtn.appendChild(unitFlicWorkshopLabel);
+    unitFlicWorkshopBtn.title = 'Open the selected unit animation in the FLC Workshop';
+    controlsRight.appendChild(unitFlicWorkshopBtn);
 
     unitTableBtn = document.createElement('button');
     unitTableBtn.type = 'button';
@@ -44773,6 +47175,16 @@ function renderReferenceTab(tab, tabKey) {
         referenceEditable,
         initialCivValue: getDefaultUnitAvailabilityCivValue()
       });
+    });
+  }
+  if (unitFlicWorkshopBtn) {
+    unitFlicWorkshopBtn.addEventListener('click', () => {
+      const selectedEntry = getSelectedEntry();
+      if (!selectedEntry) {
+        setStatus('Select a unit before opening the FLC Workshop.', true);
+        return;
+      }
+      void openFlicWorkshopForUnitEntry(selectedEntry);
     });
   }
   if (unitTableBtn) {

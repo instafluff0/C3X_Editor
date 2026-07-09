@@ -4,6 +4,7 @@ const path = require('node:path');
 const { Worker } = require('node:worker_threads');
 const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes, inspectAudioFileBasic } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
+const { handleFlicWorkshop } = require('./src/flcWorkshop');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -1376,10 +1377,14 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   return { ok: true };
 });
 
-ipcMain.handle('manager:pick-directory', async () => {
-  const result = await dialog.showOpenDialog({
+ipcMain.handle('manager:pick-directory', async (_event, options) => {
+  const dialogOptions = {
     properties: ['openDirectory']
-  });
+  };
+  if (options && typeof options.defaultPath === 'string' && options.defaultPath.trim()) {
+    dialogOptions.defaultPath = options.defaultPath.trim();
+  }
+  const result = await dialog.showOpenDialog(dialogOptions);
   if (result.canceled || result.filePaths.length === 0) {
     return null;
   }
@@ -1681,6 +1686,21 @@ ipcMain.handle('manager:get-preview', async (_event, payload) => {
     return result;
   } catch (err) {
     log.error('getPreview', `kind=${kind} threw: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('manager:flic-workshop', async (_event, payload) => {
+  applyLogContextFromPayload(payload || {});
+  const action = payload && payload.action;
+  try {
+    const result = handleFlicWorkshop(payload || {});
+    if (!result || !result.ok) {
+      log.warn('flicWorkshop', `action=${action} failed: ${result && result.error}`);
+    }
+    return result;
+  } catch (err) {
+    log.error('flicWorkshop', `action=${action} threw: ${err.message}`);
     return { ok: false, error: err.message };
   }
 });

@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('c3xManager', {
   getSettings: () => ipcRenderer.invoke('manager:get-settings'),
   setSettings: (settings) => ipcRenderer.invoke('manager:set-settings', settings),
-  pickDirectory: () => ipcRenderer.invoke('manager:pick-directory'),
+  pickDirectory: (options) => ipcRenderer.invoke('manager:pick-directory', options),
   pickFile: (options) => ipcRenderer.invoke('manager:pick-file', options),
   getPathForFile: (file) => {
     if (!file || !webUtils || typeof webUtils.getPathForFile !== 'function') return '';
@@ -184,5 +184,6 @@ contextBridge.exposeInMainWorld('c3xManager', {
   previewSavePlan: (payload) => ipcRenderer.invoke('manager:preview-save-plan', payload),
   previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload),
   inspectAudioFile: (filePath) => ipcRenderer.invoke('manager:inspect-audio-file', filePath),
-  inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload)
+  inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload),
+  flicWorkshop: (payload) => ipcRenderer.invoke('manager:flic-workshop', payload)
 });

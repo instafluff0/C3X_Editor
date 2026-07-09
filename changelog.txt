@@ -1,4 +1,43 @@
+* RELEASE 27.22
+- Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
+- Fixed Units-tab FLC and sound browsing so valid unit animation and sound picks are stored relative to the unit animation folder instead of leaking absolute paths.
+- Fixed Units-tab unit previews so a selected facing stays on that direction instead of cycling through every FLC direction.
+- Renamed the FLC Workshop export tab and button to `Export Storyboard` when the opened source is an FLC.
+- Refined the FLC Workshop preview UI with a shorter modal, map-mode-style tabs, a frame-delay slider, and civilization thumbnail color selection based on each civ's default color.
+- Fixed the FLC Workshop modal shell so its background stays opaque and its size remains stable when switching tabs.
+- Tightened the FLC Workshop layout with a narrower preview modal, in-modal animation switching, and civ-color-aware palette previews with smaller swatches.
+- Added simple FLC Workshop preview controls for indexed zoom and hour-based palette darkening, with Current Viewer Palette export using the same displayed palette.
+- Organized FLC Workshop preview controls into display, playback, and transform groups, and let zoomed previews grow their display frame instead of clipping scaled-up units.
+- Expanded FLC Workshop export options for current/custom/maximum frame size, current/custom/maximum frame count, original/viewer/selected palettes, and original/viewer/custom delay.
+- Reworked the FLC Workshop Preview layout with compact controls stacked on the left and the animation plus facing pad centered in the main area.
+- Reworked FLC Workshop export options into compact summary buttons with focused click-away editors for size, frame count, palette, and delay settings.
+- Tightened FLC Workshop Preview controls so alpha/shadow, frame delay, zoom, and hour controls align as compact label-and-control rows.
+- Simplified FLC Workshop export option editors with explicit close controls, no explanatory subtext, and custom inputs embedded in their matching choices.
+- Matched FLC Workshop export summary font sizing to the smaller form inputs and removed the thin wrapper border around the Workshop tabs.
+- Changed FLC Workshop to open and display a current FLC or storyboard source file, removed the separate Build tab, and made storyboard sources preview through the same tabs before saving them as FLC files from Export.
+- Fixed FLC Workshop selected-palette export editing, displayed source paths relative to the Civ3 folder when possible, defaulted output folders to the opened file's directory, and warned before overwriting export outputs.
+- Replaced FLC Workshop inline export success messages with a timed clickable toast that opens the output folder, required a chosen output directory before export, and compacted the Open file menu to avoid horizontal scrolling.
+- Moved the FLC Workshop source file selector into the modal header, added preview frame width and height sliders, and renamed the hour transform control to Day/Night.
+- Simplified the FLC Workshop Open menu, combined FLC/storyboard browsing into one picker, and let zoomed-out previews reduce the minimum frame width and height.
+- Added a Units toolbar FLC Workshop button and per-animation FLC Edit buttons that open the Workshop directly for the selected FLC.
+- Changed the FLC Workshop Open control to use a native grouped dropdown with known FLCs separated from the Browse option.
+- Polished the FLC Workshop modal with a clearer Open browse label, smaller consistent full-width Export inputs, no redundant Export footer, and a film-style Workshop icon.
+- Moved FLC Workshop export/save completion notifications inside the modal and lowered the Units toolbar width threshold for showing the Workshop button.
+- Made FLC Workshop storyboard Current Size exports use the current preview frame dimensions, including user-adjusted width and height.
+- Cached FLC Workshop preview transforms by direction/settings and disabled unavailable facing buttons for animations that do not include every direction.
+- Added an FLC Workshop Reset control and reorganized export frame-size choices around original, current viewer, selected, and maximum sizes.
+- Replaced FLC Workshop overwrite prompts with a structured in-modal confirmation that lists the files to be replaced.
+- Made FLC Workshop exports default to current viewer size, palette, and delay, and made storyboard Save as FLC use the current Preview transforms.
+- Displayed FLC Workshop output directories relative to the Civ3 folder while preserving absolute paths for writes.
+- Displayed the FLC Workshop Info file path relative to the Civ3 folder when possible.
+- Removed the redundant FLC Workshop header file-type label and changed the modal close control to a text Close button.
+- Added vanilla FLC fixture coverage for unit, vehicle, and single-direction animation storyboard export, import, transform, rebuild, and malformed companion validation.
+- Fixed storyboard Save as FLC rebuilds so the FXM direction count, frame count, offsets, and original geometry metadata survive viewer-frame exports.
+
 * RELEASE 27.21
+- Added async QA warnings for unit animation entries that reference files other than `.flc`, while preserving vanilla `DEAD=.` placeholders.
+- Added async QA warnings for unit `[Sound Effects]` entries that reference files other than `.amb` or `.wav`, matching vanilla unit sound-file conventions.
+- Added approximate Units-tab AMB sound previews by parsing AMB KMAP WAV references, resolving component samples through scenario and vanilla unit-art roots, and playing them from the existing sound Preview controls.
 - Fixed the Units list-panel header actions so Add All/Remove All buttons wrap inside their cards instead of overlapping neighboring panels.
 - Fixed unit imports so direct runtime `.flc`, `.amb`, and `.wav` references in imported unit INI files can bring along sibling unit-folder dependencies, preventing imports like Gravity Armor from dropping reused Hover Tank sounds.
 - Added async QA warnings for missing unit runtime INI, FLC, AMB, and WAV files, reporting the Civ3-style `Art\Units\...` path that would trigger FILE NOT FOUND.

@@ -650,6 +650,239 @@ function normalizeScenarioRoots(scenarioPath, scenarioPaths) {
   return out;
 }
 
+function ambReadUInt32LE(buf, off) {
+  if (off + 4 > buf.length) throw new Error(`Unexpected EOF at ${off}`);
+  return buf.readUInt32LE(off);
+}
+
+function ambReadInt32LE(buf, off) {
+  if (off + 4 > buf.length) throw new Error(`Unexpected EOF at ${off}`);
+  return buf.readInt32LE(off);
+}
+
+function ambReadUInt32BE(buf, off) {
+  if (off + 4 > buf.length) throw new Error(`Unexpected EOF at ${off}`);
+  return buf.readUInt32BE(off);
+}
+
+function ambReadCString(buf, off) {
+  let end = off;
+  while (end < buf.length && buf[end] !== 0) end += 1;
+  if (end >= buf.length) throw new Error(`Unterminated AMB string at ${off}`);
+  return {
+    value: buf.subarray(off, end).toString('latin1'),
+    off: end + 1
+  };
+}
+
+function parseAmbPrgmChunk(buf, off) {
+  const size = ambReadUInt32LE(buf, off); off += 4;
+  const number = ambReadUInt32LE(buf, off); off += 4;
+  const flags = ambReadInt32LE(buf, off); off += 4;
+  const maxRandomSpeed = ambReadInt32LE(buf, off); off += 4;
+  const minRandomSpeed = ambReadInt32LE(buf, off); off += 4;
+  const maxRandomVolume = ambReadInt32LE(buf, off); off += 4;
+  const minRandomVolume = ambReadInt32LE(buf, off); off += 4;
+  const marker = ambReadUInt32LE(buf, off); off += 4;
+  if (marker !== 0xfa) throw new Error(`Expected AMB PRGM marker at ${off - 4}`);
+  const effectName = ambReadCString(buf, off); off = effectName.off;
+  const varName = ambReadCString(buf, off); off = varName.off;
+  return {
+    off,
+    chunk: { type: 'prgm', size, number, flags, maxRandomSpeed, minRandomSpeed, maxRandomVolume, minRandomVolume, effectName: effectName.value, varName: varName.value }
+  };
+}
+
+function parseAmbKmapChunk(buf, off) {
+  const size = ambReadUInt32LE(buf, off); off += 4;
+  const flags = ambReadUInt32LE(buf, off); off += 4;
+  const param1 = ambReadUInt32LE(buf, off); off += 4;
+  const param2 = ambReadUInt32LE(buf, off); off += 4;
+  const varName = ambReadCString(buf, off); off = varName.off;
+  const itemCount = ambReadUInt32LE(buf, off); off += 4;
+  let itemSize = 0;
+  if ((flags & 6) !== 0) {
+    itemSize = ambReadUInt32LE(buf, off); off += 4;
+  }
+  const items = [];
+  for (let i = 0; i < itemCount; i += 1) {
+    if ((flags & 6) === 0) {
+      off += 8;
+    } else {
+      off += itemSize;
+    }
+    const wavName = ambReadCString(buf, off); off = wavName.off;
+    if (wavName.value) items.push({ wavName: wavName.value });
+  }
+  const marker = ambReadUInt32LE(buf, off); off += 4;
+  if (marker !== 0xfa) throw new Error(`Expected AMB KMAP marker at ${off - 4}`);
+  return {
+    off,
+    chunk: { type: 'kmap', size, flags, param1, param2, varName: varName.value, itemCount, itemSize, items }
+  };
+}
+
+function skipAmbMidiChunk(buf, off) {
+  const headerSize = ambReadUInt32BE(buf, off);
+  off += 4 + headerSize;
+  while (off + 8 <= buf.length && buf.subarray(off, off + 4).toString('latin1') === 'MTrk') {
+    off += 4;
+    const trackSize = ambReadUInt32BE(buf, off);
+    off += 4 + trackSize;
+  }
+  return { off, chunk: { type: 'midi' } };
+}
+
+function parseCiv3AmbFile(filePath) {
+  const buf = fs.readFileSync(filePath);
+  let off = 0;
+  const chunks = [];
+  while (off < buf.length) {
+    if (off + 4 > buf.length) throw new Error(`Trailing AMB bytes at ${off}`);
+    const tag = buf.subarray(off, off + 4).toString('latin1');
+    off += 4;
+    let parsed = null;
+    if (tag === 'prgm') parsed = parseAmbPrgmChunk(buf, off);
+    else if (tag === 'kmap') parsed = parseAmbKmapChunk(buf, off);
+    else if (tag === 'glbl') {
+      const size = ambReadUInt32LE(buf, off);
+      parsed = { off: off + 4 + size, chunk: { type: 'glbl', size } };
+    } else if (tag === 'MThd') {
+      parsed = skipAmbMidiChunk(buf, off);
+    } else {
+      throw new Error(`Unknown AMB chunk "${tag}" at ${off - 4}`);
+    }
+    chunks.push(parsed.chunk);
+    off = parsed.off;
+  }
+  const wavNames = chunks
+    .filter((chunk) => chunk.type === 'kmap')
+    .flatMap((chunk) => (Array.isArray(chunk.items) ? chunk.items : []).map((item) => String(item.wavName || '').trim()).filter(Boolean));
+  return { filePath, chunks, wavNames };
+}
+
+function walkFilesForBasename(rootPath, basenameLower, maxFiles = 20000) {
+  const root = String(rootPath || '').trim();
+  if (!root || !fileExists(root)) return '';
+  let visited = 0;
+  const visit = (dirPath) => {
+    if (visited >= maxFiles) return '';
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    } catch (_err) {
+      return '';
+    }
+    entries.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'en', { sensitivity: 'base' }));
+    for (const entry of entries) {
+      if (visited >= maxFiles) return '';
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isFile()) {
+        visited += 1;
+        if (String(entry.name || '').toLowerCase() === basenameLower) return fullPath;
+      } else if (entry.isDirectory()) {
+        const found = visit(fullPath);
+        if (found) return found;
+      }
+    }
+    return '';
+  };
+  return visit(root);
+}
+
+function resolveAmbWavPath(wavName, ambPath, options = {}) {
+  const raw = String(wavName || '').trim().replace(/^["']|["']$/g, '');
+  if (!raw) return '';
+  const normalized = raw.replace(/\\/g, path.sep).replace(/\//g, path.sep);
+  const ambDir = path.dirname(ambPath);
+  const direct = path.isAbsolute(normalized) || path.win32.isAbsolute(raw)
+    ? normalized
+    : path.normalize(path.join(ambDir, normalized));
+  if (fileExists(direct)) return direct;
+
+  const civ3Root = resolveCiv3Root(options.civ3Path);
+  const conquestsRoot = resolveConquestsRoot(options.civ3Path);
+  const ptwRoot = resolvePtwRoot(options.civ3Path);
+  const roots = [];
+  const seen = new Set();
+  const addRoot = (candidate) => {
+    const resolved = String(candidate || '').trim();
+    if (!resolved || seen.has(resolved)) return;
+    seen.add(resolved);
+    roots.push(resolved);
+  };
+  normalizeScenarioRoots(options.scenarioPath, options.scenarioPaths).forEach((root) => addRoot(path.join(root, 'Art', 'Units')));
+  addRoot(path.join(conquestsRoot, 'Art', 'Units'));
+  addRoot(path.join(ptwRoot, 'Art', 'Units'));
+  addRoot(path.join(civ3Root, 'Art', 'Units'));
+
+  for (const root of roots) {
+    const relCandidate = path.join(root, normalized);
+    if (fileExists(relCandidate)) return relCandidate;
+  }
+  const basenameLower = path.basename(normalized).toLowerCase();
+  for (const root of roots) {
+    const found = walkFilesForBasename(root, basenameLower);
+    if (found) return found;
+  }
+  return '';
+}
+
+function resolveUnitSoundPreview(request) {
+  const rawPath = stripInlineIniComment(String(request && request.soundPath || '')).replace(/^["']|["']$/g, '').trim();
+  if (!rawPath) return { ok: false, error: 'Missing sound path' };
+  const normalized = rawPath.replace(/\\/g, path.sep).replace(/\//g, path.sep);
+  const unitIniPath = String(request && request.unitIniPath || '').trim();
+  const soundPath = path.isAbsolute(normalized) || path.win32.isAbsolute(rawPath)
+    ? normalized
+    : path.normalize(path.join(unitIniPath ? path.dirname(unitIniPath) : '', normalized));
+  if (!fileExists(soundPath)) return { ok: false, error: 'Sound file not found' };
+  const ext = path.extname(soundPath).toLowerCase();
+  if (ext !== '.amb') {
+    return {
+      ok: true,
+      kind: 'file',
+      soundPath,
+      playablePath: soundPath,
+      samples: [{ name: path.basename(soundPath), path: soundPath, startSeconds: 0 }],
+      missingSamples: []
+    };
+  }
+  const amb = parseCiv3AmbFile(soundPath);
+  const samples = [];
+  const missingSamples = [];
+  amb.wavNames.forEach((wavName, idx) => {
+    const samplePath = resolveAmbWavPath(wavName, soundPath, request || {});
+    if (samplePath) {
+      samples.push({
+        name: wavName,
+        path: samplePath,
+        startSeconds: Number((idx * 0.08).toFixed(3))
+      });
+    } else {
+      missingSamples.push({ name: wavName });
+    }
+  });
+  if (samples.length === 0) {
+    return {
+      ok: false,
+      error: missingSamples.length > 0 ? 'AMB references no playable WAV files' : 'AMB contains no WAV references',
+      kind: 'amb',
+      soundPath,
+      samples,
+      missingSamples
+    };
+  }
+  return {
+    ok: true,
+    kind: 'amb',
+    soundPath,
+    playablePath: samples[0].path,
+    samples,
+    missingSamples
+  };
+}
+
 function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenarioPaths, civilopediaKey = '') {
   if (!civ3Path || (!rawAssetPath && !civilopediaKey)) {
     log.debug('resolveAsset', `Skipped — civ3Path=${!!civ3Path}, rawAssetPath=${!!rawAssetPath}, key=${civilopediaKey || '(none)'}`);
@@ -1155,6 +1388,15 @@ function getPreview(request) {
     return { ok: true, ...decodeByPath(flcPath, null, { civ3UnitPalette: true, maxFrames: 1000 }) };
   }
 
+  if (kind === 'unitSoundPreview') {
+    try {
+      return resolveUnitSoundPreview(request || {});
+    } catch (err) {
+      log.warn('getPreview', `unitSoundPreview failed: ${err && err.message ? err.message : err}`);
+      return { ok: false, error: err && err.message ? err.message : 'Could not inspect unit sound' };
+    }
+  }
+
   log.warn('getPreview', `Unknown preview kind: "${kind}"`);
   return { ok: false, error: 'Unknown preview kind' };
 }
@@ -1529,6 +1771,7 @@ function encodeRgbaToLeaderFlc(rgba, width, height, options = {}) {
 module.exports = {
   getPreview,
   parseUnitAnimationIni,
+  parseCiv3AmbFile,
   resolveConquestsAssetPath,
   resolveUnitIniPath,
   resolvePcxPath,

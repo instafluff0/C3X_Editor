@@ -14539,9 +14539,42 @@ function toWindowsRelativeAssetPath(rawPath) {
   return normalized.replace(/\//g, '\\');
 }
 
+function parseUnitArtFolderReference(rawPath) {
+  const normalized = normalizeAssetReferencePath(rawPath);
+  if (!normalized) return null;
+  const lower = normalized.toLowerCase();
+  const marker = '/art/units/';
+  let start = -1;
+  const idx = lower.lastIndexOf(marker);
+  if (idx >= 0) start = idx + marker.length;
+  else if (lower.startsWith('art/units/')) start = 'art/units/'.length;
+  if (start < 0) return null;
+  const rest = normalized.slice(start).replace(/^\/+/, '');
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  return {
+    folder: parts[0],
+    tail: parts.slice(1).join('/')
+  };
+}
+
+function normalizeUnitArtLogicalReferencePath(rawPath, animationName) {
+  const currentFolder = String(animationName || '').trim();
+  if (!currentFolder) return '';
+  const target = parseUnitArtFolderReference(rawPath);
+  if (!target || !target.folder || !target.tail) return '';
+  const rel = target.folder.toLowerCase() === currentFolder.toLowerCase()
+    ? target.tail
+    : `../${target.folder}/${target.tail}`;
+  return toWindowsRelativeAssetPath(rel);
+}
+
 function normalizeUnitIniAnimationReferencePath(rawPath, { entry, targetPath, scenarioDir }) {
   const normalized = normalizeAssetReferencePath(rawPath);
   if (!normalized) return '';
+  const animationName = String(entry && entry.animationName || '').trim();
+  const logicalUnitPath = normalizeUnitArtLogicalReferencePath(normalized, animationName);
+  if (logicalUnitPath) return logicalUnitPath;
   const targetDir = path.dirname(String(targetPath || '').trim());
   if (!targetDir) return toWindowsRelativeAssetPath(normalized);
   if (isAbsoluteFilesystemPath(normalized)) {
@@ -14555,7 +14588,6 @@ function normalizeUnitIniAnimationReferencePath(rawPath, { entry, targetPath, sc
       return toWindowsRelativeAssetPath(path.relative(targetDir, absolute));
     }
   }
-  const animationName = String(entry && entry.animationName || '').trim();
   if (animationName) {
     const prefix = `${animationName}/`;
     if (scenarioRelative.toLowerCase().startsWith(prefix.toLowerCase())) {
@@ -14571,14 +14603,15 @@ function normalizeUnitIniSectionsForSave(sections, { entry, targetPath, scenario
     const name = String(section && section.name || '').trim();
     if (!name) return;
     const fields = [];
-    const isAnimations = name.toUpperCase() === 'ANIMATIONS';
+    const sectionUpper = name.toUpperCase();
+    const isRuntimeReferenceSection = sectionUpper === 'ANIMATIONS' || sectionUpper === 'SOUND EFFECTS';
     (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
       const key = String(field && field.key || '').trim();
       if (!key) return;
       const rawValue = String(field && field.value || '');
       fields.push({
         key,
-        value: isAnimations
+        value: isRuntimeReferenceSection
           ? normalizeUnitIniAnimationReferencePath(rawValue, { entry, targetPath, scenarioDir })
           : rawValue
       });
