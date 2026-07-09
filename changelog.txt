@@ -6,8 +6,15 @@
 - Added simple FLC Workshop preview controls for indexed zoom and hour-based palette darkening, with Current Viewer Palette export using the same displayed palette.
 - Organized FLC Workshop preview controls into display, playback, and transform groups, and let zoomed previews grow their display frame instead of clipping scaled-up units.
 - Expanded FLC Workshop export options for current/custom/maximum frame size, current/custom/maximum frame count, original/viewer/selected palettes, and original/viewer/custom delay.
+- Reworked the FLC Workshop Preview layout with compact controls stacked on the left and the animation plus facing pad centered in the main area.
+- Reworked FLC Workshop export options into compact summary buttons with focused click-away editors for size, frame count, palette, and delay settings.
+- Tightened FLC Workshop Preview controls so alpha/shadow, frame delay, zoom, and hour controls align as compact label-and-control rows.
+- Simplified FLC Workshop export option editors with explicit close controls, no explanatory subtext, and custom inputs embedded in their matching choices.
+- Matched FLC Workshop export summary font sizing to the smaller form inputs and removed the thin wrapper border around the Workshop tabs.
+- Changed FLC Workshop to open and display a current FLC or storyboard source file, removed the separate Build tab, and made storyboard sources preview through the same tabs before saving them as FLC files from Export.
 
 * RELEASE 27.21
+- Added async QA warnings for unit animation entries that reference files other than `.flc`, while preserving vanilla `DEAD=.` placeholders.
 - Added async QA warnings for unit `[Sound Effects]` entries that reference files other than `.amb` or `.wav`, matching vanilla unit sound-file conventions.
 - Added approximate Units-tab AMB sound previews by parsing AMB KMAP WAV references, resolving component samples through scenario and vanilla unit-art roots, and playing them from the existing sound Preview controls.
 - Fixed the Units list-panel header actions so Add All/Remove All buttons wrap inside their cards instead of overlapping neighboring panels.

@@ -332,6 +332,52 @@ function previewFromDecoded(decoded, options = {}) {
   };
 }
 
+function previewFromStoryboardLoaded(loaded, options = {}) {
+  const meta = loaded.meta || {};
+  const frameLimit = Number.isFinite(Number(options.frameLimit)) && Number(options.frameLimit) > 0
+    ? Math.floor(Number(options.frameLimit))
+    : loaded.frames.length;
+  const frames = loaded.frames.slice(0, frameLimit);
+  const civ3 = {
+    size: 28,
+    flags: 0,
+    numAnims: meta.directionCount || 1,
+    animLength: meta.framesPerDirection || Math.max(1, frames.length),
+    xOffset: meta.xOffset || 0,
+    yOffset: meta.yOffset || 0,
+    xsOrig: meta.xsOrig || meta.frameWidth || DEFAULT_ORIGINAL_SIZE,
+    ysOrig: meta.ysOrig || meta.frameHeight || DEFAULT_ORIGINAL_SIZE,
+    animTime: (meta.framesPerDirection || Math.max(1, frames.length)) * (meta.delay || 100),
+    directions: meta.directions || ((meta.directionCount || 1) === 8 ? 255 : 1)
+  };
+  const previewMeta = {
+    fileSize: 0,
+    magic: 0,
+    frameCountHeader: frames.length,
+    width: meta.frameWidth || 1,
+    height: meta.frameHeight || 1,
+    depth: 8,
+    flags: 0,
+    speed: meta.delay || 100,
+    civ3
+  };
+  return {
+    ok: true,
+    width: previewMeta.width,
+    height: previewMeta.height,
+    animated: frames.length > 1,
+    sourcePath: String(options.sourcePath || loaded.paths && loaded.paths.fxmPath || ''),
+    sourceKind: 'storyboard',
+    framesBase64: frames.map((frame) => Buffer.from(rgbaFromIndexed(frame, loaded.palette, options)).toString('base64')),
+    indexedFramesBase64: frames.map((frame) => Buffer.from(frame).toString('base64')),
+    paletteBase64: Buffer.from(loaded.palette).toString('base64'),
+    meta: previewMeta,
+    storyboard: { width: loaded.storyboard.width, height: loaded.storyboard.height },
+    paths: loaded.paths,
+    frameCount: loaded.frames.length
+  };
+}
+
 function encodePcxRle(data) {
   const out = [];
   for (let i = 0; i < data.length;) {
@@ -890,13 +936,7 @@ function buildFlcFromFlicsterStoryboard(fxmPath, outputPath) {
 
 function inspectFlicsterStoryboard(fxmPath) {
   const loaded = loadFlicsterStoryboard(fxmPath);
-  return {
-    ok: true,
-    meta: loaded.meta,
-    storyboard: { width: loaded.storyboard.width, height: loaded.storyboard.height },
-    paths: loaded.paths,
-    frameCount: loaded.frames.length
-  };
+  return previewFromStoryboardLoaded(loaded, { sourcePath: fxmPath, frameLimit: 1000 });
 }
 
 function resolveFlcPathFromUnitIniValue(unitIniPath, flcValue) {

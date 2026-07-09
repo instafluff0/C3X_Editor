@@ -29,6 +29,12 @@ const DISTRICT_CULTURE_OPTIONS = [
   'asian'
 ];
 
+const UNIT_ANIMATION_RUNTIME_KEYS = new Set([
+  'BLANK', 'DEFAULT', 'WALK', 'RUN', 'ATTACK1', 'ATTACK2', 'ATTACK3', 'DEFEND', 'DEATH', 'DEAD',
+  'FORTIFY', 'FORTIFYHOLD', 'FIDGET', 'VICTORY', 'TURNLEFT', 'TURNRIGHT', 'BUILD', 'ROAD', 'MINE',
+  'IRRIGATE', 'FORTRESS', 'CAPTURE'
+]);
+
 const DISTRICT_DEPENDENCY_RULES = [
   { key: 'advance_prereqs', label: 'Tech Prerequisites', setKey: 'technologies' },
   { key: 'obsoleted_by', label: 'Obsoleted By', setKey: 'technologies' },
@@ -678,10 +684,13 @@ function collectUnitIniRuntimeAssetRefs(manifest) {
   sections.forEach((section) => {
     const sectionName = String(section && (section.nameUpper || section.name) || '').trim().toUpperCase();
     const isSoundEffects = sectionName === 'SOUND EFFECTS';
+    const isAnimations = sectionName === 'ANIMATIONS';
     (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
       const value = String(field && field.value || '').trim();
       if (isSoundEffects) {
         if (!/\.(amb|wav)$/i.test(value)) return;
+      } else if (isAnimations || UNIT_ANIMATION_RUNTIME_KEYS.has(String(field && (field.keyUpper || field.key) || '').trim().toUpperCase())) {
+        if (!/\.flc$/i.test(value)) return;
       } else if (!/\.(flc|amb|wav)$/i.test(value)) {
         return;
       }
@@ -704,6 +713,25 @@ function collectUnitIniUnsupportedSoundRefs(manifest) {
         key: String(field && (field.keyUpper || field.key) || '').trim(),
         value
       });
+    });
+  });
+  return refs;
+}
+
+function collectUnitIniUnsupportedAnimationRefs(manifest) {
+  const refs = [];
+  const sections = Array.isArray(manifest && manifest.sections) ? manifest.sections : [];
+  sections.forEach((section) => {
+    const sectionName = String(section && (section.nameUpper || section.name) || '').trim().toUpperCase();
+    const isAnimations = sectionName === 'ANIMATIONS';
+    const isGeneral = !sectionName || sectionName === 'GENERAL';
+    if (!isAnimations && !isGeneral) return;
+    (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
+      const key = String(field && (field.keyUpper || field.key) || '').trim().toUpperCase();
+      if (!isAnimations && !UNIT_ANIMATION_RUNTIME_KEYS.has(key)) return;
+      const value = String(field && field.value || '').trim();
+      if (!value || value === '.' || /\.flc$/i.test(value)) return;
+      refs.push({ key, value });
     });
   });
   return refs;
@@ -2041,6 +2069,7 @@ function auditUnitRuntimeAssets(bundle, result) {
       const iniPath = getRuntimeUnitIniPath(bundle, animationName);
       const missing = [];
       const unsupportedSounds = [];
+      const unsupportedAnimations = [];
       if (!iniPath) {
         missing.push({
           displayPath: getUnitRuntimeExpectedDisplayPath(animationName, `${animationName}.ini`),
@@ -2059,6 +2088,16 @@ function auditUnitRuntimeAssets(bundle, result) {
             soundKey: String(ref && ref.key || '').trim()
           });
         });
+        collectUnitIniUnsupportedAnimationRefs(manifest).forEach((ref) => {
+          const displayPath = getUnitRuntimeExpectedDisplayPath(animationName, ref.value);
+          const key = displayPath.toLowerCase();
+          if (!displayPath || seen.has(`unsupported-animation:${key}`)) return;
+          seen.add(`unsupported-animation:${key}`);
+          unsupportedAnimations.push({
+            displayPath,
+            animationKey: String(ref && ref.key || '').trim()
+          });
+        });
         collectUnitIniRuntimeAssetRefs(manifest).forEach((ref) => {
           const displayPath = getUnitRuntimeExpectedDisplayPath(animationName, ref.value);
           const key = displayPath.toLowerCase();
@@ -2070,7 +2109,7 @@ function auditUnitRuntimeAssets(bundle, result) {
           }
         });
       }
-      audit = { missing, unsupportedSounds };
+      audit = { missing, unsupportedSounds, unsupportedAnimations };
       unitCache.set(animationName, audit);
     }
 
@@ -2094,6 +2133,17 @@ function auditUnitRuntimeAssets(bundle, result) {
         index,
         `${label}: Unit sound file "${ref.displayPath}" is not a .amb or .wav file${suffix}. Civ3 unit sound references should use .amb or .wav files.`,
         'unit-runtime-sound-file-unsupported'
+      );
+    });
+    (Array.isArray(audit && audit.unsupportedAnimations) ? audit.unsupportedAnimations : []).forEach((ref) => {
+      const animationKey = String(ref && ref.animationKey || '').trim();
+      const suffix = animationKey ? ` referenced by Animations ${animationKey}` : ' referenced by Animations';
+      addSectionIssue(
+        result,
+        'units',
+        index,
+        `${label}: Unit animation file "${ref.displayPath}" is not an .flc file${suffix}. Civ3 unit animation references should use .flc files.`,
+        'unit-runtime-animation-file-unsupported'
       );
     });
   });
