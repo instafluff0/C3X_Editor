@@ -28,6 +28,7 @@
 - Displayed FLC Workshop output directories relative to the Civ3 folder while preserving absolute paths for writes.
 - Displayed the FLC Workshop Info file path relative to the Civ3 folder when possible.
 - Removed the redundant FLC Workshop header file-type label and changed the modal close control to a text Close button.
+- Added vanilla FLC fixture coverage for unit, vehicle, and single-direction animation storyboard export, import, transform, rebuild, and malformed companion validation.
 
 * RELEASE 27.21
 - Added async QA warnings for unit animation entries that reference files other than `.flc`, while preserving vanilla `DEAD=.` placeholders.

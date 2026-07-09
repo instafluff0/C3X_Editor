@@ -12,7 +12,8 @@ const {
   exportFlicsterStoryboardFromFlc,
   loadFlicsterStoryboard,
   buildFlcFromFlicsterStoryboard,
-  selectCiv3AnimationFrames
+  selectCiv3AnimationFrames,
+  handleFlicWorkshop
 } = require('../src/flcWorkshop');
 
 const fixtureCowDir = path.join(__dirname, 'fixtures', 'flcWorkshop', 'Cow');
@@ -24,6 +25,30 @@ const cowPcx = path.join(cowDir, 'black and white cow.pcx');
 const cowPal = path.join(cowDir, 'black and white cow.pal');
 const cowAlphaPal = path.join(cowDir, 'black and white cow_Alpha.pal');
 const hasCowFixture = fs.existsSync(cowFlc) && fs.existsSync(cowFxm) && fs.existsSync(cowPcx);
+const vanillaDir = path.join(__dirname, 'fixtures', 'flcWorkshop', 'Vanilla');
+const vanillaFixtures = [
+  {
+    name: 'WorkerDefault',
+    file: path.join(vanillaDir, 'Worker', 'WorkerDefault.flc'),
+    meta: { width: 50, height: 51, frameCountHeader: 120, decodedFrames: 128, speed: 125, directions: 8, framesPerDirection: 15, animTime: 1875, directionMask: 255 }
+  },
+  {
+    name: 'SpearmanAttackA',
+    file: path.join(vanillaDir, 'Spearman', 'SpearmanAttackA.flc'),
+    meta: { width: 129, height: 78, frameCountHeader: 120, decodedFrames: 128, speed: 66, directions: 8, framesPerDirection: 15, animTime: 1000, directionMask: 255 }
+  },
+  {
+    name: 'DestroyerDefault',
+    file: path.join(vanillaDir, 'Destroyer', 'DestroyerDefault.flc'),
+    meta: { width: 120, height: 69, frameCountHeader: 80, decodedFrames: 88, speed: 166, directions: 8, framesPerDirection: 10, animTime: 1666, directionMask: 255 }
+  },
+  {
+    name: 'VolcanoSmoke',
+    file: path.join(vanillaDir, 'VolcanoSmoke', 'VolcanoSmoke.flc'),
+    meta: { width: 33, height: 73, frameCountHeader: 20, decodedFrames: 21, speed: 100, directions: 1, framesPerDirection: 20, animTime: 2000, directionMask: 1 }
+  }
+];
+const hasVanillaFixtures = vanillaFixtures.every((fixture) => fs.existsSync(fixture.file));
 
 function framesEqual(a, b) {
   if (!a || !b || a.length !== b.length) return false;
@@ -31,6 +56,69 @@ function framesEqual(a, b) {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+function assertFramesEqual(actual, expected, label) {
+  assert.equal(actual.length, expected.length, `${label} frame count`);
+  for (let i = 0; i < expected.length; i += 1) {
+    assert.equal(framesEqual(actual[i], expected[i]), true, `${label} frame ${i}`);
+  }
+}
+
+function scaleIndexedFrameNearest(frame, width, height, scale) {
+  const outWidth = Math.max(1, Math.round(width * scale));
+  const outHeight = Math.max(1, Math.round(height * scale));
+  const out = new Uint8Array(outWidth * outHeight);
+  for (let y = 0; y < outHeight; y += 1) {
+    const srcY = Math.min(height - 1, Math.floor(y / scale));
+    for (let x = 0; x < outWidth; x += 1) {
+      const srcX = Math.min(width - 1, Math.floor(x / scale));
+      out[y * outWidth + x] = frame[srcY * width + srcX];
+    }
+  }
+  return { frame: out, width: outWidth, height: outHeight };
+}
+
+function makeDarkenedPalette(palette, hour) {
+  const factor = hour <= 12 ? 0.35 + (hour / 12) * 0.65 : 1 - ((hour - 12) / 12) * 0.55;
+  const out = new Uint8Array(palette);
+  for (let i = 0; i < 224; i += 1) {
+    out[i * 3] = Math.max(0, Math.min(255, Math.round(out[i * 3] * factor)));
+    out[i * 3 + 1] = Math.max(0, Math.min(255, Math.round(out[i * 3 + 1] * factor)));
+    out[i * 3 + 2] = Math.max(0, Math.min(255, Math.round(out[i * 3 + 2] * factor)));
+  }
+  return out;
+}
+
+function makeCurrentViewerFixture(flcPath, scale = 1.2, delay = 80) {
+  const decoded = decodeCiv3Flc(flcPath);
+  const civ3 = decoded.meta.civ3;
+  const sourceFrames = selectCiv3AnimationFrames(decoded.frames, civ3.numAnims, civ3.animLength);
+  const scaled = sourceFrames.map((frame) => scaleIndexedFrameNearest(frame, decoded.meta.width, decoded.meta.height, scale));
+  const frameWidth = scaled[0].width;
+  const frameHeight = scaled[0].height;
+  const frames = scaled.map((item, idx) => {
+    const next = new Uint8Array(item.frame);
+    next[(idx % frameHeight) * frameWidth + (idx % frameWidth)] = (40 + idx) % 223;
+    return next;
+  });
+  const palette = makeDarkenedPalette(decoded.palette, 24);
+  palette[0] = 15;
+  palette[1] = 90;
+  palette[2] = 180;
+  palette[14 * 3] = 200;
+  palette[14 * 3 + 1] = 40;
+  palette[14 * 3 + 2] = 10;
+  return {
+    decoded,
+    frames,
+    palette,
+    frameWidth,
+    frameHeight,
+    delay,
+    framesBase64: frames.map((frame) => Buffer.from(frame).toString('base64')),
+    paletteBase64: Buffer.from(palette).toString('base64')
+  };
 }
 
 test('legacy Cow fixture metadata parses from FLC, FXM, PCX, and palettes', { skip: !hasCowFixture }, () => {
@@ -174,6 +262,163 @@ test('legacy storyboard builds a Civ3 unit FLC with compatible metadata and chun
   for (let i = 0; i < source.frames.length; i += 1) {
     assert.equal(framesEqual(animationFrames[i], source.frames[i]), true, `frame ${i}`);
   }
+});
+
+test('vanilla FLC fixtures decode with expected Civ3 metadata diversity', { skip: !hasVanillaFixtures }, () => {
+  for (const fixture of vanillaFixtures) {
+    const decoded = decodeCiv3Flc(fixture.file);
+    const civ3 = decoded.meta.civ3;
+    assert.equal(decoded.meta.magic, 0xaf12, `${fixture.name} magic`);
+    assert.equal(decoded.meta.depth, 8, `${fixture.name} depth`);
+    assert.equal(decoded.meta.width, fixture.meta.width, `${fixture.name} width`);
+    assert.equal(decoded.meta.height, fixture.meta.height, `${fixture.name} height`);
+    assert.equal(decoded.meta.frameCountHeader, fixture.meta.frameCountHeader, `${fixture.name} frame header`);
+    assert.equal(decoded.frames.length, fixture.meta.decodedFrames, `${fixture.name} decoded frames`);
+    assert.equal(decoded.meta.speed, fixture.meta.speed, `${fixture.name} speed`);
+    assert.equal(civ3.numAnims, fixture.meta.directions, `${fixture.name} direction count`);
+    assert.equal(civ3.animLength, fixture.meta.framesPerDirection, `${fixture.name} frames per direction`);
+    assert.equal(civ3.animTime, fixture.meta.animTime, `${fixture.name} animation time`);
+    assert.equal(civ3.directions, fixture.meta.directionMask, `${fixture.name} direction mask`);
+    assert.equal(decoded.chunkCounts[4], 1, `${fixture.name} color chunk`);
+    assert.ok(decoded.chunkCounts[7] > 0, `${fixture.name} delta chunks`);
+    assert.ok(decoded.chunkCounts[15] > 0, `${fixture.name} byte-run chunks`);
+    assert.equal(selectCiv3AnimationFrames(decoded.frames, civ3.numAnims, civ3.animLength).length, civ3.numAnims * civ3.animLength);
+  }
+});
+
+test('vanilla FLC fixtures export to storyboard and rebuild compatible FLCs', { skip: !hasVanillaFixtures }, () => {
+  for (const fixture of vanillaFixtures) {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), `c3x-flic-${fixture.name}-`));
+    const exported = exportFlicsterStoryboardFromFlc(fixture.file, out, { baseName: fixture.name });
+    assert.equal(exported.ok, true, `${fixture.name} export`);
+
+    const loaded = loadFlicsterStoryboard(exported.paths.fxmPath);
+    const pcx = decodeIndexedPcx(exported.paths.pcxPath);
+    const fxm = parseFlicsterFxm(exported.paths.fxmPath);
+    assert.equal(fxm.frameWidth, fixture.meta.width, `${fixture.name} FXM width`);
+    assert.equal(fxm.frameHeight, fixture.meta.height, `${fixture.name} FXM height`);
+    assert.equal(fxm.delay, fixture.meta.speed, `${fixture.name} FXM delay`);
+    assert.equal(fxm.civ3.numAnims, fixture.meta.directions, `${fixture.name} FXM directions`);
+    assert.equal(fxm.civ3.animLength, fixture.meta.framesPerDirection, `${fixture.name} FXM frames`);
+    assert.equal(pcx.width, (fixture.meta.width + 1) * fixture.meta.framesPerDirection + 1, `${fixture.name} storyboard width`);
+    assert.equal(pcx.height, (fixture.meta.height + 1) * fixture.meta.directions + 1, `${fixture.name} storyboard height`);
+
+    const sourceDecoded = decodeCiv3Flc(fixture.file);
+    const sourceFrames = selectCiv3AnimationFrames(sourceDecoded.frames, fixture.meta.directions, fixture.meta.framesPerDirection);
+    assertFramesEqual(loaded.frames, sourceFrames, `${fixture.name} storyboard`);
+
+    const builtPath = path.join(out, `${fixture.name}-rebuilt.flc`);
+    buildFlcFromFlicsterStoryboard(exported.paths.fxmPath, builtPath);
+    const rebuilt = decodeCiv3Flc(builtPath);
+    assert.equal(rebuilt.meta.width, fixture.meta.width, `${fixture.name} rebuilt width`);
+    assert.equal(rebuilt.meta.height, fixture.meta.height, `${fixture.name} rebuilt height`);
+    assert.equal(rebuilt.meta.speed, fixture.meta.speed, `${fixture.name} rebuilt delay`);
+    assert.equal(rebuilt.meta.civ3.numAnims, fixture.meta.directions, `${fixture.name} rebuilt directions`);
+    assert.equal(rebuilt.meta.civ3.animLength, fixture.meta.framesPerDirection, `${fixture.name} rebuilt frames per direction`);
+    assert.equal(rebuilt.meta.civ3.animTime, fixture.meta.framesPerDirection * fixture.meta.speed, `${fixture.name} rebuilt time`);
+    assert.equal(rebuilt.chunkCounts[4], 1, `${fixture.name} rebuilt color chunk`);
+    assert.equal(rebuilt.chunkCounts[15], fixture.meta.directions, `${fixture.name} rebuilt byte-run chunks`);
+    assert.equal(rebuilt.chunkCounts[7], fixture.meta.directions * fixture.meta.framesPerDirection, `${fixture.name} rebuilt delta chunks`);
+    assertFramesEqual(selectCiv3AnimationFrames(rebuilt.frames, fixture.meta.directions, fixture.meta.framesPerDirection), loaded.frames, `${fixture.name} rebuilt`);
+  }
+});
+
+test('current viewer transforms survive storyboard export and Save as FLC rebuild', { skip: !hasVanillaFixtures }, () => {
+  const fixture = vanillaFixtures.find((item) => item.name === 'WorkerDefault');
+  const viewer = makeCurrentViewerFixture(fixture.file, 1.2, 80);
+  const civ3 = viewer.decoded.meta.civ3;
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-flic-viewer-export-'));
+  const exported = exportFlicsterStoryboardFromFlc(fixture.file, out, {
+    baseName: 'viewer-worker',
+    palette: viewer.palette,
+    framesBase64: viewer.framesBase64,
+    sourceFrameWidth: viewer.frameWidth,
+    sourceFrameHeight: viewer.frameHeight,
+    frameWidth: viewer.frameWidth,
+    frameHeight: viewer.frameHeight,
+    framesPerDirection: civ3.animLength,
+    delay: viewer.delay
+  });
+
+  const loaded = loadFlicsterStoryboard(exported.paths.fxmPath);
+  const pcx = decodeIndexedPcx(exported.paths.pcxPath);
+  const pal = parseJascPalette(exported.paths.palPath);
+  const fxm = parseFlicsterFxm(exported.paths.fxmPath);
+  assert.equal(fxm.frameWidth, viewer.frameWidth);
+  assert.equal(fxm.frameHeight, viewer.frameHeight);
+  assert.equal(fxm.delay, viewer.delay);
+  assert.equal(fxm.civ3.animTime, civ3.animLength * viewer.delay);
+  assert.equal(pcx.width, (viewer.frameWidth + 1) * civ3.animLength + 1);
+  assert.equal(pcx.height, (viewer.frameHeight + 1) * civ3.numAnims + 1);
+  assert.deepEqual(Array.from(pal.slice(0, 3)), [15, 90, 180]);
+  assert.deepEqual(Array.from(pcx.palette.slice(14 * 3, 14 * 3 + 3)), [200, 40, 10]);
+  assertFramesEqual(loaded.frames, viewer.frames, 'viewer storyboard frames');
+
+  const builtPath = path.join(out, 'viewer-worker.flc');
+  const built = handleFlicWorkshop({
+    action: 'buildFlc',
+    outputPath: builtPath,
+    framesBase64: viewer.framesBase64,
+    paletteBase64: viewer.paletteBase64,
+    frameWidth: viewer.frameWidth,
+    frameHeight: viewer.frameHeight,
+    directionCount: civ3.numAnims,
+    framesPerDirection: civ3.animLength,
+    delay: viewer.delay,
+    xOffset: 90,
+    yOffset: 89,
+    xsOrig: 240,
+    ysOrig: 240,
+    directions: civ3.directions
+  });
+  assert.equal(built.ok, true);
+  const rebuilt = decodeCiv3Flc(builtPath);
+  assert.equal(rebuilt.meta.width, viewer.frameWidth);
+  assert.equal(rebuilt.meta.height, viewer.frameHeight);
+  assert.equal(rebuilt.meta.speed, viewer.delay);
+  assert.equal(rebuilt.meta.civ3.animTime, civ3.animLength * viewer.delay);
+  assert.deepEqual(Array.from(rebuilt.palette.slice(0, 3)), [15, 90, 180]);
+  assertFramesEqual(selectCiv3AnimationFrames(rebuilt.frames, civ3.numAnims, civ3.animLength), viewer.frames, 'viewer rebuilt frames');
+});
+
+test('storyboard import rejects malformed PCX and palette companions', { skip: !hasVanillaFixtures }, () => {
+  const fixture = vanillaFixtures.find((item) => item.name === 'WorkerDefault');
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-flic-invalid-storyboard-'));
+  const exported = exportFlicsterStoryboardFromFlc(fixture.file, out, { baseName: 'invalid-worker' });
+
+  const badDimensionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-flic-invalid-dim-'));
+  for (const name of ['invalid-worker_StoryBoard.FXM', 'invalid-worker.pal', 'invalid-worker_Alpha.pal']) {
+    fs.copyFileSync(path.join(out, name), path.join(badDimensionDir, name));
+  }
+  const badPcx = Buffer.from(fs.readFileSync(exported.paths.pcxPath));
+  badPcx.writeUInt16LE(badPcx.readUInt16LE(8) + 1, 8);
+  fs.writeFileSync(path.join(badDimensionDir, 'invalid-worker.pcx'), badPcx);
+  assert.throws(
+    () => loadFlicsterStoryboard(path.join(badDimensionDir, 'invalid-worker_StoryBoard.FXM')),
+    /Storyboard PCX is .* expected/
+  );
+
+  const badModeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-flic-invalid-mode-'));
+  for (const name of ['invalid-worker_StoryBoard.FXM', 'invalid-worker.pal', 'invalid-worker_Alpha.pal']) {
+    fs.copyFileSync(path.join(out, name), path.join(badModeDir, name));
+  }
+  const trueColorPcx = Buffer.from(fs.readFileSync(exported.paths.pcxPath));
+  trueColorPcx[65] = 3;
+  fs.writeFileSync(path.join(badModeDir, 'invalid-worker.pcx'), trueColorPcx);
+  assert.throws(
+    () => loadFlicsterStoryboard(path.join(badModeDir, 'invalid-worker_StoryBoard.FXM')),
+    /8-bit indexed color/
+  );
+
+  const badPaletteDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-flic-invalid-pal-'));
+  for (const name of ['invalid-worker_StoryBoard.FXM', 'invalid-worker.pcx', 'invalid-worker_Alpha.pal']) {
+    fs.copyFileSync(path.join(out, name), path.join(badPaletteDir, name));
+  }
+  fs.writeFileSync(path.join(badPaletteDir, 'invalid-worker.pal'), 'JASC-PAL\n0100\n255\n0 0 0\n', 'latin1');
+  assert.throws(
+    () => loadFlicsterStoryboard(path.join(badPaletteDir, 'invalid-worker_StoryBoard.FXM')),
+    /256 colors/
+  );
 });
 
 test('renderer exposes the Units-tab FLC Workshop entry point', () => {
