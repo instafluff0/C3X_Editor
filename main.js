@@ -1377,10 +1377,14 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   return { ok: true };
 });
 
-ipcMain.handle('manager:pick-directory', async () => {
-  const result = await dialog.showOpenDialog({
+ipcMain.handle('manager:pick-directory', async (_event, options) => {
+  const dialogOptions = {
     properties: ['openDirectory']
-  });
+  };
+  if (options && typeof options.defaultPath === 'string' && options.defaultPath.trim()) {
+    dialogOptions.defaultPath = options.defaultPath.trim();
+  }
+  const result = await dialog.showOpenDialog(dialogOptions);
   if (result.canceled || result.filePaths.length === 0) {
     return null;
   }

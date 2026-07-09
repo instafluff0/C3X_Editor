@@ -1931,6 +1931,93 @@ button.danger:hover {
   white-space: nowrap;
 }
 
+.flic-workshop-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 110;
+  width: min(390px, calc(100vw - 24px));
+}
+
+.flic-workshop-toast.hidden {
+  display: none;
+}
+
+.flic-workshop-toast-shell {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid rgba(35, 151, 86, 0.38);
+  border-radius: 12px;
+  background: linear-gradient(170deg, rgba(239, 255, 245, 0.99), rgba(222, 250, 233, 0.99));
+  box-shadow: 0 16px 28px rgba(16, 32, 61, 0.22);
+}
+
+.flic-workshop-toast-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flic-workshop-toast-dismiss {
+  flex: 0 0 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(19, 41, 72, 0.82);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.flic-workshop-toast-button:hover,
+.flic-workshop-toast-dismiss:hover {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.flic-workshop-toast-icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: #15703f;
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.flic-workshop-toast-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.flic-workshop-toast-title {
+  overflow: hidden;
+  color: #1d3259;
+  font-size: 0.84rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flic-workshop-toast-body {
+  overflow: hidden;
+  color: #41567c;
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .save-progress-modal {
   width: min(880px, 100%);
   max-height: min(70vh, 720px);
@@ -14524,14 +14611,20 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .flic-workshop-modal-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
   background: #ffffff;
   border-bottom: 1px solid rgba(36, 25, 64, 0.12);
   flex: 0 0 auto;
+}
+
+.flic-workshop-header-source {
+  justify-self: end;
+  width: min(500px, 100%);
+  min-width: 0;
 }
 
 .flic-workshop-tabs {
@@ -14570,6 +14663,11 @@ button.unit-ini-delete-btn:disabled {
   width: min(100%, 680px);
 }
 
+.flic-workshop-sourcebar.in-header {
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 .flic-workshop-sourcebar-label {
   color: var(--ink-dim);
   font-size: 0.82rem;
@@ -14585,7 +14683,7 @@ button.unit-ini-delete-btn:disabled {
 .flic-workshop-sourcebar-value strong {
   overflow: hidden;
   color: var(--ink);
-  font-size: 0.86rem;
+  font-size: 0.8rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -14593,7 +14691,7 @@ button.unit-ini-delete-btn:disabled {
 .flic-workshop-sourcebar-value span {
   overflow: hidden;
   color: var(--ink-muted);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -14601,6 +14699,7 @@ button.unit-ini-delete-btn:disabled {
 .flic-workshop-sourcebar-change {
   min-height: 30px;
   padding: 4px 10px;
+  white-space: nowrap;
 }
 
 .flic-workshop-source-chooser {
@@ -14609,43 +14708,38 @@ button.unit-ini-delete-btn:disabled {
   right: 0;
   z-index: 8;
   display: grid;
-  gap: 6px;
-  width: min(360px, calc(100vw - 64px));
+  gap: 0;
+  width: min(300px, calc(100vw - 64px));
   max-height: 300px;
-  overflow: auto;
-  padding: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 0;
   border: 1px solid rgba(36, 25, 64, 0.14);
   border-radius: 8px;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 16px 44px rgba(36, 25, 64, 0.18);
 }
 
 .flic-workshop-source-choice {
-  display: grid;
-  gap: 2px;
+  display: block;
   width: 100%;
-  padding: 7px 9px;
-  border: 1px solid rgba(36, 25, 64, 0.12);
-  border-radius: 7px;
-  background: #ffffff;
+  min-width: 0;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
   text-align: left;
+  font-size: 0.82rem;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
 }
 
 .flic-workshop-source-choice:hover {
-  border-color: rgba(47, 111, 115, 0.32);
   background: rgba(47, 111, 115, 0.06);
-}
-
-.flic-workshop-source-choice strong {
-  font-size: 0.82rem;
-}
-
-.flic-workshop-source-choice span {
-  color: var(--ink-muted);
-  font-size: 0.74rem;
-  overflow-wrap: anywhere;
 }
 
 .flic-workshop-tab {
@@ -14658,6 +14752,7 @@ button.unit-ini-delete-btn:disabled {
   border-radius: 8px;
   padding: 6px 10px;
   font: inherit;
+  font-size: 13.3px;
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(31, 35, 58, 0.06);
@@ -14987,9 +15082,12 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .flic-workshop-export-row select,
-.flic-workshop-export-row input[type="text"] {
+.flic-workshop-export-row input[type="text"],
+.flic-workshop-export-row input[type="number"] {
   width: 100%;
   min-width: 0;
+  font-size: 0.86rem;
+  font-weight: 400;
 }
 
 .flic-workshop-export-choice {
@@ -15005,7 +15103,7 @@ button.unit-ini-delete-btn:disabled {
   color: var(--ink);
   font: inherit;
   font-size: 0.86rem;
-  font-weight: 600;
+  font-weight: 400;
   text-align: left;
   box-shadow: 0 1px 3px rgba(36, 25, 64, 0.06);
   position: relative;
@@ -15121,6 +15219,7 @@ button.unit-ini-delete-btn:disabled {
   background: rgba(246, 247, 251, 0.82);
   color: var(--ink);
   font-size: 0.84rem;
+  font-weight: 400;
   cursor: pointer;
 }
 
@@ -15140,12 +15239,14 @@ button.unit-ini-delete-btn:disabled {
   gap: 8px;
   color: var(--ink-muted);
   font-size: 0.82rem;
+  font-weight: 400;
 }
 
 .flic-workshop-export-editor-inline input[type="number"] {
   width: 74px;
   min-height: 32px;
   font-size: 0.82rem;
+  font-weight: 400;
 }
 
 .flic-workshop-export-editor-inline input[type="range"] {
@@ -15162,6 +15263,7 @@ button.unit-ini-delete-btn:disabled {
 .flic-workshop-export-popover input,
 .flic-workshop-export-popover .tech-picker-btn {
   font-size: 0.82rem;
+  font-weight: 400;
 }
 
 .flic-workshop-export-path {
@@ -15195,6 +15297,16 @@ button.unit-ini-delete-btn:disabled {
     width: calc(100vw - 20px);
     height: calc(100vh - 20px);
     min-height: 0;
+  }
+
+  .flic-workshop-modal-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .flic-workshop-header-source {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    order: 3;
   }
 
   .flic-workshop-preview-row {
