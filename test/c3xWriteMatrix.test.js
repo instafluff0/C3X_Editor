@@ -419,7 +419,7 @@ test('C3X scenario mode writes scenario-scoped files (not global user files)', (
   assert.equal(sectionField(scenarioDistricts.sections[0], 'name').value, 'Scenario Encampment');
 });
 
-test('C3X scenario save repairs app-damaged PediaIcons HomelessIcons during unrelated base edit', () => {
+test('C3X scenario save repairs app-damaged PediaIcons HomelessIcons during reference text save', () => {
   const c3xRoot = mkTmpDir();
   const scenarioDir = mkTmpDir();
   const textDir = path.join(scenarioDir, 'Text');
@@ -448,16 +448,12 @@ test('C3X scenario save repairs app-damaged PediaIcons HomelessIcons during unre
   ].join('\n'), 'latin1');
 
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3xRoot, scenarioPath: scenarioDir });
-  const flagRow = bundle.tabs.base.rows.find((row) => row.key === 'flag');
-  assert.ok(flagRow, 'expected base flag row');
-  flagRow.value = 'false';
-
   const saved = saveBundle({
     mode: 'scenario',
     c3xPath: c3xRoot,
     scenarioPath: scenarioDir,
     tabs: bundle.tabs,
-    dirtyTabs: ['base']
+    dirtyTabs: ['improvements']
   });
   assert.equal(saved.ok, true, String(saved.error || 'save failed'));
   assert.ok((saved.saveReport || []).some((row) => row.kind === 'pediaIcons' && row.repaired), 'expected PediaIcons repair in save report');

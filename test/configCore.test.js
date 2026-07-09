@@ -22,6 +22,7 @@ const {
   loadBundle,
   saveBundle,
   previewSavePlan,
+  prepareImportedDistrictArtWrites,
   collectUnitRuntimeDependencyCopiesForImportedAnimation
 } = require('../src/configCore');
 
@@ -109,6 +110,100 @@ test('base config precedence is default -> scenario -> custom', () => {
   assert.equal(model.effectiveMap.b, '20');
   assert.equal(model.effectiveMap.c, '300');
   assert.deepEqual(model.sourceOrder, ['default', 'scenario', 'custom']);
+});
+
+test('buildBaseModel includes R28 UI defaults missing from installed default config', () => {
+  const model = buildBaseModel('enable_districts = true\n', '', '', 'global', '');
+  const byKey = new Map(model.rows.map((row) => [row.key, row]));
+
+  assert.equal(byKey.get('radar_tower_detection_distance').value, '0');
+  assert.equal(byKey.get('outpost_detection_distance').value, '0');
+  assert.equal(byKey.get('steal_plans_duration').value, '1');
+  assert.equal(byKey.get('unit_limit_groups').value, '[]');
+  assert.equal(model.defaultMap.radar_tower_detection_distance, '0');
+  assert.ok(model.commentsByKey.radar_tower_detection_distance.some((line) => /radar towers and outposts/i.test(line)));
+});
+
+test('prepareImportedDistrictArtWrites reuses same-name byte-identical target PCX', () => {
+  const tmp = mkTmpDir();
+  const sourceRoot = path.join(tmp, 'source');
+  const targetRoot = path.join(tmp, 'target');
+  const sourceArt = path.join(sourceRoot, 'Art', 'Districts', '1200');
+  const targetArt = path.join(targetRoot, 'Art', 'Districts', '1200');
+  fs.mkdirSync(sourceArt, { recursive: true });
+  fs.mkdirSync(targetArt, { recursive: true });
+  const data = Buffer.from([0x0a, 0x0b, 0x0c, 0x0d]);
+  fs.writeFileSync(path.join(sourceArt, 'Depot.pcx'), data);
+  fs.writeFileSync(path.join(targetArt, 'Depot.pcx'), data);
+  const imported = {
+    marker: '#District',
+    fields: [
+      { key: 'name', value: 'Depot' },
+      { key: 'img_paths', value: 'Depot.pcx' }
+    ],
+    _pendingDistrictImport: {
+      sourceScenarioPaths: [sourceRoot]
+    }
+  };
+  const result = prepareImportedDistrictArtWrites({
+    tabs: { districts: { model: { sections: [imported] } } },
+    targetContentRoot: targetRoot,
+    targetScenarioRoots: [targetRoot],
+    c3xPath: '',
+    civ3Path: ''
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.writes.length, 0);
+  assert.equal(imported.fields.find((field) => field.key === 'img_paths').value, 'Depot.pcx');
+});
+
+test('prepareImportedDistrictArtWrites gives imported PCX a unique name before overwriting a different target file', () => {
+  const tmp = mkTmpDir();
+  const sourceRoot = path.join(tmp, 'source');
+  const targetRoot = path.join(tmp, 'target');
+  const sourceArt = path.join(sourceRoot, 'Art', 'Districts', '1200');
+  const targetArt = path.join(targetRoot, 'Art', 'Districts', '1200');
+  fs.mkdirSync(sourceArt, { recursive: true });
+  fs.mkdirSync(targetArt, { recursive: true });
+  fs.writeFileSync(path.join(sourceArt, 'Depot.pcx'), Buffer.from([0x01, 0x02, 0x03]));
+  fs.writeFileSync(path.join(targetArt, 'Depot.pcx'), Buffer.from([0x09, 0x08, 0x07]));
+  const imported = {
+    marker: '#District',
+    fields: [
+      { key: 'name', value: 'Depot' },
+      { key: 'img_paths', value: 'Depot.pcx' }
+    ],
+    _pendingDistrictImport: {
+      sourceScenarioPaths: [sourceRoot]
+    }
+  };
+  const result = prepareImportedDistrictArtWrites({
+    tabs: { districts: { model: { sections: [imported] } } },
+    targetContentRoot: targetRoot,
+    targetScenarioRoots: [targetRoot],
+    c3xPath: '',
+    civ3Path: ''
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.writes.length, 1);
+  assert.equal(path.basename(result.writes[0].path), 'Depot_2.pcx');
+  assert.equal(imported.fields.find((field) => field.key === 'img_paths').value, 'Depot_2.pcx');
+  assert.equal(fs.readFileSync(path.join(targetArt, 'Depot.pcx')).toString('hex'), '090807');
+});
+
+test('loadBundle uses bundled C3X base docs when installed default config is incomplete', () => {
+  const root = mkTmpDir();
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'enable_districts = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '; empty\n', 'utf8');
+
+  const bundle = loadBundle({ mode: 'global', c3xPath: root, scenarioPath: '' });
+  const row = bundle.tabs.base.rows.find((candidate) => candidate.key === 'steal_plans_duration');
+
+  assert.equal(row.value, '1');
+  assert.match(bundle.tabs.base.fieldDocs.steal_plans_duration, /Steal Plans/i);
 });
 
 test('sectioned config parsing round-trips marker blocks', () => {
@@ -357,7 +452,27 @@ test('saveBundle writes staged Tile Animation INI repairs to scenario Art/Animat
   fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
   fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
   fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
-  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = Cow\nini_path = Resources\\Cow\\Cow.INI\ntype = resource\n', 'utf8');
+  const animationsText = serializeSectionedConfig({
+    sections: [
+      {
+        marker: '#Animation',
+        comments: [],
+        fields: [
+          { key: 'name', value: 'Cow' },
+          { key: 'ini_path', value: 'Resources\\Cow\\Cow.INI' },
+          { key: 'type', value: 'resource' }
+        ]
+      }
+    ]
+  }, '#Animation', { kind: 'animations', mode: 'scenario', includeComments: false, includeManagedHeader: false });
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), animationsText, 'utf8');
+  fs.writeFileSync(path.join(scenario, 'scenario.tile_animations.txt'), animationsText, 'utf8');
+  const scenarioTextDir = path.join(scenario, 'Text');
+  fs.mkdirSync(scenarioTextDir, { recursive: true });
+  const pediaIconsText = '#ICON_PRTO_TEST\nart\\civilopedia\\icons\\units\\test.pcx\n';
+  const civilopediaText = '#PRTO_TEST\nTest unit\n#DESC_PRTO_TEST\nTest unit details\n#EOF\n';
+  fs.writeFileSync(path.join(scenarioTextDir, 'PediaIcons.txt'), pediaIconsText, 'latin1');
+  fs.writeFileSync(path.join(scenarioTextDir, 'Civilopedia.txt'), civilopediaText, 'latin1');
   const sourceDir = path.join(root, 'Art', 'Animations', 'Resources', 'Cow');
   fs.mkdirSync(sourceDir, { recursive: true });
   fs.writeFileSync(path.join(sourceDir, 'Cow.INI'), [
@@ -380,6 +495,19 @@ test('saveBundle writes staged Tile Animation INI repairs to scenario Art/Animat
     sourcePath: path.join(sourceDir, 'Cow.INI'),
     flcFileName: 'cow.flc'
   };
+  const preview = previewSavePlan({
+    mode: 'scenario',
+    c3xPath: root,
+    scenarioPath: scenario,
+    dirtyTabs: ['animations'],
+    tabs: bundle.tabs
+  });
+
+  assert.equal(preview.ok, true);
+  assert.equal(preview.writes.some((write) => write.kind === 'animations'), false);
+  assert.ok(preview.writes.some((write) => write.kind === 'tileAnimationIni'));
+  assert.equal(preview.writes.some((write) => write.kind === 'pediaIcons'), false);
+  assert.equal(preview.writes.some((write) => write.kind === 'civilopedia'), false);
 
   const saveResult = saveBundle({
     mode: 'scenario',
@@ -397,6 +525,8 @@ test('saveBundle writes staged Tile Animation INI repairs to scenario Art/Animat
   assert.match(saved, /\[Sound Effects\]\r?\nBLANK=\r?\nDEFAULT=\r?\nWALK=/);
   assert.match(saved, /\[Version\]\r?\nVERSION=1/);
   assert.match(saved, /\[Palette\]\r?\nPALETTE=/);
+  assert.equal(fs.readFileSync(path.join(scenarioTextDir, 'PediaIcons.txt'), 'latin1'), pediaIconsText);
+  assert.equal(fs.readFileSync(path.join(scenarioTextDir, 'Civilopedia.txt'), 'latin1'), civilopediaText);
 });
 
 test('saveBundle rejects staged Tile Animation INI repairs in Standard Game mode', () => {

@@ -331,6 +331,9 @@ const state = {
   filesReadRenderTimer: null,
   filesReadSearchInputMirror: '',
   filesReadSearchQuery: '',
+  filesReadPreviewWritesByPath: {},
+  filesReadPreviewWritesLoaded: false,
+  filesReadPreviewWritesRequestId: 0,
   fileDiffOpen: false,
   saveUi: {
     toastTimer: null,
@@ -1786,6 +1789,9 @@ function getFilesEntryChangeCategory(entry, access) {
   if (!state.isDirty) return '';
   if (entry.isPrimaryBaseTarget && !entry.baseDirty) return '';
   const explicitCategory = String(entry.changeCategory || '').trim().toLowerCase();
+  if (state.filesReadPreviewWritesLoaded && entry.potentialWrite && !entry.previewPlanWrite && !entry.generatedScienceAdvisorArt) {
+    return '';
+  }
   if (entry.potentialWrite) {
     if (access && !access.exists) return 'new';
     if (explicitCategory) return explicitCategory;
@@ -1947,6 +1953,33 @@ function collectFilesModalEntries() {
     byPath.set(pathValue, pendingEntry);
   });
 
+  Object.values(state.filesReadPreviewWritesByPath || {}).forEach((write) => {
+    const pathValue = String(write && write.path || '').trim();
+    if (!pathValue) return;
+    const existing = byPath.get(pathValue);
+    const changeCategory = write.exists ? 'changed' : 'new';
+    if (existing) {
+      existing.kind = 'write';
+      existing.potentialWrite = true;
+      existing.previewPlanWrite = true;
+      existing.changeCategory = changeCategory;
+      existing.note = mapSaveKindLabel(write.kind) || existing.note || 'Pending save target';
+      if (String(write.kind || '').toLowerCase() === 'tileanimationini') existing.animationIni = true;
+      return;
+    }
+    const entry = {
+      path: pathValue,
+      kind: 'write',
+      note: mapSaveKindLabel(write.kind) || 'Pending save target',
+      potentialWrite: true,
+      previewPlanWrite: true,
+      changeCategory,
+      animationIni: String(write.kind || '').toLowerCase() === 'tileanimationini' || isAnimationIniPath(pathValue)
+    };
+    out.push(entry);
+    byPath.set(pathValue, entry);
+  });
+
   getScienceAdvisorArrowPendingWriteEntries().forEach((scienceAdvisorEntry) => {
     const pathValue = String(scienceAdvisorEntry && scienceAdvisorEntry.path || '').trim();
     if (!pathValue) return;
@@ -2063,6 +2096,60 @@ function collectFilesModalEntries() {
 
 function markFilesReadEntriesDirty() {
   state.filesReadEntriesCacheDirty = true;
+}
+
+function resetFilesReadPreviewWrites() {
+  state.filesReadPreviewWritesByPath = {};
+  state.filesReadPreviewWritesLoaded = false;
+  state.filesReadPreviewWritesRequestId = Number(state.filesReadPreviewWritesRequestId || 0) + 1;
+  markFilesReadEntriesDirty();
+}
+
+function buildCurrentSavePreviewPayload() {
+  if (!state.bundle) return null;
+  const dirtyTabSet = getDirtyTabSetForSave();
+  return buildSavePayload({
+    tabsToSave: getTabsForSavePayload({ dirtyTabs: dirtyTabSet }),
+    dirtyTabs: Array.from(dirtyTabSet)
+  });
+}
+
+async function refreshFilesReadPreviewWrites(options = {}) {
+  if (!state.bundle || !window.c3xManager || typeof window.c3xManager.previewSavePlan !== 'function') {
+    state.filesReadPreviewWritesByPath = {};
+    state.filesReadPreviewWritesLoaded = false;
+    markFilesReadEntriesDirty();
+    return;
+  }
+  const payload = buildCurrentSavePreviewPayload();
+  if (!payload) return;
+  const requestId = Number(state.filesReadPreviewWritesRequestId || 0) + 1;
+  state.filesReadPreviewWritesRequestId = requestId;
+  try {
+    const preview = await window.c3xManager.previewSavePlan(payload);
+    if (state.filesReadPreviewWritesRequestId !== requestId) return;
+    const byPath = {};
+    (Array.isArray(preview && preview.writes) ? preview.writes : []).forEach((write) => {
+      const pathValue = String(write && write.path || '').trim();
+      if (!pathValue) return;
+      byPath[pathValue] = {
+        path: pathValue,
+        kind: String(write && write.kind || ''),
+        exists: !!(write && write.exists)
+      };
+    });
+    state.filesReadPreviewWritesByPath = byPath;
+    state.filesReadPreviewWritesLoaded = !!(preview && preview.ok);
+  } catch (_err) {
+    if (state.filesReadPreviewWritesRequestId !== requestId) return;
+    state.filesReadPreviewWritesByPath = {};
+    state.filesReadPreviewWritesLoaded = false;
+  }
+  markFilesReadEntriesDirty();
+  if (options && options.refreshAccess) void refreshFilesReadAccess();
+  if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
+    scheduleFilesReadModalRender();
+  }
 }
 
 function getFilesModalEntriesCached() {
@@ -2266,7 +2353,12 @@ function shouldIncludeFilesEntryByFilter(entry) {
   if (f.typeText) selectedTypes.push('text');
   if (f.typeBiq) selectedTypes.push('biq');
   if (f.typeArtPcx) selectedTypes.push('artPcx');
-  if (selectedTypes.length > 0 && !selectedTypes.includes(fileType)) return false;
+  if (selectedTypes.length > 0 && !selectedTypes.includes(fileType)) {
+    const pendingAnimationIniMatchesConfigIni = fileType === 'animationIni'
+      && (entry.previewPlanWrite || entry.potentialWrite)
+      && selectedTypes.includes('configIni');
+    if (!pendingAnimationIniMatchesConfigIni) return false;
+  }
 
   const selectedStatuses = [];
   if (f.statusNew) selectedStatuses.push('new');
@@ -2509,6 +2601,7 @@ function openFilesReadModal() {
   renderFilesReadModal();
   el.filesReadModalOverlay.classList.remove('hidden');
   el.filesReadModalOverlay.setAttribute('aria-hidden', 'false');
+  void refreshFilesReadPreviewWrites({ refreshAccess: true });
   void refreshFilesReadAccess();
 }
 
@@ -4176,7 +4269,7 @@ function scheduleDirtyUiRefresh(reason = '') {
 }
 
 function setDirty(next, options = {}) {
-  markFilesReadEntriesDirty();
+  resetFilesReadPreviewWrites();
   if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
   const knownDirtyTab = next
     ? String(options && options.knownDirtyTab || '').trim().toLowerCase()
@@ -43777,6 +43870,286 @@ async function loadImportEntriesForTab(tabKey, source) {
   };
 }
 
+async function loadImportDistrictSections(source) {
+  const scenarioPath = String((source && (source.scenarioPath || source.filePath)) || source || '').trim();
+  if (!scenarioPath) throw new Error('Choose a source scenario BIQ file to import districts.');
+  const loaded = await window.c3xManager.loadBundle(buildLoadBundlePayload({
+    mode: 'scenario',
+    scenarioPath
+  }));
+  const srcTab = loaded && loaded.tabs && loaded.tabs.districts;
+  const sections = srcTab && srcTab.model && Array.isArray(srcTab.model.sections)
+    ? srcTab.model.sections
+    : [];
+  return {
+    sections,
+    importSourcePath: scenarioPath,
+    importScenarioPaths: Array.isArray(loaded && loaded.scenarioSearchPaths) ? loaded.scenarioSearchPaths : []
+  };
+}
+
+function loadImportDistrictPreviewThumb(section, holder, importSourcePath, importScenarioPaths) {
+  return loadDistrictRepresentativePreview(section, holder, 35, null, {
+    scenarioPath: importSourcePath,
+    scenarioPaths: importScenarioPaths
+  });
+}
+
+async function promptDistrictImportAction(tab) {
+  if (!el.entityModalOverlay || !el.entityModalContent) return null;
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'District: Import';
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = 'Select a source scenario, choose a district, then confirm the name for the imported district.';
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Import';
+    el.entityModalConfirm.disabled = true;
+  }
+  el.entityModalContent.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.className = 'entity-modal-content';
+  const grid = document.createElement('div');
+  grid.className = 'entity-form-grid';
+  form.appendChild(grid);
+
+  const nameField = document.createElement('div');
+  nameField.className = 'entity-field';
+  nameField.style.gridColumn = '1 / -1';
+  const nameLabel = document.createElement('label');
+  nameLabel.textContent = 'Name';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Imported district name';
+  const nameFeedback = document.createElement('p');
+  nameFeedback.className = 'reference-key-feedback';
+  nameField.appendChild(nameLabel);
+  nameField.appendChild(nameInput);
+  nameField.appendChild(nameFeedback);
+  grid.appendChild(nameField);
+
+  const sourceField = document.createElement('div');
+  sourceField.className = 'entity-field';
+  sourceField.style.gridColumn = '1 / -1';
+  const sourceSelect = document.createElement('select');
+  sourceSelect.className = 'entity-import-scenario-pill';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Source...';
+  sourceSelect.appendChild(placeholder);
+  const manualOption = document.createElement('option');
+  manualOption.value = '__manual__';
+  manualOption.textContent = 'Manual / Browse...';
+  sourceSelect.appendChild(manualOption);
+  const currentScenario = toSlashPath(state.settings && state.settings.scenarioPath || '').toLowerCase();
+  const addScenarioGroup = (source, label) => {
+    const items = (state.availableScenarios || []).filter((s) => {
+      const sourceMatches = String(s && s.source || '') === source;
+      const pathValue = toSlashPath(s && s.path || '').toLowerCase();
+      return sourceMatches && pathValue && pathValue !== currentScenario;
+    });
+    if (!items.length) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    items.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = String(item.path || '');
+      option.textContent = String(item.name || item.fileName || getPathTail(item.path || ''));
+      option.title = String(item.path || '');
+      group.appendChild(option);
+    });
+    sourceSelect.appendChild(group);
+  };
+  addScenarioGroup('Conquests', 'Conquests Folder');
+  addScenarioGroup('Scenarios', 'Scenarios Folder');
+  sourceField.appendChild(sourceSelect);
+  grid.appendChild(sourceField);
+
+  const pickerHost = document.createElement('div');
+  pickerHost.className = 'entity-import-picker district-import-picker';
+  form.appendChild(pickerHost);
+  el.entityModalContent.appendChild(form);
+
+  let importFilePath = '';
+  let importScenarioPaths = [];
+  let importSections = [];
+  let selectedImportIndex = -1;
+  let nameEdited = false;
+
+  const getExistingNames = () => new Set((Array.isArray(tab && tab.model && tab.model.sections) ? tab.model.sections : [])
+    .map((section) => normalizeConfigToken(getSectionFieldValueCaseInsensitive(section, 'name')).toLowerCase())
+    .filter(Boolean));
+
+  const validateName = () => {
+    const name = String(nameInput.value || '').trim();
+    const existing = getExistingNames();
+    if (!name) return { ok: false, message: 'Name is required.' };
+    if (existing.has(name.toLowerCase())) return { ok: false, message: 'Name must be unique.' };
+    return { ok: true, message: 'Name is available.' };
+  };
+
+  const updateConfirmButton = () => {
+    const validation = validateName();
+    const showNameFeedback = nameEdited || selectedImportIndex >= 0 || !!String(nameInput.value || '').trim();
+    nameFeedback.textContent = showNameFeedback ? validation.message : '';
+    nameFeedback.classList.toggle('is-error', showNameFeedback && !validation.ok);
+    nameInput.classList.toggle('is-invalid', showNameFeedback && !validation.ok);
+    if (el.entityModalConfirm) el.entityModalConfirm.disabled = selectedImportIndex < 0 || !validation.ok;
+  };
+
+  const selectImportSection = (index) => {
+    selectedImportIndex = index;
+    const section = importSections[index] || null;
+    if (section && !nameEdited) {
+      const sourceName = getSectionFieldValueCaseInsensitive(section, 'name') || 'District';
+      nameInput.value = makeUniqueSectionName(tab, sourceName);
+    }
+    renderPicker();
+    updateConfirmButton();
+  };
+
+  function renderPicker() {
+    pickerHost.innerHTML = '';
+    if (!importFilePath) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'Select a source scenario to load districts.';
+      pickerHost.appendChild(empty);
+      return;
+    }
+    if (importSections.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'Selected scenario has no districts.';
+      pickerHost.appendChild(empty);
+      return;
+    }
+    const picker = createReferencePicker({
+      options: importSections.map((section, index) => {
+        const display = getDistrictSectionDisplay(section, index);
+        return {
+          value: String(index),
+          label: display.secondary ? `${display.primary} (${display.secondary})` : display.primary,
+          displayLabel: display.primary,
+          entry: { section, index }
+        };
+      }),
+      targetTabKey: '',
+      currentValue: selectedImportIndex >= 0 ? String(selectedImportIndex) : '-1',
+      searchPlaceholder: 'Search Districts in selected source...',
+      noneLabel: 'Choose district to import...',
+      thumbClassName: 'district-entry-thumb',
+      renderOptionThumb: ({ holder, option }) => {
+        const index = Number.parseInt(String(option && option.value || ''), 10);
+        const section = Number.isFinite(index) ? importSections[index] : null;
+        if (!section) return false;
+        void loadImportDistrictPreviewThumb(section, holder, importFilePath, importScenarioPaths);
+        return true;
+      },
+      onSelect: (value) => {
+        const index = Number.parseInt(String(value || ''), 10);
+        if (!Number.isFinite(index) || index < 0 || index >= importSections.length) {
+          selectedImportIndex = -1;
+          updateConfirmButton();
+          return;
+        }
+        selectImportSection(index);
+      }
+    });
+    pickerHost.appendChild(picker);
+  }
+
+  const loadSource = async (source) => {
+    sourceSelect.disabled = true;
+    selectedImportIndex = -1;
+    importSections = [];
+    importFilePath = '';
+    importScenarioPaths = [];
+    renderPicker();
+    updateConfirmButton();
+    try {
+      const loaded = await loadImportDistrictSections(source);
+      importFilePath = String(loaded.importSourcePath || '').trim();
+      importScenarioPaths = Array.isArray(loaded.importScenarioPaths) ? loaded.importScenarioPaths : [];
+      importSections = loaded.sections;
+      renderPicker();
+      if (importSections.length === 0) {
+        setStatus('Selected scenario has no districts.', true);
+      }
+    } catch (err) {
+      setStatus(err && err.message ? err.message : 'Could not load district import source.', true);
+    } finally {
+      sourceSelect.disabled = false;
+      updateConfirmButton();
+    }
+  };
+
+  sourceSelect.addEventListener('change', async () => {
+    const value = String(sourceSelect.value || '');
+    if (!value) return;
+    if (value === '__manual__') {
+      const filePath = await window.c3xManager.pickFile({
+        filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+      });
+      if (!filePath) {
+        sourceSelect.value = importFilePath || '';
+        return;
+      }
+      const existingOpt = Array.from(sourceSelect.options).find((opt) => String(opt.value || '') === filePath);
+      if (existingOpt) {
+        sourceSelect.value = filePath;
+      } else {
+        const manual = document.createElement('option');
+        manual.value = filePath;
+        manual.textContent = getPathTail(filePath);
+        manual.title = filePath;
+        sourceSelect.insertBefore(manual, manualOption);
+        sourceSelect.value = filePath;
+      }
+      await loadSource({ scenarioPath: filePath });
+      return;
+    }
+    await loadSource({ scenarioPath: value });
+  });
+
+  nameInput.addEventListener('input', () => {
+    nameEdited = true;
+    updateConfirmButton();
+  });
+  renderPicker();
+  updateConfirmButton();
+
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => sourceSelect.focus({ preventScroll: true }), 0);
+
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const onConfirm = () => {
+      const validation = validateName();
+      if (!validation.ok) {
+        setStatus(validation.message, true);
+        return;
+      }
+      const section = importSections[selectedImportIndex] || null;
+      if (!section || !importFilePath) {
+        setStatus('Select one district to import.', true);
+        return;
+      }
+      resolveEntityModal({
+        importedSection: section,
+        name: String(nameInput.value || '').trim(),
+        importFilePath,
+        importScenarioPaths
+      });
+    };
+    const onCancel = () => resolveEntityModal(null);
+    if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
+    if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
+  });
+}
+
 function getImportReferenceIndexMap(sourceMaps, tabKey) {
   const maps = sourceMaps && typeof sourceMaps === 'object' ? sourceMaps : {};
   const items = maps[tabKey];
@@ -65021,14 +65394,37 @@ function composeDistrictCellPreviews(previews) {
   };
 }
 
-async function fetchDistrictRepresentativePreview(section) {
+function getDistrictPreviewRequestContext(options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const c3xPath = String(opts.c3xPath || state.settings && state.settings.c3xPath || '').trim();
+  const hasScenarioPath = Object.prototype.hasOwnProperty.call(opts, 'scenarioPath')
+    && opts.scenarioPath != null;
+  const hasScenarioPaths = Object.prototype.hasOwnProperty.call(opts, 'scenarioPaths')
+    && opts.scenarioPaths != null;
+  const scenarioPath = hasScenarioPath
+    ? String(opts.scenarioPath || '').trim()
+    : String(state.settings && state.settings.scenarioPath || '').trim();
+  const scenarioPaths = hasScenarioPaths
+    ? (Array.isArray(opts.scenarioPaths) ? opts.scenarioPaths.slice() : [])
+    : getScenarioPreviewPaths();
+  return {
+    c3xPath,
+    scenarioPath,
+    scenarioPaths,
+    scenarioPathsKey: JSON.stringify((Array.isArray(scenarioPaths) ? scenarioPaths : []).map((value) => toSlashPath(value)))
+  };
+}
+
+async function fetchDistrictRepresentativePreview(section, options = {}) {
   const spec = getDistrictPreviewSpec(section);
-  if (!spec || !state.settings || !state.settings.c3xPath) return null;
+  const previewContext = getDistrictPreviewRequestContext(options);
+  if (!spec || !previewContext.c3xPath) return null;
   const renderStrategy = getDistrictRenderStrategy(section);
   const autoKey = JSON.stringify({
     kind: 'district-representative-auto',
-    c3xPath: state.settings.c3xPath,
-    scenarioPath: state.settings.scenarioPath,
+    c3xPath: previewContext.c3xPath,
+    scenarioPath: previewContext.scenarioPath,
+    scenarioPaths: previewContext.scenarioPathsKey,
     fileName: spec.fileName,
     w: spec.cellW,
     h: spec.cellH,
@@ -65043,17 +65439,19 @@ async function fetchDistrictRepresentativePreview(section) {
   const pending = (async () => {
   const fullKey = JSON.stringify({
     kind: 'district-full',
-    c3xPath: state.settings.c3xPath,
+    c3xPath: previewContext.c3xPath,
+    scenarioPath: previewContext.scenarioPath,
+    scenarioPaths: previewContext.scenarioPathsKey,
     fileName: spec.fileName
   });
   let fullPreview = state.previewCache.get(fullKey) || null;
   if (!fullPreview) {
     const full = await window.c3xManager.getPreview({
       kind: 'district',
-      c3xPath: state.settings.c3xPath,
+      c3xPath: previewContext.c3xPath,
       fileName: spec.fileName,
-      scenarioPath: state.settings.scenarioPath,
-      scenarioPaths: getScenarioPreviewPaths()
+      scenarioPath: previewContext.scenarioPath,
+      scenarioPaths: previewContext.scenarioPaths
     });
     if (!full || !full.ok) return null;
     fullPreview = full;
@@ -65063,7 +65461,9 @@ async function fetchDistrictRepresentativePreview(section) {
   const col = findRightMostNonTransparentDistrictColumn(fullPreview, spec, row);
   const cropKey = JSON.stringify({
     kind: 'district-representative',
-    c3xPath: state.settings.c3xPath,
+    c3xPath: previewContext.c3xPath,
+    scenarioPath: previewContext.scenarioPath,
+    scenarioPaths: previewContext.scenarioPathsKey,
     fileName: spec.fileName,
     row,
     col,
@@ -65080,15 +65480,18 @@ async function fetchDistrictRepresentativePreview(section) {
     ? await fetchDistrictCellPreview(section, {
         cultureIndex: 0,
         eraIndex: row,
-        buildingCols: representativeBuildingCols
+        buildingCols: representativeBuildingCols,
+        c3xPath: previewContext.c3xPath,
+        scenarioPath: previewContext.scenarioPath,
+        scenarioPaths: previewContext.scenarioPaths
       })
     : await window.c3xManager.getPreview({
         kind: 'district',
-        c3xPath: state.settings.c3xPath,
+        c3xPath: previewContext.c3xPath,
         fileName: spec.fileName,
         crop: { row, col, w: spec.cellW, h: spec.cellH },
-        scenarioPath: state.settings.scenarioPath,
-        scenarioPaths: getScenarioPreviewPaths()
+        scenarioPath: previewContext.scenarioPath,
+        scenarioPaths: previewContext.scenarioPaths
       });
   if (!cropped || !cropped.ok) return null;
   const representative = {
@@ -65109,8 +65512,17 @@ async function fetchDistrictRepresentativePreview(section) {
   }
 }
 
-async function fetchDistrictSingleCellPreview(section, { cultureIndex = 0, eraIndex = 0, buildingCol = 0, fileNameOverride = '' } = {}) {
-  if (!state.settings || !state.settings.c3xPath) return null;
+async function fetchDistrictSingleCellPreview(section, {
+  cultureIndex = 0,
+  eraIndex = 0,
+  buildingCol = 0,
+  fileNameOverride = '',
+  c3xPath = undefined,
+  scenarioPath = undefined,
+  scenarioPaths = undefined
+} = {}) {
+  const previewContext = getDistrictPreviewRequestContext({ c3xPath, scenarioPath, scenarioPaths });
+  if (!previewContext.c3xPath) return null;
   const allPaths = getDistrictImagePaths(section);
   if (!allPaths.length) return null;
   const fileName = String(fileNameOverride || allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))] || '');
@@ -65121,7 +65533,9 @@ async function fetchDistrictSingleCellPreview(section, { cultureIndex = 0, eraIn
   const cellH = Number.isFinite(customH) && customH > 0 ? customH : 64;
   const cropKey = JSON.stringify({
     kind: 'district-cell',
-    c3xPath: state.settings.c3xPath,
+    c3xPath: previewContext.c3xPath,
+    scenarioPath: previewContext.scenarioPath,
+    scenarioPaths: previewContext.scenarioPathsKey,
     fileName,
     row: eraIndex,
     col: buildingCol,
@@ -65132,21 +65546,39 @@ async function fetchDistrictSingleCellPreview(section, { cultureIndex = 0, eraIn
   if (cached) return cached;
   const result = await window.c3xManager.getPreview({
     kind: 'district',
-    c3xPath: state.settings.c3xPath,
+    c3xPath: previewContext.c3xPath,
     fileName,
     crop: { row: eraIndex, col: buildingCol, w: cellW, h: cellH },
-    scenarioPath: state.settings.scenarioPath,
-    scenarioPaths: getScenarioPreviewPaths()
+    scenarioPath: previewContext.scenarioPath,
+    scenarioPaths: previewContext.scenarioPaths
   });
   if (!result || !result.ok) return null;
   setPreviewCache(cropKey, result);
   return result;
 }
 
-async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 0, buildingCol = 0, buildingCols = null, fileNameOverride = '' } = {}) {
+async function fetchDistrictCellPreview(section, {
+  cultureIndex = 0,
+  eraIndex = 0,
+  buildingCol = 0,
+  buildingCols = null,
+  fileNameOverride = '',
+  c3xPath = undefined,
+  scenarioPath = undefined,
+  scenarioPaths = undefined
+} = {}) {
+  const previewContext = getDistrictPreviewRequestContext({ c3xPath, scenarioPath, scenarioPaths });
   const renderStrategy = getDistrictRenderStrategy(section);
   if (renderStrategy !== 'by-building') {
-    return fetchDistrictSingleCellPreview(section, { cultureIndex, eraIndex, buildingCol, fileNameOverride });
+    return fetchDistrictSingleCellPreview(section, {
+      cultureIndex,
+      eraIndex,
+      buildingCol,
+      fileNameOverride,
+      c3xPath: previewContext.c3xPath,
+      scenarioPath: previewContext.scenarioPath,
+      scenarioPaths: previewContext.scenarioPaths
+    });
   }
   const allPaths = getDistrictImagePaths(section);
   const fileName = String(fileNameOverride || allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))] || '');
@@ -65157,12 +65589,20 @@ async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 
   )).sort((a, b) => a - b);
   const compositeCols = [0, ...normalizedCols];
   if (compositeCols.length === 1) {
-    return fetchDistrictSingleCellPreview(section, { cultureIndex, eraIndex, buildingCol: 0 });
+    return fetchDistrictSingleCellPreview(section, {
+      cultureIndex,
+      eraIndex,
+      buildingCol: 0,
+      c3xPath: previewContext.c3xPath,
+      scenarioPath: previewContext.scenarioPath,
+      scenarioPaths: previewContext.scenarioPaths
+    });
   }
   const cacheKey = JSON.stringify({
     kind: 'district-cell-composite',
-    c3xPath: state.settings && state.settings.c3xPath,
-    scenarioPath: state.settings && state.settings.scenarioPath,
+    c3xPath: previewContext.c3xPath,
+    scenarioPath: previewContext.scenarioPath,
+    scenarioPaths: previewContext.scenarioPathsKey,
     fileName,
     cultureIndex,
     eraIndex,
@@ -65174,7 +65614,10 @@ async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 
     cultureIndex,
     eraIndex,
     buildingCol: col,
-    fileNameOverride: fileName
+    fileNameOverride: fileName,
+    c3xPath: previewContext.c3xPath,
+    scenarioPath: previewContext.scenarioPath,
+    scenarioPaths: previewContext.scenarioPaths
   })));
   const composed = composeDistrictCellPreviews(parts);
   if (!composed) return null;
@@ -65182,7 +65625,7 @@ async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 
   return composed;
 }
 
-function loadDistrictRepresentativePreview(section, holder, canvasSize = 28, onLoaded = null) {
+function loadDistrictRepresentativePreview(section, holder, canvasSize = 28, onLoaded = null, options = {}) {
   if (!holder) return Promise.resolve(false);
   holder.innerHTML = '';
   const canvas = document.createElement('canvas');
@@ -65190,7 +65633,7 @@ function loadDistrictRepresentativePreview(section, holder, canvasSize = 28, onL
   canvas.height = canvasSize;
   canvas.className = 'entry-thumb-canvas';
   holder.appendChild(canvas);
-  return fetchDistrictRepresentativePreview(section)
+  return fetchDistrictRepresentativePreview(section, options)
     .then((preview) => {
       if (!preview || !holder.isConnected) return false;
       drawPreviewFrameToCanvas(preview, canvas);
@@ -67067,11 +67510,75 @@ function createSectionFromTemplate(tabKey) {
   return section;
 }
 
+function getSectionFieldValueCaseInsensitive(section, key) {
+  const needle = String(key || '').trim().toLowerCase();
+  const fields = Array.isArray(section && section.fields) ? section.fields : [];
+  const field = fields.find((item) => String(item && item.key || '').trim().toLowerCase() === needle);
+  return field ? String(field.value || '').trim() : '';
+}
+
+function makeUniqueSectionName(tab, baseName, selectedIndex = -1) {
+  const cleanBase = String(baseName || '').trim() || 'District';
+  const sections = Array.isArray(tab && tab.model && tab.model.sections) ? tab.model.sections : [];
+  const used = new Set();
+  sections.forEach((section, index) => {
+    if (index === selectedIndex) return;
+    const name = getSectionFieldValueCaseInsensitive(section, 'name');
+    if (name) used.add(normalizeConfigToken(name).toLowerCase());
+  });
+  if (!used.has(cleanBase.toLowerCase())) return cleanBase;
+  for (let n = 2; n < 10000; n += 1) {
+    const candidate = `${cleanBase} ${n}`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${cleanBase} ${Date.now()}`;
+}
+
+function cloneDistrictSectionForCreate(tab, sourceSection, mode, options = {}) {
+  const source = sourceSection ? deepCloneUiValue(sourceSection) : createSectionFromTemplate('districts');
+  const section = {
+    marker: source.marker || (SECTION_SCHEMAS.districts && SECTION_SCHEMAS.districts.marker) || '#District',
+    fields: Array.isArray(source.fields) ? source.fields.map((field) => deepCloneUiValue(field)) : [],
+    comments: Array.isArray(source.comments) ? source.comments.slice() : []
+  };
+  const originalName = String(options.name || getSectionFieldValueCaseInsensitive(section, 'name') || 'District').trim();
+  const newName = makeUniqueSectionName(tab, mode === 'copy' ? `${originalName} Copy` : originalName, -1);
+  const hadDisplayName = section.fields.some((field) => String(field && field.key || '').trim().toLowerCase() === 'display_name');
+  section.fields = section.fields.filter((field) => {
+    const key = String(field && field.key || '').trim().toLowerCase();
+    return key !== 'name' && key !== 'display_name';
+  });
+  section.fields.unshift({ key: 'name', value: newName });
+  if (hadDisplayName) section.fields.splice(1, 0, { key: 'display_name', value: newName });
+  if (options.importSourcePath) {
+    section._pendingDistrictImport = {
+      sourceBiqPath: String(options.importSourcePath || ''),
+      sourceScenarioPaths: Array.isArray(options.importScenarioPaths) ? options.importScenarioPaths.slice() : []
+    };
+  }
+  return section;
+}
+
 function addSection(tab, tabKey) {
   rememberUndoSnapshotForKey(`SECTION_TAB:${String(tabKey || '').trim()}`);
   tab.model.sections.unshift(createSectionFromTemplate(tabKey));
   state.sectionSelection[tabKey] = 0;
   setDirty(true);
+  renderActiveTab();
+}
+
+function copySelectedDistrictSection(tab) {
+  if (!tab || !tab.model || !Array.isArray(tab.model.sections) || tab.model.sections.length <= 0) return;
+  const selectedIndex = Math.max(0, Math.min(state.sectionSelection.districts || 0, tab.model.sections.length - 1));
+  const selected = tab.model.sections[selectedIndex];
+  if (!selected) return;
+  rememberUndoSnapshotForKey('SECTION_TAB:districts');
+  const section = cloneDistrictSectionForCreate(tab, selected, 'copy');
+  tab.model.sections.unshift(section);
+  state.sectionSelection.districts = 0;
+  state.sectionDetailScrollTop.districts = 0;
+  setDirty(true);
+  setStatus(`Copied "${getSectionFieldValueCaseInsensitive(selected, 'name') || 'district'}".`);
   renderActiveTab();
 }
 
@@ -68528,7 +69035,9 @@ function renderSectionTab(tab, tabKey) {
   const districtIssueIndexes = (showQualityWarnings && tabKey === 'districts') ? collectDistrictIssueIndexes(tab, districtCompatibility) : null;
   const wonderCompatibility = (showQualityWarnings && tabKey === 'wonders') ? collectWonderCompatibilityIssuesForTab(tab) : null;
   const wonderIssueIndexes = (showQualityWarnings && tabKey === 'wonders') ? collectWonderIssueIndexes(tab, wonderCompatibility) : null;
-  const auditGeneralMessages = showQualityWarnings ? getLoadAuditAllEntries(tabKey) : [];
+  const auditGeneralMessages = showQualityWarnings
+    ? (tabKey === 'animations' ? getLoadAuditGeneralEntries(tabKey) : getLoadAuditAllEntries(tabKey))
+    : [];
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
 
@@ -68657,6 +69166,42 @@ function renderSectionTab(tab, tabKey) {
     addSectionBtn.textContent = '+ Add';
     addSectionBtn.addEventListener('click', () => addSection(tab, tabKey));
     actionRow.appendChild(addSectionBtn);
+
+    if (tabKey === 'districts') {
+      const copySectionBtn = document.createElement('button');
+      copySectionBtn.type = 'button';
+      copySectionBtn.className = 'ghost action-copy';
+      copySectionBtn.textContent = '⧉ Copy';
+      copySectionBtn.disabled = !tab.model || !Array.isArray(tab.model.sections) || tab.model.sections.length <= 0;
+      copySectionBtn.addEventListener('click', () => copySelectedDistrictSection(tab));
+      actionRow.appendChild(copySectionBtn);
+
+      const importSectionBtn = document.createElement('button');
+      importSectionBtn.type = 'button';
+      importSectionBtn.className = 'ghost action-import';
+      importSectionBtn.textContent = '⇪ Import';
+      importSectionBtn.addEventListener('click', async () => {
+        try {
+          const result = await promptDistrictImportAction(tab);
+          if (!result || !result.importedSection) return;
+          rememberUndoSnapshotForKey('SECTION_TAB:districts');
+          const section = cloneDistrictSectionForCreate(tab, result.importedSection, 'import', {
+            name: result.name,
+            importSourcePath: result.importFilePath,
+            importScenarioPaths: result.importScenarioPaths
+          });
+          tab.model.sections.unshift(section);
+          state.sectionSelection.districts = 0;
+          state.sectionDetailScrollTop.districts = 0;
+          setDirty(true);
+          setStatus(`Imported "${getSectionFieldValueCaseInsensitive(result.importedSection, 'name') || 'district'}".`);
+          renderActiveTab();
+        } catch (err) {
+          setStatus(err && err.message ? err.message : 'District import failed.', true);
+        }
+      });
+      actionRow.appendChild(importSectionBtn);
+    }
 
     const deleteSectionBtn = document.createElement('button');
     deleteSectionBtn.type = 'button';
@@ -70412,9 +70957,11 @@ function mapSaveKindLabel(kind) {
   if (!key) return 'File';
   if (key === 'base') return 'Base Config';
   if (key === 'districts') return 'Districts';
+  if (key === 'districtart') return 'District Art';
   if (key === 'wonders') return 'Wonder Districts';
   if (key === 'naturalwonders') return 'Natural Wonders';
   if (key === 'animations') return 'Tile Animations';
+  if (key === 'tileanimationini') return 'Tile Animation INI';
   if (key === 'music') return 'Music';
   if (key === 'musicaudio') return 'Music MP3';
   if (key === 'biq') return 'BIQ';

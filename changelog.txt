@@ -1,4 +1,11 @@
 * RELEASE 28.0.0
+- Changed District import thumbnails to use representative District preview crops instead of shrinking full PCX sheets.
+- Normalized BIQ and C3X tab action button sizing for Add, Copy, Import, and Delete controls.
+- Refined the District import modal with the same searchable structured item picker used by BIQ imports.
+- Added Districts tab Copy and scenario Import actions, with imported district PCXs localized under unique scenario-safe names while reusing same-name byte-identical target files.
+- Fixed Tile Animation INI repair saves so unrelated scenario Civilopedia and PediaIcons cleanup is not previewed or staged as pending changes.
+- Fixed the Files modal for staged Tile Animation INI repairs so the pending INI appears with a diff preview and unchanged `scenario.tile_animations.txt` files are not shown as changed.
+- Added a bundled C3X base defaults schema so known keys, comments, grouping, and R28 fields appear in the UI even when the installed default config file is incomplete or older.
 - Added inline FLC previews and FLC Workshop buttons for District and Natural Wonder animation items.
 - Added Tile Animation INI quality checks with a staged repair action that writes canonical DEFAULT/ATTACK1-only INIs through the normal Save transaction.
 - Fixed District animation previews for INI files whose FLC values are relative to the `Art/Animations` root, such as Wind Farm.

@@ -1388,3 +1388,35 @@ test('Unit list panels render abilities and Available To as checkbox lists', () 
     'Unit checkbox lists should scroll inside the existing Units bottom-list panels'
   );
 });
+
+test('Tile Animations keep section QA warnings out of the top summary', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /tabKey === 'animations' \? getLoadAuditGeneralEntries\(tabKey\) : getLoadAuditAllEntries\(tabKey\)/,
+    'Tile Animations should show section-level QA on the selected animation card rather than duplicating it in the top summary'
+  );
+});
+
+test('Files modal uses preview save plan for pending write status', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /state\.filesReadPreviewWritesLoaded && entry\.potentialWrite && !entry\.previewPlanWrite/,
+    'Files modal should not mark dirty-tab fallback entries as changed once the actual preview save plan is available'
+  );
+  assert.match(
+    text,
+    /Object\.values\(state\.filesReadPreviewWritesByPath \|\| \{\}\)\.forEach\(\(write\) => \{[\s\S]*?existing\.previewPlanWrite = true;[\s\S]*?tileanimationini/,
+    'Files modal should merge preview-plan writes, including Tile Animation INI sidecar repairs, into the tracked file list'
+  );
+  assert.match(
+    text,
+    /pendingAnimationIniMatchesConfigIni = fileType === 'animationIni'[\s\S]*?entry\.previewPlanWrite \|\| entry\.potentialWrite[\s\S]*?selectedTypes\.includes\('configIni'\)/,
+    'Pending Animation INI writes should remain visible under the default Config INI filter'
+  );
+});
