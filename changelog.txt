@@ -1,4 +1,7 @@
 * RELEASE 27.22
+- Updated the release script to build a Windows portable app on Windows-like Bash hosts and a universal macOS DMG on macOS.
+- Added an initial Civ Advisor modal with `.SAV` file selection and a General tab parser that matches the Tokugawa 740 AD CivAssist reference screenshot for game info, player info, ranks, and visible rival rows.
+- Documented the SAV source mapping for CivAssist II's General tab, including live `GAME`, `LEAD`, `CULT`, explored-tile intelligence, diplomacy, gold, and score-tail sources.
 - Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
 - Fixed Units-tab FLC and sound browsing so valid unit animation and sound picks are stored relative to the unit animation folder instead of leaking absolute paths.
 - Fixed Units-tab unit previews so a selected facing stays on that direction instead of cycling through every FLC direction.

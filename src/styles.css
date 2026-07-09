@@ -14608,6 +14608,322 @@ button.unit-ini-delete-btn:disabled {
   padding: 24px;
 }
 
+.civassist-fab {
+  width: 42px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  color: #244b77;
+  border-color: rgba(36, 75, 119, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 244, 255, 0.96));
+}
+
+.civassist-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(20, 20, 28, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.civassist-modal-overlay.hidden {
+  display: none;
+}
+
+.civassist-modal-panel {
+  width: min(1260px, calc(100vw - 32px));
+  height: min(820px, calc(100vh - 32px));
+  min-height: min(600px, calc(100vh - 32px));
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid rgba(36, 25, 64, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(20, 20, 28, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.civassist-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(36, 25, 64, 0.12);
+  background: #ffffff;
+  flex: 0 0 auto;
+}
+
+.civassist-modal-head {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.civassist-modal-head strong,
+.civassist-modal-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.civassist-modal-subtitle {
+  color: #5e6a86;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.civassist-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.civassist-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px 12px;
+  background: #ffffff;
+  flex: 0 0 auto;
+  border-bottom: 1px solid rgba(57, 62, 95, 0.14);
+}
+
+.civassist-tab {
+  min-height: 30px;
+  padding: 6px 11px;
+  padding-right: 16px;
+}
+
+.civassist-tab.active {
+  background: linear-gradient(120deg, var(--accent-2), #ef9f63);
+  color: #fff;
+  border-color: transparent;
+}
+
+.civassist-modal-body {
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 10px 10px;
+  background: #f6f7fa;
+  flex: 1 1 auto;
+}
+
+.civassist-empty {
+  min-height: 220px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+  color: #4b5878;
+}
+
+.civassist-empty strong {
+  color: #1d2b48;
+  font-size: 1rem;
+}
+
+.civassist-empty p {
+  margin: 0;
+  max-width: 520px;
+  line-height: 1.35;
+}
+
+.civassist-error p {
+  color: #9f2f25;
+}
+
+.civassist-general {
+  display: grid;
+  gap: 8px;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.civassist-info-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.8fr) minmax(520px, 1.2fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.civassist-info-section,
+.civassist-rivals {
+  border: 1px solid rgba(36, 25, 64, 0.16);
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.civassist-rivals {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.civassist-info-section h3,
+.civassist-rivals h3 {
+  margin: 0;
+  padding: 5px 8px;
+  font-size: 0.76rem;
+  color: #10223f;
+  background: #eef2f7;
+  border-bottom: 1px solid rgba(36, 25, 64, 0.12);
+}
+
+.civassist-kv-list {
+  margin: 0;
+  padding: 7px 10px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 3px;
+  align-content: start;
+  font-size: 0.74rem;
+  line-height: 1.16;
+}
+
+.civassist-kv-row {
+  display: contents;
+}
+
+.civassist-kv-row dt {
+  color: #17233e;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.civassist-kv-row dd {
+  margin: 0;
+  min-width: 0;
+  color: #1738ff;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.civassist-muted-value {
+  color: #9aa3b4;
+}
+
+.civassist-rank {
+  margin-left: 10px;
+  color: #1738ff;
+}
+
+.civassist-table-scroll {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.civassist-rival-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.68rem;
+  line-height: 1.15;
+  background: #ffffff;
+}
+
+.civassist-rival-table th,
+.civassist-rival-table td {
+  border: 1px solid rgba(220, 225, 235, 0.95);
+  padding: 3px 5px;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.civassist-rival-table th {
+  text-overflow: clip;
+}
+
+.civassist-rival-table th {
+  color: #1d2b48;
+  background: #f0f3f8;
+  font-weight: 800;
+}
+
+.civassist-rival-table tbody tr:nth-child(odd) {
+  background: #f6fbf4;
+}
+
+.civassist-rival-table tbody tr:nth-child(even) {
+  background: #f2f5ff;
+}
+
+.civassist-rival-table tbody tr.at-war {
+  color: #ca3429;
+}
+
+.civassist-rival-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.civassist-nation-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.civassist-color-swatch {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(16, 22, 38, 0.52);
+}
+
+@media (max-width: 820px) {
+  .civassist-modal-overlay {
+    padding: 10px;
+  }
+
+  .civassist-modal-panel {
+    width: calc(100vw - 20px);
+    height: calc(100vh - 20px);
+    min-height: 0;
+  }
+
+  .civassist-modal-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .civassist-modal-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .civassist-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .civassist-kv-list {
+    grid-template-columns: minmax(112px, max-content) minmax(0, 1fr);
+    column-gap: 10px;
+  }
+}
+
+@media (max-height: 700px) {
+  .civassist-modal-body {
+    overflow: auto;
+  }
+
+  .civassist-general {
+    height: auto;
+  }
+}
+
 .flic-workshop-modal-overlay.hidden {
   display: none;
 }

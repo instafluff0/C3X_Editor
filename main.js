@@ -5,6 +5,7 @@ const { Worker } = require('node:worker_threads');
 const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes, inspectAudioFileBasic } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const { handleFlicWorkshop } = require('./src/flcWorkshop');
+const { inspectCivAssistSaveFile } = require('./src/biq/civAssist');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -1672,6 +1673,22 @@ ipcMain.handle('manager:inspect-civ-color-palettes', async (_event, payload) => 
   } catch (err) {
     log.error('inspectCivColorPalettes', `Threw: ${err.message}`);
     return { ok: false, error: err && err.message ? err.message : 'Could not inspect civ color palettes.' };
+  }
+});
+
+ipcMain.handle('manager:inspect-civ-assist-save', async (_event, filePath) => {
+  try {
+    const target = String(filePath || '');
+    const result = inspectCivAssistSaveFile(target);
+    if (!result || !result.ok) {
+      log.warn('civAssist', `SAV inspect failed: ${result && result.error}`);
+    } else {
+      log.info('civAssist', `Loaded ${log.rel(target)} for General tab.`);
+    }
+    return result;
+  } catch (err) {
+    log.error('civAssist', `Threw: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not inspect SAV file.' };
   }
 });
 

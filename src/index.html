@@ -82,6 +82,7 @@
     </template>
 
     <div class="floating-tools" aria-label="Quick tools">
+      <button id="civassist-toggle" class="debug-fab civassist-fab" title="Open Civ Advisor">CA</button>
       <button id="files-read-toggle" class="debug-fab files-read-fab" title="Show files read">📄</button>
       <button id="debug-toggle" class="debug-fab" title="Open Debug Log">🛠</button>
       <div class="floating-font-controls" aria-label="Font size controls">
@@ -103,6 +104,25 @@
       </div>
       <pre id="debug-log"></pre>
     </section>
+
+    <div id="civassist-modal-overlay" class="civassist-modal-overlay hidden" aria-hidden="true">
+      <div class="civassist-modal-panel" role="dialog" aria-modal="true" aria-label="Civ Advisor">
+        <div class="civassist-modal-header">
+          <div class="civassist-modal-head">
+            <strong id="civassist-modal-title">Civ Advisor</strong>
+            <span id="civassist-modal-subtitle" class="civassist-modal-subtitle">No save selected</span>
+          </div>
+          <div class="civassist-modal-actions">
+            <button id="civassist-open-save" class="ghost" type="button"><span class="btn-icon">📁</span>Open SAV</button>
+            <button id="civassist-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
+          </div>
+        </div>
+        <div class="civassist-tabs" role="tablist" aria-label="Civ Advisor tabs">
+          <button class="civassist-tab tab-btn active" type="button" role="tab" aria-selected="true"><span>General</span></button>
+        </div>
+        <div id="civassist-modal-body" class="civassist-modal-body"></div>
+      </div>
+    </div>
 
     <div id="files-read-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
       <div class="confirm-modal files-read-modal" role="dialog" aria-modal="true" aria-labelledby="files-read-modal-title" aria-describedby="files-read-modal-body">

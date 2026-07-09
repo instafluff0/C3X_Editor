@@ -108,6 +108,13 @@ const state = {
   unitAvailabilityView: {
     showKingUnits: false
   },
+  civAssist: {
+    isOpen: false,
+    savePath: '',
+    report: null,
+    loading: false,
+    error: ''
+  },
   referenceContextPaneVisible: {},
   improvementLayoutMode: '',
   sectionFilter: {},
@@ -737,6 +744,13 @@ const el = {
   aboutBtn: document.getElementById('about-btn'),
   aboutModalOverlay: document.getElementById('about-modal-overlay'),
   aboutClose: document.getElementById('about-close'),
+  civAssistToggle: document.getElementById('civassist-toggle'),
+  civAssistModalOverlay: document.getElementById('civassist-modal-overlay'),
+  civAssistModalTitle: document.getElementById('civassist-modal-title'),
+  civAssistModalSubtitle: document.getElementById('civassist-modal-subtitle'),
+  civAssistOpenSave: document.getElementById('civassist-open-save'),
+  civAssistClose: document.getElementById('civassist-close'),
+  civAssistModalBody: document.getElementById('civassist-modal-body'),
   filesReadToggle: document.getElementById('files-read-toggle'),
   filesReadModalOverlay: document.getElementById('files-read-modal-overlay'),
   filesReadModalBody: document.getElementById('files-read-modal-body'),
@@ -2630,6 +2644,7 @@ function isBlockingShortcutModalOpen() {
     return true;
   }
   if (isVisibleElement(el.aboutModalOverlay)
+    || isVisibleElement(el.civAssistModalOverlay)
     || isVisibleElement(el.filesReadModalOverlay)
     || isVisibleElement(el.fileDiffModalOverlay)
     || isVisibleElement(el.saveProgressModalOverlay)) {
@@ -72067,6 +72082,230 @@ async function wireBrowseButton(button, input) {
   });
 }
 
+function getCivAssistDefaultSavePath() {
+  if (state.civAssist.savePath) return state.civAssist.savePath;
+  const root = state.settings && state.settings.civ3Path ? String(state.settings.civ3Path) : '';
+  if (!root) return '';
+  const slash = root.includes('\\') && !root.includes('/') ? '\\' : '/';
+  return `${root.replace(/[\\/]+$/, '')}${slash}Conquests${slash}Saves`;
+}
+
+function setCivAssistModalVisible(visible) {
+  state.civAssist.isOpen = !!visible;
+  if (!el.civAssistModalOverlay) return;
+  el.civAssistModalOverlay.classList.toggle('hidden', !visible);
+  el.civAssistModalOverlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
+}
+
+function openCivAssistModal() {
+  setCivAssistModalVisible(true);
+  renderCivAssistModal();
+}
+
+function closeCivAssistModal() {
+  setCivAssistModalVisible(false);
+}
+
+async function pickCivAssistSave() {
+  if (!window.c3xManager || typeof window.c3xManager.pickFile !== 'function') {
+    state.civAssist.error = 'File picker is not available.';
+    renderCivAssistModal();
+    return;
+  }
+  const filePath = await window.c3xManager.pickFile({
+    defaultPath: getCivAssistDefaultSavePath(),
+    filters: [
+      { name: 'Civ III Saves', extensions: ['sav'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  if (!filePath) return;
+  await loadCivAssistSave(filePath);
+}
+
+async function loadCivAssistSave(filePath) {
+  const target = String(filePath || '').trim();
+  if (!target) return;
+  if (!window.c3xManager || typeof window.c3xManager.inspectCivAssistSave !== 'function') {
+    state.civAssist.error = 'Civ Advisor save inspection is not available.';
+    renderCivAssistModal();
+    return;
+  }
+  state.civAssist.savePath = target;
+  state.civAssist.loading = true;
+  state.civAssist.error = '';
+  state.civAssist.report = null;
+  renderCivAssistModal();
+  try {
+    const result = await window.c3xManager.inspectCivAssistSave(target);
+    if (!result || !result.ok) {
+      state.civAssist.error = String(result && result.error || 'Could not read the selected SAV file.');
+      state.civAssist.report = null;
+      setStatus(state.civAssist.error, true);
+    } else {
+      state.civAssist.report = result;
+      state.civAssist.error = '';
+      setStatus('Civ Advisor save loaded.');
+    }
+  } catch (err) {
+    state.civAssist.error = String(err && err.message || err || 'Could not read the selected SAV file.');
+    state.civAssist.report = null;
+    setStatus(state.civAssist.error, true);
+  } finally {
+    state.civAssist.loading = false;
+    renderCivAssistModal();
+  }
+}
+
+function appendCivAssistInfoGroup(parent, title, fields) {
+  const section = document.createElement('section');
+  section.className = 'civassist-info-section';
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  section.appendChild(heading);
+  const list = document.createElement('dl');
+  list.className = 'civassist-kv-list';
+  for (const field of fields || []) {
+    const row = document.createElement('div');
+    row.className = 'civassist-kv-row';
+    const dt = document.createElement('dt');
+    dt.textContent = `${field.label}:`;
+    const dd = document.createElement('dd');
+    const value = document.createElement('span');
+    value.className = field.muted ? 'civassist-muted-value' : '';
+    value.textContent = String(field.value == null ? '' : field.value);
+    dd.appendChild(value);
+    if (field.rank) {
+      const rank = document.createElement('span');
+      rank.className = 'civassist-rank';
+      rank.textContent = `(${field.rank})`;
+      dd.appendChild(rank);
+    }
+    row.append(dt, dd);
+    list.appendChild(row);
+  }
+  section.appendChild(list);
+  parent.appendChild(section);
+}
+
+function renderCivAssistEmptyState(message, isError = false) {
+  const wrap = document.createElement('div');
+  wrap.className = isError ? 'civassist-empty civassist-error' : 'civassist-empty';
+  const title = document.createElement('strong');
+  title.textContent = isError ? 'Could not load save' : 'Select a Civ III save';
+  const body = document.createElement('p');
+  body.textContent = message || 'Open a .SAV file to view CivAssist data.';
+  const button = document.createElement('button');
+  button.className = 'secondary';
+  button.type = 'button';
+  button.textContent = 'Open SAV';
+  button.addEventListener('click', () => {
+    void pickCivAssistSave();
+  });
+  wrap.append(title, body, button);
+  return wrap;
+}
+
+function renderCivAssistGeneral(report) {
+  const general = report && report.general ? report.general : {};
+  const wrap = document.createElement('div');
+  wrap.className = 'civassist-general';
+  const infoGrid = document.createElement('div');
+  infoGrid.className = 'civassist-info-grid';
+  appendCivAssistInfoGroup(infoGrid, 'Game Info', general.gameInfo || []);
+  appendCivAssistInfoGroup(infoGrid, 'Player Info', general.playerInfo || []);
+  wrap.appendChild(infoGrid);
+
+  const rivals = document.createElement('section');
+  rivals.className = 'civassist-rivals';
+  const heading = document.createElement('h3');
+  heading.textContent = 'Rival Info';
+  rivals.appendChild(heading);
+  const scroller = document.createElement('div');
+  scroller.className = 'civassist-table-scroll';
+  const table = document.createElement('table');
+  table.className = 'civassist-rival-table';
+  const colgroup = document.createElement('colgroup');
+  [12, 22, 8, 12, 13, 7, 7, 7, 12].forEach((width) => {
+    const col = document.createElement('col');
+    col.style.width = `${width}%`;
+    colgroup.appendChild(col);
+  });
+  table.appendChild(colgroup);
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  ['Nation', 'Traits', 'Relation', 'Government', 'Current Era', 'Gold', 'Cities', 'Land', 'Population'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const rival of general.rivals || []) {
+    const row = document.createElement('tr');
+    if (rival.atWar) row.classList.add('at-war');
+    const nation = document.createElement('td');
+    nation.className = 'civassist-nation-cell';
+    const swatch = document.createElement('span');
+    swatch.className = 'civassist-color-swatch';
+    swatch.style.backgroundColor = rival.color || '#94a3b8';
+    const name = document.createElement('span');
+    name.textContent = rival.nation || '';
+    nation.append(swatch, name);
+    row.appendChild(nation);
+    [
+      rival.traits,
+      rival.relation,
+      rival.government,
+      rival.currentEra,
+      rival.gold,
+      rival.cities,
+      rival.land,
+      rival.population
+    ].forEach((value, index) => {
+      const cell = document.createElement('td');
+      if (index >= 4) cell.className = 'num';
+      cell.textContent = String(value == null ? '' : value);
+      row.appendChild(cell);
+    });
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
+  scroller.appendChild(table);
+  rivals.appendChild(scroller);
+  wrap.appendChild(rivals);
+  return wrap;
+}
+
+function renderCivAssistModal() {
+  if (!el.civAssistModalBody) return;
+  const report = state.civAssist.report;
+  if (el.civAssistModalTitle) {
+    el.civAssistModalTitle.textContent = report && report.title ? `Civ Advisor - ${report.title}` : 'Civ Advisor';
+  }
+  if (el.civAssistModalSubtitle) {
+    el.civAssistModalSubtitle.textContent = state.civAssist.savePath ? getPathTail(state.civAssist.savePath) : 'No save selected';
+  }
+  el.civAssistModalBody.replaceChildren();
+  if (state.civAssist.loading) {
+    const loading = document.createElement('div');
+    loading.className = 'civassist-empty';
+    loading.textContent = 'Reading save...';
+    el.civAssistModalBody.appendChild(loading);
+    return;
+  }
+  if (state.civAssist.error) {
+    el.civAssistModalBody.appendChild(renderCivAssistEmptyState(state.civAssist.error, true));
+    return;
+  }
+  if (!report || !report.ok) {
+    el.civAssistModalBody.appendChild(renderCivAssistEmptyState('Open a .SAV file to view CivAssist data.'));
+    return;
+  }
+  el.civAssistModalBody.appendChild(renderCivAssistGeneral(report));
+}
+
 async function wireScenarioBrowseButton(button, input) {
   button.addEventListener('click', async () => {
     const allow = await confirmResolveUnsavedChanges('switching scenarios');
@@ -72563,6 +72802,28 @@ async function init() {
       el.debugDrawer.classList.add('hidden');
     });
   }
+  if (el.civAssistToggle) {
+    el.civAssistToggle.addEventListener('click', () => {
+      openCivAssistModal();
+    });
+  }
+  if (el.civAssistOpenSave) {
+    el.civAssistOpenSave.addEventListener('click', () => {
+      void pickCivAssistSave();
+    });
+  }
+  if (el.civAssistClose) {
+    el.civAssistClose.addEventListener('click', () => {
+      closeCivAssistModal();
+    });
+  }
+  if (el.civAssistModalOverlay) {
+    el.civAssistModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.civAssistModalOverlay) {
+        closeCivAssistModal();
+      }
+    });
+  }
   if (el.clearDebugLog) {
     el.clearDebugLog.addEventListener('click', () => {
       el.debugLog.textContent = '';
@@ -72873,6 +73134,12 @@ async function init() {
         return;
       }
       closeSaveProgressModal();
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (el.civAssistModalOverlay && !el.civAssistModalOverlay.classList.contains('hidden') && ev.key === 'Escape') {
+      closeCivAssistModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;

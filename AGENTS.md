@@ -155,6 +155,7 @@ npm test
 - `docs/biq/tabs/*.md` for per-tab BIQ mapping and dependencies.
 - `docs/Editing.md` for extended Civ3 data/storage notes.
 - `docs/Civ3Music.md` for Civ3 music layout, scenario playlist behavior, and Music-tab UX implications.
+- `docs/CivAssistGeneral.md` for the first-pass SAV source mapping needed to recreate CivAssist II's General tab.
 - If a topic here grows beyond stable rules, move detail to `docs/` and keep only a short summary here.
 
 ## Maintenance Rules for This File
