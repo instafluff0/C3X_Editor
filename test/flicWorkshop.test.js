@@ -130,6 +130,22 @@ test('exported storyboard honors frame size and frame count options', { skip: !h
   assert.equal(fxm.civ3.animTime, 40 * 170);
   assert.equal(pcx.width, (80 + 1) * 40 + 1);
   assert.equal(pcx.height, (90 + 1) * 8 + 1);
+
+  const shrinkOut = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-flic-export-shrink-'));
+  const shrink = exportFlicsterStoryboardFromFlc(cowFlc, shrinkOut, {
+    baseName: 'cow-shrink',
+    frameWidth: 50,
+    frameHeight: 45
+  });
+  assert.equal(shrink.ok, true);
+  const shrinkFxm = parseFlicsterFxm(shrink.paths.fxmPath);
+  const shrinkPcx = decodeIndexedPcx(shrink.paths.pcxPath);
+  assert.equal(shrinkFxm.frameWidth, 50);
+  assert.equal(shrinkFxm.frameHeight, 45);
+  assert.equal(shrinkFxm.civ3.xOffset, 95);
+  assert.equal(shrinkFxm.civ3.yOffset, 98);
+  assert.equal(shrinkPcx.width, (50 + 1) * 32 + 1);
+  assert.equal(shrinkPcx.height, (45 + 1) * 8 + 1);
 });
 
 
@@ -163,12 +179,24 @@ test('legacy storyboard builds a Civ3 unit FLC with compatible metadata and chun
 test('renderer exposes the Units-tab FLC Workshop entry point', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   assert.match(renderer, /workshopBtn\.textContent = 'FLC Workshop'/);
+  assert.match(renderer, /unitFlicWorkshopLabel\.textContent = 'FLC Workshop'/);
+  assert.match(renderer, /unitFlicWorkshopIcon\.textContent = '🎞'/);
+  assert.match(renderer, /unitFlicWorkshopBtn\.addEventListener\('click'/);
+  assert.match(renderer, /openFlicWorkshopForUnitEntry\(selectedEntry\)/);
+  assert.match(renderer, /flcEdit\.innerHTML = '<span class="btn-icon">🎞<\/span>Edit'/);
+  assert.match(renderer, /openFlicWorkshopForUnitAnimationModel\(activeModelForRow, row\.key\)/);
+  assert.match(renderer, /openFlicWorkshopForUnitAnimationModel\(activeModel, String\(activeAction \|\| ui\.actionKey \|\| ''\)/);
   assert.match(renderer, /openFlicWorkshopModal\(\{/);
-  assert.match(renderer, /actionRows: Array\.isArray\(activeModel\.typeRows\) \? activeModel\.typeRows : \[\]/);
+  assert.match(renderer, /actionRows: rows/);
   assert.match(renderer, /flicWorkshopModal\.title\.textContent = 'FLC Workshop'/);
   assert.match(renderer, /renderFlicWorkshopActionBar\(\)/);
   assert.match(renderer, /overlay\.querySelector\('\.flic-workshop-header-source'\)/);
-  assert.match(renderer, /!ev\.target\.closest\('\.flic-workshop-sourcebar'\)/);
+  assert.match(renderer, /chooser\.className = 'flic-workshop-source-native-select'/);
+  assert.match(renderer, /knownGroup\.label = 'Known FLCs'/);
+  assert.match(renderer, /separator\.disabled = true/);
+  assert.match(renderer, /browseGroup\.label = 'Other'/);
+  assert.match(renderer, /browseSource\.textContent = 'Browse FLC or Storyboard'/);
+  assert.doesNotMatch(renderer, /Exports PCX, PAL, Alpha PAL/);
   assert.match(renderer, /loadFlicWorkshopFlc\(row, \{ resetStatus: true \}\)/);
   assert.match(renderer, /browseFlicWorkshopSource\(\)/);
   assert.match(renderer, /extensions: \['flc', 'fxm'\]/);
@@ -200,6 +228,9 @@ test('renderer exposes the Units-tab FLC Workshop entry point', () => {
   assert.match(renderer, /flicWorkshopModal\.frameHeight/);
   assert.match(renderer, /getFlicWorkshopFrameWidth\(\)/);
   assert.match(renderer, /getFlicWorkshopFrameHeight\(\)/);
+  assert.match(renderer, /const fileWidth = Math\.max\(1, Number\(meta\.width\) \|\| 1\)/);
+  assert.match(renderer, /const sourceWidth = getFlicWorkshopFrameWidth\(\)/);
+  assert.match(renderer, /const sourceHeight = getFlicWorkshopFrameHeight\(\)/);
   assert.match(renderer, /getFlicWorkshopMinFrameWidth\(\)/);
   assert.match(renderer, /getFlicWorkshopMinFrameHeight\(\)/);
   assert.match(renderer, /scaleFlicWorkshopFullIndexedFrame\(frame, width, height, scale, bg\)/);
@@ -250,7 +281,7 @@ test('FLC Workshop modal has an opaque stable-height shell', () => {
   assert.ok(bodyRule, 'missing modal body rule');
   assert.match(panelRule[0], /background:\s*#ffffff;/);
   assert.match(panelRule[0], /width:\s*min\(780px,\s*calc\(100vw - 48px\)\);/);
-  assert.match(panelRule[0], /height:\s*min\(560px,\s*calc\(100vh - 48px\)\);/);
+  assert.match(panelRule[0], /height:\s*min\(600px,\s*calc\(100vh - 48px\)\);/);
   assert.doesNotMatch(panelRule[0], /var\(--panel-bg\)/);
   assert.match(bodyRule[0], /background:\s*#ffffff;/);
   assert.match(bodyRule[0], /flex:\s*1 1 auto;/);
@@ -278,16 +309,22 @@ test('FLC Workshop tabs use map-mode style segmented buttons', () => {
 });
 
 test('FLC Workshop action selector and palette grid stay compact', () => {
+  const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
   const headerSourceRule = css.match(/\.flic-workshop-header-source\s*\{[^}]+\}/);
   const sourceBarRule = css.match(/\.flic-workshop-sourcebar\s*\{[^}]+\}/);
   const headerSourceBarRule = css.match(/\.flic-workshop-sourcebar\.in-header\s*\{[^}]+\}/);
-  const sourceChooserRule = css.match(/\.flic-workshop-source-chooser\s*\{[^}]+\}/);
-  const sourceChoiceRule = css.match(/\.flic-workshop-source-choice\s*\{[^}]+\}/);
+  const sourceOpenRule = css.match(/\.flic-workshop-sourcebar-open\s*\{[^}]+\}/);
+  const sourceNativeSelectRule = css.match(/\.flic-workshop-source-native-select\s*\{[^}]+\}/);
   const toastRule = css.match(/\.flic-workshop-toast\s*\{[^}]+\}/);
+  const modalPanelRule = css.match(/\.flic-workshop-modal-panel\s*\{[^}]+\}/);
+  const directionDisabledRule = css.match(/\.unit-direction-btn:disabled\s*\{[^}]+\}/);
+  const workshopHideRule = css.match(/@media \(max-width:\s*1320px\)\s*\{[^}]*\.unit-flic-workshop-action-btn\s*\{[^}]+\}/);
   const previewLayoutRule = css.match(/\.flic-workshop-preview-layout\s*\{[^}]+\}/);
   const previewControlsRule = css.match(/\.flic-workshop-preview-controls\s*\{[^}]+\}/);
   const controlGroupRule = css.match(/^\.flic-workshop-control-group\s*\{[^}]+\}/m);
+  const exportFormRule = css.match(/\.flic-workshop-export-form\s*\{[^}]+\}/);
+  const exportFormCompactRule = css.match(/\.flic-workshop-export-form\.compact\s*\{[^}]+\}/);
   const exportChoiceRule = css.match(/\.flic-workshop-export-choice\s*\{[^}]+\}/);
   const exportInputRule = css.match(/\.flic-workshop-export-row select,\s*\.flic-workshop-export-row input\[type="text"\],\s*\.flic-workshop-export-row input\[type="number"\]\s*\{[^}]+\}/);
   const exportPopoverRule = css.match(/\.flic-workshop-export-popover-layer\s*\{[^}]+\}/);
@@ -297,36 +334,59 @@ test('FLC Workshop action selector and palette grid stay compact', () => {
   assert.ok(headerSourceRule, 'missing header source rule');
   assert.ok(sourceBarRule, 'missing source bar rule');
   assert.ok(headerSourceBarRule, 'missing header source bar rule');
-  assert.ok(sourceChooserRule, 'missing source chooser rule');
-  assert.ok(sourceChoiceRule, 'missing source choice rule');
+  assert.ok(sourceOpenRule, 'missing source open wrapper rule');
+  assert.ok(sourceNativeSelectRule, 'missing native source select rule');
   assert.ok(toastRule, 'missing workshop toast rule');
+  assert.ok(modalPanelRule, 'missing modal panel rule');
+  assert.ok(directionDisabledRule, 'missing disabled direction rule');
+  assert.ok(workshopHideRule, 'missing lower-width toolbar hide rule');
   assert.ok(previewLayoutRule, 'missing preview layout rule');
   assert.ok(previewControlsRule, 'missing preview controls rule');
   assert.ok(controlGroupRule, 'missing control group rule');
+  assert.ok(exportFormRule, 'missing export form rule');
+  assert.ok(exportFormCompactRule, 'missing compact export form rule');
   assert.ok(exportChoiceRule, 'missing export choice rule');
   assert.ok(exportInputRule, 'missing export input rule');
   assert.ok(exportPopoverRule, 'missing export popover rule');
   assert.ok(previewRowRule, 'missing preview row rule');
   assert.ok(paletteGridRule, 'missing palette grid rule');
   assert.ok(paletteSwatchRule, 'missing palette swatch rule');
+  assert.match(renderer, /document\.createElement\('select'\)/);
+  assert.match(renderer, /chooser\.className = 'flic-workshop-source-native-select'/);
+  assert.match(renderer, /knownGroup\.label = 'Known FLCs'/);
+  assert.match(renderer, /separator\.disabled = true/);
+  assert.match(renderer, /browseGroup\.label = 'Other'/);
+  assert.match(renderer, /browseSource\.textContent = 'Browse FLC or Storyboard'/);
+  assert.match(renderer, /getFlicWorkshopToastHost\(\)\.appendChild\(toast\)/);
+  assert.match(renderer, /hideFlicWorkshopToast\(\)/);
+  assert.match(renderer, /function getPreviewAvailableDirectionIndexes\(preview\)/);
+  assert.match(renderer, /btn\.disabled = disabled/);
+  assert.match(renderer, /getFlicWorkshopPreviewForDisplay\(activeDirection\)/);
+  assert.match(renderer, /displayPreviewCache/);
+  assert.match(renderer, /sliceBase64FramesByDirection\(preview\.indexedFramesBase64, preview, directionIndex\)/);
   assert.match(headerSourceRule[0], /justify-self:\s*end;/);
   assert.match(sourceBarRule[0], /grid-template-columns:\s*auto minmax\(0,\s*1fr\) auto;/);
   assert.match(headerSourceBarRule[0], /width:\s*100%;/);
-  assert.match(sourceChooserRule[0], /overflow-x:\s*hidden;/);
-  assert.match(sourceChoiceRule[0], /display:\s*block;/);
-  assert.match(sourceChoiceRule[0], /border:\s*0;/);
-  assert.match(sourceChoiceRule[0], /text-align:\s*left;/);
-  assert.match(sourceChoiceRule[0], /text-overflow:\s*ellipsis;/);
-  assert.match(toastRule[0], /position:\s*fixed;/);
+  assert.match(sourceOpenRule[0], /position:\s*relative;/);
+  assert.match(sourceNativeSelectRule[0], /position:\s*absolute;/);
+  assert.match(sourceNativeSelectRule[0], /opacity:\s*0;/);
+  assert.match(sourceNativeSelectRule[0], /cursor:\s*pointer;/);
+  assert.match(toastRule[0], /position:\s*absolute;/);
+  assert.match(toastRule[0], /bottom:\s*14px;/);
+  assert.match(modalPanelRule[0], /position:\s*relative;/);
+  assert.match(directionDisabledRule[0], /cursor:\s*not-allowed;/);
   assert.match(previewLayoutRule[0], /grid-template-columns:\s*minmax\(220px,\s*280px\) minmax\(0,\s*1fr\);/);
   assert.match(previewControlsRule[0], /grid-template-columns:\s*1fr;/);
   assert.match(controlGroupRule[0], /grid-template-rows:\s*auto 1fr;/);
   assert.match(controlGroupRule[0], /border-radius:\s*8px;/);
+  assert.match(exportFormRule[0], /width:\s*100%;/);
+  assert.match(exportFormRule[0], /max-width:\s*none;/);
+  assert.match(exportFormCompactRule[0], /max-width:\s*none;/);
   assert.match(exportChoiceRule[0], /min-height:\s*38px;/);
-  assert.match(exportChoiceRule[0], /font-size:\s*0\.86rem;/);
+  assert.match(exportChoiceRule[0], /font-size:\s*0\.82rem;/);
   assert.match(exportChoiceRule[0], /font-weight:\s*400;/);
   assert.match(exportChoiceRule[0], /text-align:\s*left;/);
-  assert.match(exportInputRule[0], /font-size:\s*0\.86rem;/);
+  assert.match(exportInputRule[0], /font-size:\s*0\.82rem;/);
   assert.match(exportInputRule[0], /font-weight:\s*400;/);
   assert.match(exportPopoverRule[0], /position:\s*absolute;/);
   assert.match(exportPopoverRule[0], /background:\s*rgba\(36,\s*25,\s*64,\s*0\.1\);/);

@@ -850,13 +850,11 @@ function exportFlicsterStoryboardFromFlc(flcPath, outputDir, options = {}) {
   const decoded = decodeCiv3Flc(flcPath);
   const meta = { ...metadataFromDecoded(decoded), ...(options.meta || {}) };
   const exportPalette = options.palette && options.palette.length >= 768 ? options.palette : decoded.palette;
-  const sourceWidth = meta.frameWidth;
-  const sourceHeight = meta.frameHeight;
   if (Number.isFinite(Number(options.frameWidth))) {
-    meta.frameWidth = Math.max(sourceWidth, clampInt(options.frameWidth, 1, 255, sourceWidth));
+    meta.frameWidth = clampInt(options.frameWidth, 1, 255, meta.frameWidth);
   }
   if (Number.isFinite(Number(options.frameHeight))) {
-    meta.frameHeight = Math.max(sourceHeight, clampInt(options.frameHeight, 1, 255, sourceHeight));
+    meta.frameHeight = clampInt(options.frameHeight, 1, 255, meta.frameHeight);
   }
   if (Number.isFinite(Number(options.framesPerDirection))) {
     meta.framesPerDirection = clampInt(options.framesPerDirection, 1, 64, meta.framesPerDirection);
