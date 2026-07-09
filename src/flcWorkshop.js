@@ -372,6 +372,7 @@ function previewFromStoryboardLoaded(loaded, options = {}) {
     indexedFramesBase64: frames.map((frame) => Buffer.from(frame).toString('base64')),
     paletteBase64: Buffer.from(loaded.palette).toString('base64'),
     meta: previewMeta,
+    storyboardMeta: meta,
     storyboard: { width: loaded.storyboard.width, height: loaded.storyboard.height },
     paths: loaded.paths,
     frameCount: loaded.frames.length
@@ -905,8 +906,9 @@ function exportFlicsterStoryboardFromFlc(flcPath, outputDir, options = {}) {
   if (Number.isFinite(Number(options.delay))) {
     meta.delay = clampInt(options.delay, 1, 65535, meta.delay);
   }
-  meta.xOffset = Math.max(0, Math.round((meta.xsOrig - meta.frameWidth) / 2));
-  meta.yOffset = Math.max(0, Math.round((meta.ysOrig - meta.frameHeight) / 2));
+  const frameSizeChanged = meta.frameWidth !== sourceMeta.frameWidth || meta.frameHeight !== sourceMeta.frameHeight;
+  meta.xOffset = frameSizeChanged ? Math.max(0, Math.round((meta.xsOrig - meta.frameWidth) / 2)) : sourceMeta.xOffset;
+  meta.yOffset = frameSizeChanged ? Math.max(0, Math.round((meta.ysOrig - meta.frameHeight) / 2)) : sourceMeta.yOffset;
   const viewerFrames = framesFromBase64List(options.framesBase64);
   const frames = viewerFrames.length > 0
     ? prepareStoryboardExportFramesFromIndexed(viewerFrames, {

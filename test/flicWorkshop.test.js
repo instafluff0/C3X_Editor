@@ -295,15 +295,19 @@ test('vanilla FLC fixtures export to storyboard and rebuild compatible FLCs', { 
     const loaded = loadFlicsterStoryboard(exported.paths.fxmPath);
     const pcx = decodeIndexedPcx(exported.paths.pcxPath);
     const fxm = parseFlicsterFxm(exported.paths.fxmPath);
+    const sourceDecoded = decodeCiv3Flc(fixture.file);
     assert.equal(fxm.frameWidth, fixture.meta.width, `${fixture.name} FXM width`);
     assert.equal(fxm.frameHeight, fixture.meta.height, `${fixture.name} FXM height`);
     assert.equal(fxm.delay, fixture.meta.speed, `${fixture.name} FXM delay`);
     assert.equal(fxm.civ3.numAnims, fixture.meta.directions, `${fixture.name} FXM directions`);
     assert.equal(fxm.civ3.animLength, fixture.meta.framesPerDirection, `${fixture.name} FXM frames`);
+    assert.equal(fxm.civ3.xOffset, sourceDecoded.meta.civ3.xOffset, `${fixture.name} FXM x offset`);
+    assert.equal(fxm.civ3.yOffset, sourceDecoded.meta.civ3.yOffset, `${fixture.name} FXM y offset`);
+    assert.equal(fxm.civ3.xsOrig, sourceDecoded.meta.civ3.xsOrig, `${fixture.name} FXM original width`);
+    assert.equal(fxm.civ3.ysOrig, sourceDecoded.meta.civ3.ysOrig, `${fixture.name} FXM original height`);
     assert.equal(pcx.width, (fixture.meta.width + 1) * fixture.meta.framesPerDirection + 1, `${fixture.name} storyboard width`);
     assert.equal(pcx.height, (fixture.meta.height + 1) * fixture.meta.directions + 1, `${fixture.name} storyboard height`);
 
-    const sourceDecoded = decodeCiv3Flc(fixture.file);
     const sourceFrames = selectCiv3AnimationFrames(sourceDecoded.frames, fixture.meta.directions, fixture.meta.framesPerDirection);
     assertFramesEqual(loaded.frames, sourceFrames, `${fixture.name} storyboard`);
 
@@ -321,6 +325,62 @@ test('vanilla FLC fixtures export to storyboard and rebuild compatible FLCs', { 
     assert.equal(rebuilt.chunkCounts[7], fixture.meta.directions * fixture.meta.framesPerDirection, `${fixture.name} rebuilt delta chunks`);
     assertFramesEqual(selectCiv3AnimationFrames(rebuilt.frames, fixture.meta.directions, fixture.meta.framesPerDirection), loaded.frames, `${fixture.name} rebuilt`);
   }
+});
+
+test('inspected storyboard metadata survives UI-style Save as FLC rebuild', { skip: !hasVanillaFixtures }, () => {
+  const fixture = vanillaFixtures.find((item) => item.name === 'WorkerDefault');
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-flic-storyboard-ui-build-'));
+  const exported = exportFlicsterStoryboardFromFlc(fixture.file, out, { baseName: 'worker-ui-build' });
+  const sourceDecoded = decodeCiv3Flc(fixture.file);
+  const inspected = handleFlicWorkshop({ action: 'inspectStoryboard', fxmPath: exported.paths.fxmPath });
+  assert.equal(inspected.ok, true);
+  assert.ok(inspected.storyboardMeta, 'inspectStoryboard should expose flat storyboard metadata');
+  assert.equal(inspected.storyboardMeta.frameWidth, fixture.meta.width);
+  assert.equal(inspected.storyboardMeta.frameHeight, fixture.meta.height);
+  assert.equal(inspected.storyboardMeta.directionCount, fixture.meta.directions);
+  assert.equal(inspected.storyboardMeta.framesPerDirection, fixture.meta.framesPerDirection);
+  assert.equal(inspected.storyboardMeta.xOffset, sourceDecoded.meta.civ3.xOffset);
+  assert.equal(inspected.storyboardMeta.yOffset, sourceDecoded.meta.civ3.yOffset);
+  assert.equal(inspected.storyboardMeta.xsOrig, sourceDecoded.meta.civ3.xsOrig);
+  assert.equal(inspected.storyboardMeta.ysOrig, sourceDecoded.meta.civ3.ysOrig);
+  assert.equal(inspected.storyboardMeta.directions, sourceDecoded.meta.civ3.directions);
+
+  const meta = inspected.storyboardMeta;
+  const builtPath = path.join(out, 'worker-ui-built.flc');
+  const built = handleFlicWorkshop({
+    action: 'buildFlc',
+    outputPath: builtPath,
+    framesBase64: inspected.indexedFramesBase64,
+    paletteBase64: inspected.paletteBase64,
+    frameWidth: meta.frameWidth,
+    frameHeight: meta.frameHeight,
+    directionCount: meta.directionCount,
+    framesPerDirection: meta.framesPerDirection,
+    delay: meta.delay,
+    xOffset: meta.xOffset,
+    yOffset: meta.yOffset,
+    xsOrig: meta.xsOrig,
+    ysOrig: meta.ysOrig,
+    directions: meta.directions
+  });
+  assert.equal(built.ok, true);
+  const rebuilt = decodeCiv3Flc(builtPath);
+  assert.equal(rebuilt.meta.width, fixture.meta.width);
+  assert.equal(rebuilt.meta.height, fixture.meta.height);
+  assert.equal(rebuilt.meta.speed, fixture.meta.speed);
+  assert.equal(rebuilt.meta.frameCountHeader, fixture.meta.directions * fixture.meta.framesPerDirection);
+  assert.equal(rebuilt.meta.civ3.numAnims, sourceDecoded.meta.civ3.numAnims);
+  assert.equal(rebuilt.meta.civ3.animLength, sourceDecoded.meta.civ3.animLength);
+  assert.equal(rebuilt.meta.civ3.xOffset, sourceDecoded.meta.civ3.xOffset);
+  assert.equal(rebuilt.meta.civ3.yOffset, sourceDecoded.meta.civ3.yOffset);
+  assert.equal(rebuilt.meta.civ3.xsOrig, sourceDecoded.meta.civ3.xsOrig);
+  assert.equal(rebuilt.meta.civ3.ysOrig, sourceDecoded.meta.civ3.ysOrig);
+  assert.equal(rebuilt.meta.civ3.directions, sourceDecoded.meta.civ3.directions);
+  assertFramesEqual(
+    selectCiv3AnimationFrames(rebuilt.frames, meta.directionCount, meta.framesPerDirection),
+    loadFlicsterStoryboard(exported.paths.fxmPath).frames,
+    'UI-style storyboard rebuild'
+  );
 });
 
 test('current viewer transforms survive storyboard export and Save as FLC rebuild', { skip: !hasVanillaFixtures }, () => {
@@ -450,6 +510,11 @@ test('renderer exposes the Units-tab FLC Workshop entry point', () => {
   assert.match(renderer, /action: 'inspectStoryboard'/);
   assert.match(renderer, /action: 'exportStoryboard'/);
   assert.match(renderer, /action: 'buildFlc'/);
+  assert.match(renderer, /function getFlicWorkshopStoryboardBuildMeta\(storyboard\)/);
+  assert.match(renderer, /const flat = source\.storyboardMeta \|\| \{\}/);
+  assert.match(renderer, /directionCount: meta\.directionCount/);
+  assert.match(renderer, /framesPerDirection: meta\.framesPerDirection/);
+  assert.match(renderer, /xOffset: frameSizeChanged \? Math\.max\(0, Math\.round\(\(xsOrig - frameWidth\) \/ 2\)\) : meta\.xOffset/);
   assert.match(renderer, /saveBtn\.textContent = 'Save as FLC'/);
   assert.match(renderer, /configuredName === 'conquests' \|\| configuredName === 'civ3ptw'/);
   assert.match(renderer, /\['File', flicWorkshopModal\.sourcePath \? getFlicWorkshopDisplayPath\(flicWorkshopModal\.sourcePath\) : '\(none\)'\]/);

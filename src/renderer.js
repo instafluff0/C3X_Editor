@@ -13836,9 +13836,38 @@ function getFlicWorkshopStoryboardStem(filePath) {
   return getPathBaseName(filePath).replace(/_StoryBoard\.FXM$/i, '').replace(/\.[^.]+$/, '') || 'animation';
 }
 
+function finiteNumberOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getFlicWorkshopStoryboardBuildMeta(storyboard) {
+  const source = storyboard || {};
+  const flat = source.storyboardMeta || {};
+  const previewMeta = source.meta || {};
+  const civ3 = previewMeta.civ3 || {};
+  const frameWidth = Math.max(1, Math.round(finiteNumberOr(flat.frameWidth, previewMeta.width || 1)));
+  const frameHeight = Math.max(1, Math.round(finiteNumberOr(flat.frameHeight, previewMeta.height || 1)));
+  const directionCount = Math.max(1, Math.round(finiteNumberOr(flat.directionCount, civ3.numAnims || 1)));
+  const framesPerDirection = Math.max(1, Math.round(finiteNumberOr(flat.framesPerDirection, civ3.animLength || 1)));
+  const delay = Math.max(1, Math.round(finiteNumberOr(flat.delay, previewMeta.speed || flicWorkshopModal.frameDelay || 100)));
+  return {
+    frameWidth,
+    frameHeight,
+    directionCount,
+    framesPerDirection,
+    delay,
+    xOffset: Math.max(0, Math.round(finiteNumberOr(flat.xOffset, civ3.xOffset || 0))),
+    yOffset: Math.max(0, Math.round(finiteNumberOr(flat.yOffset, civ3.yOffset || 0))),
+    xsOrig: Math.max(frameWidth, Math.round(finiteNumberOr(flat.xsOrig, civ3.xsOrig || frameWidth))),
+    ysOrig: Math.max(frameHeight, Math.round(finiteNumberOr(flat.ysOrig, civ3.ysOrig || frameHeight))),
+    directions: Math.max(0, Math.round(finiteNumberOr(flat.directions, civ3.directions || (directionCount === 8 ? 255 : 1))))
+  };
+}
+
 function renderFlicWorkshopSaveAsFlcTab(body) {
   const storyboard = flicWorkshopModal.storyboard || flicWorkshopModal.preview || {};
-  const meta = storyboard.meta || {};
+  const meta = getFlicWorkshopStoryboardBuildMeta(storyboard);
   const story = storyboard.storyboard || {};
   const stem = getFlicWorkshopStoryboardStem(flicWorkshopModal.sourcePath);
   const form = document.createElement('div');
@@ -13863,7 +13892,7 @@ function renderFlicWorkshopSaveAsFlcTab(body) {
   infoLabel.textContent = 'Storyboard';
   const infoValue = document.createElement('div');
   infoValue.className = 'flic-workshop-source-summary';
-  infoValue.textContent = `${story.width || 0} x ${story.height || 0}; ${meta.frameWidth || 0} x ${meta.frameHeight || 0}; ${meta.directionCount || 0} directions; ${meta.framesPerDirection || 0} frames`;
+  infoValue.textContent = `${story.width || 0} x ${story.height || 0}; ${meta.frameWidth} x ${meta.frameHeight}; ${meta.directionCount} directions; ${meta.framesPerDirection} frames`;
   infoRow.appendChild(infoLabel);
   infoRow.appendChild(infoValue);
   form.appendChild(infoRow);
@@ -13925,10 +13954,11 @@ function renderFlicWorkshopSaveAsFlcTab(body) {
     const outputPath = getFlicWorkshopOutputPath(outputDir, `${cleanBase.replace(/\.flc$/i, '')}.flc`);
     if (!await confirmFlicWorkshopOverwrite([outputPath])) return;
     const viewerPayload = getFlicWorkshopViewerFramePayload();
-    const frameWidth = viewerPayload ? viewerPayload.frameWidth : Math.max(1, Number(meta.frameWidth) || 1);
-    const frameHeight = viewerPayload ? viewerPayload.frameHeight : Math.max(1, Number(meta.frameHeight) || 1);
-    const xsOrig = Math.max(frameWidth, Number(meta.xsOrig) || frameWidth);
-    const ysOrig = Math.max(frameHeight, Number(meta.ysOrig) || frameHeight);
+    const frameWidth = viewerPayload ? viewerPayload.frameWidth : meta.frameWidth;
+    const frameHeight = viewerPayload ? viewerPayload.frameHeight : meta.frameHeight;
+    const xsOrig = Math.max(frameWidth, meta.xsOrig);
+    const ysOrig = Math.max(frameHeight, meta.ysOrig);
+    const frameSizeChanged = frameWidth !== meta.frameWidth || frameHeight !== meta.frameHeight;
     const res = await window.c3xManager.flicWorkshop({
       action: 'buildFlc',
       fxmPath: flicWorkshopModal.sourcePath,
@@ -13937,14 +13967,14 @@ function renderFlicWorkshopSaveAsFlcTab(body) {
       paletteBase64: viewerPayload && viewerPayload.paletteBase64,
       frameWidth,
       frameHeight,
-      directionCount: Number(meta.directionCount) || 1,
-      framesPerDirection: Number(meta.framesPerDirection) || 1,
-      delay: viewerPayload ? viewerPayload.delay : clampFlicWorkshopFrameDelay(Number(meta.delay) || flicWorkshopModal.frameDelay),
-      xOffset: Math.max(0, Math.round((xsOrig - frameWidth) / 2)),
-      yOffset: Math.max(0, Math.round((ysOrig - frameHeight) / 2)),
+      directionCount: meta.directionCount,
+      framesPerDirection: meta.framesPerDirection,
+      delay: viewerPayload ? viewerPayload.delay : clampFlicWorkshopFrameDelay(meta.delay),
+      xOffset: frameSizeChanged ? Math.max(0, Math.round((xsOrig - frameWidth) / 2)) : meta.xOffset,
+      yOffset: frameSizeChanged ? Math.max(0, Math.round((ysOrig - frameHeight) / 2)) : meta.yOffset,
       xsOrig,
       ysOrig,
-      directions: Number(meta.directions) || ((Number(meta.directionCount) || 1) === 8 ? 255 : 1)
+      directions: meta.directions
     });
     if (res && res.ok) {
       flicWorkshopModal.status = '';
