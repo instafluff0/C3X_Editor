@@ -15,25 +15,37 @@ function listRecentCivAssistSaves(civ3Path, requestedLimit = 10) {
   if (!savesDir || !fs.existsSync(savesDir) || !fs.statSync(savesDir).isDirectory()) {
     return { ok: true, savesDir, saves: [] };
   }
-  const saves = fs.readdirSync(savesDir, { withFileTypes: true })
+  const searchDirs = [
+    { dir: savesDir, prefix: '' },
+    { dir: path.join(savesDir, 'Auto'), prefix: 'Auto' }
+  ].filter((item) => {
+    try {
+      return fs.existsSync(item.dir) && fs.statSync(item.dir).isDirectory();
+    } catch (_err) {
+      return false;
+    }
+  });
+  const saves = searchDirs.flatMap(({ dir, prefix }) => fs.readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && /\.sav$/i.test(entry.name))
     .map((entry) => {
-      const filePath = path.join(savesDir, entry.name);
+      const filePath = path.join(dir, entry.name);
+      const relativeName = prefix ? path.join(prefix, entry.name) : entry.name;
       try {
         const stat = fs.statSync(filePath);
         return {
           path: filePath,
           fileName: entry.name,
+          relativeName,
           modifiedMs: Number(stat.mtimeMs || 0),
           size: Number(stat.size || 0)
         };
       } catch (_err) {
         return null;
       }
-    })
+    }))
     .filter(Boolean)
     .sort((a, b) => (b.modifiedMs - a.modifiedMs)
-      || a.fileName.localeCompare(b.fileName, 'en', { sensitivity: 'base' }))
+      || a.relativeName.localeCompare(b.relativeName, 'en', { sensitivity: 'base' }))
     .slice(0, limit);
   return { ok: true, savesDir, saves };
 }

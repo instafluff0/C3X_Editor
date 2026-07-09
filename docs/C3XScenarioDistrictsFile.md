@@ -81,7 +81,20 @@ Application behavior:
   - `enable_named_tiles`
 
 ## Savegame Persistence (Not Scenario Text Export)
-C3X persists named tiles into savegame mod chunk `named_tiles`:
+C3X persists live district/named-tile state into savegame mod chunks after the vanilla Civ3 save data. For Civ Advisor and save inspection, these chunks are more authoritative than `scenario.districts.txt` for a mid-game save.
+
+District-related chunks include:
+- `district_config_names`
+- `district_pending_requests`
+- `building_pending_orders`
+- `district_tile_map`
+- `natural_wonder_districts`
+- `distribution_hub_records`
+- `aerodrome_airlift_usage`
+
+`district_tile_map` stores live district placement/state, while district yields still come from the effective C3X district config files loaded by C3X. `district_config_names` is the saved ID/name mapping used to detect whether the current district config can safely interpret those saved IDs.
+
+C3X also persists named tiles into savegame mod chunk `named_tiles`:
 - Per-entry payload: `int tile_x`, `int tile_y`, `char name[100]`.
 - On save load, entries are restored into `is->named_tile_map`.
 

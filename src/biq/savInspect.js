@@ -546,7 +546,9 @@ function parseCity(reader, index, savVersion) {
   if (reader.tag() !== 'CITY') throw new Error(`Expected fourth CITY at ${fourthStart}.`);
   const fourthLength = reader.uint32();
   city.culturePerTurn = reader.int32();
-  reader.skip(32 * 4);
+  city.cultureByPlayer = [];
+  for (let playerID = 0; playerID < 32; playerID += 1) city.cultureByPlayer.push(reader.int32());
+  city.culture = Number(city.cultureByPlayer[city.owner]) || 0;
   reader.skip(8);
   city.foodPerTurn = reader.int32();
   city.shieldsPerTurn = reader.int32();
@@ -574,6 +576,18 @@ function parseCity(reader, index, savVersion) {
   city.entertainerCount = reader.int32();
   city.scientistCount = reader.int32();
   city.taxManCount = reader.int32();
+  city.foodRequired = city.foodPerTurnForPopulation;
+  city.productionLoss = city.corruptShieldsPerTurn;
+  city.corruption = city.corruptGoldPerTurn;
+  city.foodIncome = city.excessFoodPerTurn;
+  city.productionIncome = city.unwastedFoodPerTurn;
+  city.cashIncome = city.uncorruptGoldPerTurn;
+  city.luxuryIncome = city.luxGoldPerTurn;
+  city.scienceIncome = city.scienceGoldPerTurn;
+  city.taxIncome = city.treasuryGoldPerTurn;
+  city.specialistLuxuryIncome = city.entertainerCount;
+  city.specialistScienceIncome = city.scientistCount;
+  city.specialistTaxIncome = city.taxManCount;
   const fifthRead = reader.tell() - fifthBodyStart;
   if (fifthLength > fifthRead) reader.skip(fifthLength - fifthRead);
 
@@ -582,7 +596,17 @@ function parseCity(reader, index, savVersion) {
   const popdLength = reader.uint32();
   city.specialistCount = reader.int32();
   city.citizenCount = reader.int32();
-  for (let c = 0; c < city.citizenCount; c += 1) parseLengthSection(reader, 'CTZN');
+  city.citizens = [];
+  for (let c = 0; c < city.citizenCount; c += 1) {
+    const citizenStart = reader.tell();
+    if (reader.tag() !== 'CTZN') throw new Error(`Expected CTZN at ${citizenStart}.`);
+    const citizenLength = reader.uint32();
+    const citizenBody = reader.bytes(citizenLength);
+    city.citizens.push({
+      mood: citizenLength >= 268 ? citizenBody.readInt32LE(264) : -1,
+      nationality: citizenLength >= 292 ? citizenBody.readInt32LE(288) : -1,
+    });
+  }
   const popdRead = reader.tell() - popdStart - 8;
   if (popdLength > popdRead) reader.skip(popdLength - popdRead);
 
@@ -590,7 +614,15 @@ function parseCity(reader, index, savVersion) {
   if (reader.tag() !== 'BINF') throw new Error(`Expected BINF at ${binfStart}.`);
   const binfLength = reader.uint32();
   city.buildingCount = reader.int32();
-  reader.skip(city.buildingCount * 12);
+  city.buildings = [];
+  for (let buildingIndex = 0; buildingIndex < city.buildingCount; buildingIndex += 1) {
+    city.buildings.push({
+      buildingIndex,
+      yearBuilt: reader.int32(),
+      originalOwner: reader.int32(),
+      culture: reader.int32(),
+    });
+  }
   const binfRead = reader.tell() - binfStart - 8;
   if (binfLength > binfRead) reader.skip(binfLength - binfRead);
 
@@ -666,11 +698,14 @@ function summarizeUnits(units, names, players) {
     count: units.length,
     byType: countBy(units, (unit) => namedIndex(names.units, unit.unitType, 'Unit')),
     byOwner: countBy(units, (unit) => ownerName(unit.owner)),
-    records: units.slice(0, 100).map((unit) => ({
+    records: units.map((unit) => ({
       id: unit.id,
       x: unit.x,
       y: unit.y,
       owner: unit.owner,
+      nationality: unit.nationality,
+      unitType: unit.unitType,
+      experienceLevel: unit.experienceLevel,
       ownerName: ownerName(unit.owner),
       type: namedIndex(names.units, unit.unitType, 'Unit'),
       name: unit.name,
@@ -690,7 +725,11 @@ function summarizeCities(cities, names, players) {
   return {
     count: cities.length,
     byOwner: countBy(cities, (city) => ownerName(city.owner)),
-    records: cities.map((city) => ({
+    records: cities.map((city) => {
+      const owner = playerById.get(city.owner);
+      const ownerRaceID = owner ? Number(owner.raceID) : -1;
+      const citizens = Array.isArray(city.citizens) ? city.citizens : [];
+      return ({
       id: city.id,
       name: city.name,
       x: city.x,
@@ -699,17 +738,42 @@ function summarizeCities(cities, names, players) {
       ownerName: ownerName(city.owner),
       population: city.citizenCount,
       specialists: city.specialistCount,
+      happyCitizens: citizens.filter((citizen) => Number(citizen.mood) === 0).length,
+      unhappyCitizens: citizens.filter((citizen) => Number(citizen.mood) === 2).length,
+      contentCitizens: citizens.filter((citizen) => Number(citizen.mood) === 1).length,
+      alienCitizens: citizens.filter((citizen) => Number(citizen.nationality) >= 0 && Number(citizen.nationality) !== ownerRaceID).length,
       buildings: city.buildingCount,
+      buildingRecords: city.buildings,
       foodPerTurn: city.foodPerTurn,
       shieldsPerTurn: city.shieldsPerTurn,
+      shieldsCollected: city.shieldsCollected,
       commercePerTurn: city.commercePerTurn,
       culturePerTurn: city.culturePerTurn,
+      culture: city.culture,
+      pollution: city.pollution,
+      maintenanceGPT: city.maintenanceGPT,
+      foodRequired: city.foodRequired,
+      foodIncome: city.foodIncome,
+      productionLoss: city.productionLoss,
+      corruption: city.corruption,
+      productionIncome: city.productionIncome,
+      cashIncome: city.cashIncome,
+      luxuryIncome: city.luxuryIncome,
+      scienceIncome: city.scienceIncome,
+      taxIncome: city.taxIncome,
+      specialistLuxuryIncome: city.specialistLuxuryIncome,
+      specialistScienceIncome: city.specialistScienceIncome,
+      specialistTaxIncome: city.specialistTaxIncome,
+      constructingIndex: city.constructing,
+      constructingType: city.constructingType,
+      productionQueue: city.queue,
       constructing: city.constructingType === 1
         ? namedIndex(names.buildings, city.constructing, 'Building')
         : city.constructingType === 2
           ? namedIndex(names.units, city.constructing, 'Unit')
           : `Type ${city.constructingType}:${city.constructing}`,
-    })),
+      });
+    }),
   };
 }
 

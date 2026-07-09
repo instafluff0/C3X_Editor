@@ -1736,14 +1736,19 @@ ipcMain.handle('manager:inspect-civ-color-palettes', async (_event, payload) => 
   }
 });
 
-ipcMain.handle('manager:inspect-civ-assist-save', async (_event, filePath) => {
+ipcMain.handle('manager:inspect-civ-assist-save', async (_event, payload) => {
   try {
-    const target = String(filePath || '');
-    const result = inspectCivAssistSaveFile(target);
+    const request = payload && typeof payload === 'object' && !Buffer.isBuffer(payload)
+      ? payload
+      : { filePath: payload };
+    const target = String(request.filePath || request.path || '');
+    const result = inspectCivAssistSaveFile(target, {
+      selectedPlayerID: request.selectedPlayerID
+    });
     if (!result || !result.ok) {
       log.warn('civAssist', `SAV inspect failed: ${result && result.error}`);
     } else {
-      log.info('civAssist', `Loaded ${log.rel(target)} for General tab.`);
+      log.info('civAssist', `Loaded ${log.rel(target)} for Civ Advisor.`);
     }
     return result;
   } catch (err) {

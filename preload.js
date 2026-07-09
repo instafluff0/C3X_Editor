@@ -196,6 +196,6 @@ contextBridge.exposeInMainWorld('c3xManager', {
   previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload),
   inspectAudioFile: (filePath) => ipcRenderer.invoke('manager:inspect-audio-file', filePath),
   inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload),
-  inspectCivAssistSave: (filePath) => ipcRenderer.invoke('manager:inspect-civ-assist-save', filePath),
+  inspectCivAssistSave: (payload) => ipcRenderer.invoke('manager:inspect-civ-assist-save', payload),
   flicWorkshop: (payload) => ipcRenderer.invoke('manager:flic-workshop', payload)
 });

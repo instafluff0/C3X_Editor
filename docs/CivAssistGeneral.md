@@ -12,6 +12,8 @@ Reference files used:
 
 The decompiled CivAssist file currently looks like a low-level PE/.NET metadata dump, not useful C# method logic. Treat it as a fallback; direct SAV section evidence is more productive.
 
+For C3X district-specific save/config interactions, see `docs/CivAdvisorDistricts.md`. The short version is: district yields are defined by effective C3X config files when C3X starts/loads a scenario, while `.SAV` mod chunks persist live district instances and saved config-name alignment. Current Civ Advisor values should prefer saved city/player aggregates and avoid adding district yields a second time.
+
 ## Existing Local Entry Points
 
 - `node scripts/inspect-sav.js <save> --limit N` prints the current debug summary.
@@ -119,7 +121,9 @@ The `.SAV` embedded BIQ rules are authoritative for Civ Advisor labels. Do not a
 Civ Advisor reference links and thumbnails must be conditional. For the General tab, `src/biq/civAssist.js` emits section signatures for:
 
 - `RACE`: civilization name, Civilopedia key
+- `TECH`: technology name, Civilopedia key, era index
 - `GOOD`: resource name, Civilopedia key
+- `BLDG`: improvement name, Civilopedia key
 - `GOVT`: name, Civilopedia key
 - `ERAS`: name, Civilopedia key
 
@@ -134,6 +138,23 @@ This should be verified against another save before treating the offset as final
 ## Recommended Next Implementation Step
 
 Next CivAssist tabs should reuse `src/biq/civAssist.js` and add parser fields behind tests before exposing UI. Treat offsets validated only against this save, such as the diplomacy vector and score tail, as candidates for cross-save verification.
+
+## Alerts Tab Notes
+
+The Civ Advisor `Alerts` tab is intentionally non-obtrusive. It never foregrounds the app or activates the main window; alerts are visible only when the user opens Civ Advisor, and the tab badge counts current alerts for the selected save.
+
+The tab should start with actionable alerts. Date, turn, time-played, and Golden Age status belong on General, not in an Alerts status banner.
+
+There are two different alert families:
+
+- Current-save alerts can be computed from one `.SAV`: trade opportunities, expiring deals, production overrun, treasury deficit, city deficit, research overrun, visible pollution, visible riot risk, damaged units, and enemies willing to negotiate.
+- Historical alerts require comparing at least two observations of the same game: city grew/shrank, specialists were reassigned, rival changed government, rival entered a new era, new tech/resource/contact appeared for sale, and disconnected-source warnings if they depend on newly observed map state.
+
+The current implementation should keep historical items out of `current` unless the auto-update/save-history path has previous state to compare against. A future unobtrusive design is a small `History` subview inside Alerts that appears only after multiple saves have been loaded or auto-update has observed a new save. That view should group entries by game date, similar to CivAssist II's alert log, while keeping the existing Current Alerts list focused on actionable facts from the selected save.
+
+Current alert rows may include `detailRows`, which the renderer shows in the right-hand detail pane when an alert is selected. Trade detail rows should show the specific civ and the linked technologies/resources involved, instead of only a summary such as "resources are for sale from 2 civs".
+
+`Alert Coverage` is a selectable implementation index, not a roadmap table. It should show only active, current-save alert families and let users inspect which current alerts match each family. Planned CivAssist-style checks belong in this document until their required data is decoded and tested.
 
 ## Trade Tab Notes
 
@@ -190,3 +211,243 @@ Known gaps:
 
 - Gold per turn is currently fixture-matched for Tokugawa but should be decoded from deal/payment data.
 - City-state tech filtering may need CivAssist-specific exclusions beyond the basic prerequisite/era check.
+
+## Diplomacy Tab Notes
+
+The Civ Advisor `Diplomacy` tab uses the same live `LEAD` diplomacy vectors as the Trade tab:
+
+- `LEAD + 2964`: `will_talk_to[32]`
+- `LEAD + 3348`: `at_war[32]`
+- `LEAD + 3732`: `contact_with[32]`
+
+The first implementation intentionally limits itself to verified save facts:
+
+- known/contacted visible rivals;
+- Peace/War relation;
+- Will Talk;
+- saved culture-total comparison labels;
+- active timed deal counts from the same treaty-list tails used by Trade;
+- current buy/sell opportunity counts;
+- government, era, and gold context.
+
+The CivAssist II screenshot also shows Embassy, Spy, Ally, ROP, and MPP columns. Those live `.SAV` offsets are not yet verified in this codebase, so the app should not display guessed values. Keep them as planned Diplomacy coverage until another offset audit confirms them against real saves.
+
+## Techs Tab Notes
+
+The Civ Advisor `Techs` tab consolidates CivAssist II's Technology screen into a compact research-status panel and a scrollable technology table. Save-native `TECH`, `RACE`, and `ERAS` references use the same whole-section signature gate as General and Trade, so thumbnails and editor navigation are only enabled when the loaded BIQ matches the save's embedded rules.
+
+Live research state for the human player comes from the `LEAD` body:
+
+- `+216`: current era index.
+- `+220`: gathered research beakers (`1614`).
+- `+224`: current research `TECH` index (`29`, Education).
+- `+228`: turns already spent researching (`25`).
+- `+396`: science slider step (`3`, displayed as `30%`).
+
+Technology ownership uses the `GAME` technology-civilization masks documented above. For the fixture, Japan owns 25 visible-era technologies. The `Known To` list intentionally includes only visible rivals, matching CivAssist's `(9) Greece, ...` display rather than exposing unmet civilizations. The UI renders those visible-rival names as compact non-link pills instead of full civilization reference chips so dense technology rows remain scannable; users can filter the technology table with the local Techs search box.
+
+Estimated cost matches every visible CivAssist row in the fixture. The calculation uses:
+
+1. `TECH.cost` from the embedded rules.
+2. The number of remaining players from `GAME.remainingPlayersMask`, converted to the Civ3 known-civ denominator with `floor(count * 7 / 4)`.
+3. A discount count for active contacted civilizations that know the tech, including the human player for already-known technologies.
+4. `WSIZ.techRate` for the save's world size.
+5. `DIFF.costFactor`, capped at 10.
+6. The Accelerated Production rule when enabled.
+
+For Education in the reference save, that produces `1815`. The current implementation's beakers-per-turn projection is `22`, based on the human cities' saved commerce, the 30% science rate, and the difficulty cost factor. With `1614` gathered, the UI therefore shows `201` remaining over `10` turns and `19` end wastage (`9% of 201`).
+
+This projection is now suspect for game-parity display. The in-game Domestic Advisor for the same save shows `38` science and Education in `6` turns, matching the saved city science fields (`19 + 19`). C3X districts can contribute to those saved city fields, so the current-value Techs panel should prefer saved city science output; any commerce/slider-derived value should be labeled as a projection.
+
+The optional marker is `TECH.flags & 0x20000` (`Not Required for Era Advancement`). `Optionals Skipped` lists optional technologies from completed eras that the human player does not know; it is empty for the Tokugawa fixture.
+
+## Culture And City Building Records
+
+Each live city has a `BINF` block containing one 12-byte record per embedded `BLDG` entry:
+
+- build year (`int32`)
+- original owner/player ID (`int32`, `-1` when absent)
+- accumulated culture from that improvement (`int32`)
+
+The fourth live `CITY` subrecord begins with culture per turn followed by a 32-player city-culture vector. The value at the city's owner index is the city's accumulated culture. For Kyoto this is `3811`, and its `BINF` rows reproduce CivAssist's build dates and culture totals for Palace, Temple, Library, Cathedral, Colosseum, Great Library, and Great Wall.
+
+Culture improvement links use a `BLDG` signature and remain disabled when the loaded editor scenario does not match the save's embedded rules.
+
+The CivAssist II `Miscellaneous` tab is not being copied as a single top-level Civ Advisor tab. Its Wonders list belongs with Culture because it reuses the same embedded `BLDG` records and live city `BINF` status checks:
+
+- `Culture -> Wonders` lists great and small wonders with the same conditional `BLDG` links as city improvements.
+- Wonder status comes from the same per-city availability pass used by `Culture -> City Improvements`.
+- The initial `Top Available Locations` estimate is derived from the per-city "Available, N turns needed" status. This matches the current Culture-table production model but does not fully match CivAssist II's Miscellaneous screenshot yet (`The Pyramids` shows `Osaka [30]` there while this first pass derives `Osaka [17]`). Treat that column as useful but still under investigation.
+
+The remaining Miscellaneous groups should be split by subject rather than exposed as a random tab:
+
+- Palace Jump belongs under `Cities` once the exact `Rank` and `Required` formulas are traced.
+- Resource Locator belongs under `Trade` once the strategic/luxury selector and `(n) m` cell semantics are confirmed.
+
+## Economy Tab Notes
+
+CivAssist II's Economy screen is partly a hypothetical building simulator. Civ Advisor intentionally shows the saved Domestic Advisor economy and omits the checkbox simulator for now.
+
+The saved `CITY` economy fields map to Civ3's `City_Body` as follows:
+
+- `ProductionLoss`, `Corruption`, `ProductionIncome`, `CashIncome`
+- `Luxury`, `Science`, `AddCash`
+- `Improvements_Maintenance`
+
+National city income is `sum(CashIncome + Corruption)`. Expenses subtract science, luxury/entertainment, corruption, building maintenance, unit support, and outgoing GPT. Incoming GPT and treasury interest are income.
+
+For Tokugawa 740 AD the saved-state totals are:
+
+- city income `132`
+- science `38`
+- corruption `6`
+- maintenance `23`
+- unit costs `62`
+- net gain `+3`
+
+The unit-support calculation should use live `UNIT` records for paid units, not the `LEAD` aggregate alone. In the Tokugawa save, Japan owns 38 units: 37 native Japanese units plus one captured German worker. Republic grants three free units for each size-12 city, and the captured worker is maintenance-free. Thus `(37 paid native units - 6 government support) * 2 GPT = 62 GPT`, matching the in-game Domestic Advisor.
+
+`LEAD body +392`, `+396`, and `+400` are the luxury, science, and tax slider steps. `+136` is mobilization level, and `+32` is the Golden Age ending turn. The Economy city table intentionally omits per-building status columns; building-status details belong in Culture/Wonders or a future focused workflow, not in the saved-state economy summary. Forbidden Palace and Secret Police HQ status comes from each city's `BINF` records and links through the conditional `BLDG` signature gate.
+
+## Culture Tab Notes
+
+The Culture tab is city-scoped. The city selector lists the human player's live cities and defaults to the saved capital. Its headline values come directly from the serialized city body:
+
+- The fourth live-city `CITY` subrecord starts with `culturePerTurn`, followed by 32 per-player accumulated-culture int32 values. The selected city's owner slot is its displayed culture total.
+- Kyoto therefore decodes to `3811` culture and `28` culture per turn; Osaka decodes to `2194` and `28`. The live human `CULT` block remains authoritative for the civilization total (`6021`) and per-turn value (`56`).
+
+Each city's `BINF` block contains `BLDG count` triplets, in embedded-BIQ building order:
+
+1. build year (signed int32; negative is BC),
+2. original owner/player ID (signed int32; `-1` means absent),
+3. culture accumulated by that improvement (signed int32).
+
+For Kyoto, those triplets reproduce the CivAssist rows exactly: Palace `4000 BC / 552`, Temple `1675 BC / 842`, Library `180 AD / 309`, Cathedral `455 AD / 171`, Colosseum `350 AD / 156`, Great Library `20 BC / 738`, and Great Wall `430 AD / 124`. A built improvement receives the `2x` culture bonus when its saved build year is more than 1000 years before the current game date, matching Civ3's `Buildings_Info::get_age_in_years()` and `Culture::get_culture_produced_by()` logic.
+
+Non-built rows combine the embedded `BLDG` rule with live city/player state:
+
+- displayed shield cost is `BLDG.cost * 10`;
+- Shields/Culture is that cost divided by `BLDG.culture`;
+- required and obsolete technology IDs are checked against the saved technology-civilization masks;
+- required-improvement counts are checked against the human cities' `BINF` records;
+- Great Wonder locations are found by scanning every live city's `BINF` records;
+- links and thumbnails are gated by the full `BLDG` signature, just like the other Civ Advisor references.
+
+The first implementation uses a straight-line culture-victory date from the current saved culture-per-turn value. CivAssist's screenshot dates (`2054 AD` for Kyoto and `2788 AD` for Japan) include a forecast of future 1000-year building bonuses; that exact forecasting algorithm remains to be recovered. Keep this distinction explicit until it is fixture-matched rather than silently hard-coding the screenshot dates.
+
+## Territory Tab Notes
+
+The Territory tab scans the live `TILE` stream from the inflated SAV rather than relying on BIQ map records. The relevant saved tile fields are:
+
+- first `TILE` body `+1`: territory owner/player ID;
+- second `TILE` body `+0`: Conquests overlay bitfield (`0x01 = road`, `0x02 = railroad`, `0x04 = mine`, `0x08 = irrigation`);
+- second `TILE` body `+5`: packed base terrain byte; use the low nibble as the terrain id;
+- fourth `TILE` body `+0`: explored-by bitmask;
+- fourth `TILE` body `+20`: city id whose workers are assigned to the tile, or negative for unworked.
+
+For Tokugawa 740 AD this reproduces CivAssist's directly decoded rows:
+
+- exploration: `5000` world tiles, `1461` explored, split into `539` land and `922` water;
+- domination tiles: `185`, because CivAssist counts owned land plus coast and excludes sea/ocean;
+- workable owned land: `154`, which is the `26 worked + 128 unworked` basis for the lower improvement table;
+- improvement stats: Roaded `26 / 81`, Irrigated `14 / 8`, Mined `10 / 12`, Unroaded `0 / 47`, Unrailed `26 / 80`, Jungle or Marsh `0 / 0`.
+
+C3X district persistence is appended after the normal save data using the `0x22 'C' '3' 'X'` bookends from `injected_code.c`. The `district_tile_map` chunk is segment-relative aligned text followed by:
+
+```text
+int32 count
+repeat count times:
+  int32 x
+  int32 y
+  int32 district_id
+  int32 state
+  int32 built_by_civ_id
+  int32 completed_turn
+  int32 wonder_state
+  int32 wonder_city_id
+  int32 wonder_index
+```
+
+After `inflateSavIfNeeded()`, read the segment size from the last eight bytes, start at `buffer.length - segment_size - 8`, then align chunk payloads relative to that segment, not the absolute file offset. The Tokugawa fixture contains `90` district instances, `40` of them on Japan-owned workable land. C3X implements district completion through the tile mine overlay, so Civ Advisor excludes saved district coordinates from the `Mined` improvement total rather than treating districts as ordinary mined tiles.
+
+Still unresolved for 1:1 CivAssist Territory parity:
+
+- `Domination Limit`, `Tiles To Limit`, and visible `Unclaimed Tiles`;
+- CivAssist's Forested/Fully Improved/Partially Improved/Unimproved classifications;
+- exact city-row worked/mined/irrigated semantics where CivAssist appears to use more than the raw `cityWithWorkers` assignment.
+
+## Cities Tab Notes
+
+The first Cities implementation intentionally lists only the human player's live cities and does not reproduce CivAssist's unexplained row colors. It uses neutral Editor table styling and the shared sortable-header behavior.
+
+Citizen morale comes from each city's `POPD` list of 300-byte `CTZN` records:
+
+- `CTZN body +264`: mood (`0 = happy`, `1 = content`, `2 = unhappy` for the reference save).
+- `CTZN body +288`: citizen nationality/race index, used to count foreign citizens.
+
+For Kyoto, 10 of 12 citizens are happy and one is unhappy, producing `83%`, `8%`, and `+9`. Osaka has 12 happy citizens, producing `100%` and `+12`.
+
+Other fixture-matched columns:
+
+- Corruption is the saved corrupted-commerce value as a percentage of saved city commerce (`Osaka: 6 / 49 = 12%`).
+- Waste is the saved production-loss value as a percentage of gross production (`Osaka: 2 / (21 + 2) = 8%`).
+- Entertainer, taxman, and scientist counts come from the fifth live-city `CITY` subrecord.
+- Garrison counts human-owned live `UNIT` records on the city coordinates (`Kyoto: 18`, `Osaka: 3`).
+- Distance is staggered-grid/hex distance from the saved capital plus one (`Kyoto: 1`, `Osaka: 9`).
+- Flip Risk is `-` for the player's own cities in this first pass.
+
+Resistor, police specialist, engineer specialist, and city-rank semantics still need a fixture that contains nonzero examples before their raw fields can be finalized. They remain blank (rank remains the reference value `1`) rather than guessing from unrelated fields.
+
+## Production Tab Notes
+
+The Production tab uses the live city body's saved construction and shield fields rather than CivAssist's separate Economy what-if model:
+
+- `constructingType = 1` identifies a `BLDG` improvement; its displayed cost is `BLDG.cost * 10` shields.
+- `constructingType = 2` identifies a `PRTO` unit; `PRTO.shieldCost` is already stored in shields and must not be multiplied by the game's production factor.
+- `shieldsCollected` is current progress, `ProductionIncome` is actual shields per turn after waste, and `ProductionLoss` is saved waste.
+- turns are `ceil((cost - collected) / ProductionIncome)` and projected overflow is `(turns * ProductionIncome) - (cost - collected)`.
+
+For Tokugawa 740 AD this yields Kyoto building Samurai at `40 / 70`, `20` shields per turn, two turns, and `10` projected overflow; Osaka builds Galley at `19 / 30`, `19` shields per turn, one turn, and `8` projected overflow. CivAssist shows `22` and `13` shields per turn because its Production table reflects the Economy tab's hypothetical building simulation. Civ Advisor intentionally presents the serialized save state.
+
+Production targets use `PRTO` or `BLDG` signatures, so thumbnails and links are enabled only when the save's embedded rule section matches the scenario currently loaded in the Editor. The UI should stay table-first for CivAssist-style scanning, with the producing item rendered as the normal Editor reference chip so matching units and improvements show thumbnails and navigate back to their tabs.
+
+## Military Tab Notes
+
+The Military tab separates aggregate force composition from individual-unit condition. The Roster subtab groups the human player's live `UNIT` records by `UnitTypeID`; the Units subtab exposes each record's experience, health, remaining movement, position, and nationality.
+
+Useful live `UNIT` body offsets are:
+
+- `+20`: owning player ID
+- `+24`: nationality/race ID
+- `+32`: `PRTO` unit-type index
+- `+36`: `EXPR` experience-level index
+- `+44`: damage
+- `+48`: movement already consumed, stored in thirds of a movement point
+
+Maximum health is `EXPR.baseHitPoints + PRTO.hitPointBonus`; current health subtracts saved damage. Maximum movement is `PRTO.movement * 3` internal thirds. Civ Advisor converts current and maximum movement back to user-facing movement points, so a fresh Samurai is shown as `2/2` rather than CivAssist's internal `6/6`.
+
+Upgrade resolution must account for civilization-specific units. Starting at `PRTO.upgradeTo`, follow the chain until the first target whose `availableTo` mask contains the player's race. This maps Archer to Longbowman, Swordsman to Medieval Infantry, Pikeman to Musketman, and Galley to Caravel for Japan while skipping unavailable unique units. Upgrade price is the positive shield-cost difference multiplied by `RULE.upgradeCost` (`3` in the fixture).
+
+The Tokugawa fixture contains 38 units: 32 combat units, 6 civilians, 2 naval units, one foreign-national Worker, no damaged units, and one unit with no movement remaining. Unit and upgrade links use the exact raw 157-record `PRTO` signature from the loaded BIQ; the Units tab's synthetic era variants must not be used for this comparison.
+
+## Alerts Tab Notes
+
+The Alerts tab should be non-obtrusive by default. It is derived when a user opens Civ Advisor or enables the existing "follow latest save while open" mode; it should not foreground the app, make the window topmost, or notify users who never use Civ Advisor. Future desktop notification behavior should be opt-in and should have alert history/dismissal semantics first.
+
+The first implementation separates passive save status from current alerts:
+
+- passive status: current game date, turn number, time played, and Golden Age state;
+- current alerts: sorted by severity (`critical`, `warning`, `opportunity`, `info`);
+- coverage notes: implemented alert families only, selectable with current-match detail, so future work does not confuse deferred alerts with forgotten ones.
+
+Fixture-backed Tokugawa 740 AD current alerts are:
+
+- Osaka production overrun warning: Galley wastes 8 shields in 1 turn.
+- Buy-resource opportunity: Aztecs can sell Incense/Gems and Mongols can sell Incense.
+- Sell-technology opportunity: Japan can sell technology to 9 civs.
+- Sell-resource opportunity: Japan can sell resources to 6 civs.
+- Diplomacy opportunity: Persia, Spain, and Aztecs are willing to negotiate.
+- Kyoto production overrun info: Samurai wastes 10 shields in 2 turns.
+- Rival-cash info: Persia has 84 gold.
+
+Implemented alert coverage is current-save only: trade opportunities/expiring deals/cash, enemies willing to negotiate, production projections, saved-state economy, current research progress, city morale/pollution, and unit damage. Alerts that require comparing successive saves remain documented but hidden from the UI, notably rival government/era changes, city growth/shrink/specialist reassignment, and "new" trade opportunities. "Foreign units in our territory" remains deferred because it requires territory ownership lookup; foreign unit nationality alone is not equivalent.
