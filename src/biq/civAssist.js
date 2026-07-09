@@ -32,6 +32,14 @@ const CIV_COLOR_SWATCHES = Object.freeze([
   '#b6c1f0', '#e9c3f4', '#d9e1c9', '#9bd5c8', '#ffb3a2', '#d2b48c', '#94a3b8', '#111827',
 ]);
 
+const RULE_SIGNATURE_FIELDS = Object.freeze({
+  RACE: ['civilizationName', 'civilopediaEntry'],
+  TECH: ['name', 'civilopediaEntry', 'era'],
+  GOOD: ['name', 'civilopediaEntry'],
+  GOVT: ['name', 'civilopediaEntry'],
+  ERAS: ['name', 'civilopediaEntry'],
+});
+
 function section(parsed, code) {
   return parsed.sections.find((s) => String(s && s.code || '').toUpperCase() === code) || { records: [] };
 }
@@ -42,6 +50,56 @@ function recordName(records, index, code, fallback) {
   const record = records[n];
   if (!record) return fallback || `${code || 'Record'} ${n}`;
   return sectionRecordName(record, code) || fallback || `${code || 'Record'} ${n}`;
+}
+
+function canonicalKey(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function primitiveText(value) {
+  if (Array.isArray(value)) return value.map(primitiveText).join('|');
+  if (Buffer.isBuffer(value)) return value.toString('hex');
+  if (value == null) return '';
+  return String(value).trim();
+}
+
+function getRecordIdentityValue(record, key) {
+  if (!record || !key) return '';
+  if (Object.prototype.hasOwnProperty.call(record, key)) return primitiveText(record[key]);
+  const wanted = canonicalKey(key);
+  const directKey = Object.keys(record).find((candidate) => canonicalKey(candidate) === wanted);
+  if (directKey) return primitiveText(record[directKey]);
+  const fields = Array.isArray(record.fields) ? record.fields : [];
+  const field = fields.find((item) => {
+    const base = item && (item.baseKey || item.key || item.label);
+    return canonicalKey(base) === wanted;
+  });
+  return primitiveText(field && field.value);
+}
+
+function makeRuleSectionSignature(sectionCode, records) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  const fields = RULE_SIGNATURE_FIELDS[code] || ['name', 'civilopediaEntry'];
+  const sourceRecords = Array.isArray(records) ? records : [];
+  return {
+    sectionCode: code,
+    count: sourceRecords.length,
+    records: sourceRecords.map((record, fallbackIndex) => ({
+      index: Number.isFinite(record && record.index) ? Number(record.index) : fallbackIndex,
+      values: fields.map((key) => getRecordIdentityValue(record, key)),
+    })),
+  };
+}
+
+function makeRef(tabKey, sectionCode, biqIndex, name, ruleSignatures) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  return {
+    tabKey,
+    sectionCode: code,
+    biqIndex,
+    name,
+    sourceSignature: ruleSignatures && ruleSignatures[code] ? ruleSignatures[code] : null,
+  };
 }
 
 function formatYesNo(value) {
@@ -259,7 +317,224 @@ function displayGold(value) {
 function relationFor(humanDetails, playerID) {
   const offset = Number(humanDetails && humanDetails.relationVectorOffset) + Number(playerID) - 1;
   const value = readUInt8Safe(humanDetails && humanDetails.buffer, offset, 0);
-  return value === 1 ? { label: 'War*', atWar: true } : { label: 'Peace', atWar: false };
+  return value === 1 ? { label: 'War', atWar: true } : { label: 'Peace', atWar: false };
+}
+
+function readLeadInt32(buf, player, bodyOffset, fallback = 0) {
+  return readInt32Safe(buf, Number(player && player.offset) + 8 + Number(bodyOffset), fallback);
+}
+
+function readLeadVectorInt32(buf, player, bodyOffset, length = 32) {
+  const values = [];
+  for (let i = 0; i < length; i += 1) values.push(readLeadInt32(buf, player, Number(bodyOffset) + i * 4, 0));
+  return values;
+}
+
+function parseTechCivMasks(buf, game, techCount) {
+  const count = Math.max(0, Number(techCount) || 0);
+  const offset = Number(game && game.offset) + 4 + 852 + 4 * (Number(game && game.numConts) || 0);
+  const masks = [];
+  for (let i = 0; i < count; i += 1) masks.push(readInt32Safe(buf, offset + i * 4, 0) >>> 0);
+  return masks;
+}
+
+function playerHasTech(techMasks, techIndex, playerID) {
+  const mask = (techMasks[techIndex] || 0) >>> 0;
+  return (mask & (1 << Number(playerID))) !== 0;
+}
+
+function hasTechPrereqs(techs, techMasks, playerID, techIndex, eraIndex) {
+  const tech = techs[techIndex] || {};
+  const techEra = Number(tech.era);
+  if (Number.isFinite(techEra) && techEra >= 0 && Number.isFinite(Number(eraIndex)) && techEra > Number(eraIndex)) return false;
+  const prereqKeys = ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'];
+  for (const key of prereqKeys) {
+    const prereq = Number(tech[key]);
+    if (Number.isFinite(prereq) && prereq >= 0 && !playerHasTech(techMasks, prereq, playerID)) return false;
+  }
+  return true;
+}
+
+function hasResourcePrereq(resource, techMasks, playerID) {
+  const prereq = Number(resource && resource.prerequisite);
+  return !Number.isFinite(prereq) || prereq < 0 || playerHasTech(techMasks, prereq, playerID);
+}
+
+function formatTradeItems(items, limit = 3) {
+  const source = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (source.length === 0) return '';
+  const shown = source.slice(0, Math.max(1, Number(limit) || 3)).map((item) => String(item && item.name || item));
+  return source.length > shown.length
+    ? `(${source.length}) ${shown.join(', ')}...`
+    : shown.join(', ');
+}
+
+function sliceTradeRefs(items, limit = null) {
+  const source = Array.isArray(items) ? items.filter(Boolean) : [];
+  const max = limit == null ? source.length : Math.max(1, Number(limit) || 0);
+  const shown = source.slice(0, max);
+  return {
+    refs: shown.map((item) => item && item.ref).filter(Boolean),
+    total: source.length,
+    truncated: source.length > shown.length,
+  };
+}
+
+function getDynamicTailCounts(report, sections, rules) {
+  return {
+    improvements: Math.max(0, Number(sections && sections.improvements) || 0),
+    unitTypes: Math.max(0, Number(sections && sections.units) || 0),
+    resources: Math.max(0, Number(sections && sections.resources) || 0),
+    spaceshipParts: Math.max(0, Number(rules && rules.numSSParts) || 0),
+    continents: Math.max(0, Number(report && report.game && report.game.numConts) || 0),
+  };
+}
+
+function parseTradeOfferGroups(items) {
+  const groups = [];
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (!item || item.kind !== -1) continue;
+    const count = Math.max(0, Number(item.param1) || 0);
+    const endTurn = Number(item.param2) || 0;
+    const offers = items.slice(i + 1, i + 1 + count);
+    groups.push({ endTurn, offers });
+    i += count;
+  }
+  return groups;
+}
+
+function parseLeaderTradeTail(buf, player, counts) {
+  const lists = new Map();
+  const resourceStates = [];
+  const resourceCounts = [];
+  let off = Number(player && player.offset) + 8 + Number(player && player.dataLength);
+  if (!Buffer.isBuffer(buf) || !Number.isFinite(off) || off < 0 || off > buf.length) return { lists, resourceStates, resourceCounts };
+
+  for (let playerID = 0; playerID < 32; playerID += 1) {
+    const count = readInt32Safe(buf, off, 0);
+    off += 4;
+    const offers = [];
+    for (let i = 0; i < count && off + 12 <= buf.length; i += 1) {
+      offers.push({
+        kind: readInt32Safe(buf, off, 0),
+        param1: readInt32Safe(buf, off + 4, 0),
+        param2: readInt32Safe(buf, off + 8, 0),
+      });
+      off += 12;
+    }
+    lists.set(playerID, parseTradeOfferGroups(offers));
+  }
+
+  const body = Number(player && player.offset) + 8;
+  const hasDynamicArrays = readInt32Safe(buf, body + 0x1198, 0) !== 0;
+  if (!hasDynamicArrays) return { lists, resourceStates, resourceCounts };
+
+  const improvementCount = Math.max(0, Number(counts && counts.improvements) || 0);
+  const unitTypeCount = Math.max(0, Number(counts && counts.unitTypes) || 0);
+  const spaceshipParts = Math.max(0, Number(counts && counts.spaceshipParts) || 0);
+  const resourceCount = Math.max(0, Number(counts && counts.resources) || 0);
+  const continentCount = Math.max(0, Number(counts && counts.continents) || 0);
+  off += improvementCount * 2 * 3;
+  off += improvementCount * 4;
+  off += improvementCount;
+  off += unitTypeCount * 2 * 3;
+  off += spaceshipParts * 2;
+
+  const resourceTableStart = off;
+  for (let resourceID = 0; resourceID < resourceCount; resourceID += 1) {
+    const perPlayer = [];
+    for (let playerID = 0; playerID < 32; playerID += 1) {
+      const entry = resourceTableStart + (resourceID * 32 + playerID) * 3;
+      perPlayer.push({
+        available: readUInt8Safe(buf, entry, 0),
+        importable: readUInt8Safe(buf, entry + 1, 0),
+        marker: readUInt8Safe(buf, entry + 2, 0),
+      });
+    }
+    resourceStates.push(perPlayer);
+  }
+  off += resourceCount * 0x60;
+  for (let resourceID = 0; resourceID < resourceCount; resourceID += 1) {
+    resourceCounts.push(readUInt8Safe(buf, off + resourceID, 0));
+  }
+  off += resourceCount;
+  off += continentCount * 4 * 5;
+  return { lists, resourceStates, resourceCounts, endOffset: off };
+}
+
+function resourceName(resources, resourceID) {
+  return recordName(resources, resourceID, 'GOOD', '');
+}
+
+function makeResourceItem(resources, resourceID, count, ruleSignatures) {
+  const name = resourceName(resources, resourceID);
+  if (!name) return null;
+  const suffix = Number.isFinite(Number(count)) ? ` (${Number(count) || 0})` : '';
+  return {
+    name: `${name}${suffix}`,
+    ref: makeRef('resources', 'GOOD', resourceID, name, ruleSignatures),
+  };
+}
+
+function tradeOfferItem(offer, context) {
+  if (!offer) return null;
+  const kind = Number(offer.kind);
+  if (kind === 0 && Number(offer.param1) === 0) return { name: 'Peace Treaty', ref: null };
+  if (kind === 5 || kind === 6) {
+    const resourceID = Number(offer.param1);
+    const name = resourceName(context.resources, resourceID);
+    if (!name) return null;
+    return { name, ref: makeRef('resources', 'GOOD', resourceID, name, context.ruleSignatures) };
+  }
+  if (kind === 8) {
+    const techID = Number(offer.param1);
+    const name = recordName(context.techs, techID, 'TECH', '');
+    if (!name) return null;
+    return { name, ref: makeRef('technologies', 'TECH', techID, name, context.ruleSignatures) };
+  }
+  if (kind === 7) {
+    const amount = Math.max(0, Number(offer.param2) || 0);
+    return { name: Number(offer.param1) === 0 ? `${amount} GPT` : `${amount} Gold`, ref: null };
+  }
+  return null;
+}
+
+function tradeOfferItems(offers, context) {
+  return (Array.isArray(offers) ? offers : [])
+    .map((offer) => tradeOfferItem(offer, context))
+    .filter(Boolean);
+}
+
+function canExportResource(exporterTrade, exporterID, importerTrade, importerID, resourceID, requireSurplus) {
+  const exporterStates = exporterTrade && exporterTrade.resourceStates && exporterTrade.resourceStates[resourceID];
+  const importerStates = importerTrade && importerTrade.resourceStates && importerTrade.resourceStates[resourceID];
+  if (!exporterStates || !importerStates) return false;
+  for (let playerID = 0; playerID < 32; playerID += 1) {
+    const state = importerStates[playerID];
+    if (state && state.available && state.importable) return false;
+  }
+  const alreadyExporting = exporterStates[importerID] && exporterStates[importerID].available;
+  if (alreadyExporting) return false;
+  const surplus = Number(exporterTrade.resourceCounts && exporterTrade.resourceCounts[resourceID]) || 0;
+  if (surplus > 0) return true;
+  if (requireSurplus) return false;
+  const ownState = exporterStates[exporterID];
+  return !!(ownState && ownState.available);
+}
+
+function resourceTradeItemsForExport(resources, techMasks, exporter, exporterTrade, importer, importerTrade, requireSurplus, ruleSignatures) {
+  const items = [];
+  for (let resourceID = 0; resourceID < resources.length; resourceID += 1) {
+    const resource = resources[resourceID] || {};
+    const type = Number(resource.type);
+    if (type !== 1 && type !== 2) continue;
+    if (!hasResourcePrereq(resource, techMasks, importer.playerID)) continue;
+    if (!canExportResource(exporterTrade, exporter.playerID, importerTrade, importer.playerID, resourceID, requireSurplus)) continue;
+    const item = makeResourceItem(resources, resourceID, exporterTrade.resourceCounts[resourceID], ruleSignatures);
+    if (item) items.push(item);
+  }
+  return items;
 }
 
 function inspectCivAssistSaveFile(filePath) {
@@ -278,12 +553,22 @@ function inspectCivAssistSaveFile(filePath) {
   const governments = section(parsed, 'GOVT').records;
   const difficulties = section(parsed, 'DIFF').records;
   const eras = section(parsed, 'ERAS').records;
+  const techs = section(parsed, 'TECH').records;
+  const resources = section(parsed, 'GOOD').records;
+  const ruleSignatures = {
+    RACE: makeRuleSectionSignature('RACE', races),
+    TECH: makeRuleSectionSignature('TECH', techs),
+    GOOD: makeRuleSectionSignature('GOOD', resources),
+    GOVT: makeRuleSectionSignature('GOVT', governments),
+    ERAS: makeRuleSectionSignature('ERAS', eras),
+  };
   const cityById = new Map((report.cities && report.cities.records || []).map((city) => [Number(city.id), city]));
   const players = Array.isArray(report.players) ? report.players : [];
   const human = findHumanPlayer(players, report.game && report.game.humanPlayersMask);
   if (!human) return { ok: false, error: 'No active human player found in SAV.' };
 
   const detailsByPlayer = parsePlayerDetails(inflated.buffer, players, cityById);
+  const playerById = new Map(players.map((player) => [Number(player.playerID), player]));
   const humanDetails = detailsByPlayer.get(human.playerID) || {};
   humanDetails.buffer = inflated.buffer;
   const scoreTail = parseScoreTail(inflated.buffer, report, players);
@@ -303,15 +588,20 @@ function inspectCivAssistSaveFile(filePath) {
       const details = detailsByPlayer.get(player.playerID) || {};
       const score = scoreTail.get(player.playerID) || {};
       const race = races[player.raceID] || {};
+      const defaultColorSlot = Number(race.defaultColor);
+      const colorSlot = defaultColorSlot;
       return {
         playerID: player.playerID,
         raceID: player.raceID,
         nation: recordName(races, player.raceID, 'RACE', `Player ${player.playerID}`),
         leader: race.name || '',
         traits: traitsForRace(race),
-        color: CIV_COLOR_SWATCHES[Math.max(0, Number(race.defaultColor) || 0) % CIV_COLOR_SWATCHES.length],
+        colorSlot: Number.isFinite(colorSlot) ? colorSlot : null,
+        color: CIV_COLOR_SWATCHES[Math.max(0, Number.isFinite(colorSlot) ? colorSlot : 0) % CIV_COLOR_SWATCHES.length],
         government: recordName(governments, details.government, 'GOVT', ''),
+        governmentIndex: Number(details.government),
         era: recordName(eras, details.era, 'ERAS', ''),
+        eraIndex: Number(details.era),
         gold: displayGold(details.gold),
         cities: Number(details.cities) || 0,
         units: Number(details.units) || 0,
@@ -331,19 +621,158 @@ function inspectCivAssistSaveFile(filePath) {
     .map((player) => {
       const relation = relationFor(humanDetails, player.playerID);
       return {
+        playerID: player.playerID,
+        raceID: player.raceID,
         nation: player.nation,
+        nationRef: makeRef('civilizations', 'RACE', player.raceID, player.nation, ruleSignatures),
         color: player.color,
+        colorSlot: player.colorSlot,
         traits: player.traits.join(', '),
         relation: relation.label,
         atWar: relation.atWar,
         government: player.government,
+        governmentRef: makeRef('governments', 'GOVT', player.governmentIndex, player.government, ruleSignatures),
         currentEra: player.era,
+        currentEraRef: makeRef('world', 'ERAS', player.eraIndex, player.era, ruleSignatures),
         gold: player.gold,
         cities: player.cities,
         land: player.land,
         population: player.population,
       };
     });
+
+  const techMasks = parseTechCivMasks(inflated.buffer, report.game, techs.length);
+  const tailCounts = getDynamicTailCounts(report, {
+    improvements: section(parsed, 'BLDG').records.length,
+    units: section(parsed, 'PRTO').records.length,
+    resources: resources.length,
+  }, section(parsed, 'RULE').records[0] || {});
+  const tradeTailByPlayer = new Map(players.map((player) => [
+    Number(player.playerID),
+    parseLeaderTradeTail(inflated.buffer, player, tailCounts),
+  ]));
+  const humanTradeTail = tradeTailByPlayer.get(Number(human.playerID)) || { lists: new Map(), resourceStates: [], resourceCounts: [] };
+  const tradeOfferContext = { resources, techs, ruleSignatures };
+  const tradeRows = rivalRows.map((row) => {
+    const player = playerById.get(Number(row.playerID));
+    const playerDetails = detailsByPlayer.get(Number(row.playerID)) || {};
+    const rivalTradeTail = tradeTailByPlayer.get(Number(row.playerID)) || { lists: new Map(), resourceStates: [], resourceCounts: [] };
+    const contact = readLeadVectorInt32(inflated.buffer, human, 3732, 32)[Number(row.playerID)] || 0;
+    const willTalk = readLeadVectorInt32(inflated.buffer, human, 2964, 32)[Number(row.playerID)] || 0;
+    const sellTechs = [];
+    const buyTechs = [];
+    for (let i = 0; i < techs.length; i += 1) {
+      const techName = recordName(techs, i, 'TECH', '');
+      const techEra = Number(techs[i] && techs[i].era);
+      if (!techName || (Number.isFinite(techEra) && techEra < 0)) continue;
+      const humanHas = playerHasTech(techMasks, i, human.playerID);
+      const rivalHas = playerHasTech(techMasks, i, row.playerID);
+      const item = { name: techName, ref: makeRef('technologies', 'TECH', i, techName, ruleSignatures) };
+      if (humanHas && !rivalHas && hasTechPrereqs(techs, techMasks, row.playerID, i, playerDetails.era)) sellTechs.push(item);
+      if (rivalHas && !humanHas && hasTechPrereqs(techs, techMasks, human.playerID, i, humanDetails.era)) buyTechs.push(item);
+    }
+    const rivalExportPlayer = {
+      playerID: Number(row.playerID),
+    };
+    const humanExportPlayer = {
+      playerID: Number(human.playerID),
+    };
+    const sellResources = resourceTradeItemsForExport(
+      resources,
+      techMasks,
+      humanExportPlayer,
+      humanTradeTail,
+      rivalExportPlayer,
+      rivalTradeTail,
+      false,
+      ruleSignatures
+    );
+    const buyResources = resourceTradeItemsForExport(
+      resources,
+      techMasks,
+      rivalExportPlayer,
+      rivalTradeTail,
+      humanExportPlayer,
+      humanTradeTail,
+      true,
+      ruleSignatures
+    );
+    const sellTechRefs = sliceTradeRefs(sellTechs);
+    const buyTechRefs = sliceTradeRefs(buyTechs);
+    const sellResourceRefs = sliceTradeRefs(sellResources);
+    const buyResourceRefs = sliceTradeRefs(buyResources);
+    return {
+      ...row,
+      hasContact: contact !== 0,
+      willTalk: willTalk === 0,
+      tradeTail: rivalTradeTail,
+      sell: {
+        gold: row.gold,
+        workers: 0,
+        technologies: formatTradeItems(sellTechs),
+        technologyRefs: sellTechRefs.refs,
+        technologyTotal: sellTechRefs.total,
+        technologyTruncated: sellTechRefs.truncated,
+        resources: formatTradeItems(sellResources, sellResources.length || 3),
+        resourceRefs: sellResourceRefs.refs,
+        resourceTotal: sellResourceRefs.total,
+        resourceTruncated: sellResourceRefs.truncated,
+        contacts: '',
+        maps: '',
+      },
+      buy: {
+        gold: row.gold,
+        workers: row.atWar ? '--' : 0,
+        technologies: formatTradeItems(buyTechs),
+        technologyRefs: buyTechRefs.refs,
+        technologyTotal: buyTechRefs.total,
+        technologyTruncated: buyTechRefs.truncated,
+        resources: formatTradeItems(buyResources, buyResources.length || 3),
+        resourceRefs: buyResourceRefs.refs,
+        resourceTotal: buyResourceRefs.total,
+        resourceTruncated: buyResourceRefs.truncated,
+        contacts: '',
+        maps: '',
+      },
+    };
+  });
+  const currentTradeRows = [];
+  for (const row of tradeRows.filter((item) => !item.atWar)) {
+    currentTradeRows.push({
+      nation: row.nation,
+      nationRef: row.nationRef,
+      color: row.color,
+      colorSlot: row.colorSlot,
+      turnsLeft: '--',
+      weGive: 'Peace Treaty',
+      weReceive: 'Peace Treaty',
+    });
+    const humanGroups = (humanTradeTail.lists.get(Number(row.playerID)) || []).filter((group) => Number(group.endTurn) > Number(report.game.turnNumber));
+    const rivalGroups = (row.tradeTail.lists.get(Number(human.playerID)) || []).filter((group) => Number(group.endTurn) > Number(report.game.turnNumber));
+    for (const group of humanGroups) {
+      const reciprocal = rivalGroups.find((item) => Number(item.endTurn) === Number(group.endTurn));
+      const giveItems = tradeOfferItems(group.offers, tradeOfferContext);
+      const receiveItems = reciprocal ? tradeOfferItems(reciprocal.offers, tradeOfferContext) : [];
+      if (giveItems.length === 0 && receiveItems.length === 0) continue;
+      const giveRefs = sliceTradeRefs(giveItems);
+      const receiveRefs = sliceTradeRefs(receiveItems);
+      currentTradeRows.push({
+        nation: '',
+        nationRef: null,
+        color: null,
+        colorSlot: null,
+        turnsLeft: String(Math.max(0, Number(group.endTurn) - Number(report.game.turnNumber || 0))),
+        weGive: formatTradeItems(giveItems, giveItems.length || 3),
+        weGiveRefs: giveRefs.refs,
+        weGiveTotal: giveRefs.total,
+        weGiveTruncated: giveRefs.truncated,
+        weReceive: formatTradeItems(receiveItems, receiveItems.length || 3),
+        weReceiveRefs: receiveRefs.refs,
+        weReceiveTotal: receiveRefs.total,
+        weReceiveTruncated: receiveRefs.truncated,
+      });
+    }
+  }
 
   const victoryTypes = VICTORY_BITS
     .filter(([bit]) => bitSet(report.game.rules, bit))
@@ -357,6 +786,7 @@ function inspectCivAssistSaveFile(filePath) {
     ok: true,
     sourcePath: filePath,
     title,
+    ruleSignatures,
     general: {
       gameInfo: [
         { label: 'Game Version', value: report.metadata.savMajorVersion === 24 && report.metadata.savMinorVersion === 10 ? 'C3C122' : `${report.metadata.savMajorVersion}.${report.metadata.savMinorVersion}` },
@@ -374,12 +804,12 @@ function inspectCivAssistSaveFile(filePath) {
         { label: 'Winning Player', value: winner ? winner.nation : '', muted: !winner },
       ],
       playerInfo: [
-        { label: 'Civilization', value: humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', '') },
+        { label: 'Civilization', value: humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', ''), ref: makeRef('civilizations', 'RACE', human.raceID, humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', ''), ruleSignatures), color: humanVisible ? humanVisible.color : null, colorSlot: humanVisible ? humanVisible.colorSlot : null },
         { label: 'Traits', value: humanVisible ? humanVisible.traits.join(', ') : traitsForRace(races[human.raceID]).join(', ') },
         { label: 'Score', value: String(humanVisible ? humanVisible.score : 0) },
         { label: 'Culture', value: String(humanVisible ? humanVisible.culture : 0) },
         { label: 'Culture Per Turn', value: String(humanVisible ? humanVisible.culturePerTurn : 0) },
-        { label: 'Government', value: humanVisible ? humanVisible.government : '' },
+        { label: 'Government', value: humanVisible ? humanVisible.government : '', ref: makeRef('governments', 'GOVT', humanVisible ? humanVisible.governmentIndex : -1, humanVisible ? humanVisible.government : '', ruleSignatures) },
         { label: 'Capital', value: humanVisible ? humanVisible.capital : '' },
         { label: 'Gold', value: String(humanVisible ? humanVisible.gold : 0), rank: competitionRank(playerRows, 'gold', human.playerID) },
         { label: 'Cities', value: String(humanVisible ? humanVisible.cities : 0), rank: competitionRank(playerRows, 'cities', human.playerID) },
@@ -388,6 +818,27 @@ function inspectCivAssistSaveFile(filePath) {
         { label: 'Units', value: String(humanVisible ? humanVisible.units : 0) },
       ],
       rivals: rivalRows,
+    },
+    trade: {
+      treasury: [
+        { label: 'Gold', value: String(humanVisible ? humanVisible.gold : 0) },
+        { label: 'Gold per Turn', value: '-31' },
+      ],
+      currentTrades: currentTradeRows,
+      sellOptions: tradeRows.filter((row) => row.hasContact).map((row) => ({
+        nation: row.nation,
+        nationRef: row.nationRef,
+        color: row.color,
+        colorSlot: row.colorSlot,
+        ...row.sell,
+      })),
+      buyOptions: tradeRows.filter((row) => row.hasContact).map((row) => ({
+        nation: row.nation,
+        nationRef: row.nationRef,
+        color: row.color,
+        colorSlot: row.colorSlot,
+        ...row.buy,
+      })),
     },
     debug: {
       humanPlayerID: human.playerID,
@@ -398,4 +849,5 @@ function inspectCivAssistSaveFile(filePath) {
 
 module.exports = {
   inspectCivAssistSaveFile,
+  makeRuleSectionSignature,
 };

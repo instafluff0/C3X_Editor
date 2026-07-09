@@ -6,6 +6,7 @@ const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializ
 const { getPreview } = require('./src/artPreview');
 const { handleFlicWorkshop } = require('./src/flcWorkshop');
 const { inspectCivAssistSaveFile } = require('./src/biq/civAssist');
+const { listRecentCivAssistSaves } = require('./src/civAssistRecent');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -64,6 +65,17 @@ function readStartupReloadAfterSave() {
     return normalizeReloadAfterSave(raw && raw.reloadAfterSave);
   } catch (_err) {
     return false;
+  }
+}
+
+function readStartupCivAdvisorLoadMode() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return 'latest';
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeCivAdvisorLoadMode(raw && raw.civAdvisorLoadMode);
+  } catch (_err) {
+    return 'latest';
   }
 }
 
@@ -250,6 +262,13 @@ function normalizeReloadAfterSave(value) {
   return value === true;
 }
 
+function normalizeCivAdvisorLoadMode(value) {
+  const raw = String(value || 'latest').trim().toLowerCase();
+  if (raw === 'manual') return 'manual';
+  if (raw === 'follow' || raw === 'follow-latest' || raw === 'follow_latest') return 'follow';
+  return 'latest';
+}
+
 function normalizeAutoAddImportedResourceIcons(value) {
   return value !== false;
 }
@@ -343,6 +362,7 @@ function normalizeC3xVersion(value) {
 const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
 const startupReloadAfterSave = readStartupReloadAfterSave();
+const startupCivAdvisorLoadMode = readStartupCivAdvisorLoadMode();
 const startupTooltipDelay = readStartupTooltipDelay();
 const startupAutoAddImportedResourceIcons = readStartupAutoAddImportedResourceIcons();
 const startupAutoAddImportedUnitIcons = readStartupAutoAddImportedUnitIcons();
@@ -358,6 +378,7 @@ const startupLogFolder = readStartupLogFolder();
 let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentReloadAfterSave = startupReloadAfterSave;
+let currentCivAdvisorLoadMode = startupCivAdvisorLoadMode;
 let currentTooltipDelay = startupTooltipDelay;
 let currentAutoAddImportedResourceIcons = startupAutoAddImportedResourceIcons;
 let currentAutoAddImportedUnitIcons = startupAutoAddImportedUnitIcons;
@@ -742,6 +763,19 @@ function sendReloadAfterSaveSelection(enabled) {
   target.webContents.send('manager:reload-after-save-selected', currentReloadAfterSave);
 }
 
+function sendCivAdvisorLoadModeSelection(mode) {
+  currentCivAdvisorLoadMode = normalizeCivAdvisorLoadMode(mode);
+  try {
+    persistSettingsPatch({ civAdvisorLoadMode: currentCivAdvisorLoadMode });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:civ-advisor-load-mode-selected', currentCivAdvisorLoadMode);
+}
+
 function sendTooltipDelaySelection(value) {
   currentTooltipDelay = normalizeTooltipDelay(value);
   try {
@@ -1017,6 +1051,14 @@ function buildAppMenu() {
             click: (item) => sendReloadAfterSaveSelection(item && item.checked)
           },
           {
+            label: 'Civ Advisor',
+            submenu: [
+              { label: 'Choose Saves Manually', type: 'radio', checked: currentCivAdvisorLoadMode === 'manual', click: () => sendCivAdvisorLoadModeSelection('manual') },
+              { label: 'Load Latest When Opened', type: 'radio', checked: currentCivAdvisorLoadMode === 'latest', click: () => sendCivAdvisorLoadModeSelection('latest') },
+              { label: 'Follow Latest While Open', type: 'radio', checked: currentCivAdvisorLoadMode === 'follow', click: () => sendCivAdvisorLoadModeSelection('follow') }
+            ]
+          },
+          {
             label: 'Tooltips',
             submenu: [
               { label: 'No Delay', type: 'radio', checked: currentTooltipDelay === 'none', click: () => sendTooltipDelaySelection('none') },
@@ -1202,6 +1244,7 @@ ipcMain.handle('manager:get-settings', async () => {
     performanceMode: 'high',
     runQualityChecks: true,
     reloadAfterSave: false,
+    civAdvisorLoadMode: 'latest',
     tooltipDelay: 'medium',
     autoAddImportedResourceIcons: true,
     autoAddImportedUnitIcons: true,
@@ -1222,6 +1265,7 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.reloadAfterSave = normalizeReloadAfterSave(merged.reloadAfterSave);
+  merged.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(merged.civAdvisorLoadMode);
   merged.tooltipDelay = normalizeTooltipDelay(merged.tooltipDelay);
   merged.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(merged.autoAddImportedResourceIcons);
   merged.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(merged.autoAddImportedUnitIcons);
@@ -1239,6 +1283,7 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.reloadAfterSave = normalizeReloadAfterSave(inferred.reloadAfterSave);
+  inferred.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(inferred.civAdvisorLoadMode);
   inferred.tooltipDelay = normalizeTooltipDelay(inferred.tooltipDelay);
   inferred.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(inferred.autoAddImportedResourceIcons);
   inferred.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(inferred.autoAddImportedUnitIcons);
@@ -1254,6 +1299,7 @@ ipcMain.handle('manager:get-settings', async () => {
   currentPerformanceMode = inferred.performanceMode;
   currentRunQualityChecks = inferred.runQualityChecks;
   currentReloadAfterSave = inferred.reloadAfterSave;
+  currentCivAdvisorLoadMode = inferred.civAdvisorLoadMode;
   currentTooltipDelay = inferred.tooltipDelay;
   currentAutoAddImportedResourceIcons = inferred.autoAddImportedResourceIcons;
   currentAutoAddImportedUnitIcons = inferred.autoAddImportedUnitIcons;
@@ -1274,7 +1320,7 @@ ipcMain.handle('manager:get-settings', async () => {
   applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
-  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${inferred.tooltipDelay}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${inferred.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${inferred.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${inferred.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, civAdvisor=${inferred.civAdvisorLoadMode}, tooltipDelay=${inferred.tooltipDelay}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${inferred.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${inferred.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${inferred.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
   log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
   if (inferred.mode === 'scenario') {
@@ -1293,6 +1339,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode),
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
     reloadAfterSave: normalizeReloadAfterSave(settings && settings.reloadAfterSave),
+    civAdvisorLoadMode: normalizeCivAdvisorLoadMode(settings && settings.civAdvisorLoadMode),
     tooltipDelay: normalizeTooltipDelay(settings && settings.tooltipDelay),
     autoAddImportedResourceIcons: normalizeAutoAddImportedResourceIcons(settings && settings.autoAddImportedResourceIcons),
     autoAddImportedUnitIcons: normalizeAutoAddImportedUnitIcons(settings && settings.autoAddImportedUnitIcons),
@@ -1310,7 +1357,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   log.setCiv3Root(normalized.civ3Path || '');
   applyLogContextFromPayload(normalized);
   log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
-  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, tooltipDelay=${normalized.tooltipDelay}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${normalized.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${normalized.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${normalized.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, civAdvisor=${normalized.civAdvisorLoadMode}, tooltipDelay=${normalized.tooltipDelay}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${normalized.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${normalized.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${normalized.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
     log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
@@ -1327,6 +1374,10 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentReloadAfterSave !== normalized.reloadAfterSave) {
     currentReloadAfterSave = normalized.reloadAfterSave;
+    buildAppMenu();
+  }
+  if (currentCivAdvisorLoadMode !== normalized.civAdvisorLoadMode) {
+    currentCivAdvisorLoadMode = normalized.civAdvisorLoadMode;
     buildAppMenu();
   }
   if (currentTooltipDelay !== normalized.tooltipDelay) {
@@ -1499,6 +1550,15 @@ ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
   } catch (err) {
     log.error('listScenarios', `Failed: ${err.message}`);
     return [];
+  }
+});
+
+ipcMain.handle('manager:list-recent-civ-assist-saves', async (_event, payload) => {
+  try {
+    return listRecentCivAssistSaves(payload && payload.civ3Path, payload && payload.limit);
+  } catch (err) {
+    log.error('civAssist', `Could not list recent SAV files: ${err.message}`);
+    return { ok: false, error: err && err.message ? err.message : 'Could not list recent SAV files.', savesDir: '', saves: [] };
   }
 });
 

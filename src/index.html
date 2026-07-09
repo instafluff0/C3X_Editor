@@ -110,15 +110,21 @@
         <div class="civassist-modal-header">
           <div class="civassist-modal-head">
             <strong id="civassist-modal-title">Civ Advisor</strong>
-            <span id="civassist-modal-subtitle" class="civassist-modal-subtitle">No save selected</span>
+            <span id="civassist-modal-source">No save loaded</span>
           </div>
           <div class="civassist-modal-actions">
-            <button id="civassist-open-save" class="ghost" type="button"><span class="btn-icon">📁</span>Open SAV</button>
+            <select id="civassist-save-select" class="mode-pill mode-select civassist-save-select" aria-label="Choose Civ III save">
+              <option value="">Choose SAV...</option>
+              <optgroup label="Other">
+                <option value="__browse__">Browse...</option>
+              </optgroup>
+            </select>
+            <label class="bool-toggle civassist-auto-update" title="Check every 5 seconds and switch to the newest save">
+              <input id="civassist-follow-latest" type="checkbox" />
+              <span>Auto-update</span>
+            </label>
             <button id="civassist-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
           </div>
-        </div>
-        <div class="civassist-tabs" role="tablist" aria-label="Civ Advisor tabs">
-          <button class="civassist-tab tab-btn active" type="button" role="tab" aria-selected="true"><span>General</span></button>
         </div>
         <div id="civassist-modal-body" class="civassist-modal-body"></div>
       </div>

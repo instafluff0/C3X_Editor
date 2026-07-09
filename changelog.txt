@@ -1,6 +1,15 @@
 * RELEASE 27.22
 - Updated the release script to build a Windows portable app on Windows-like Bash hosts and a universal macOS DMG on macOS.
 - Added an initial Civ Advisor modal with `.SAV` file selection and a General tab parser that matches the Tokugawa 740 AD CivAssist reference screenshot for game info, player info, ranks, and visible rival rows.
+- Restyled Civ Advisor to use the editor's standard card, table, and reference-chip visual language, including thumbnail links from visible civilizations and governments back to their editor tabs.
+- Added Civ Advisor era links into the World/Eras records and preserved the open advisor when using Back after following a Civ Advisor reference link.
+- Gated Civ Advisor reference links and thumbnails behind save-vs-current-rule signatures so `.SAV` files from other scenarios display save-native text without misleading editor links.
+- Fixed Civ Advisor matching for loaded scenario bundles, renamed the Rival Info `Nation` column to `Civ`, and colored linked civ chips from the same default-color slots used by the Civs tab.
+- Added a consolidated Civ Advisor Trade tab with treasury, current peace treaties, and initial trade-option technology columns backed by the Tokugawa reference save.
+- Cleaned up the Civ Advisor Trade UI by removing the duplicate tab strip, giving Trade its own active-tab color, adding table scrollbars, and linking trade-option technologies back to Tech records.
+- Reworked the Civ Advisor Trade tab into Current, Sell, and Buy subtabs, with multi-value trade cells stacked vertically as thumbnail reference chips instead of cramped inline lists.
+- Added Civ Advisor recent-save selection, latest-save startup modes, and optional five-second auto-updating that pauses whenever a user manually selects or browses to a save.
+- Decoded Civ Advisor current timed resource trades and Trade Options resource columns from live `LEAD` treaty/resource tails, matching the Tokugawa China `Salt, Gold` for `Silks` deal and resource sell/buy screenshots.
 - Documented the SAV source mapping for CivAssist II's General tab, including live `GAME`, `LEAD`, `CULT`, explored-tile intelligence, diplomacy, gold, and score-tail sources.
 - Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
 - Fixed Units-tab FLC and sound browsing so valid unit animation and sound picks are stored relative to the unit animation folder instead of leaking absolute paths.

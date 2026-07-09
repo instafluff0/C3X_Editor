@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
   getPathAccess: (paths) => ipcRenderer.invoke('manager:get-path-access', paths),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
+  listRecentCivAssistSaves: (payload) => ipcRenderer.invoke('manager:list-recent-civ-assist-saves', payload),
   createScenario: (payload) => ipcRenderer.invoke('manager:create-scenario', payload),
   deleteScenario: (payload) => ipcRenderer.invoke('manager:delete-scenario', payload),
   relaunch: () => ipcRenderer.invoke('manager:relaunch'),
@@ -51,6 +52,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
     ipcRenderer.on('manager:reload-after-save-selected', listener);
     return () => {
       ipcRenderer.removeListener('manager:reload-after-save-selected', listener);
+    };
+  },
+  onCivAdvisorLoadModeMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, mode) => handler(mode);
+    ipcRenderer.on('manager:civ-advisor-load-mode-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:civ-advisor-load-mode-selected', listener);
     };
   },
   onTooltipDelayMenuSelect: (handler) => {

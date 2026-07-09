@@ -110,10 +110,23 @@ const state = {
   },
   civAssist: {
     isOpen: false,
+    activeTab: 'general',
+    activeTradeSubtab: 'current',
     savePath: '',
     report: null,
     loading: false,
-    error: ''
+    error: '',
+    recentSaves: [],
+    savesDir: '',
+    followingLatest: false,
+    loadLatestOncePending: false,
+    initializedForSession: false,
+    pollTimer: null,
+    pollInFlight: false,
+    latestObservations: {},
+    loadedFingerprint: '',
+    loadedSaveMeta: null,
+    loadRequestId: 0
   },
   referenceContextPaneVisible: {},
   improvementLayoutMode: '',
@@ -321,6 +334,7 @@ const state = {
   performanceMenuUnsubscribe: null,
   qualityChecksMenuUnsubscribe: null,
   reloadAfterSaveMenuUnsubscribe: null,
+  civAdvisorLoadModeMenuUnsubscribe: null,
   tooltipDelayMenuUnsubscribe: null,
   logSettingsMenuUnsubscribe: null,
   mapSettingsMenuUnsubscribe: null,
@@ -747,8 +761,9 @@ const el = {
   civAssistToggle: document.getElementById('civassist-toggle'),
   civAssistModalOverlay: document.getElementById('civassist-modal-overlay'),
   civAssistModalTitle: document.getElementById('civassist-modal-title'),
-  civAssistModalSubtitle: document.getElementById('civassist-modal-subtitle'),
-  civAssistOpenSave: document.getElementById('civassist-open-save'),
+  civAssistModalSource: document.getElementById('civassist-modal-source'),
+  civAssistSaveSelect: document.getElementById('civassist-save-select'),
+  civAssistFollowLatest: document.getElementById('civassist-follow-latest'),
   civAssistClose: document.getElementById('civassist-close'),
   civAssistModalBody: document.getElementById('civassist-modal-body'),
   filesReadToggle: document.getElementById('files-read-toggle'),
@@ -7503,6 +7518,17 @@ function sanitizeUnitAvailabilityView(view) {
   };
 }
 
+function sanitizeCivAssistView(view) {
+  const source = view && typeof view === 'object' ? view : {};
+  const activeTradeSubtab = String(source.activeTradeSubtab || 'current');
+  return {
+    isOpen: !!source.isOpen,
+    activeTab: String(source.activeTab || 'general') || 'general',
+    activeTradeSubtab: ['current', 'sell', 'buy'].includes(activeTradeSubtab) ? activeTradeSubtab : 'current',
+    savePath: String(source.savePath || '')
+  };
+}
+
 function clearLoadAuditState(options = {}) {
   clearDeferredMapOpenAudit();
   state.loadAudit = {
@@ -7551,6 +7577,7 @@ function captureViewSnapshot() {
     referenceUnitSort: sanitizeReferenceUnitSortMap(state.referenceUnitSort),
     unitTableView: sanitizeUnitTableView(state.unitTableView),
     unitAvailabilityView: sanitizeUnitAvailabilityView(state.unitAvailabilityView),
+    civAssistView: sanitizeCivAssistView(state.civAssist),
     referenceContextPaneVisible: cloneStateMap(state.referenceContextPaneVisible),
     biqSectionSelectionByTab: cloneStateMap(state.biqSectionSelectionByTab),
     biqRecordSelection: cloneStateMap(state.biqRecordSelection),
@@ -7772,6 +7799,11 @@ function applyViewSnapshot(snapshot) {
   state.referenceUnitSort = sanitizeReferenceUnitSortMap(snapshot.referenceUnitSort);
   state.unitTableView = sanitizeUnitTableView(snapshot.unitTableView);
   state.unitAvailabilityView = sanitizeUnitAvailabilityView(snapshot.unitAvailabilityView);
+  const civAssistView = sanitizeCivAssistView(snapshot.civAssistView);
+  state.civAssist.activeTab = civAssistView.activeTab;
+  state.civAssist.activeTradeSubtab = civAssistView.activeTradeSubtab;
+  state.civAssist.savePath = civAssistView.savePath || state.civAssist.savePath || '';
+  state.civAssist.isOpen = civAssistView.isOpen;
   state.referenceContextPaneVisible = cloneStateMap(snapshot.referenceContextPaneVisible);
   state.biqSectionSelectionByTab = cloneStateMap(snapshot.biqSectionSelectionByTab);
   state.biqRecordSelection = cloneStateMap(snapshot.biqRecordSelection);
@@ -7834,6 +7866,11 @@ function applyViewSnapshot(snapshot) {
       referenceEditable: isScenarioMode(),
       syncHistory: false
     });
+  }
+  if (state.civAssist.isOpen) {
+    openCivAssistModal({ skipHistorySync: true });
+  } else {
+    setCivAssistModalVisible(false, { skipHistorySync: true });
   }
   updateNavButtons();
   persistCurrentViewSnapshot();
@@ -72082,6 +72119,21 @@ async function wireBrowseButton(button, input) {
   });
 }
 
+const CIV_ASSIST_RECENT_SAVE_LIMIT = 10;
+const CIV_ASSIST_POLL_INTERVAL_MS = 5000;
+const CIV_ASSIST_SAVE_SETTLE_MS = 1500;
+
+function normalizeCivAdvisorLoadMode(value) {
+  const raw = String(value || 'latest').trim().toLowerCase();
+  if (raw === 'manual') return 'manual';
+  if (raw === 'follow' || raw === 'follow-latest' || raw === 'follow_latest') return 'follow';
+  return 'latest';
+}
+
+function getCivAdvisorLoadMode() {
+  return normalizeCivAdvisorLoadMode(state.settings && state.settings.civAdvisorLoadMode);
+}
+
 function getCivAssistDefaultSavePath() {
   if (state.civAssist.savePath) return state.civAssist.savePath;
   const root = state.settings && state.settings.civ3Path ? String(state.settings.civ3Path) : '';
@@ -72090,20 +72142,234 @@ function getCivAssistDefaultSavePath() {
   return `${root.replace(/[\\/]+$/, '')}${slash}Conquests${slash}Saves`;
 }
 
-function setCivAssistModalVisible(visible) {
+function normalizeCivAssistPathKey(filePath) {
+  return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
+}
+
+function getCivAssistSaveFingerprint(save) {
+  if (!save || !save.path) return '';
+  return `${normalizeCivAssistPathKey(save.path)}|${Number(save.modifiedMs || 0)}|${Number(save.size || 0)}`;
+}
+
+function formatCivAssistSaveTime(modifiedMs) {
+  const value = Number(modifiedMs || 0);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  try {
+    return new Date(value).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  } catch (_err) {
+    return '';
+  }
+}
+
+function findRecentCivAssistSave(filePath) {
+  const target = normalizeCivAssistPathKey(filePath);
+  if (!target) return null;
+  return (state.civAssist.recentSaves || []).find((save) => normalizeCivAssistPathKey(save && save.path) === target) || null;
+}
+
+function isCivAssistSaveStable(save) {
+  const fingerprint = getCivAssistSaveFingerprint(save);
+  if (!fingerprint) return false;
+  const key = normalizeCivAssistPathKey(save.path);
+  const previous = state.civAssist.latestObservations[key];
+  state.civAssist.latestObservations[key] = fingerprint;
+  return previous === fingerprint || (Date.now() - Number(save.modifiedMs || 0)) >= CIV_ASSIST_SAVE_SETTLE_MS;
+}
+
+function renderCivAssistSaveSelector() {
+  const select = el.civAssistSaveSelect;
+  if (!select) return;
+  const currentPath = String(state.civAssist.savePath || '');
+  const currentKey = normalizeCivAssistPathKey(currentPath);
+  const recent = Array.isArray(state.civAssist.recentSaves) ? state.civAssist.recentSaves : [];
+  select.replaceChildren();
+
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Choose SAV...';
+  select.appendChild(placeholder);
+
+  const currentIsRecent = recent.some((save) => normalizeCivAssistPathKey(save && save.path) === currentKey);
+  if (currentPath && !currentIsRecent) {
+    const selectedGroup = document.createElement('optgroup');
+    selectedGroup.label = 'Selected File';
+    const selectedOption = document.createElement('option');
+    selectedOption.value = currentPath;
+    selectedOption.textContent = getPathTail(currentPath) || currentPath;
+    selectedOption.title = currentPath;
+    selectedGroup.appendChild(selectedOption);
+    select.appendChild(selectedGroup);
+  }
+
+  if (recent.length > 0) {
+    const recentGroup = document.createElement('optgroup');
+    recentGroup.label = 'Recent Saves';
+    recent.forEach((save) => {
+      const option = document.createElement('option');
+      option.value = String(save.path || '');
+      const modified = formatCivAssistSaveTime(save.modifiedMs);
+      option.textContent = modified ? `${save.fileName || getPathTail(save.path)} — ${modified}` : (save.fileName || getPathTail(save.path));
+      option.title = String(save.path || '');
+      recentGroup.appendChild(option);
+    });
+    select.appendChild(recentGroup);
+  }
+
+  if (currentPath || recent.length > 0) {
+    const separator = document.createElement('option');
+    separator.value = '__separator__';
+    separator.textContent = '────────────';
+    separator.disabled = true;
+    select.appendChild(separator);
+  }
+  const otherGroup = document.createElement('optgroup');
+  otherGroup.label = 'Other';
+  const browse = document.createElement('option');
+  browse.value = '__browse__';
+  browse.textContent = 'Browse...';
+  otherGroup.appendChild(browse);
+  select.appendChild(otherGroup);
+  select.value = currentPath || '';
+  select.disabled = !!state.civAssist.loading;
+}
+
+function syncCivAssistHeader(options = {}) {
+  const report = state.civAssist.report;
+  if (el.civAssistModalTitle) {
+    el.civAssistModalTitle.textContent = report && report.title ? `Civ Advisor - ${report.title}` : 'Civ Advisor';
+  }
+  if (el.civAssistModalSource) {
+    const fileName = getPathTail(state.civAssist.savePath || '');
+    const modified = formatCivAssistSaveTime(state.civAssist.loadedSaveMeta && state.civAssist.loadedSaveMeta.modifiedMs);
+    if (!fileName) {
+      el.civAssistModalSource.textContent = state.civAssist.savesDir
+        ? `No save loaded from ${state.civAssist.savesDir}`
+        : 'No save loaded';
+    } else {
+      const sourceMode = state.civAssist.followingLatest ? 'Following latest' : 'Viewing selected save';
+      el.civAssistModalSource.textContent = `${sourceMode}: ${fileName}${modified ? ` • Updated ${modified}` : ''}${state.civAssist.loading ? ' • Updating...' : ''}`;
+    }
+  }
+  if (el.civAssistFollowLatest) {
+    el.civAssistFollowLatest.checked = state.civAssist.followingLatest;
+    el.civAssistFollowLatest.disabled = !!state.civAssist.loading;
+  }
+  if (options.renderSelector !== false) renderCivAssistSaveSelector();
+}
+
+function clearCivAssistPollTimer() {
+  if (!state.civAssist.pollTimer) return;
+  window.clearTimeout(state.civAssist.pollTimer);
+  state.civAssist.pollTimer = null;
+}
+
+function scheduleCivAssistPoll() {
+  clearCivAssistPollTimer();
+  if (!state.civAssist.isOpen) return;
+  state.civAssist.pollTimer = window.setTimeout(() => {
+    state.civAssist.pollTimer = null;
+    void refreshCivAssistRecentSaves({
+      allowAutoLoad: state.civAssist.followingLatest || state.civAssist.loadLatestOncePending
+    });
+  }, CIV_ASSIST_POLL_INTERVAL_MS);
+}
+
+async function refreshCivAssistRecentSaves(options = {}) {
+  if (state.civAssist.pollInFlight) return false;
+  if (!window.c3xManager || typeof window.c3xManager.listRecentCivAssistSaves !== 'function') return false;
+  state.civAssist.pollInFlight = true;
+  try {
+    const result = await window.c3xManager.listRecentCivAssistSaves({
+      civ3Path: state.settings && state.settings.civ3Path,
+      limit: CIV_ASSIST_RECENT_SAVE_LIMIT
+    });
+    if (!result || !result.ok) {
+      if (!state.civAssist.report) state.civAssist.error = String(result && result.error || 'Could not list recent SAV files.');
+      syncCivAssistHeader();
+      if (!state.civAssist.report) renderCivAssistModal();
+      return false;
+    }
+    const previousRecentSignature = JSON.stringify((state.civAssist.recentSaves || []).map(getCivAssistSaveFingerprint));
+    state.civAssist.savesDir = String(result.savesDir || '');
+    state.civAssist.recentSaves = Array.isArray(result.saves) ? result.saves : [];
+    const recentSignature = JSON.stringify(state.civAssist.recentSaves.map(getCivAssistSaveFingerprint));
+    syncCivAssistHeader({ renderSelector: previousRecentSignature !== recentSignature });
+    const latest = state.civAssist.recentSaves[0];
+    if (!options.allowAutoLoad || !latest || !isCivAssistSaveStable(latest)) return true;
+    const fingerprint = getCivAssistSaveFingerprint(latest);
+    if (fingerprint && fingerprint === state.civAssist.loadedFingerprint) {
+      state.civAssist.loadLatestOncePending = false;
+      return true;
+    }
+    const loaded = await loadCivAssistSave(latest.path, { saveMeta: latest, fingerprint, automatic: true });
+    if (loaded) state.civAssist.loadLatestOncePending = false;
+    return loaded;
+  } finally {
+    state.civAssist.pollInFlight = false;
+    scheduleCivAssistPoll();
+  }
+}
+
+function setCivAssistModalVisible(visible, options = {}) {
   state.civAssist.isOpen = !!visible;
   if (!el.civAssistModalOverlay) return;
   el.civAssistModalOverlay.classList.toggle('hidden', !visible);
   el.civAssistModalOverlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  if (!visible) clearCivAssistPollTimer();
+  if (!options.skipHistorySync) syncCurrentNavigationSnapshot();
 }
 
-function openCivAssistModal() {
-  setCivAssistModalVisible(true);
+function openCivAssistModal(options = {}) {
+  setCivAssistModalVisible(true, { skipHistorySync: !!options.skipHistorySync });
   renderCivAssistModal();
+  const loadMode = getCivAdvisorLoadMode();
+  const firstOpen = !state.civAssist.initializedForSession;
+  if (firstOpen) {
+    state.civAssist.initializedForSession = true;
+    state.civAssist.followingLatest = loadMode === 'follow';
+    state.civAssist.loadLatestOncePending = loadMode === 'latest';
+  }
+  syncCivAssistHeader();
+  if (loadMode === 'latest' && !state.civAssist.report) state.civAssist.loadLatestOncePending = true;
+  const allowAutoLoad = state.civAssist.followingLatest || state.civAssist.loadLatestOncePending;
+  void refreshCivAssistRecentSaves({ allowAutoLoad });
 }
 
-function closeCivAssistModal() {
-  setCivAssistModalVisible(false);
+function closeCivAssistModal(options = {}) {
+  setCivAssistModalVisible(false, { skipHistorySync: !!options.skipHistorySync });
+}
+
+function navigateFromCivAssistToTarget(target) {
+  if (!target) return false;
+  syncCurrentNavigationSnapshot();
+  const before = captureViewSnapshot();
+  closeCivAssistModal({ skipHistorySync: true });
+  const navigated = target.type === 'structured'
+    ? navigateToCivAssistStructuredTarget(target)
+    : navigateToReferenceEntry(target.tabKey, target.entry, { preserveTabScroll: true });
+  if (!navigated) {
+    if (before && before.civAssistView && before.civAssistView.isOpen) {
+      state.civAssist.activeTab = before.civAssistView.activeTab || 'general';
+      state.civAssist.activeTradeSubtab = before.civAssistView.activeTradeSubtab || 'current';
+      state.civAssist.savePath = before.civAssistView.savePath || state.civAssist.savePath || '';
+      openCivAssistModal({ skipHistorySync: true });
+    }
+    return false;
+  }
+  if (before && before.civAssistView && before.civAssistView.isOpen) {
+    const historyIndex = state.navHistoryIndex - 1;
+    if (historyIndex >= 0 && historyIndex < state.navHistory.length) {
+      state.navHistory[historyIndex] = before;
+      updateNavButtons();
+      persistCurrentViewSnapshot();
+    }
+  }
+  return true;
 }
 
 async function pickCivAssistSave() {
@@ -72119,42 +72385,366 @@ async function pickCivAssistSave() {
       { name: 'All Files', extensions: ['*'] }
     ]
   });
-  if (!filePath) return;
-  await loadCivAssistSave(filePath);
+  if (!filePath) {
+    renderCivAssistSaveSelector();
+    return false;
+  }
+  const wasFollowing = state.civAssist.followingLatest;
+  const wasLoadLatestOncePending = state.civAssist.loadLatestOncePending;
+  state.civAssist.followingLatest = false;
+  state.civAssist.loadLatestOncePending = false;
+  syncCivAssistHeader();
+  const loaded = await loadCivAssistSave(filePath);
+  if (!loaded) {
+    state.civAssist.followingLatest = wasFollowing;
+    state.civAssist.loadLatestOncePending = wasLoadLatestOncePending;
+  }
+  syncCivAssistHeader();
+  return loaded;
 }
 
-async function loadCivAssistSave(filePath) {
+async function loadCivAssistSave(filePath, options = {}) {
   const target = String(filePath || '').trim();
-  if (!target) return;
+  if (!target) return false;
   if (!window.c3xManager || typeof window.c3xManager.inspectCivAssistSave !== 'function') {
     state.civAssist.error = 'Civ Advisor save inspection is not available.';
     renderCivAssistModal();
-    return;
+    return false;
   }
-  state.civAssist.savePath = target;
+  const requestId = state.civAssist.loadRequestId + 1;
+  state.civAssist.loadRequestId = requestId;
+  const previous = {
+    savePath: state.civAssist.savePath,
+    report: state.civAssist.report,
+    error: state.civAssist.error,
+    loadedFingerprint: state.civAssist.loadedFingerprint,
+    loadedSaveMeta: state.civAssist.loadedSaveMeta
+  };
   state.civAssist.loading = true;
   state.civAssist.error = '';
-  state.civAssist.report = null;
   renderCivAssistModal();
   try {
     const result = await window.c3xManager.inspectCivAssistSave(target);
+    if (requestId !== state.civAssist.loadRequestId) return false;
     if (!result || !result.ok) {
-      state.civAssist.error = String(result && result.error || 'Could not read the selected SAV file.');
-      state.civAssist.report = null;
-      setStatus(state.civAssist.error, true);
+      const error = String(result && result.error || 'Could not read the selected SAV file.');
+      state.civAssist.savePath = previous.savePath;
+      state.civAssist.report = previous.report;
+      state.civAssist.loadedFingerprint = previous.loadedFingerprint;
+      state.civAssist.loadedSaveMeta = previous.loadedSaveMeta;
+      state.civAssist.error = previous.report ? '' : error;
+      setStatus(error, true);
+      return false;
     } else {
+      state.civAssist.savePath = target;
       state.civAssist.report = result;
       state.civAssist.error = '';
-      setStatus('Civ Advisor save loaded.');
+      state.civAssist.loadedSaveMeta = options.saveMeta || findRecentCivAssistSave(target) || null;
+      state.civAssist.loadedFingerprint = String(options.fingerprint || getCivAssistSaveFingerprint(state.civAssist.loadedSaveMeta));
+      setStatus(options.automatic ? 'Civ Advisor loaded the latest save.' : 'Civ Advisor save loaded.');
+      syncCurrentNavigationSnapshot();
+      return true;
     }
   } catch (err) {
-    state.civAssist.error = String(err && err.message || err || 'Could not read the selected SAV file.');
-    state.civAssist.report = null;
-    setStatus(state.civAssist.error, true);
+    if (requestId !== state.civAssist.loadRequestId) return false;
+    const error = String(err && err.message || err || 'Could not read the selected SAV file.');
+    state.civAssist.savePath = previous.savePath;
+    state.civAssist.report = previous.report;
+    state.civAssist.loadedFingerprint = previous.loadedFingerprint;
+    state.civAssist.loadedSaveMeta = previous.loadedSaveMeta;
+    state.civAssist.error = previous.report ? '' : error;
+    setStatus(error, true);
+    return false;
   } finally {
-    state.civAssist.loading = false;
-    renderCivAssistModal();
+    if (requestId === state.civAssist.loadRequestId) {
+      state.civAssist.loading = false;
+      renderCivAssistModal();
+    }
   }
+}
+
+function getCivAssistReferenceEntry(ref) {
+  const tabKey = String(ref && ref.tabKey || '').trim();
+  if (!tabKey || !state.bundle || !state.bundle.tabs) return null;
+  const tab = state.bundle.tabs[tabKey];
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  if (entries.length === 0) return null;
+  const targetIndex = Number(ref && ref.biqIndex);
+  const targetName = String(ref && ref.name || '').trim().toLowerCase();
+  if (Number.isFinite(targetIndex) && targetIndex >= 0) {
+    const byIndex = entries.find((entry, fallbackIdx) => {
+      const raw = entry && entry.biqIndex;
+      const biqIndex = raw === '' || raw == null ? fallbackIdx : Number(raw);
+      return Number.isFinite(biqIndex) && biqIndex === targetIndex;
+    });
+    if (byIndex) return byIndex;
+  }
+  if (targetName) {
+    return entries.find((entry) => String(entry && entry.name || '').trim().toLowerCase() === targetName)
+      || entries.find((entry) => String(entry && entry.civilopediaKey || '').trim().toLowerCase() === targetName)
+      || null;
+  }
+  return null;
+}
+
+function getCivAssistSignatureFields(sectionCode) {
+  switch (String(sectionCode || '').trim().toUpperCase()) {
+    case 'RACE': return ['civilizationName', 'civilopediaEntry'];
+    case 'TECH': return ['name', 'civilopediaEntry', 'era'];
+    case 'GOOD': return ['name', 'civilopediaEntry'];
+    case 'GOVT': return ['name', 'civilopediaEntry'];
+    case 'ERAS': return ['name', 'civilopediaEntry'];
+    default: return ['name', 'civilopediaEntry'];
+  }
+}
+
+function getCivAssistPrimitiveText(value) {
+  if (Array.isArray(value)) return value.map(getCivAssistPrimitiveText).join('|');
+  if (value == null) return '';
+  return String(value).trim();
+}
+
+function getCivAssistCanonicalKey(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function getCivAssistRecordIdentityValue(record, key) {
+  if (!record || !key) return '';
+  if (Object.prototype.hasOwnProperty.call(record, key)) return getCivAssistPrimitiveText(record[key]);
+  const wanted = getCivAssistCanonicalKey(key);
+  const directKey = Object.keys(record).find((candidate) => getCivAssistCanonicalKey(candidate) === wanted);
+  if (directKey) return getCivAssistPrimitiveText(record[directKey]);
+  const fieldLists = [
+    Array.isArray(record.fields) ? record.fields : [],
+    Array.isArray(record.biqFields) ? record.biqFields : []
+  ];
+  for (const fields of fieldLists) {
+    const field = fields.find((item) => {
+      const base = item && (item.baseKey || item.key || item.label);
+      return getCivAssistCanonicalKey(base) === wanted;
+    });
+    if (field) return getCivAssistPrimitiveText(field.value);
+  }
+  return '';
+}
+
+function makeCivAssistSectionSignature(sectionCode, records) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  const fields = getCivAssistSignatureFields(code);
+  const sourceRecords = Array.isArray(records) ? records : [];
+  return {
+    sectionCode: code,
+    count: sourceRecords.length,
+    records: sourceRecords.map((record, fallbackIndex) => ({
+      index: Number.isFinite(record && record.index) ? Number(record.index) : fallbackIndex,
+      values: fields.map((key) => getCivAssistRecordIdentityValue(record, key))
+    }))
+  };
+}
+
+function getCivAssistCurrentSectionRecords(sectionCode) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  const tabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
+  if (code === 'RACE' || code === 'GOVT' || code === 'GOOD') {
+    const tabKey = code === 'RACE' ? 'civilizations' : code === 'GOVT' ? 'governments' : 'resources';
+    const entries = tabs[tabKey] && Array.isArray(tabs[tabKey].entries) ? tabs[tabKey].entries : [];
+    return entries
+      .filter((entry) => Number.isFinite(Number(entry && entry.biqIndex)))
+      .sort((a, b) => Number(a.biqIndex) - Number(b.biqIndex))
+      .map((entry) => ({
+        index: Number(entry.biqIndex),
+        name: code === 'GOVT' ? (entry.name || '') : '',
+        civilizationName: code === 'RACE' ? (entry.name || '') : '',
+        ...(code === 'GOOD' ? { name: entry.name || '' } : {}),
+        civilopediaEntry: entry.displayCivilopediaKey || entry.civilopediaKey || '',
+        biqFields: Array.isArray(entry.biqFields) ? entry.biqFields : []
+      }));
+  }
+  if (code === 'TECH') {
+    const entries = tabs.technologies && Array.isArray(tabs.technologies.entries) ? tabs.technologies.entries : [];
+    return entries
+      .filter((entry) => Number.isFinite(Number(entry && entry.biqIndex)))
+      .sort((a, b) => Number(a.biqIndex) - Number(b.biqIndex))
+      .map((entry) => ({
+        index: Number(entry.biqIndex),
+        name: entry.name || '',
+        civilopediaEntry: entry.displayCivilopediaKey || entry.civilopediaKey || '',
+        era: getTechFieldInt(entry, 'era', -1),
+        biqFields: Array.isArray(entry.biqFields) ? entry.biqFields : []
+      }));
+  }
+  const tabKeys = Object.keys(tabs);
+  for (const tabKey of tabKeys) {
+    const sections = Array.isArray(tabs[tabKey] && tabs[tabKey].sections) ? tabs[tabKey].sections : [];
+    const section = sections.find((item) => String(item && item.code || '').trim().toUpperCase() === code);
+    if (!section) continue;
+    return Array.isArray(section.records) ? section.records : [];
+  }
+  return [];
+}
+
+function getCivAssistCurrentSectionSignature(sectionCode) {
+  return makeCivAssistSectionSignature(sectionCode, getCivAssistCurrentSectionRecords(sectionCode));
+}
+
+function civAssistSignaturesEqual(a, b) {
+  return !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+}
+
+function canLinkCivAssistRef(ref) {
+  const sourceSignature = ref && ref.sourceSignature;
+  const sectionCode = String((ref && ref.sectionCode) || (sourceSignature && sourceSignature.sectionCode) || '').trim().toUpperCase();
+  if (!sectionCode || !sourceSignature) return false;
+  const currentSignature = getCivAssistCurrentSectionSignature(sectionCode);
+  return civAssistSignaturesEqual(sourceSignature, currentSignature);
+}
+
+function getCivAssistStructuredTarget(ref) {
+  const tabKey = String(ref && ref.tabKey || '').trim();
+  const sectionCode = String(ref && ref.sectionCode || '').trim().toUpperCase();
+  if (!tabKey || !sectionCode || !state.bundle || !state.bundle.tabs) return null;
+  const tab = state.bundle.tabs[tabKey];
+  const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+  const sectionIndex = sections.findIndex((section) => String(section && section.code || '').trim().toUpperCase() === sectionCode);
+  if (sectionIndex < 0) return null;
+  const section = sections[sectionIndex];
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  if (records.length === 0) return null;
+  const targetIndex = Number(ref && ref.biqIndex);
+  const targetName = String(ref && ref.name || '').trim().toLowerCase();
+  let recordIndex = -1;
+  if (Number.isFinite(targetIndex) && targetIndex >= 0) {
+    recordIndex = records.findIndex((record, fallbackIdx) => {
+      const raw = record && record.index;
+      const biqIndex = raw === '' || raw == null ? fallbackIdx : Number(raw);
+      return Number.isFinite(biqIndex) && biqIndex === targetIndex;
+    });
+  }
+  if (recordIndex < 0 && targetName) {
+    recordIndex = records.findIndex((record, fallbackIdx) => {
+      const name = getDisplayBiqRecordName(sectionCode, record, fallbackIdx);
+      return String(name || '').trim().toLowerCase() === targetName;
+    });
+  }
+  if (recordIndex < 0) return null;
+  return {
+    type: 'structured',
+    tabKey,
+    tab,
+    section,
+    sectionCode,
+    sectionIndex,
+    recordIndex,
+    label: getDisplayBiqRecordName(sectionCode, records[recordIndex], recordIndex)
+  };
+}
+
+function getCivAssistLinkTarget(ref) {
+  if (!ref) return null;
+  if (!canLinkCivAssistRef(ref)) return null;
+  const entry = getCivAssistReferenceEntry(ref);
+  if (entry) {
+    return {
+      type: 'reference',
+      tabKey: String(ref.tabKey || '').trim(),
+      entry,
+      label: entry.name || entry.civilopediaKey || String(ref.name || '')
+    };
+  }
+  return getCivAssistStructuredTarget(ref);
+}
+
+function getCivAssistReferenceTabTitle(tabKey) {
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  return String(tab && tab.title || tabKey || 'Reference');
+}
+
+function navigateToCivAssistStructuredTarget(target) {
+  if (!target || target.type !== 'structured') return false;
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[target.tabKey] : null;
+  if (!tab || !Array.isArray(tab.sections)) return false;
+  const section = tab.sections[target.sectionIndex];
+  if (!section || String(section.code || '').trim().toUpperCase() !== target.sectionCode) return false;
+  const records = Array.isArray(section.records) ? section.records : [];
+  if (target.recordIndex < 0 || target.recordIndex >= records.length) return false;
+  navigateWithHistory(() => {
+    state.activeTab = target.tabKey;
+    state.biqSectionSelectionByTab[target.tabKey] = target.sectionIndex;
+    state.biqRecordSelection[section.id] = target.recordIndex;
+    state.biqRecordFilter[`${target.tabKey}:${section.id}`] = '';
+  }, { preserveTabScroll: true });
+  return true;
+}
+
+function makeCivAssistReferenceChip(ref, label, options = {}) {
+  const text = String(label == null ? '' : label);
+  const target = getCivAssistLinkTarget(ref);
+  const appendColorSwatch = (parent) => {
+    let slot = Number(options.colorSlot);
+    if (target && target.type === 'reference' && target.tabKey === 'civilizations') {
+      const defaultColorField = getBiqFieldByBaseKey(target.entry, 'defaultcolor');
+      const linkedSlot = parseIntLoose(defaultColorField && defaultColorField.value, NaN);
+      if (Number.isFinite(linkedSlot)) slot = linkedSlot;
+    }
+    if (Number.isFinite(slot) && slot >= 0) {
+      const color = document.createElement('span');
+      color.className = 'civassist-color-swatch';
+      const applyColor = (css) => {
+        if (color.isConnected) color.style.backgroundColor = css;
+      };
+      color.style.backgroundColor = getCivSlotUiColor(slot, applyColor);
+      color.title = `Default Color ${slot}`;
+      parent.appendChild(color);
+      return true;
+    }
+    if (options.color) {
+      const color = document.createElement('span');
+      color.className = 'civassist-color-swatch';
+      color.style.backgroundColor = options.color;
+      parent.appendChild(color);
+      return true;
+    }
+    return false;
+  };
+  if (!target) {
+    const span = document.createElement('span');
+    span.className = options.inline ? 'civassist-value' : 'civassist-ref-chip civassist-ref-chip-unlinked';
+    if (ref && ref.sourceSignature) {
+      const tooltip = 'From the selected save rules.\nOpen the matching scenario to enable links and thumbnails.';
+      span.title = tooltip.replace(/\n/g, ' - ');
+      attachRichTooltip(span, tooltip);
+    }
+    appendColorSwatch(span);
+    const labelEl = document.createElement('span');
+    labelEl.textContent = text;
+    span.appendChild(labelEl);
+    return span;
+  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = options.inline ? 'civassist-ref-link-inline' : 'civassist-ref-chip';
+  if (target.type === 'structured') button.classList.add('civassist-ref-chip-textonly');
+  appendColorSwatch(button);
+  if (target.type === 'reference') {
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb civassist-ref-thumb';
+    thumb.dataset.thumbSize = options.inline ? '20' : '22';
+    button.appendChild(thumb);
+    loadReferenceListThumbnail(target.tabKey, target.entry, thumb);
+  }
+  const name = document.createElement('span');
+  name.className = 'civassist-ref-label';
+  name.textContent = text || target.label || '';
+  button.appendChild(name);
+  const tabTitle = getCivAssistReferenceTabTitle(target.tabKey);
+  const tooltip = `Open: ${name.textContent}\nTab: ${tabTitle}`;
+  button.title = tooltip.replace(/\n/g, ' - ');
+  attachRichTooltip(button, tooltip);
+  button.addEventListener('click', () => {
+    const navigated = navigateFromCivAssistToTarget(target);
+    if (!navigated) setStatus(`Could not open ${name.textContent || 'reference'}.`, true);
+  });
+  return button;
 }
 
 function appendCivAssistInfoGroup(parent, title, fields) {
@@ -72171,10 +72761,18 @@ function appendCivAssistInfoGroup(parent, title, fields) {
     const dt = document.createElement('dt');
     dt.textContent = `${field.label}:`;
     const dd = document.createElement('dd');
-    const value = document.createElement('span');
-    value.className = field.muted ? 'civassist-muted-value' : '';
-    value.textContent = String(field.value == null ? '' : field.value);
-    dd.appendChild(value);
+    if (field.ref) {
+      dd.appendChild(makeCivAssistReferenceChip(field.ref, field.value, {
+        inline: true,
+        color: field.color,
+        colorSlot: field.colorSlot
+      }));
+    } else {
+      const value = document.createElement('span');
+      value.className = field.muted ? 'civassist-muted-value' : 'civassist-value';
+      value.textContent = String(field.value == null ? '' : field.value);
+      dd.appendChild(value);
+    }
     if (field.rank) {
       const rank = document.createElement('span');
       rank.className = 'civassist-rank';
@@ -72226,7 +72824,7 @@ function renderCivAssistGeneral(report) {
   const table = document.createElement('table');
   table.className = 'civassist-rival-table';
   const colgroup = document.createElement('colgroup');
-  [12, 22, 8, 12, 13, 7, 7, 7, 12].forEach((width) => {
+  [14, 20, 8, 14, 12, 7, 7, 7, 11].forEach((width) => {
     const col = document.createElement('col');
     col.style.width = `${width}%`;
     colgroup.appendChild(col);
@@ -72234,7 +72832,7 @@ function renderCivAssistGeneral(report) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Nation', 'Traits', 'Relation', 'Government', 'Current Era', 'Gold', 'Cities', 'Land', 'Population'].forEach((label) => {
+  ['Civ', 'Traits', 'Relation', 'Government', 'Current Era', 'Gold', 'Cities', 'Land', 'Population'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     headerRow.appendChild(th);
@@ -72247,26 +72845,28 @@ function renderCivAssistGeneral(report) {
     if (rival.atWar) row.classList.add('at-war');
     const nation = document.createElement('td');
     nation.className = 'civassist-nation-cell';
-    const swatch = document.createElement('span');
-    swatch.className = 'civassist-color-swatch';
-    swatch.style.backgroundColor = rival.color || '#94a3b8';
-    const name = document.createElement('span');
-    name.textContent = rival.nation || '';
-    nation.append(swatch, name);
+    nation.appendChild(makeCivAssistReferenceChip(rival.nationRef, rival.nation, {
+      color: rival.color,
+      colorSlot: rival.colorSlot
+    }));
     row.appendChild(nation);
     [
-      rival.traits,
-      rival.relation,
-      rival.government,
-      rival.currentEra,
-      rival.gold,
-      rival.cities,
-      rival.land,
-      rival.population
-    ].forEach((value, index) => {
+      { value: rival.traits },
+      { value: rival.relation },
+      { value: rival.government, ref: rival.governmentRef },
+      { value: rival.currentEra, ref: rival.currentEraRef },
+      { value: rival.gold },
+      { value: rival.cities },
+      { value: rival.land },
+      { value: rival.population }
+    ].forEach((item, index) => {
       const cell = document.createElement('td');
       if (index >= 4) cell.className = 'num';
-      cell.textContent = String(value == null ? '' : value);
+      if (item.ref) {
+        cell.appendChild(makeCivAssistReferenceChip(item.ref, item.value));
+      } else {
+        cell.textContent = String(item.value == null ? '' : item.value);
+      }
       row.appendChild(cell);
     });
     tbody.appendChild(row);
@@ -72278,17 +72878,168 @@ function renderCivAssistGeneral(report) {
   return wrap;
 }
 
+function getCivAssistTradeMultiRefs(row, columnKey) {
+  const mappings = {
+    technologies: ['technologyRefs', 'technologyTotal', 'technologyTruncated'],
+    resources: ['resourceRefs', 'resourceTotal', 'resourceTruncated'],
+    weGive: ['weGiveRefs', 'weGiveTotal', 'weGiveTruncated'],
+    weReceive: ['weReceiveRefs', 'weReceiveTotal', 'weReceiveTruncated'],
+  };
+  const mapping = mappings[columnKey];
+  if (!mapping) return null;
+  const refs = Array.isArray(row[mapping[0]]) ? row[mapping[0]] : [];
+  if (refs.length === 0) return null;
+  const total = Number(row[mapping[1]]);
+  return {
+    refs,
+    total: Number.isFinite(total) ? total : refs.length,
+    truncated: !!row[mapping[2]],
+  };
+}
+
+function appendCivAssistTradeTable(parent, title, rows, columns) {
+  const section = document.createElement('section');
+  section.className = 'civassist-rivals civassist-trade-section';
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  section.appendChild(heading);
+  const scroller = document.createElement('div');
+  scroller.className = 'civassist-table-scroll';
+  const table = document.createElement('table');
+  table.className = 'civassist-rival-table civassist-trade-table';
+  const colgroup = document.createElement('colgroup');
+  columns.forEach((column) => {
+    const col = document.createElement('col');
+    if (column.width) col.style.width = column.width;
+    colgroup.appendChild(col);
+  });
+  table.appendChild(colgroup);
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  columns.forEach((column) => {
+    const th = document.createElement('th');
+    th.textContent = column.label;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  (rows || []).forEach((row) => {
+    const tr = document.createElement('tr');
+    columns.forEach((column) => {
+      const td = document.createElement('td');
+      if (column.num) td.className = 'num';
+      if (column.key === 'nation') {
+        td.className = 'civassist-nation-cell';
+        td.appendChild(makeCivAssistReferenceChip(row.nationRef, row.nation, {
+          color: row.color,
+          colorSlot: row.colorSlot
+        }));
+      } else {
+        const multiRefs = getCivAssistTradeMultiRefs(row, column.key);
+        if (multiRefs) {
+          td.classList.add('civassist-multi-cell');
+          if (column.num) td.classList.remove('num');
+          const list = document.createElement('div');
+          list.className = 'civassist-stacked-links';
+          if (multiRefs.total > multiRefs.refs.length) {
+            const count = document.createElement('span');
+            count.className = 'civassist-linked-count civassist-stacked-count';
+            count.textContent = `(${multiRefs.total})`;
+            list.appendChild(count);
+          }
+          multiRefs.refs.forEach((ref) => {
+            list.appendChild(makeCivAssistReferenceChip(ref, ref.name || ref.label || ''));
+          });
+          if (multiRefs.truncated) {
+            const more = document.createElement('span');
+            more.className = 'civassist-linked-more';
+            more.textContent = '...';
+            list.appendChild(more);
+          }
+          td.appendChild(list);
+        } else {
+          td.textContent = String(row[column.key] == null ? '' : row[column.key]);
+        }
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  scroller.appendChild(table);
+  section.appendChild(scroller);
+  parent.appendChild(section);
+}
+
+function renderCivAssistTrade(report) {
+  const trade = report && report.trade ? report.trade : {};
+  const wrap = document.createElement('div');
+  wrap.className = 'civassist-trade';
+  const top = document.createElement('div');
+  top.className = 'civassist-trade-top';
+  const treasury = document.createElement('div');
+  treasury.className = 'civassist-info-grid civassist-trade-treasury';
+  appendCivAssistInfoGroup(treasury, 'Treasury', trade.treasury || []);
+  top.appendChild(treasury);
+
+  const subtabs = [
+    { key: 'current', label: 'Current Trades', count: (trade.currentTrades || []).length },
+    { key: 'sell', label: 'Sell', count: (trade.sellOptions || []).length },
+    { key: 'buy', label: 'Buy', count: (trade.buyOptions || []).length },
+  ];
+  const activeSubtab = subtabs.some((tab) => tab.key === state.civAssist.activeTradeSubtab)
+    ? state.civAssist.activeTradeSubtab
+    : 'current';
+  state.civAssist.activeTradeSubtab = activeSubtab;
+  const subtabBar = document.createElement('div');
+  subtabBar.className = 'civassist-subtabs';
+  subtabs.forEach((tab) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = activeSubtab === tab.key ? 'civassist-subtab active' : 'civassist-subtab';
+    button.dataset.subtabKey = tab.key;
+    button.textContent = `${tab.label} (${tab.count})`;
+    button.addEventListener('click', () => {
+      state.civAssist.activeTradeSubtab = tab.key;
+      renderCivAssistModal();
+      syncCurrentNavigationSnapshot();
+    });
+    subtabBar.appendChild(button);
+  });
+  top.appendChild(subtabBar);
+  wrap.appendChild(top);
+
+  const optionColumns = [
+    { key: 'nation', label: 'Civ', width: '15%' },
+    { key: 'gold', label: 'Gold', num: true, width: '7%' },
+    { key: 'workers', label: 'Workers', num: true, width: '8%' },
+    { key: 'technologies', label: 'Technologies', width: '40%' },
+    { key: 'resources', label: 'Resources', width: '16%' },
+    { key: 'contacts', label: 'Contacts', width: '7%' },
+    { key: 'maps', label: 'Maps', width: '7%' },
+  ];
+  if (activeSubtab === 'sell') {
+    appendCivAssistTradeTable(wrap, 'Options for Us to Sell', trade.sellOptions || [], optionColumns);
+  } else if (activeSubtab === 'buy') {
+    appendCivAssistTradeTable(wrap, 'Options for Us to Buy', trade.buyOptions || [], optionColumns);
+  } else {
+    appendCivAssistTradeTable(wrap, 'Current Trades', trade.currentTrades || [], [
+      { key: 'nation', label: 'Civ', width: '22%' },
+      { key: 'turnsLeft', label: 'Turns Left', num: true, width: '10%' },
+      { key: 'weGive', label: 'We Give', width: '34%' },
+      { key: 'weReceive', label: 'We Receive', width: '34%' },
+    ]);
+  }
+  return wrap;
+}
+
 function renderCivAssistModal() {
   if (!el.civAssistModalBody) return;
   const report = state.civAssist.report;
-  if (el.civAssistModalTitle) {
-    el.civAssistModalTitle.textContent = report && report.title ? `Civ Advisor - ${report.title}` : 'Civ Advisor';
-  }
-  if (el.civAssistModalSubtitle) {
-    el.civAssistModalSubtitle.textContent = state.civAssist.savePath ? getPathTail(state.civAssist.savePath) : 'No save selected';
-  }
+  syncCivAssistHeader();
   el.civAssistModalBody.replaceChildren();
-  if (state.civAssist.loading) {
+  if (state.civAssist.loading && (!report || !report.ok)) {
     const loading = document.createElement('div');
     loading.className = 'civassist-empty';
     loading.textContent = 'Reading save...';
@@ -72303,7 +73054,28 @@ function renderCivAssistModal() {
     el.civAssistModalBody.appendChild(renderCivAssistEmptyState('Open a .SAV file to view CivAssist data.'));
     return;
   }
-  el.civAssistModalBody.appendChild(renderCivAssistGeneral(report));
+  const tabs = document.createElement('div');
+  tabs.className = 'civassist-tabs';
+  [
+    { key: 'general', label: 'General' },
+    { key: 'trade', label: 'Trade' }
+  ].forEach((tab) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = state.civAssist.activeTab === tab.key ? 'civassist-tab active' : 'civassist-tab';
+    button.dataset.tabKey = tab.key;
+    button.textContent = tab.label;
+    button.addEventListener('click', () => {
+      state.civAssist.activeTab = tab.key;
+      renderCivAssistModal();
+      syncCurrentNavigationSnapshot();
+    });
+    tabs.appendChild(button);
+  });
+  el.civAssistModalBody.appendChild(tabs);
+  el.civAssistModalBody.appendChild(state.civAssist.activeTab === 'trade'
+    ? renderCivAssistTrade(report)
+    : renderCivAssistGeneral(report));
 }
 
 async function wireScenarioBrowseButton(button, input) {
@@ -72352,6 +73124,7 @@ async function init() {
   if (typeof state.settings.reloadAfterSave !== 'boolean') {
     state.settings.reloadAfterSave = false;
   }
+  state.settings.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(state.settings.civAdvisorLoadMode);
   state.settings.tooltipDelay = normalizeTooltipDelay(state.settings.tooltipDelay);
   if (typeof state.settings.mapAutoDockTileInfoLeft !== 'boolean') {
     state.settings.mapAutoDockTileInfoLeft = true;
@@ -72517,6 +73290,36 @@ async function init() {
         state.reloadAfterSaveMenuUnsubscribe();
         state.reloadAfterSaveMenuUnsubscribe = null;
       }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onCivAdvisorLoadModeMenuSelect === 'function') {
+    state.civAdvisorLoadModeMenuUnsubscribe = window.c3xManager.onCivAdvisorLoadModeMenuSelect((mode) => {
+      if (!state.settings) return;
+      state.settings.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(mode);
+      void window.c3xManager.setSettings(state.settings);
+      if (state.settings.civAdvisorLoadMode === 'manual') {
+        state.civAssist.followingLatest = false;
+        state.civAssist.loadLatestOncePending = false;
+        setStatus('Civ Advisor will use manually selected saves.');
+      } else if (state.settings.civAdvisorLoadMode === 'follow') {
+        state.civAssist.followingLatest = true;
+        state.civAssist.loadLatestOncePending = false;
+        setStatus('Civ Advisor will follow the latest save while open.');
+        if (state.civAssist.isOpen) void refreshCivAssistRecentSaves({ allowAutoLoad: true });
+      } else {
+        state.civAssist.followingLatest = false;
+        state.civAssist.loadLatestOncePending = true;
+        setStatus('Civ Advisor will load the latest save when opened.');
+        if (state.civAssist.isOpen) void refreshCivAssistRecentSaves({ allowAutoLoad: true });
+      }
+      syncCivAssistHeader();
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.civAdvisorLoadModeMenuUnsubscribe) {
+        state.civAdvisorLoadModeMenuUnsubscribe();
+        state.civAdvisorLoadModeMenuUnsubscribe = null;
+      }
+      clearCivAssistPollTimer();
     }, { once: true });
   }
   if (window.c3xManager && typeof window.c3xManager.onTooltipDelayMenuSelect === 'function') {
@@ -72807,9 +73610,51 @@ async function init() {
       openCivAssistModal();
     });
   }
-  if (el.civAssistOpenSave) {
-    el.civAssistOpenSave.addEventListener('click', () => {
-      void pickCivAssistSave();
+  if (el.civAssistSaveSelect) {
+    el.civAssistSaveSelect.addEventListener('change', () => {
+      const selected = String(el.civAssistSaveSelect.value || '');
+      if (!selected || selected === '__separator__') {
+        renderCivAssistSaveSelector();
+        return;
+      }
+      if (selected === '__browse__') {
+        renderCivAssistSaveSelector();
+        void pickCivAssistSave();
+        return;
+      }
+      const wasFollowing = state.civAssist.followingLatest;
+      const wasLoadLatestOncePending = state.civAssist.loadLatestOncePending;
+      state.civAssist.followingLatest = false;
+      state.civAssist.loadLatestOncePending = false;
+      syncCivAssistHeader();
+      if (normalizeCivAssistPathKey(selected) === normalizeCivAssistPathKey(state.civAssist.savePath) && state.civAssist.report) {
+        setStatus('Civ Advisor save pinned.');
+        return;
+      }
+      const saveMeta = findRecentCivAssistSave(selected);
+      void loadCivAssistSave(selected, {
+        saveMeta,
+        fingerprint: getCivAssistSaveFingerprint(saveMeta)
+      }).then((loaded) => {
+        if (!loaded) {
+          state.civAssist.followingLatest = wasFollowing;
+          state.civAssist.loadLatestOncePending = wasLoadLatestOncePending;
+        }
+        syncCivAssistHeader();
+      });
+    });
+  }
+  if (el.civAssistFollowLatest) {
+    el.civAssistFollowLatest.addEventListener('change', () => {
+      state.civAssist.followingLatest = !!el.civAssistFollowLatest.checked;
+      state.civAssist.loadLatestOncePending = false;
+      syncCivAssistHeader();
+      if (state.civAssist.followingLatest) {
+        setStatus('Civ Advisor is following the latest save.');
+        void refreshCivAssistRecentSaves({ allowAutoLoad: true });
+      } else {
+        setStatus('Civ Advisor paused on the selected save.');
+      }
     });
   }
   if (el.civAssistClose) {
