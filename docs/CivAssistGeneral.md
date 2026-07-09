@@ -141,7 +141,7 @@ Next CivAssist tabs should reuse `src/biq/civAssist.js` and add parser fields be
 
 ## Alerts Tab Notes
 
-The Civ Advisor `Alerts` tab is intentionally non-obtrusive. It never foregrounds the app or activates the main window; alerts are visible only when the user opens Civ Advisor, and the tab badge counts current alerts for the selected save.
+The Civ Advisor `Alerts` tab is intentionally non-obtrusive. It never foregrounds the app or activates the main window. Actual current alerts appear at the top of their relevant Civ Advisor tabs, and those tabs get alert-count badges. The `Alerts` tab itself is for enabling or disabling alert families.
 
 The tab should start with actionable alerts. Date, turn, time-played, and Golden Age status belong on General, not in an Alerts status banner.
 
@@ -150,11 +150,11 @@ There are two different alert families:
 - Current-save alerts can be computed from one `.SAV`: trade opportunities, expiring deals, production overrun, treasury deficit, city deficit, research overrun, visible pollution, visible riot risk, damaged units, and enemies willing to negotiate.
 - Historical alerts require comparing at least two observations of the same game: city grew/shrank, specialists were reassigned, rival changed government, rival entered a new era, new tech/resource/contact appeared for sale, and disconnected-source warnings if they depend on newly observed map state.
 
-The current implementation should keep historical items out of `current` unless the auto-update/save-history path has previous state to compare against. A future unobtrusive design is a small `History` subview inside Alerts that appears only after multiple saves have been loaded or auto-update has observed a new save. That view should group entries by game date, similar to CivAssist II's alert log, while keeping the existing Current Alerts list focused on actionable facts from the selected save.
+The current implementation should keep historical items out of `current` unless the auto-update/save-history path has previous state to compare against. A future unobtrusive design is a small `History` subview inside Alerts that appears only after multiple saves have been loaded or auto-update has observed a new save. That view should group entries by game date, similar to CivAssist II's alert log, while keeping the per-tab current alert banners focused on actionable facts from the selected save.
 
-Current alert rows may include `detailRows`, which the renderer shows in the right-hand detail pane when an alert is selected. Trade detail rows should show the specific civ and the linked technologies/resources involved, instead of only a summary such as "resources are for sale from 2 civs".
+Current alert rows may include `detailRows` for future expansion, but the primary UI is a compact banner at the top of each related tab. Trade details should still retain the specific civ and linked technologies/resources in the report, instead of only a summary such as "resources are for sale from 2 civs".
 
-`Alert Coverage` is a selectable implementation index, not a roadmap table. It should show only active, current-save alert families and let users inspect which current alerts match each family. Planned CivAssist-style checks belong in this document until their required data is decoded and tested.
+`Alert Settings` is an enable/disable list, not a roadmap table. It should show only active, current-save alert families. Planned CivAssist-style checks belong in this document until their required data is decoded and tested.
 
 ## Trade Tab Notes
 
@@ -434,11 +434,11 @@ The Tokugawa fixture contains 38 units: 32 combat units, 6 civilians, 2 naval un
 
 The Alerts tab should be non-obtrusive by default. It is derived when a user opens Civ Advisor or enables the existing "follow latest save while open" mode; it should not foreground the app, make the window topmost, or notify users who never use Civ Advisor. Future desktop notification behavior should be opt-in and should have alert history/dismissal semantics first.
 
-The first implementation separates passive save status from current alerts:
+The implementation separates passive save status from current alerts:
 
 - passive status: current game date, turn number, time played, and Golden Age state;
-- current alerts: sorted by severity (`critical`, `warning`, `opportunity`, `info`);
-- coverage notes: implemented alert families only, selectable with current-match detail, so future work does not confuse deferred alerts with forgotten ones.
+- current alerts: sorted by severity (`critical`, `warning`, `opportunity`, `info`) and shown at the top of the related tab;
+- alert settings: implemented alert families only, toggleable, so future work does not confuse deferred alerts with forgotten ones.
 
 Fixture-backed Tokugawa 740 AD current alerts are:
 

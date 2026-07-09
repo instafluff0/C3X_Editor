@@ -667,15 +667,16 @@ test('CivAssist General tab matches Tokugawa 740 AD reference save', (t) => {
       experienceMix: row.experienceMix,
       upgrade: row.upgrade,
       upgradeCost: row.upgradeCost,
+      civText: row.civText,
     })),
     [
-      { name: 'Worker', stats: '0 / 0 / 1', count: 6, experienceMix: [{ name: 'Regular', count: 3 }, { name: 'Veteran', count: 3 }], upgrade: '', upgradeCost: 0 },
-      { name: 'Archer', stats: '2 / 1 / 1', count: 3, experienceMix: [{ name: 'Regular', count: 2 }, { name: 'Veteran', count: 1 }], upgrade: 'Longbowman', upgradeCost: 60 },
-      { name: 'Swordsman', stats: '3 / 2 / 1', count: 9, experienceMix: [{ name: 'Veteran', count: 8 }, { name: 'Elite', count: 1 }], upgrade: 'Medieval Infantry', upgradeCost: 30 },
-      { name: 'Pikeman', stats: '1 / 3 / 1', count: 2, experienceMix: [{ name: 'Veteran', count: 2 }], upgrade: 'Musketman', upgradeCost: 90 },
-      { name: 'Galley', stats: '1 / 1 / 3', count: 2, experienceMix: [{ name: 'Veteran', count: 2 }], upgrade: 'Caravel', upgradeCost: 30 },
-      { name: 'Crusader', stats: '5 / 3 / 1', count: 1, experienceMix: [{ name: 'Veteran', count: 1 }], upgrade: '', upgradeCost: 0 },
-      { name: 'Samurai', stats: '4 / 4 / 2', count: 15, experienceMix: [{ name: 'Veteran', count: 15 }], upgrade: 'Cavalry', upgradeCost: 30 },
+      { name: 'Worker', stats: '0 / 0 / 1', count: 6, experienceMix: [{ name: 'Regular', count: 3 }, { name: 'Veteran', count: 3 }], upgrade: '', upgradeCost: 0, civText: 'Japan, Germany' },
+      { name: 'Archer', stats: '2 / 1 / 1', count: 3, experienceMix: [{ name: 'Regular', count: 2 }, { name: 'Veteran', count: 1 }], upgrade: 'Longbowman', upgradeCost: 60, civText: 'Japan' },
+      { name: 'Swordsman', stats: '3 / 2 / 1', count: 9, experienceMix: [{ name: 'Veteran', count: 8 }, { name: 'Elite', count: 1 }], upgrade: 'Medieval Infantry', upgradeCost: 30, civText: 'Japan' },
+      { name: 'Pikeman', stats: '1 / 3 / 1', count: 2, experienceMix: [{ name: 'Veteran', count: 2 }], upgrade: 'Musketman', upgradeCost: 90, civText: 'Japan' },
+      { name: 'Galley', stats: '1 / 1 / 3', count: 2, experienceMix: [{ name: 'Veteran', count: 2 }], upgrade: 'Caravel', upgradeCost: 30, civText: 'Japan' },
+      { name: 'Crusader', stats: '5 / 3 / 1', count: 1, experienceMix: [{ name: 'Veteran', count: 1 }], upgrade: '', upgradeCost: 0, civText: 'Japan' },
+      { name: 'Samurai', stats: '4 / 4 / 2', count: 15, experienceMix: [{ name: 'Veteran', count: 15 }], upgrade: 'Cavalry', upgradeCost: 30, civText: 'Japan' },
     ]
   );
   assert.ok(report.military.roster.every((row) => row.ref.sourceSignature === report.ruleSignatures.PRTO));
@@ -930,6 +931,27 @@ test('Civ Advisor can inspect the same save from another active civ perspective'
     romeReport.general.rivals.some((row) => row.nation === 'Japan'),
     'the original player should become a rival when inspecting another civ'
   );
+
+  const allReport = inspectCivAssistSaveFile(TOKUGAWA_SAVE, { selectedPlayerID: -1 });
+  assert.equal(allReport.ok, true, allReport.error);
+  assert.equal(allReport.selectedPlayerID, -1);
+  assert.equal(allReport.viewingCiv.nation, 'All Civs');
+  assert.equal(allReport.cities.allCivs, true);
+  assert.ok(allReport.cities.rows.length > defaultReport.cities.rows.length);
+  assert.ok(allReport.cities.rows.some((row) => row.city === 'Kyoto' && row.civ === 'Japan'));
+  assert.ok(allReport.cities.rows.some((row) => row.city === 'Rome' && row.civ === 'Rome'));
+  assert.equal(allReport.culture.allCivs, true);
+  assert.ok(allReport.culture.cities.some((row) => row.name === 'Kyoto' && row.civ === 'Japan'));
+  assert.ok(allReport.culture.cities.some((row) => row.name === 'Rome' && row.civ === 'Rome'));
+  assert.equal(allReport.territory.allCivs, true);
+  assert.ok(allReport.territory.cityRows.some((row) => row.city === 'Kyoto' && row.civ === 'Japan'));
+  assert.ok(allReport.territory.cityRows.some((row) => row.city === 'Rome' && row.civ === 'Rome'));
+  assert.equal(allReport.economy.allCivs, true);
+  assert.ok(allReport.economy.cityRows.some((row) => row.name === 'Kyoto' && row.civ === 'Japan'));
+  assert.ok(allReport.economy.cityRows.some((row) => row.name === 'Rome' && row.civ === 'Rome'));
+  assert.equal(allReport.production.allCivs, true);
+  assert.ok(allReport.production.rows.some((row) => row.city === 'Kyoto' && row.civ === 'Japan'));
+  assert.ok(allReport.production.rows.some((row) => row.city === 'Rome' && row.civ === 'Rome'));
 });
 
 test('Civ Advisor table links fill their columns and trade continuation rows omit empty civ chips', () => {
@@ -1002,9 +1024,12 @@ test('Civ Advisor Territory tab renders exploration and improvement stats', () =
 test('Civ Advisor Military tab separates roster and individual-unit views', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
-  assert.match(renderer, /function renderCivAssistMilitary\(report\) \{[\s\S]*?Roster \([\s\S]*?Units \(/);
-  assert.match(renderer, /function renderCivAssistMilitaryRoster\(military\) \{[\s\S]*?row\.upgradeRef[\s\S]*?row\.experienceMix/);
-  assert.match(renderer, /function renderCivAssistMilitaryUnits\(military\) \{[\s\S]*?row\.health[\s\S]*?row\.movement[\s\S]*?row\.nationalityRef/);
+  assert.match(renderer, /function renderCivAssistMilitary\(report\) \{[\s\S]*?Unit Types \(\$\{\(military\.roster \|\| \[\]\)\.length\}\)[\s\S]*?Individual Units \(\$\{\(military\.units \|\| \[\]\)\.length\}\)/);
+  assert.match(renderer, /function renderCivAssistMilitaryRoster\(military\) \{[\s\S]*?Search Unit Types\.\.\.[\s\S]*?state\.civAssist\.militaryRosterSearch = search\.value[\s\S]*?\{ key: 'civText', label: 'Civ', className: 'civ' \}[\s\S]*?row\.upgradeRef[\s\S]*?row\.experienceMix[\s\S]*?appendCivAssistMilitaryCivs\(civ, row\.civs\)/);
+  assert.match(renderer, /function renderCivAssistMilitaryUnits\(military\) \{[\s\S]*?Search Individual Units\.\.\.[\s\S]*?state\.civAssist\.militaryUnitsSearch = search\.value[\s\S]*?\{ key: 'nationality', label: 'Civ', className: 'nationality' \}[\s\S]*?row\.health[\s\S]*?row\.movement[\s\S]*?row\.nationalityRef/);
+  assert.match(renderer, /function refocusCivAssistMilitaryRosterSearch\(value, selectionStart, selectionEnd\)/);
+  assert.match(renderer, /function refocusCivAssistMilitaryUnitsSearch\(value, selectionStart, selectionEnd\)/);
+  assert.doesNotMatch(renderer, /appendCivAssistMilitarySummary|Force Roster|Roster \(\$\{|label: 'Nationality'/);
   assert.match(renderer, /\{ key: 'military', label: 'Military' \}/);
   assert.match(renderer, /activeMilitarySubtab: \['roster', 'units'\]\.includes/);
   assert.match(renderer, /function civAssistRefMatchesCurrentRecord\(ref, currentSignature\) \{[\s\S]*?sourceRecord[\s\S]*?currentRecord/);
@@ -1016,28 +1041,35 @@ test('Civ Advisor Military tab separates roster and individual-unit views', () =
   assert.match(renderer, /if \(byIndex\) \{[\s\S]*?civAssistReferenceEntryMatchesSource\(ref, byIndex\)[\s\S]*?return byIndex/);
   assert.match(renderer, /function getCivAssistLinkTarget\(ref\) \{[\s\S]*?civAssistReferenceEntryMatchesSource\(ref, entry\)[\s\S]*?type: 'reference'/);
   assert.match(renderer, /button\.dataset\.subtabKey = tab\.key/);
-  assert.match(styles, /\.civassist-military\s*\{[\s\S]*?grid-template-rows: auto auto minmax\(0, 1fr\)/);
+  assert.match(styles, /\.civassist-military\s*\{[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\)/);
+  assert.match(styles, /\.civassist-military-roster-table col\.civ \{ width: 12%; \}/);
+  assert.match(styles, /\.civassist-military-roster-search,\s*\.civassist-military-units-search\s*\{[\s\S]*?width: min\(640px, 100%\)/);
+  assert.doesNotMatch(styles, /civassist-military-summary/);
   assert.match(styles, /\.civassist-subtab\[data-subtab-key="roster"\]\.active,\s*\.civassist-subtab\[data-subtab-key="units"\]\.active/);
 });
 
 test('Civ Advisor Alerts tab groups current alerts without foregrounding the app', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
-  assert.match(renderer, /function renderCivAssistAlerts\(report\) \{[\s\S]*?Current Alerts[\s\S]*?Alert Coverage/);
+  const renderAlertsStart = renderer.indexOf('function renderCivAssistAlerts(report)');
+  const renderAlertsEnd = renderer.indexOf('function renderCivAssistModal()', renderAlertsStart);
+  const renderAlertsBody = renderer.slice(renderAlertsStart, renderAlertsEnd);
+  assert.match(renderAlertsBody, /Alert Settings/);
+  assert.match(renderAlertsBody, /renderCivAssistAlertCoverageRow\(row, currentRows\)/);
+  assert.doesNotMatch(renderAlertsBody, /Current Alerts/);
   assert.doesNotMatch(renderer, /statusHeading\.textContent = 'Save Status'/);
-  assert.match(renderer, /function renderCivAssistAlertDetail\(alert\) \{[\s\S]*?detailRows[\s\S]*?makeCivAssistReferenceChip/);
-  assert.match(renderer, /function renderCivAssistAlertCoverageDetail\(coverage, currentRows\) \{[\s\S]*?Current Matches/);
+  assert.match(renderer, /function renderCivAssistTabAlertBanner\(report, tabKey\) \{[\s\S]*?getCivAssistTabAlerts\(report, tabKey\)[\s\S]*?civassist-tab-alerts/);
+  assert.match(renderer, /function renderCivAssistAlertCoverageRow\(coverage, currentRows\) \{[\s\S]*?checkbox\.type = 'checkbox'[\s\S]*?setCivAssistAlertCoverageEnabled/);
   assert.match(renderer, /function civAssistCoverageMatchesAlert\(coverage, alert\) \{/);
-  assert.match(renderer, /activeAlertCoverageID/);
-  assert.match(renderer, /filter\(\(row\) => String\(row\.status \|\| ''\)\.toLowerCase\(\) === 'active'\)/);
+  assert.match(renderer, /function getCivAssistAlertCoverageRows\(report\) \{[\s\S]*?toLowerCase\(\) === 'active'/);
   assert.doesNotMatch(renderer, /<th>Check<\/th><th>Status<\/th><th>Notes<\/th>/);
-  assert.match(renderer, /\{ key: 'alerts', label: 'Alerts', count: report\.alerts/);
+  assert.match(renderer, /count: tab\.key === 'alerts' \? 0 : getCivAssistTabAlerts\(report, tab\.key\)\.length/);
   assert.match(renderer, /function applyCivAssistAlertTarget\(alert\) \{[\s\S]*?state\.civAssist\.activeTradeSubtab = String\(alert\.subtab\)/);
   assert.match(renderer, /activeAlertID/);
-  assert.match(renderer, /civassist-tab-count/);
+  assert.match(renderer, /civassist-tab-count dirty-dot-badge dirty-count-badge/);
   assert.doesNotMatch(renderer, /BrowserWindow\.getFocusedWindow\(\)\.focus\(\)/);
-  assert.match(styles, /\.civassist-alert-current-shell\s*\{[\s\S]*?grid-template-columns/);
-  assert.match(styles, /\.civassist-alert-detail\s*\{/);
+  assert.match(styles, /\.civassist-tab-alerts\s*\{/);
+  assert.match(styles, /\.civassist-alert-coverage-row input\s*\{/);
   assert.match(styles, /\.civassist-tab\[data-tab-key="alerts"\]\.active/);
 });
 
@@ -1069,12 +1101,33 @@ test('Civ Advisor tables expose Unit Table-style sortable headers', () => {
   );
   assert.match(
     renderer,
-    /function renderCivAssistViewingSelector\(report\) \{[\s\S]*?createReferencePicker\(\{[\s\S]*?pickerClassName: 'civassist-viewing-civ-picker'[\s\S]*?loadCivAssistSave\(state\.civAssist\.savePath/,
-    'Civ Advisor should render a structured global viewing-civ selector that reloads the current save for that player'
+    /function renderCivAssistViewingSelector\(report\) \{[\s\S]*?createReferencePicker\(\{[\s\S]*?includeNone: true,[\s\S]*?noneLabel: 'All Civs'[\s\S]*?pickerClassName: 'civassist-viewing-civ-picker'[\s\S]*?loadCivAssistSave\(state\.civAssist\.savePath/,
+    'Civ Advisor should render a structured global viewing-civ selector with All Civs and reload the current save for that player'
   );
   assert.match(
     renderer,
-    /state\.civAssist\.selectedPlayerID = Number\.isFinite\(resolvedPlayerID\)[\s\S]*?state\.civAssist\.report = result/,
+    /function getCivAssistViewingOptions\(report\) \{[\s\S]*?const civEntryByIndex = new Map\(getCivilizationBitmaskOptions\(\)[\s\S]*?entry: civEntryByIndex\.get\(String\(item\.raceID\)\) \|\| null/,
+    'Civ Advisor viewing-civ options should use live civilization entries so the structured picker can show leader thumbnails'
+  );
+  assert.match(renderer, /selectedPlayerID: 0,/);
+  assert.match(renderer, /label\.textContent = 'Civ'/);
+  assert.doesNotMatch(renderer, /item\.isHuman \? 'Human'|getOptionMetaText: \(option\) => option && option\.meta/);
+  assert.match(
+    renderer,
+    /function renderCivAssistViewingCivThumb\(holder, option\) \{[\s\S]*?if \(option\.entry\) \{[\s\S]*?loadReferenceListThumbnail\('civilizations', option\.entry, holder\)/,
+    'Civ Advisor viewing-civ selector should render leader thumbnails from live civilization entries'
+  );
+  assert.match(
+    renderer,
+    /const columns = \[[\s\S]*?\.\.\.\(cities\.allCivs \? \[\{ key: 'civ', label: 'Civ'/,
+    'Cities tab should add an owner Civ column when All Civs is selected'
+  );
+  assert.match(renderer, /const columns = \[[\s\S]*?\.\.\.\(territory\.allCivs \? \[\{ key: 'civ', label: 'Civ'/);
+  assert.match(renderer, /const columns = \[[\s\S]*?\.\.\.\(economy\.allCivs \? \[\{ key: 'civ', label: 'Civ'/);
+  assert.match(renderer, /const hasAllCivs = !!production\.allCivs;[\s\S]*?<th>Civ<\/th>/);
+  assert.match(
+    renderer,
+    /state\.civAssist\.selectedPlayerID = Number\.isFinite\(resolvedPlayerID\) && \(resolvedPlayerID > 0 \|\| resolvedPlayerID === -1\)[\s\S]*?state\.civAssist\.report = result/,
     'loaded Civ Advisor reports should sync selectedPlayerID from the backend fallback-aware result'
   );
   assert.match(

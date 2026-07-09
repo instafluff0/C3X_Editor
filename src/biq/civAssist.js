@@ -712,6 +712,46 @@ function makeCityArtMetadata(city, context) {
   };
 }
 
+function makeCityOwnerContext(city, context) {
+  const {
+    human, humanDetails, players, detailsByPlayer, races, ruleRecord, ruleSignatures,
+  } = context || {};
+  const playerById = context && context.playerById instanceof Map
+    ? context.playerById
+    : new Map((players || []).map((player) => [Number(player.playerID), player]));
+  const ownerPlayer = playerById.get(Number(city && city.owner)) || human || {};
+  const ownerDetails = detailsByPlayer && detailsByPlayer.get(Number(ownerPlayer.playerID)) || humanDetails || {};
+  const ownerRaceID = Number(ownerPlayer.raceID);
+  const ownerName = recordName(races || [], ownerRaceID, 'RACE', '');
+  const ownerRace = races && races[ownerRaceID] || null;
+  return {
+    player: ownerPlayer,
+    details: ownerDetails,
+    ownerPlayerID: Number(ownerPlayer.playerID),
+    ownerRaceID,
+    civ: ownerName,
+    civRef: makeRef('civilizations', 'RACE', ownerRaceID, ownerName, ruleSignatures),
+    colorSlot: Number(ownerRace && ownerRace.defaultColor),
+    cityArt: makeCityArtMetadata(city, {
+      player: ownerPlayer,
+      playerDetails: ownerDetails,
+      races,
+      ruleRecord,
+    }),
+  };
+}
+
+function makeCityOwnerFields(ownerContext, include) {
+  if (!include || !ownerContext) return {};
+  return {
+    ownerPlayerID: ownerContext.ownerPlayerID,
+    ownerRaceID: ownerContext.ownerRaceID,
+    civ: ownerContext.civ,
+    civRef: ownerContext.civRef,
+    colorSlot: ownerContext.colorSlot,
+  };
+}
+
 function estimateCultureWinDate({ currentTurn, currentCulture, culturePerTurn, limit, gameRules }) {
   const target = Math.max(0, Number(limit) || 0);
   const gathered = Math.max(0, Number(currentCulture) || 0);
@@ -723,12 +763,14 @@ function estimateCultureWinDate({ currentTurn, currentCulture, culturePerTurn, l
 
 function makeCultureReport(context) {
   const {
-    report, human, humanVisible, humanDetails, races, players, techs, techMasks, buildings,
-    gameRules, ruleRecord, ruleSignatures,
+    report, human, humanVisible, humanDetails, races, players, detailsByPlayer, techs, techMasks, buildings,
+    gameRules, ruleRecord, ruleSignatures, allPlayersMode,
   } = context;
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
-  const humanCities = (report.cities && report.cities.records || [])
-    .filter((city) => Number(city.owner) === Number(human.playerID))
+  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const selectedCityRecords = (report.cities && report.cities.records || [])
+    .filter((city) => allPlayersMode ? activePlayerIDs.has(Number(city.owner)) : Number(city.owner) === Number(human.playerID));
+  const humanCities = selectedCityRecords
     .map((city) => ({
       id: Number(city.id),
       name: city.name || `City ${city.id}`,
@@ -737,11 +779,14 @@ function makeCultureReport(context) {
       shieldsPerTurn: Number(city.shieldsPerTurn) || 0,
       shieldsCollected: Number(city.shieldsCollected) || 0,
       buildingRecords: Array.isArray(city.buildingRecords) ? city.buildingRecords : [],
-      cityArt: makeCityArtMetadata(city, {
-        player: human,
-        playerDetails: humanDetails,
+      owner: makeCityOwnerContext(city, {
+        human,
+        humanDetails,
+        playerById,
+        detailsByPlayer,
         races,
         ruleRecord,
+        ruleSignatures,
       }),
     }));
   const defaultCityID = humanCities.some((city) => city.id === Number(human.capitalCity))
@@ -765,6 +810,17 @@ function makeCultureReport(context) {
     : 0;
   const buildingRowsByCity = {};
   for (const city of humanCities) {
+    const cityOwner = city.owner || makeCityOwnerContext(city, {
+      human,
+      humanDetails,
+      playerById,
+      detailsByPlayer,
+      races,
+      ruleRecord,
+      ruleSignatures,
+    });
+    const ownerPlayer = cityOwner.player || human;
+    const ownerCities = humanCities.filter((item) => Number(item.owner && item.owner.ownerPlayerID) === Number(ownerPlayer.playerID));
     const savedByIndex = new Map(city.buildingRecords.map((item) => [Number(item.buildingIndex), item]));
     buildingRowsByCity[city.id] = buildings.map((building, buildingIndex) => {
       const saved = savedByIndex.get(buildingIndex) || { originalOwner: -1, yearBuilt: 0, culture: 0 };
@@ -776,7 +832,7 @@ function makeCultureReport(context) {
       const builtElsewhere = isGreatWonder ? builtLocations.get(buildingIndex) : null;
       const missing = [];
       const reqAdvance = Number(building && building.reqAdvance);
-      if (Number.isFinite(reqAdvance) && reqAdvance >= 0 && !playerHasTech(techMasks, reqAdvance, human.playerID)) {
+      if (Number.isFinite(reqAdvance) && reqAdvance >= 0 && !playerHasTech(techMasks, reqAdvance, ownerPlayer.playerID)) {
         missing.push(recordName(techs, reqAdvance, 'TECH', `Technology ${reqAdvance}`));
       }
       const reqImprovement = Number(building && building.reqImprovement);
@@ -784,7 +840,7 @@ function makeCultureReport(context) {
       if (Number.isFinite(reqImprovement) && reqImprovement >= 0) {
         const requirementName = recordName(buildings, reqImprovement, 'BLDG', `Improvement ${reqImprovement}`);
         if (requiredCount > 1) {
-          const ownedCount = humanCities.filter((item) => cityHasBuilding(item, reqImprovement)).length;
+          const ownedCount = ownerCities.filter((item) => cityHasBuilding(item, reqImprovement)).length;
           if (ownedCount < requiredCount) missing.push(`${requiredCount - ownedCount} more ${requirementName}${requiredCount - ownedCount === 1 ? '' : 's'}`);
         } else if (!cityHasBuilding(city, reqImprovement)) {
           missing.push(requirementName);
@@ -793,7 +849,7 @@ function makeCultureReport(context) {
       if ((((Number(building && building.smallWonderCharacteristics) || 0) >>> 0) & 0x400) !== 0) missing.push('victorious Army');
       if (Number(building && building.armiesRequired) > 0) missing.push(`${Number(building.armiesRequired)} Armies`);
       const obsoleteBy = Number(building && building.obsoleteBy);
-      const obsolete = Number.isFinite(obsoleteBy) && obsoleteBy >= 0 && playerHasTech(techMasks, obsoleteBy, human.playerID);
+      const obsolete = Number.isFinite(obsoleteBy) && obsoleteBy >= 0 && playerHasTech(techMasks, obsoleteBy, ownerPlayer.playerID);
       const cost = Math.max(0, Number(building && building.cost) || 0) * 10;
       const projectedShields = city.shieldsPerTurn + 1;
       const turnsNeeded = projectedShields > 0
@@ -815,7 +871,7 @@ function makeCultureReport(context) {
         status = 'Expired';
         statusKind = 'expired';
       } else if (builtElsewhere && builtElsewhere.cityID !== city.id) {
-        const owner = builtElsewhere.civilization && Number(report.cities.records.find((item) => Number(item.id) === builtElsewhere.cityID)?.owner) !== Number(human.playerID)
+        const owner = builtElsewhere.civilization && Number(report.cities.records.find((item) => Number(item.id) === builtElsewhere.cityID)?.owner) !== Number(ownerPlayer.playerID)
           ? ` [${builtElsewhere.civilization}]`
           : '';
         status = `Already built in ${builtElsewhere.cityName}${owner}`;
@@ -845,16 +901,22 @@ function makeCultureReport(context) {
       };
     });
   }
-  const civilizationCulture = Number(humanVisible && humanVisible.culture) || Number(humanDetails && humanDetails.cultureTotal) || 0;
-  const civilizationCulturePerTurn = Number(humanVisible && humanVisible.culturePerTurn) || Number(humanDetails && humanDetails.culturePerTurn) || 0;
+  const civilizationCulture = allPlayersMode
+    ? humanCities.reduce((sum, city) => sum + (Number(city.culture) || 0), 0)
+    : Number(humanVisible && humanVisible.culture) || Number(humanDetails && humanDetails.cultureTotal) || 0;
+  const civilizationCulturePerTurn = allPlayersMode
+    ? humanCities.reduce((sum, city) => sum + (Number(city.culturePerTurn) || 0), 0)
+    : Number(humanVisible && humanVisible.culturePerTurn) || Number(humanDetails && humanDetails.culturePerTurn) || 0;
   return {
     defaultCityID,
+    allCivs: !!allPlayersMode,
     cities: humanCities.map((city) => ({
       id: city.id,
       name: city.name,
+      ...makeCityOwnerFields(city.owner, allPlayersMode),
       culture: city.culture,
       culturePerTurn: city.culturePerTurn,
-      cityArt: city.cityArt,
+      cityArt: city.owner.cityArt,
       estimatedWinDate: estimateCultureWinDate({
         currentTurn: report.game.turnNumber,
         currentCulture: city.culture,
@@ -913,32 +975,52 @@ function civ3CityDistance(left, right, worldWidth) {
 
 function makeCitiesReport(context) {
   const {
-    report, human, humanDetails, races, ruleRecord,
+    report, human, humanDetails, races, ruleRecord, players, detailsByPlayer, ruleSignatures, allPlayersMode,
   } = context;
   const allCities = report.cities && report.cities.records || [];
-  const humanCities = allCities.filter((city) => Number(city.owner) === Number(human.playerID));
-  const capital = humanCities.find((city) => Number(city.id) === Number(human.capitalCity)) || humanCities[0] || null;
+  const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
+  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const selectedCities = allPlayersMode
+    ? allCities.filter((city) => activePlayerIDs.has(Number(city.owner)))
+    : allCities.filter((city) => Number(city.owner) === Number(human.playerID));
+  const capitalByPlayer = new Map((players || []).map((player) => [
+    Number(player.playerID),
+    allCities.find((city) => Number(city.id) === Number(player.capitalCity)) || null,
+  ]));
+  const fallbackCapital = selectedCities.find((city) => Number(city.id) === Number(human.capitalCity)) || selectedCities[0] || null;
   const units = report.units && report.units.records || [];
   return {
-    rows: humanCities.map((city) => {
+    allCivs: !!allPlayersMode,
+    rows: selectedCities.map((city) => {
+      const ownerPlayer = playerById.get(Number(city.owner)) || human;
+      const ownerDetails = detailsByPlayer && detailsByPlayer.get(Number(ownerPlayer.playerID)) || humanDetails;
+      const capital = capitalByPlayer.get(Number(ownerPlayer.playerID)) || fallbackCapital;
+      const ownerName = recordName(races, Number(ownerPlayer.raceID), 'RACE', '');
       const population = Math.max(0, Number(city.population) || 0);
       const happy = Math.max(0, Number(city.happyCitizens) || 0);
       const unhappy = Math.max(0, Number(city.unhappyCitizens) || 0);
       const corruption = Math.max(0, Number(city.corruption) || 0);
       const waste = Math.max(0, Number(city.productionLoss) || 0);
-      const garrison = units.filter((unit) => Number(unit.owner) === Number(human.playerID)
+      const garrison = units.filter((unit) => Number(unit.owner) === Number(ownerPlayer.playerID)
         && Number(unit.x) === Number(city.x)
         && Number(unit.y) === Number(city.y)).length;
       return {
         id: Number(city.id),
+        ...(allPlayersMode ? {
+          ownerPlayerID: Number(ownerPlayer.playerID),
+          ownerRaceID: Number(ownerPlayer.raceID),
+          civ: ownerName,
+          civRef: makeRef('civilizations', 'RACE', Number(ownerPlayer.raceID), ownerName, ruleSignatures),
+          colorSlot: Number(races[Number(ownerPlayer.raceID)] && races[Number(ownerPlayer.raceID)].defaultColor),
+        } : {}),
         city: city.name || '',
         cityArt: makeCityArtMetadata(city, {
-          player: human,
-          playerDetails: humanDetails,
+          player: ownerPlayer,
+          playerDetails: ownerDetails,
           races,
           ruleRecord,
         }),
-        size: `${Number(city.id) === Number(human.capitalCity) ? '*' : ''}${population}`,
+        size: `${Number(city.id) === Number(ownerPlayer.capitalCity) ? '*' : ''}${population}`,
         sizeValue: population,
         happy: population > 0 ? `${Math.round((happy * 100) / population)}%` : '',
         happyValue: population > 0 ? Math.round((happy * 100) / population) : 0,
@@ -1008,7 +1090,7 @@ function territoryRatio(part, whole) {
 function makeTerritoryReport(context) {
   const {
     buf, report, human, humanDetails, humanVisible, playerRows, terrainRecords, unitTypes, races, ruleRecord,
-    perspectiveMask,
+    perspectiveMask, players, detailsByPlayer, ruleSignatures, allPlayersMode,
   } = context;
   const tiles = parseTerritoryTiles(buf, report);
   const humanMask = (Number(perspectiveMask) || 0) >>> 0;
@@ -1024,7 +1106,9 @@ function makeTerritoryReport(context) {
   const explored = tiles.filter((tile) => ((Number(tile.exploredBy) >>> 0) & humanMask) !== 0);
   const exploredLand = explored.filter(isLand);
   const exploredWater = explored.filter(isWater);
-  const ownedTiles = tiles.filter((tile) => Number(tile.owner) === Number(human.playerID));
+  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const selectedOwnerIDs = allPlayersMode ? activePlayerIDs : new Set([Number(human.playerID)]);
+  const ownedTiles = tiles.filter((tile) => selectedOwnerIDs.has(Number(tile.owner)));
   const ownedLand = ownedTiles.filter(isLand);
   const ownedDominationTiles = ownedTiles.filter(isDominationTile);
   const districtTiles = parseC3XDistrictTileMap(buf);
@@ -1040,9 +1124,9 @@ function makeTerritoryReport(context) {
   const workedStats = countTerritoryImprovements(worked, { excludeMined: excludeDistrictMine });
   const unworkedStats = countTerritoryImprovements(unworked, { excludeMined: excludeDistrictMine });
   const humanCities = (report.cities && report.cities.records || [])
-    .filter((city) => Number(city.owner) === Number(human.playerID));
+    .filter((city) => selectedOwnerIDs.has(Number(city.owner)));
   const units = report.units && report.units.records || [];
-  const humanUnits = units.filter((unit) => Number(unit.owner) === Number(human.playerID));
+  const humanUnits = units.filter((unit) => selectedOwnerIDs.has(Number(unit.owner)));
   const workerTypeIndexes = new Set((unitTypes || [])
     .map((unit, index) => ({ unit, index, name: recordName(unitTypes, index, 'PRTO', '') }))
     .filter((item) => canonicalKey(item.name) === 'worker')
@@ -1063,7 +1147,17 @@ function makeTerritoryReport(context) {
     if (!cityTiles.has(cityID)) cityTiles.set(cityID, []);
     cityTiles.get(cityID).push(tile);
   });
+  const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
   const cityRows = humanCities.map((city) => {
+    const owner = makeCityOwnerContext(city, {
+      human,
+      humanDetails,
+      playerById,
+      detailsByPlayer,
+      races,
+      ruleRecord,
+      ruleSignatures,
+    });
     const assigned = cityTiles.get(Number(city.id)) || [];
     const assignedNonDistrict = assigned.filter((tile) => !districtCoordSet.has(`${Number(tile.x)},${Number(tile.y)}`));
     const assignedStats = countTerritoryImprovements(assignedNonDistrict);
@@ -1074,14 +1168,10 @@ function makeTerritoryReport(context) {
     const corruption = Math.max(0, Number(city.corruption) || 0);
     return {
       id: Number(city.id),
+      ...makeCityOwnerFields(owner, allPlayersMode),
       city: city.name || '',
-      cityArt: makeCityArtMetadata(city, {
-        player: human,
-        playerDetails: humanDetails,
-        races,
-        ruleRecord,
-      }),
-      size: `${Number(city.id) === Number(human.capitalCity) ? '*' : ''}${Number(city.population) || 0}`,
+      cityArt: owner.cityArt,
+      size: `${Number(city.id) === Number(owner.player && owner.player.capitalCity) ? '*' : ''}${Number(city.population) || 0}`,
       sizeValue: Number(city.population) || 0,
       assigned: assigned.length,
       worked: assignedStats.irrigated + assignedStats.mined + assigned.filter(isForest).length,
@@ -1122,7 +1212,7 @@ function makeTerritoryReport(context) {
       cities: humanCities.length,
       citizens,
       specialists,
-      tilesPerCity: humanCities.length > 0 ? (Number(humanVisible && humanVisible.land) / humanCities.length).toFixed(1) : '',
+      tilesPerCity: humanCities.length > 0 ? ((allPlayersMode ? ownedTiles.length : Number(humanVisible && humanVisible.land)) / humanCities.length).toFixed(1) : '',
       workerCount: workerUnits.length,
       nativeWorkers: workerUnits.length - slaveWorkers,
       nativeWorkersPercent: territoryRatio(workerUnits.length - slaveWorkers, workerUnits.length),
@@ -1141,6 +1231,7 @@ function makeTerritoryReport(context) {
       { label: 'Jungle or Marsh', worked: worked.filter(isJungleOrMarsh).length, unworked: unworked.filter(isJungleOrMarsh).length },
     ],
     cityRows,
+    allCivs: !!allPlayersMode,
   };
 }
 
@@ -1168,11 +1259,15 @@ function sumTradeGpt(groups) {
 function makeEconomyReport(context) {
   const {
     buf, report, human, humanDetails, humanVisible, governments, buildings, unitTypes,
-    ruleRecord, techs, techMasks, players, races, humanTradeTail, tradeRows, ruleSignatures,
+    ruleRecord, techs, techMasks, players, detailsByPlayer, races, humanTradeTail, tradeRows, ruleSignatures,
+    allPlayersMode,
   } = context;
   const governmentIndex = Number(humanDetails && humanDetails.government);
   const government = governments[governmentIndex] || {};
   const humanCities = (report.cities && report.cities.records || []).filter((city) => Number(city.owner) === Number(human.playerID));
+  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const cityRowRecords = (report.cities && report.cities.records || [])
+    .filter((city) => allPlayersMode ? activePlayerIDs.has(Number(city.owner)) : Number(city.owner) === Number(human.playerID));
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
   const buildingIndexByKey = new Map(buildings.map((building, index) => [canonicalKey(building && building.name), index]));
   const marketplaceIndex = buildingIndexByKey.get('marketplace');
@@ -1215,7 +1310,19 @@ function makeEconomyReport(context) {
       ref: makeRef('improvements', 'BLDG', buildingIndex, name, ruleSignatures),
     };
   };
-  const cityRows = humanCities.map((city) => {
+  const cityRows = cityRowRecords.map((city) => {
+    const owner = makeCityOwnerContext(city, {
+      human,
+      humanDetails,
+      playerById,
+      detailsByPlayer,
+      races,
+      ruleRecord,
+      ruleSignatures,
+    });
+    const ownerCities = allPlayersMode
+      ? (report.cities && report.cities.records || []).filter((item) => Number(item.owner) === Number(owner.ownerPlayerID))
+      : humanCities;
     const productionLoss = Math.max(0, Number(city.productionLoss) || 0);
     const corruption = Math.max(0, Number(city.corruption) || 0);
     const production = Math.max(0, Number(city.productionIncome) || 0);
@@ -1227,23 +1334,19 @@ function makeEconomyReport(context) {
       building: buildings[Number(option.buildingIndex)],
       buildingIndex: Number(option.buildingIndex),
       buildings,
-      humanCities,
+      humanCities: ownerCities,
       builtLocations,
       report,
-      human,
+      human: owner.player || human,
       techs,
       techMasks,
       ruleSignatures,
     }));
     return {
       id: Number(city.id),
+      ...makeCityOwnerFields(owner, allPlayersMode),
       name: city.name || '',
-      cityArt: makeCityArtMetadata(city, {
-        player: human,
-        playerDetails: humanDetails,
-        races,
-        ruleRecord,
-      }),
+      cityArt: owner.cityArt,
       size: Math.max(0, Number(city.population) || 0),
       production,
       waste: productionLoss,
@@ -1331,17 +1434,30 @@ function makeEconomyReport(context) {
     defaultBuildingIndex,
     buildingOptions,
     cityRows,
+    allCivs: !!allPlayersMode,
   };
 }
 
 function makeProductionReport(context) {
   const {
-    report, human, humanDetails, races, ruleRecord, buildings, unitTypes, ruleSignatures,
+    report, human, humanDetails, races, ruleRecord, buildings, unitTypes, players, detailsByPlayer, ruleSignatures,
+    allPlayersMode,
   } = context;
   const productionFactor = bitSet(report.game && report.game.rules, 5) ? 5 : 10;
+  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
   const rows = (report.cities && report.cities.records || [])
-    .filter((city) => Number(city.owner) === Number(human.playerID))
+    .filter((city) => allPlayersMode ? activePlayerIDs.has(Number(city.owner)) : Number(city.owner) === Number(human.playerID))
     .map((city) => {
+      const owner = makeCityOwnerContext(city, {
+        human,
+        humanDetails,
+        playerById,
+        detailsByPlayer,
+        races,
+        ruleRecord,
+        ruleSignatures,
+      });
       const orderType = Number(city.constructingType);
       const orderIndex = Number(city.constructingIndex);
       const records = orderType === 1 ? buildings : orderType === 2 ? unitTypes : [];
@@ -1359,13 +1475,9 @@ function makeProductionReport(context) {
       const waste = Math.max(0, Number(city.productionLoss) || 0);
       return {
         cityID: Number(city.id),
+        ...makeCityOwnerFields(owner, allPlayersMode),
         city: city.name || '',
-        cityArt: makeCityArtMetadata(city, {
-          player: human,
-          playerDetails: humanDetails,
-          races,
-          ruleRecord,
-        }),
+        cityArt: owner.cityArt,
         producing: name || 'Nothing',
         producingRef: sectionCode ? makeRef(tabKey, sectionCode, orderIndex, name, ruleSignatures) : null,
         orderType: orderType === 1 ? 'Improvement' : orderType === 2 ? 'Unit' : '',
@@ -1381,7 +1493,7 @@ function makeProductionReport(context) {
         wastePercent: percentage(waste, perTurn + waste),
       };
     });
-  return { productionFactor, rows };
+  return { productionFactor, rows, allCivs: !!allPlayersMode };
 }
 
 function unitAvailableToRace(unitType, raceID) {
@@ -1471,10 +1583,22 @@ function makeMilitaryReport(context) {
         name: level.name || `Level ${index + 1}`,
         count: units.filter((unit) => unit.experienceIndex === index).length,
       })).filter((item) => item.count > 0);
+      const civMap = new Map();
+      units.forEach((unit) => {
+        const key = Number(unit.nationalityRef && unit.nationalityRef.biqIndex);
+        if (!Number.isFinite(key) || key < 0 || civMap.has(key)) return;
+        civMap.set(key, {
+          name: unit.nationality,
+          ref: unit.nationalityRef,
+        });
+      });
+      const civs = Array.from(civMap.values());
       return {
         typeIndex,
         name,
         ref: makeRef('units', 'PRTO', typeIndex, name, ruleSignatures),
+        civs,
+        civText: civs.map((civ) => civ.name).join(', '),
         attack: Math.max(0, Number(type.attack) || 0),
         defence: Math.max(0, Number(type.defence) || 0),
         movement: Math.max(0, Number(type.movement) || 0),
@@ -2197,10 +2321,11 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
   const humanPlayer = findHumanPlayer(players, report.game && report.game.humanPlayersMask);
   if (!humanPlayer) return { ok: false, error: 'No active human player found in SAV.' };
   const requestedPlayerID = Number(options && options.selectedPlayerID);
+  const allPlayersMode = requestedPlayerID === -1;
   const selectedPlayer = Number.isFinite(requestedPlayerID)
     ? active.find((player) => Number(player.playerID) === requestedPlayerID)
     : null;
-  const human = selectedPlayer || humanPlayer;
+  const human = allPlayersMode ? humanPlayer : (selectedPlayer || humanPlayer);
   const perspectiveMask = playerBitMask(human.playerID) || ((Number(report.game && report.game.humanPlayersMask) || 0) >>> 0);
 
   const detailsByPlayer = parsePlayerDetails(inflated.buffer, players, cityById);
@@ -2209,6 +2334,7 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
   humanDetails.buffer = inflated.buffer;
   const scoreTail = parseScoreTail(inflated.buffer, report, players);
   const known = parseKnownTiles(inflated.buffer, report, perspectiveMask);
+  const useKnownPerspectiveCounts = Number(human.playerID) === Number(humanPlayer.playerID);
   const territoryTiles = parseTerritoryTiles(inflated.buffer, report);
   const ownedLandByPlayer = new Map();
   for (const tile of territoryTiles) {
@@ -2244,8 +2370,20 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
         gold: displayGold(details.gold),
         cities: Number(details.cities) || 0,
         units: Number(details.units) || 0,
-        land: ownedLandByPlayer.get(player.playerID) || known.knownLandByPlayer.get(player.playerID) || 0,
-        population: populationByPlayer.get(player.playerID) || 0,
+        land: useKnownPerspectiveCounts
+          ? (known.knownLandByPlayer.get(player.playerID) || 0)
+          : (ownedLandByPlayer.get(player.playerID) || known.knownLandByPlayer.get(player.playerID) || 0),
+        population: useKnownPerspectiveCounts
+          ? ((() => {
+            let total = 0;
+            for (const city of report.cities.records || []) {
+              if (Number(city.owner) !== Number(player.playerID)) continue;
+              const explored = (known.cityExploredMaskById.get(Number(city.id)) || 0) >>> 0;
+              if ((explored & perspectiveMask) !== 0) total += Number(city.population) || 0;
+            }
+            return total;
+          })())
+          : (populationByPlayer.get(player.playerID) || 0),
         score: Number(score.score) || 0,
         culture: Number(details.cultureTotal) || Number(score.culture) || 0,
         culturePerTurn: Number(details.culturePerTurn) || 0,
@@ -2494,12 +2632,14 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     humanDetails,
     races,
     players,
+    detailsByPlayer,
     techs,
     techMasks,
     buildings,
     gameRules,
     ruleRecord,
     ruleSignatures,
+    allPlayersMode,
   });
   const cities = makeCitiesReport({
     report,
@@ -2507,6 +2647,10 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     humanDetails,
     races,
     ruleRecord,
+    players,
+    detailsByPlayer,
+    ruleSignatures,
+    allPlayersMode,
   });
   const economy = makeEconomyReport({
     buf: inflated.buffer,
@@ -2521,10 +2665,12 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     techs,
     techMasks,
     players,
+    detailsByPlayer,
     races,
     humanTradeTail,
     tradeRows,
     ruleSignatures,
+    allPlayersMode,
   });
   const production = makeProductionReport({
     report,
@@ -2534,7 +2680,10 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     ruleRecord,
     buildings,
     unitTypes,
+    players,
+    detailsByPlayer,
     ruleSignatures,
+    allPlayersMode,
   });
   const territory = makeTerritoryReport({
     buf: inflated.buffer,
@@ -2548,6 +2697,10 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     unitTypes,
     races,
     ruleRecord,
+    players,
+    detailsByPlayer,
+    ruleSignatures,
+    allPlayersMode,
   });
   const military = makeMilitaryReport({
     report,
@@ -2578,16 +2731,16 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     title,
     ruleSignatures,
     humanPlayerID: Number(humanPlayer.playerID),
-    selectedPlayerID: Number(human.playerID),
+    selectedPlayerID: allPlayersMode ? -1 : Number(human.playerID),
     viewingCiv: {
-      playerID: Number(human.playerID),
-      raceID: Number(human.raceID),
-      nation: humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', ''),
-      leader: humanVisible ? humanVisible.leader : humanRace.name || '',
+      playerID: allPlayersMode ? -1 : Number(human.playerID),
+      raceID: allPlayersMode ? -1 : Number(human.raceID),
+      nation: allPlayersMode ? 'All Civs' : (humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', '')),
+      leader: allPlayersMode ? '' : (humanVisible ? humanVisible.leader : humanRace.name || ''),
       color: humanVisible ? humanVisible.color : null,
       colorSlot: humanVisible ? humanVisible.colorSlot : null,
-      isHuman: Number(human.playerID) === Number(humanPlayer.playerID),
-      ref: makeRef('civilizations', 'RACE', human.raceID, humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', ''), ruleSignatures),
+      isHuman: !allPlayersMode && Number(human.playerID) === Number(humanPlayer.playerID),
+      ref: allPlayersMode ? null : makeRef('civilizations', 'RACE', human.raceID, humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', ''), ruleSignatures),
     },
     viewingOptions,
     general: {
@@ -2654,7 +2807,7 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     alerts,
     debug: {
       humanPlayerID: humanPlayer.playerID,
-      selectedPlayerID: human.playerID,
+      selectedPlayerID: allPlayersMode ? -1 : human.playerID,
       visiblePlayerIDs: visible.map((player) => player.playerID),
     },
   };

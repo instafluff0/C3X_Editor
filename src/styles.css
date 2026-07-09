@@ -14757,6 +14757,7 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .civassist-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -14812,23 +14813,12 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .civassist-tab-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.22);
-  font-size: 0.62rem;
-  font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 
-.civassist-tab:not(.active) .civassist-tab-count {
-  color: #7a4150;
-  background: #f8e8ec;
+.civassist-tab .civassist-tab-count {
+  top: -7px;
+  right: -7px;
 }
 
 .civassist-viewing-strip {
@@ -15519,43 +15509,10 @@ button.unit-ini-delete-btn:disabled {
 
 .civassist-military {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
   height: 100%;
-}
-
-.civassist-military-summary {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(110px, 1fr));
-  overflow: hidden;
-  border: 1px solid rgba(36, 25, 64, 0.16);
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.civassist-military-summary > div {
-  display: grid;
-  gap: 2px;
-  padding: 8px 12px;
-  border-right: 1px solid rgba(72, 84, 121, 0.12);
-}
-
-.civassist-military-summary > div:last-child {
-  border-right: 0;
-}
-
-.civassist-military-summary strong {
-  color: var(--ink);
-  font-size: 0.9rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.civassist-military-summary span {
-  color: #66718b;
-  font-size: 0.62rem;
-  text-transform: uppercase;
 }
 
 .civassist-military-controls {
@@ -15591,17 +15548,31 @@ button.unit-ini-delete-btn:disabled {
   min-height: 0;
 }
 
-.civassist-military-roster-table {
-  min-width: 1100px;
+.civassist-military-table-heading {
+  display: flex;
+  align-items: center;
 }
 
-.civassist-military-roster-table col.unit { width: 20%; }
-.civassist-military-roster-table col.stats { width: 9%; }
-.civassist-military-roster-table col.cost { width: 7%; }
-.civassist-military-roster-table col.upgrade { width: 24%; }
-.civassist-military-roster-table col.experience { width: 23%; }
-.civassist-military-roster-table col.total { width: 7%; }
-.civassist-military-roster-table col.status { width: 10%; }
+.civassist-military-roster-search,
+.civassist-military-units-search {
+  width: min(640px, 100%);
+  min-height: 32px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.civassist-military-roster-table {
+  min-width: 1240px;
+}
+
+.civassist-military-roster-table col.unit { width: 18%; }
+.civassist-military-roster-table col.stats { width: 8%; }
+.civassist-military-roster-table col.cost { width: 6%; }
+.civassist-military-roster-table col.upgrade { width: 21%; }
+.civassist-military-roster-table col.experience { width: 20%; }
+.civassist-military-roster-table col.civ { width: 12%; }
+.civassist-military-roster-table col.total { width: 6%; }
+.civassist-military-roster-table col.status { width: 9%; }
 
 .civassist-military-stats {
   color: #33425f;
@@ -15645,6 +15616,12 @@ button.unit-ini-delete-btn:disabled {
 .civassist-military-experience-mix strong {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
+}
+
+.civassist-military-civ-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .civassist-military-units-table {
@@ -15914,11 +15891,6 @@ button.unit-ini-delete-btn:disabled {
   white-space: nowrap;
 }
 
-.civassist-alert-coverage-pill.planned {
-  color: #7a5a19;
-  background: #fff4d8;
-}
-
 .civassist-alert-coverage-shell {
   display: grid;
   grid-template-columns: minmax(280px, 0.38fr) minmax(420px, 0.62fr);
@@ -15979,51 +15951,6 @@ button.unit-ini-delete-btn:disabled {
   color: #66718b;
   font-size: 0.62rem;
   white-space: nowrap;
-}
-
-.civassist-alert-coverage-detail {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 9px;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  padding: 12px;
-  background: #ffffff;
-}
-
-.civassist-alert-coverage-matches {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-height: 0;
-}
-
-.civassist-alert-coverage-matches h4 {
-  margin: 0;
-  color: #52649a;
-  font-size: 0.68rem;
-  line-height: 1.1;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.civassist-alert-match {
-  min-height: 32px;
-  padding: 5px 8px;
-  border: 1px solid rgba(72, 84, 121, 0.14);
-  border-radius: 8px;
-  color: var(--ink);
-  background: #fbfcff;
-  font: inherit;
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-align: left;
-  cursor: pointer;
-}
-
-.civassist-alert-match:hover {
-  background: #ffffff;
 }
 
 .civassist-alerts {
@@ -16747,6 +16674,9 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .civassist-rival-table th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   padding: 0 7px;
   color: #25324f;
   background: linear-gradient(180deg, rgba(245, 249, 255, 0.99), rgba(236, 244, 255, 0.99));
@@ -16756,6 +16686,20 @@ button.unit-ini-delete-btn:disabled {
   text-transform: uppercase;
   line-height: 1.05;
   height: 34px;
+}
+
+.civassist-rival-table th:first-child,
+.civassist-rival-table td:first-child {
+  position: sticky;
+  left: 0;
+}
+
+.civassist-rival-table th:first-child {
+  z-index: 6;
+}
+
+.civassist-rival-table td:first-child {
+  z-index: 3;
 }
 
 .civassist-rival-table th.civassist-sortable-heading {
@@ -17037,14 +16981,6 @@ button.unit-ini-delete-btn:disabled {
 
   .civassist-production {
     grid-template-columns: 1fr;
-  }
-
-  .civassist-military-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .civassist-military-summary > div:nth-child(2n) {
-    border-right: 0;
   }
 
   .civassist-military-controls {

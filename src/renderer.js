@@ -115,16 +115,17 @@ const state = {
     activeCultureSubtab: 'city',
     activeMilitarySubtab: 'roster',
     activeAlertID: '',
-    activeAlertCoverageID: '',
     alertCoverageEnabled: {},
     militaryTypeFilter: -1,
     techSearch: '',
     citiesSearch: '',
     productionSearch: '',
+    militaryRosterSearch: '',
+    militaryUnitsSearch: '',
     cultureSearch: '',
     selectedCultureCityID: -1,
     showAllCultureBuildings: false,
-    selectedPlayerID: -1,
+    selectedPlayerID: 0,
     sortState: {},
     savePath: '',
     report: null,
@@ -7556,16 +7557,17 @@ function sanitizeCivAssistView(view) {
     activeCultureSubtab: ['city', 'wonders'].includes(activeCultureSubtab) ? activeCultureSubtab : 'city',
     activeMilitarySubtab: ['roster', 'units'].includes(activeMilitarySubtab) ? activeMilitarySubtab : 'roster',
     activeAlertID: String(source.activeAlertID || ''),
-    activeAlertCoverageID: String(source.activeAlertCoverageID || ''),
     alertCoverageEnabled: cloneStateMap(source.alertCoverageEnabled),
     militaryTypeFilter: Number.isFinite(Number(source.militaryTypeFilter)) ? Number(source.militaryTypeFilter) : -1,
     techSearch: String(source.techSearch || ''),
     citiesSearch: String(source.citiesSearch || ''),
     productionSearch: String(source.productionSearch || ''),
+    militaryRosterSearch: String(source.militaryRosterSearch || ''),
+    militaryUnitsSearch: String(source.militaryUnitsSearch || ''),
     cultureSearch: String(source.cultureSearch || ''),
     selectedCultureCityID: Number.isFinite(Number(source.selectedCultureCityID)) ? Number(source.selectedCultureCityID) : -1,
     showAllCultureBuildings: !!source.showAllCultureBuildings,
-    selectedPlayerID: Number.isFinite(Number(source.selectedPlayerID)) ? Number(source.selectedPlayerID) : -1,
+    selectedPlayerID: Number.isFinite(Number(source.selectedPlayerID)) ? Number(source.selectedPlayerID) : 0,
     sortState,
     savePath: String(source.savePath || '')
   };
@@ -7847,12 +7849,13 @@ function applyViewSnapshot(snapshot) {
   state.civAssist.activeCultureSubtab = civAssistView.activeCultureSubtab;
   state.civAssist.activeMilitarySubtab = civAssistView.activeMilitarySubtab;
   state.civAssist.activeAlertID = civAssistView.activeAlertID;
-  state.civAssist.activeAlertCoverageID = civAssistView.activeAlertCoverageID;
   state.civAssist.alertCoverageEnabled = cloneStateMap(civAssistView.alertCoverageEnabled);
   state.civAssist.militaryTypeFilter = civAssistView.militaryTypeFilter;
   state.civAssist.techSearch = civAssistView.techSearch;
   state.civAssist.citiesSearch = civAssistView.citiesSearch;
   state.civAssist.productionSearch = civAssistView.productionSearch;
+  state.civAssist.militaryRosterSearch = civAssistView.militaryRosterSearch;
+  state.civAssist.militaryUnitsSearch = civAssistView.militaryUnitsSearch;
   state.civAssist.cultureSearch = civAssistView.cultureSearch;
   state.civAssist.selectedCultureCityID = civAssistView.selectedCultureCityID;
   state.civAssist.showAllCultureBuildings = civAssistView.showAllCultureBuildings;
@@ -72323,6 +72326,10 @@ function renderCivAssistSaveSelector() {
 function renderCivAssistViewingCivThumb(holder, option) {
   if (!holder || !option) return false;
   holder.innerHTML = '';
+  if (option.entry) {
+    loadReferenceListThumbnail('civilizations', option.entry, holder);
+    return true;
+  }
   const target = option.ref ? getCivAssistReferenceEntry(option.ref) : null;
   if (target && target.type === 'reference' && target.entry) {
     loadReferenceListThumbnail(target.tabKey, target.entry, holder);
@@ -72345,26 +72352,21 @@ function renderCivAssistViewingCivThumb(holder, option) {
 
 function getCivAssistViewingOptions(report) {
   const options = Array.isArray(report && report.viewingOptions) ? report.viewingOptions : [];
+  const civEntryByIndex = new Map(getCivilizationBitmaskOptions().map((option) => [String(option.value), option.entry || null]));
   return options
     .filter((item) => Number.isFinite(Number(item && item.playerID)) && Number(item.playerID) > 0)
     .map((item) => {
       const nation = String(item.nation || item.label || `Player ${item.playerID}`);
-      const details = [
-        item.isHuman ? 'Human' : '',
-        Number.isFinite(Number(item.cityCount)) ? `${Number(item.cityCount)} cit${Number(item.cityCount) === 1 ? 'y' : 'ies'}` : '',
-        item.government || '',
-        item.currentEra || '',
-      ].filter(Boolean).join(' · ');
       return {
         value: String(item.playerID),
         label: nation,
         displayLabel: nation,
+        entry: civEntryByIndex.get(String(item.raceID)) || null,
         ref: item.ref || null,
         color: item.color || '',
         colorSlot: item.colorSlot,
         cityCount: item.cityCount,
         isHuman: !!item.isHuman,
-        meta: details,
       };
     });
 }
@@ -72372,26 +72374,28 @@ function getCivAssistViewingOptions(report) {
 function renderCivAssistViewingSelector(report) {
   const options = getCivAssistViewingOptions(report);
   if (options.length <= 1) return null;
-  const selectedID = Number.isFinite(Number(state.civAssist.selectedPlayerID)) && Number(state.civAssist.selectedPlayerID) > 0
+  const selectedID = Number.isFinite(Number(state.civAssist.selectedPlayerID)) && (Number(state.civAssist.selectedPlayerID) > 0 || Number(state.civAssist.selectedPlayerID) === -1)
     ? Number(state.civAssist.selectedPlayerID)
     : Number(report && report.selectedPlayerID);
   const strip = document.createElement('div');
   strip.className = 'civassist-viewing-strip';
   const label = document.createElement('span');
   label.className = 'civassist-viewing-label';
-  label.textContent = 'Viewing Civ';
+  label.textContent = 'Civ';
   const picker = createReferencePicker({
     options,
-    currentValue: String(Number.isFinite(selectedID) && selectedID > 0 ? selectedID : options[0].value),
-    includeNone: false,
+    currentValue: String(Number.isFinite(selectedID) && (selectedID > 0 || selectedID === -1) ? selectedID : options[0].value),
+    includeNone: true,
+    noneLabel: 'All Civs',
     searchPlaceholder: 'Search Civilizations...',
     pickerClassName: 'civassist-viewing-civ-picker',
     menuClassName: 'civassist-viewing-civ-picker-menu',
     renderOptionThumb: ({ holder, option }) => renderCivAssistViewingCivThumb(holder, option),
-    getOptionMetaText: (option) => option && option.meta ? String(option.meta) : '',
+    resolveJumpTarget: (option) => option && option.entry ? option.entry : null,
+    onJump: (entry) => navigateToReferenceEntry('civilizations', entry),
     onSelect: async (value) => {
       const nextID = Number(value);
-      if (!Number.isFinite(nextID) || nextID <= 0) return;
+      if (!Number.isFinite(nextID) || (nextID <= 0 && nextID !== -1)) return;
       if (nextID === Number(state.civAssist.selectedPlayerID)) return;
       const priorID = state.civAssist.selectedPlayerID;
       state.civAssist.selectedPlayerID = nextID;
@@ -72409,7 +72413,7 @@ function renderCivAssistViewingSelector(report) {
       }
       const selected = getCivAssistViewingOptions(state.civAssist.report)
         .find((item) => Number(item.value) === Number(state.civAssist.selectedPlayerID));
-      setStatus(`Civ Advisor is viewing ${selected ? selected.label : 'the selected civ'}.`);
+      setStatus(`Civ Advisor is viewing ${state.civAssist.selectedPlayerID === -1 ? 'All Civs' : selected ? selected.label : 'the selected civ'}.`);
     }
   });
   strip.append(label, picker);
@@ -72536,7 +72540,6 @@ function navigateFromCivAssistToTarget(target) {
       state.civAssist.activeCultureSubtab = before.civAssistView.activeCultureSubtab || 'city';
       state.civAssist.activeMilitarySubtab = before.civAssistView.activeMilitarySubtab || 'roster';
       state.civAssist.activeAlertID = before.civAssistView.activeAlertID || '';
-      state.civAssist.activeAlertCoverageID = before.civAssistView.activeAlertCoverageID || '';
       state.civAssist.alertCoverageEnabled = cloneStateMap(before.civAssistView.alertCoverageEnabled);
       state.civAssist.militaryTypeFilter = Number.isFinite(Number(before.civAssistView.militaryTypeFilter))
         ? Number(before.civAssistView.militaryTypeFilter)
@@ -72544,6 +72547,8 @@ function navigateFromCivAssistToTarget(target) {
       state.civAssist.techSearch = before.civAssistView.techSearch || '';
       state.civAssist.citiesSearch = before.civAssistView.citiesSearch || '';
       state.civAssist.productionSearch = before.civAssistView.productionSearch || '';
+      state.civAssist.militaryRosterSearch = before.civAssistView.militaryRosterSearch || '';
+      state.civAssist.militaryUnitsSearch = before.civAssistView.militaryUnitsSearch || '';
       state.civAssist.cultureSearch = before.civAssistView.cultureSearch || '';
       state.civAssist.selectedCultureCityID = Number.isFinite(Number(before.civAssistView.selectedCultureCityID))
         ? Number(before.civAssistView.selectedCultureCityID)
@@ -72621,7 +72626,7 @@ async function loadCivAssistSave(filePath, options = {}) {
   state.civAssist.error = '';
   renderCivAssistModal();
   try {
-    const selectedPlayerID = Number.isFinite(Number(state.civAssist.selectedPlayerID)) && Number(state.civAssist.selectedPlayerID) > 0
+    const selectedPlayerID = Number.isFinite(Number(state.civAssist.selectedPlayerID)) && (Number(state.civAssist.selectedPlayerID) > 0 || Number(state.civAssist.selectedPlayerID) === -1)
       ? Number(state.civAssist.selectedPlayerID)
       : undefined;
     const result = await window.c3xManager.inspectCivAssistSave({
@@ -72643,9 +72648,9 @@ async function loadCivAssistSave(filePath, options = {}) {
       state.civAssist.savePath = target;
       const resolvedPlayerID = Number(result.selectedPlayerID);
       const previousSelectedPlayerID = Number(state.civAssist.selectedPlayerID);
-      state.civAssist.selectedPlayerID = Number.isFinite(resolvedPlayerID) && resolvedPlayerID > 0
+      state.civAssist.selectedPlayerID = Number.isFinite(resolvedPlayerID) && (resolvedPlayerID > 0 || resolvedPlayerID === -1)
         ? resolvedPlayerID
-        : -1;
+        : 0;
       if (Number.isFinite(previousSelectedPlayerID) && previousSelectedPlayerID > 0 && previousSelectedPlayerID !== state.civAssist.selectedPlayerID) {
         state.civAssist.selectedCultureCityID = -1;
       }
@@ -73863,6 +73868,34 @@ function refocusCivAssistProductionSearch(value, selectionStart, selectionEnd) {
   }
 }
 
+function refocusCivAssistMilitaryRosterSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'military' || state.civAssist.activeMilitarySubtab !== 'roster') return;
+  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-military-roster-search');
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
+  const end = Number.isFinite(selectionEnd) ? selectionEnd : start;
+  try {
+    input.setSelectionRange(start, end);
+  } catch (_err) {
+    // Search inputs can reject selection updates in some browser builds.
+  }
+}
+
+function refocusCivAssistMilitaryUnitsSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'military' || state.civAssist.activeMilitarySubtab !== 'units') return;
+  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-military-units-search');
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
+  const end = Number.isFinite(selectionEnd) ? selectionEnd : start;
+  try {
+    input.setSelectionRange(start, end);
+  } catch (_err) {
+    // Search inputs can reject selection updates in some browser builds.
+  }
+}
+
 function refocusCivAssistCultureSearch(value, selectionStart, selectionEnd) {
   if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'culture') return;
   const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-culture-search');
@@ -74293,6 +74326,7 @@ function renderCivAssistTerritory(report) {
   cityTable.className = 'civassist-rival-table civassist-territory-city-table';
   const columns = [
     { key: 'city', label: 'City', className: 'city' },
+    ...(territory.allCivs ? [{ key: 'civ', label: 'Civ', className: 'civ' }] : []),
     { key: 'size', label: 'Size', className: 'size', num: true, sortValue: (row) => row.sizeValue },
     { key: 'worked', label: 'Worked', className: 'worked', num: true },
     { key: 'mined', label: 'Mined', className: 'mined', num: true },
@@ -74325,6 +74359,7 @@ function renderCivAssistTerritory(report) {
       const td = document.createElement('td');
       if (column.num) td.className = 'num';
       if (column.key === 'city') td.appendChild(makeCivAssistCityName(row, row.city));
+      else if (column.key === 'civ') td.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
       else if (column.key === 'waste' || column.key === 'corruption' || column.key === 'complete') td.textContent = `${row[column.key] || 0}${column.key === 'complete' ? '' : '%'}`;
       else td.textContent = String(row[column.key] == null ? '' : row[column.key]);
       tr.appendChild(td);
@@ -74366,7 +74401,8 @@ function renderCivAssistCities(report) {
   const table = document.createElement('table');
   table.className = 'civassist-rival-table civassist-cities-table';
   const columns = [
-    { key: 'city', label: 'City', width: 20 },
+    { key: 'city', label: 'City', width: cities.allCivs ? 16 : 20 },
+    ...(cities.allCivs ? [{ key: 'civ', label: 'Civ', width: 10 }] : []),
     { key: 'size', label: 'Size', width: 5, num: true, sortValue: (row) => row.sizeValue },
     { key: 'happy', label: 'Happy', width: 6, num: true, sortValue: (row) => row.happyValue },
     { key: 'unhappy', label: 'Unhappy', width: 6, num: true, sortValue: (row) => row.unhappyValue },
@@ -74409,9 +74445,11 @@ function renderCivAssistCities(report) {
     columns.forEach((column, index) => {
       const td = document.createElement('td');
       if (column.num) td.classList.add('num');
-      if (index === 0) {
+      if (column.key === 'city') {
         td.classList.add('civassist-city-name-cell');
         td.appendChild(makeCivAssistCityName(row, row[column.key]));
+      } else if (column.key === 'civ') {
+        td.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
       } else {
         td.textContent = String(row[column.key] == null ? '' : row[column.key]);
       }
@@ -74551,6 +74589,7 @@ function renderCivAssistEconomy(report) {
   table.className = 'civassist-rival-table civassist-economy-table';
   const columns = [
     { key: 'name', label: 'City', className: 'city' },
+    ...(economy.allCivs ? [{ key: 'civ', label: 'Civ', className: 'civ' }] : []),
     { key: 'size', label: 'Size', className: 'size', num: true },
     { key: 'production', label: 'Shields', className: 'production', num: true },
     { key: 'waste', label: 'Waste', className: 'waste', sortValue: (row) => row.waste, num: true },
@@ -74582,6 +74621,8 @@ function renderCivAssistEconomy(report) {
       if (column.key === 'name') {
         td.classList.add('civassist-city-name-cell');
         td.appendChild(makeCivAssistCityName(row, row.name));
+      } else if (column.key === 'civ') {
+        td.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
       } else if (column.key === 'waste') td.textContent = `${row.waste} (${row.wastePercent}%)`;
       else if (column.key === 'corruption') td.textContent = `${row.corruption} (${row.corruptionPercent}%)`;
       else td.textContent = String(row[column.key] == null ? '' : row[column.key]);
@@ -74623,14 +74664,15 @@ function renderCivAssistProduction(report) {
   scroller.className = 'civassist-table-scroll';
   const table = document.createElement('table');
   table.className = 'civassist-rival-table civassist-production-table';
+  const hasAllCivs = !!production.allCivs;
   table.innerHTML = `
     <colgroup>
-      <col class="city"><col class="producing"><col class="cost"><col class="collected">
+      <col class="city">${hasAllCivs ? '<col class="civ">' : ''}<col class="producing"><col class="cost"><col class="collected">
       <col class="per-turn"><col class="overrun"><col class="shields"><col class="turns"><col class="waste">
     </colgroup>
     <thead>
       <tr>
-        <th>City</th><th>Producing</th><th>Cost</th><th>Collected</th>
+        <th>City</th>${hasAllCivs ? '<th>Civ</th>' : ''}<th>Producing</th><th>Cost</th><th>Collected</th>
         <th>Per Turn</th><th>Overrun</th><th>Shields</th><th>Turns</th><th>% Waste</th>
       </tr>
     </thead>`;
@@ -74640,6 +74682,7 @@ function renderCivAssistProduction(report) {
     if (!productionQuery) return true;
     return [
       row.city,
+      row.civ,
       row.producing,
       row.orderType,
       row.cost,
@@ -74656,6 +74699,8 @@ function renderCivAssistProduction(report) {
     const city = document.createElement('td');
     city.className = 'civassist-production-city';
     city.appendChild(makeCivAssistCityName(row, row.city || ''));
+    const civ = document.createElement('td');
+    if (hasAllCivs) civ.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
     const producing = document.createElement('td');
     const item = makeCivAssistReferenceChip(row.producingRef, row.producing);
     item.classList.add('civassist-production-item');
@@ -74695,7 +74740,8 @@ function renderCivAssistProduction(report) {
     const waste = document.createElement('td');
     waste.className = 'num';
     waste.textContent = String(row.wastePercent == null ? '' : row.wastePercent);
-    tr.append(city, producing, cost, collected, perTurn, overrun, shields, turns, waste);
+    if (hasAllCivs) tr.append(city, civ, producing, cost, collected, perTurn, overrun, shields, turns, waste);
+    else tr.append(city, producing, cost, collected, perTurn, overrun, shields, turns, waste);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -74704,28 +74750,6 @@ function renderCivAssistProduction(report) {
   wrap.appendChild(section);
   if (!tbody.childElementCount) wrap.appendChild(renderCivAssistEmptyState('No active city production found.'));
   return wrap;
-}
-
-function appendCivAssistMilitarySummary(parent, summary) {
-  const metrics = [
-    ['Total Units', summary.total],
-    ['Combat', summary.combat],
-    ['Civilian', summary.civilian],
-    ['Naval / Air', `${summary.naval} / ${summary.air}`],
-    ['Unit Support', `${summary.unitSupport} GPT`],
-  ];
-  const strip = document.createElement('div');
-  strip.className = 'civassist-military-summary';
-  metrics.forEach(([label, value]) => {
-    const metric = document.createElement('div');
-    const strong = document.createElement('strong');
-    strong.textContent = String(value == null ? 0 : value);
-    const span = document.createElement('span');
-    span.textContent = label;
-    metric.append(strong, span);
-    strip.appendChild(metric);
-  });
-  parent.appendChild(strip);
 }
 
 function appendCivAssistExperienceMix(parent, items) {
@@ -74743,11 +74767,39 @@ function appendCivAssistExperienceMix(parent, items) {
   parent.appendChild(list);
 }
 
+function appendCivAssistMilitaryCivs(parent, civs) {
+  const items = Array.isArray(civs) ? civs : [];
+  if (!items.length) {
+    parent.textContent = '--';
+    return;
+  }
+  const list = document.createElement('div');
+  list.className = 'civassist-military-civ-list';
+  items.forEach((item) => {
+    list.appendChild(makeCivAssistReferenceChip(item.ref, item.name, { inline: true }));
+  });
+  parent.appendChild(list);
+}
+
 function renderCivAssistMilitaryRoster(military) {
   const section = document.createElement('section');
   section.className = 'civassist-rivals civassist-military-section';
   const heading = document.createElement('h3');
-  heading.textContent = 'Force Roster';
+  heading.className = 'civassist-military-table-heading';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'app-search-input civassist-military-roster-search';
+  search.placeholder = 'Search Unit Types...';
+  search.value = String(state.civAssist.militaryRosterSearch || '');
+  search.addEventListener('input', () => {
+    const selectionStart = search.selectionStart;
+    const selectionEnd = search.selectionEnd;
+    state.civAssist.militaryRosterSearch = search.value;
+    renderCivAssistModal();
+    syncCurrentNavigationSnapshot();
+    refocusCivAssistMilitaryRosterSearch(state.civAssist.militaryRosterSearch, selectionStart, selectionEnd);
+  });
+  heading.appendChild(search);
   section.appendChild(heading);
   const scroller = document.createElement('div');
   scroller.className = 'civassist-table-scroll';
@@ -74759,6 +74811,7 @@ function renderCivAssistMilitaryRoster(military) {
     { key: 'shieldCost', label: 'Cost', className: 'cost', num: true },
     { key: 'upgrade', label: 'Upgrade', className: 'upgrade' },
     { key: 'experienceMix', label: 'Experience', className: 'experience', sortValue: (row) => row.count },
+    { key: 'civText', label: 'Civ', className: 'civ' },
     { key: 'count', label: 'Total', className: 'total', num: true },
     { key: 'spent', label: 'Condition', className: 'status', sortValue: (row) => row.damaged + row.spent },
   ];
@@ -74775,7 +74828,22 @@ function renderCivAssistMilitaryRoster(military) {
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  sortCivAssistRows(military.roster || [], columns, 'military-roster').forEach((row) => {
+  const rosterQuery = String(state.civAssist.militaryRosterSearch || '').trim().toLowerCase();
+  const rosterRows = (military.roster || []).filter((row) => {
+    if (!rosterQuery) return true;
+    return [
+      row.name,
+      row.stats,
+      row.shieldCost,
+      row.upgrade,
+      row.civText,
+      row.count,
+      row.damaged ? `${row.damaged} damaged` : '',
+      row.spent ? `${row.spent} out of moves` : '',
+      (row.experienceMix || []).map((item) => `${item.name} ${item.count}`).join(' '),
+    ].some((value) => String(value == null ? '' : value).toLowerCase().includes(rosterQuery));
+  });
+  sortCivAssistRows(rosterRows, columns, 'military-roster').forEach((row) => {
     const tr = document.createElement('tr');
     const unit = document.createElement('td');
     unit.appendChild(makeCivAssistReferenceChip(row.ref, row.name));
@@ -74797,6 +74865,8 @@ function renderCivAssistMilitaryRoster(military) {
     } else upgrade.textContent = '--';
     const experience = document.createElement('td');
     appendCivAssistExperienceMix(experience, row.experienceMix);
+    const civ = document.createElement('td');
+    appendCivAssistMilitaryCivs(civ, row.civs);
     const total = document.createElement('td');
     total.className = 'num';
     total.textContent = String(row.count);
@@ -74805,7 +74875,7 @@ function renderCivAssistMilitaryRoster(military) {
     if (row.damaged) statusParts.push(`${row.damaged} damaged`);
     if (row.spent) statusParts.push(`${row.spent} out of moves`);
     status.textContent = statusParts.join(', ') || 'Ready';
-    tr.append(unit, stats, cost, upgrade, experience, total, status);
+    tr.append(unit, stats, cost, upgrade, experience, civ, total, status);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -74818,10 +74888,37 @@ function renderCivAssistMilitaryUnits(military) {
   const section = document.createElement('section');
   section.className = 'civassist-rivals civassist-military-section';
   const heading = document.createElement('h3');
-  heading.textContent = 'Individual Units';
+  heading.className = 'civassist-military-table-heading';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'app-search-input civassist-military-units-search';
+  search.placeholder = 'Search Individual Units...';
+  search.value = String(state.civAssist.militaryUnitsSearch || '');
+  search.addEventListener('input', () => {
+    const selectionStart = search.selectionStart;
+    const selectionEnd = search.selectionEnd;
+    state.civAssist.militaryUnitsSearch = search.value;
+    renderCivAssistModal();
+    syncCurrentNavigationSnapshot();
+    refocusCivAssistMilitaryUnitsSearch(state.civAssist.militaryUnitsSearch, selectionStart, selectionEnd);
+  });
+  heading.appendChild(search);
   section.appendChild(heading);
   const filter = Number(state.civAssist.militaryTypeFilter);
-  const rows = (military.units || []).filter((row) => filter < 0 || Number(row.typeIndex) === filter);
+  const unitsQuery = String(state.civAssist.militaryUnitsSearch || '').trim().toLowerCase();
+  const rows = (military.units || []).filter((row) => {
+    if (!(filter < 0 || Number(row.typeIndex) === filter)) return false;
+    if (!unitsQuery) return true;
+    return [
+      row.type,
+      row.description,
+      row.experience,
+      row.health,
+      row.movement,
+      row.location,
+      row.nationality,
+    ].some((value) => String(value == null ? '' : value).toLowerCase().includes(unitsQuery));
+  });
   const scroller = document.createElement('div');
   scroller.className = 'civassist-table-scroll';
   const table = document.createElement('table');
@@ -74832,7 +74929,7 @@ function renderCivAssistMilitaryUnits(military) {
     { key: 'currentHealth', label: 'Health', className: 'health', num: true },
     { key: 'remainingMovement', label: 'Moves', className: 'moves', num: true },
     { key: 'location', label: 'Location', className: 'location' },
-    { key: 'nationality', label: 'Nationality', className: 'nationality' },
+    { key: 'nationality', label: 'Civ', className: 'nationality' },
   ];
   const colgroup = document.createElement('colgroup');
   columns.forEach((column) => {
@@ -74878,14 +74975,13 @@ function renderCivAssistMilitary(report) {
   const military = report && report.military ? report.military : { summary: {}, roster: [], units: [] };
   const wrap = document.createElement('div');
   wrap.className = 'civassist-military';
-  appendCivAssistMilitarySummary(wrap, military.summary || {});
   const controls = document.createElement('div');
   controls.className = 'civassist-military-controls';
   const tabs = document.createElement('div');
   tabs.className = 'civassist-subtabs';
   [
-    { key: 'roster', label: `Roster (${(military.roster || []).length})` },
-    { key: 'units', label: `Units (${(military.units || []).length})` },
+    { key: 'roster', label: `Unit Types (${(military.roster || []).length})` },
+    { key: 'units', label: `Individual Units (${(military.units || []).length})` },
   ].forEach((tab) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -74953,26 +75049,6 @@ function applyCivAssistAlertTarget(alert) {
   syncCurrentNavigationSnapshot();
 }
 
-function getCivAssistSelectedAlert(alertRows) {
-  const rows = Array.isArray(alertRows) ? alertRows : [];
-  if (rows.length === 0) return null;
-  const selectedID = String(state.civAssist.activeAlertID || '');
-  const selected = selectedID ? rows.find((alert) => String(alert && alert.id || '') === selectedID) : null;
-  const fallback = selected || rows[0];
-  state.civAssist.activeAlertID = String(fallback && fallback.id || '');
-  return fallback;
-}
-
-function getCivAssistSelectedAlertCoverage(coverageRows) {
-  const rows = Array.isArray(coverageRows) ? coverageRows : [];
-  if (rows.length === 0) return null;
-  const selectedID = String(state.civAssist.activeAlertCoverageID || '');
-  const selected = selectedID ? rows.find((row) => String(row && row.id || '') === selectedID) : null;
-  const fallback = selected || rows[0];
-  state.civAssist.activeAlertCoverageID = String(fallback && fallback.id || '');
-  return fallback;
-}
-
 function civAssistCoverageMatchesAlert(coverage, alert) {
   if (!coverage || !alert) return false;
   const alertID = String(alert.id || '');
@@ -75024,122 +75100,6 @@ function countCivAssistCoverageMatches(coverage, currentRows) {
   return (Array.isArray(currentRows) ? currentRows : []).filter((alert) => civAssistCoverageMatchesAlert(coverage, alert)).length;
 }
 
-function renderCivAssistAlertCard(alert, selectedID) {
-  const button = document.createElement('button');
-  const severity = String(alert.severity || 'info').toLowerCase();
-  button.type = 'button';
-  button.className = `civassist-alert-card severity-${severity}`;
-  if (String(alert.id || '') === String(selectedID || '')) button.classList.add('active');
-  button.setAttribute('aria-pressed', button.classList.contains('active') ? 'true' : 'false');
-  const meta = document.createElement('span');
-  meta.className = 'civassist-alert-card-meta';
-  const severityBadge = document.createElement('span');
-  severityBadge.className = 'civassist-alert-severity';
-  severityBadge.textContent = getCivAssistAlertSeverityLabel(alert.severity);
-  const category = document.createElement('span');
-  category.className = 'civassist-alert-category';
-  category.textContent = String(alert.category || '');
-  meta.append(severityBadge, category);
-  const title = document.createElement('strong');
-  title.textContent = String(alert.title || 'Alert');
-  const detail = document.createElement('span');
-  detail.className = 'civassist-alert-card-detail';
-  detail.textContent = String(alert.detail || '');
-  button.append(meta, title, detail);
-  button.addEventListener('click', () => {
-    state.civAssist.activeAlertID = String(alert.id || '');
-    renderCivAssistModal();
-    syncCurrentNavigationSnapshot();
-  });
-  return button;
-}
-
-function appendCivAssistAlertItems(parent, items) {
-  const refs = Array.isArray(items) ? items : [];
-  if (refs.length === 0) {
-    const empty = document.createElement('span');
-    empty.className = 'civassist-alert-muted';
-    empty.textContent = 'None';
-    parent.appendChild(empty);
-    return;
-  }
-  refs.forEach((item) => {
-    if (item && item.ref) parent.appendChild(makeCivAssistReferenceChip(item.ref, item.name || item.ref.name || 'Open'));
-    else {
-      const value = document.createElement('span');
-      value.className = 'civassist-alert-value-pill';
-      value.textContent = String(item && item.name || item || '');
-      parent.appendChild(value);
-    }
-  });
-}
-
-function renderCivAssistAlertDetail(alert) {
-  const pane = document.createElement('section');
-  pane.className = 'civassist-alert-detail';
-  if (!alert) {
-    pane.appendChild(renderCivAssistEmptyState('No current alerts for this save.'));
-    return pane;
-  }
-  const head = document.createElement('div');
-  head.className = 'civassist-alert-detail-head';
-  const copy = document.createElement('div');
-  const badges = document.createElement('div');
-  badges.className = 'civassist-alert-detail-badges';
-  const severity = document.createElement('span');
-  severity.className = 'civassist-alert-severity';
-  severity.textContent = getCivAssistAlertSeverityLabel(alert.severity);
-  const category = document.createElement('span');
-  category.className = 'civassist-alert-category';
-  category.textContent = String(alert.category || '');
-  badges.append(severity, category);
-  const title = document.createElement('h3');
-  title.textContent = String(alert.title || 'Alert');
-  copy.append(badges, title);
-  head.appendChild(copy);
-  if (alert.tab) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'civassist-alert-action';
-    button.textContent = 'View Related Tab';
-    button.addEventListener('click', () => applyCivAssistAlertTarget(alert));
-    head.appendChild(button);
-  }
-  pane.appendChild(head);
-
-  const detail = document.createElement('p');
-  detail.className = 'civassist-alert-detail-copy';
-  detail.textContent = String(alert.detail || '');
-  pane.appendChild(detail);
-
-  const rows = document.createElement('div');
-  rows.className = 'civassist-alert-detail-rows';
-  (alert.detailRows || []).forEach((row) => {
-    const item = document.createElement('div');
-    item.className = 'civassist-alert-detail-row';
-    const label = document.createElement('div');
-    label.className = 'civassist-alert-detail-label';
-    if (row.labelRef) label.appendChild(makeCivAssistReferenceChip(row.labelRef, row.label || row.labelRef.name || 'Open'));
-    else label.textContent = String(row.label || '');
-    const value = document.createElement('div');
-    value.className = 'civassist-alert-detail-value';
-    if (Array.isArray(row.items)) appendCivAssistAlertItems(value, row.items);
-    else value.textContent = String(row.value == null ? '' : row.value);
-    item.append(label, value);
-    rows.appendChild(item);
-  });
-  if (rows.childElementCount > 0) pane.appendChild(rows);
-
-  const refs = Array.isArray(alert.refs) ? alert.refs : [];
-  if (refs.length > 0) {
-    const refWrap = document.createElement('div');
-    refWrap.className = 'civassist-alert-detail-links';
-    refs.forEach((ref) => refWrap.appendChild(makeCivAssistReferenceChip(ref, ref.name || 'Open')));
-    pane.appendChild(refWrap);
-  }
-  return pane;
-}
-
 function renderCivAssistAlertCoverageRow(coverage, currentRows) {
   const row = document.createElement('label');
   row.className = 'civassist-alert-coverage-row';
@@ -75172,68 +75132,6 @@ function renderCivAssistAlertCoverageRow(coverage, currentRows) {
   body.append(title, note, meta);
   row.append(checkbox, body);
   return row;
-}
-
-function renderCivAssistAlertCoverageDetail(coverage, currentRows) {
-  const pane = document.createElement('section');
-  pane.className = 'civassist-alert-coverage-detail';
-  if (!coverage) {
-    pane.appendChild(renderCivAssistEmptyState('No alert coverage is available for this save.'));
-    return pane;
-  }
-
-  const head = document.createElement('div');
-  head.className = 'civassist-alert-detail-head';
-  const copy = document.createElement('div');
-  const badge = document.createElement('span');
-  badge.className = `civassist-alert-coverage-pill ${String(coverage.status || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-  badge.textContent = String(coverage.status || '');
-  const title = document.createElement('h3');
-  title.textContent = String(coverage.label || 'Alert check');
-  copy.append(badge, title);
-  head.appendChild(copy);
-  if (coverage.tab) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'civassist-alert-action';
-    button.textContent = 'Open Related Tab';
-    button.addEventListener('click', () => applyCivAssistAlertTarget(coverage));
-    head.appendChild(button);
-  }
-  pane.appendChild(head);
-
-  const note = document.createElement('p');
-  note.className = 'civassist-alert-detail-copy';
-  note.textContent = String(coverage.note || '');
-  pane.appendChild(note);
-
-  const matches = (Array.isArray(currentRows) ? currentRows : []).filter((alert) => civAssistCoverageMatchesAlert(coverage, alert));
-  const matchWrap = document.createElement('div');
-  matchWrap.className = 'civassist-alert-coverage-matches';
-  const matchHeading = document.createElement('h4');
-  matchHeading.textContent = 'Current Matches';
-  matchWrap.appendChild(matchHeading);
-  if (matches.length === 0) {
-    const empty = document.createElement('span');
-    empty.className = 'civassist-alert-muted';
-    empty.textContent = 'No current alerts for this check in this save.';
-    matchWrap.appendChild(empty);
-  } else {
-    matches.forEach((alert) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'civassist-alert-match';
-      button.textContent = String(alert.title || 'Alert');
-      button.addEventListener('click', () => {
-        state.civAssist.activeAlertID = String(alert.id || '');
-        renderCivAssistModal();
-        syncCurrentNavigationSnapshot();
-      });
-      matchWrap.appendChild(button);
-    });
-  }
-  pane.appendChild(matchWrap);
-  return pane;
 }
 
 function renderCivAssistTabAlertBanner(report, tabKey) {
@@ -75351,7 +75249,7 @@ function renderCivAssistModal() {
     button.appendChild(label);
     if (Number(tab.count) > 0) {
       const count = document.createElement('span');
-      count.className = 'civassist-tab-count';
+      count.className = 'civassist-tab-count dirty-dot-badge dirty-count-badge';
       count.textContent = String(tab.count);
       button.appendChild(count);
     }
