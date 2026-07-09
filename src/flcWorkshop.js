@@ -778,6 +778,48 @@ function prepareStoryboardExportFrames(decoded, meta, options = {}) {
   return frames;
 }
 
+function prepareStoryboardExportFramesFromIndexed(sourceFrames, sourceMeta, meta) {
+  const frames = Array.isArray(sourceFrames) ? sourceFrames : [];
+  const sourceWidth = clampInt(sourceMeta.frameWidth, 1, 255, meta.frameWidth);
+  const sourceHeight = clampInt(sourceMeta.frameHeight, 1, 255, meta.frameHeight);
+  const sourceDirectionCount = clampInt(sourceMeta.directionCount, 1, 255, meta.directionCount);
+  const sourceFramesPerDirection = clampInt(
+    sourceMeta.framesPerDirection,
+    1,
+    65535,
+    Math.max(1, Math.floor(frames.length / sourceDirectionCount))
+  );
+  const validFrames = frames.map((frame) => frame instanceof Uint8Array ? frame : new Uint8Array(frame || []));
+  const backgroundIndex = chooseStoryboardBackgroundIndex(validFrames, sourceWidth, sourceHeight);
+  const blankFrame = new Uint8Array(meta.frameWidth * meta.frameHeight);
+  blankFrame.fill(backgroundIndex);
+  const resizedSource = validFrames.map((frame) => resizeIndexedFrameCanvas(
+    frame,
+    sourceWidth,
+    sourceHeight,
+    meta.frameWidth,
+    meta.frameHeight,
+    backgroundIndex
+  ));
+  const out = [];
+  for (let dir = 0; dir < meta.directionCount; dir += 1) {
+    const sourceDirStart = dir * sourceFramesPerDirection;
+    for (let frameIdx = 0; frameIdx < meta.framesPerDirection; frameIdx += 1) {
+      const source = dir < sourceDirectionCount && frameIdx < sourceFramesPerDirection
+        ? resizedSource[sourceDirStart + frameIdx]
+        : null;
+      out.push(source || new Uint8Array(blankFrame));
+    }
+  }
+  return out;
+}
+
+function framesFromBase64List(framesBase64) {
+  return (Array.isArray(framesBase64) ? framesBase64 : [])
+    .map((frameB64) => new Uint8Array(Buffer.from(String(frameB64 || ''), 'base64')))
+    .filter((frame) => frame.length > 0);
+}
+
 function encodeCiv3UnitFlc(frames, palette, options) {
   const frameWidth = clampInt(options.frameWidth, 1, 255, 1);
   const frameHeight = clampInt(options.frameHeight, 1, 255, 1);
@@ -849,6 +891,7 @@ function metadataFromDecoded(decoded) {
 function exportFlicsterStoryboardFromFlc(flcPath, outputDir, options = {}) {
   const decoded = decodeCiv3Flc(flcPath);
   const meta = { ...metadataFromDecoded(decoded), ...(options.meta || {}) };
+  const sourceMeta = metadataFromDecoded(decoded);
   const exportPalette = options.palette && options.palette.length >= 768 ? options.palette : decoded.palette;
   if (Number.isFinite(Number(options.frameWidth))) {
     meta.frameWidth = clampInt(options.frameWidth, 1, 255, meta.frameWidth);
@@ -864,7 +907,15 @@ function exportFlicsterStoryboardFromFlc(flcPath, outputDir, options = {}) {
   }
   meta.xOffset = Math.max(0, Math.round((meta.xsOrig - meta.frameWidth) / 2));
   meta.yOffset = Math.max(0, Math.round((meta.ysOrig - meta.frameHeight) / 2));
-  const frames = prepareStoryboardExportFrames(decoded, meta);
+  const viewerFrames = framesFromBase64List(options.framesBase64);
+  const frames = viewerFrames.length > 0
+    ? prepareStoryboardExportFramesFromIndexed(viewerFrames, {
+      frameWidth: Number(options.sourceFrameWidth) || sourceMeta.frameWidth,
+      frameHeight: Number(options.sourceFrameHeight) || sourceMeta.frameHeight,
+      directionCount: sourceMeta.directionCount,
+      framesPerDirection: Math.max(1, Math.floor(viewerFrames.length / Math.max(1, sourceMeta.directionCount)))
+    }, meta)
+    : prepareStoryboardExportFrames(decoded, meta);
   const stem = String(options.baseName || path.basename(flcPath, path.extname(flcPath))).trim() || 'animation';
   fs.mkdirSync(outputDir, { recursive: true });
   const storyboard = buildStoryboardIndices(frames, exportPalette, meta);
@@ -932,6 +983,44 @@ function buildFlcFromFlicsterStoryboard(fxmPath, outputPath) {
   return { ok: true, outputPath, meta: loaded.meta };
 }
 
+function buildFlcFromIndexedFrames(framesBase64, paletteBase64, outputPath, options = {}) {
+  const frames = framesFromBase64List(framesBase64);
+  if (frames.length <= 0) throw new Error('No viewer frames were provided');
+  const palette = new Uint8Array(Buffer.from(String(paletteBase64 || ''), 'base64'));
+  if (palette.length < 768) throw new Error('No valid viewer palette was provided');
+  const directionCount = clampInt(options.directionCount, 1, 255, 1);
+  const framesPerDirection = clampInt(options.framesPerDirection, 1, 65535, Math.max(1, Math.floor(frames.length / directionCount)));
+  const frameWidth = clampInt(options.frameWidth, 1, 255, 1);
+  const frameHeight = clampInt(options.frameHeight, 1, 255, 1);
+  const sourceFrames = prepareStoryboardExportFramesFromIndexed(frames, {
+    frameWidth,
+    frameHeight,
+    directionCount,
+    framesPerDirection: Math.max(1, Math.floor(frames.length / directionCount))
+  }, {
+    frameWidth,
+    frameHeight,
+    directionCount,
+    framesPerDirection
+  });
+  const meta = {
+    frameWidth,
+    frameHeight,
+    directionCount,
+    framesPerDirection,
+    delay: clampInt(options.delay, 1, 65535, 100),
+    xOffset: clampInt(options.xOffset, 0, 65535, 0),
+    yOffset: clampInt(options.yOffset, 0, 65535, 0),
+    xsOrig: clampInt(options.xsOrig, frameWidth, 65535, frameWidth),
+    ysOrig: clampInt(options.ysOrig, frameHeight, 65535, frameHeight),
+    directions: clampInt(options.directions, 0, 0xffffffff, directionCount === 8 ? 255 : 1)
+  };
+  const flc = encodeCiv3UnitFlc(sourceFrames, palette, meta);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, flc);
+  return { ok: true, outputPath, meta };
+}
+
 function inspectFlicsterStoryboard(fxmPath) {
   const loaded = loadFlicsterStoryboard(fxmPath);
   return previewFromStoryboardLoaded(loaded, { sourcePath: fxmPath, frameLimit: 1000 });
@@ -965,6 +1054,9 @@ function handleFlicWorkshop(payload = {}) {
     return exportFlicsterStoryboardFromFlc(String(payload.flcPath || '').trim(), String(payload.outputDir || '').trim(), {
       baseName: payload.baseName,
       palette,
+      framesBase64: payload.framesBase64,
+      sourceFrameWidth: Number(payload.sourceFrameWidth),
+      sourceFrameHeight: Number(payload.sourceFrameHeight),
       delay: Number(payload.delay),
       frameWidth: Number(payload.frameWidth),
       frameHeight: Number(payload.frameHeight),
@@ -975,6 +1067,20 @@ function handleFlicWorkshop(payload = {}) {
     return inspectFlicsterStoryboard(String(payload.fxmPath || '').trim());
   }
   if (action === 'buildFlc') {
+    if (Array.isArray(payload.framesBase64) && payload.framesBase64.length > 0) {
+      return buildFlcFromIndexedFrames(payload.framesBase64, payload.paletteBase64, String(payload.outputPath || '').trim(), {
+        frameWidth: Number(payload.frameWidth),
+        frameHeight: Number(payload.frameHeight),
+        directionCount: Number(payload.directionCount),
+        framesPerDirection: Number(payload.framesPerDirection),
+        delay: Number(payload.delay),
+        xOffset: Number(payload.xOffset),
+        yOffset: Number(payload.yOffset),
+        xsOrig: Number(payload.xsOrig),
+        ysOrig: Number(payload.ysOrig),
+        directions: Number(payload.directions)
+      });
+    }
     return buildFlcFromFlicsterStoryboard(String(payload.fxmPath || '').trim(), String(payload.outputPath || '').trim());
   }
   return { ok: false, error: 'Unknown FLC Workshop action' };

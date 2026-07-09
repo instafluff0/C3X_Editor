@@ -14639,8 +14639,8 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .flic-workshop-header-source {
-  justify-self: end;
-  width: min(500px, 100%);
+  justify-self: stretch;
+  width: 100%;
   min-width: 0;
 }
 
@@ -14649,13 +14649,22 @@ button.unit-ini-delete-btn:disabled {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  width: max-content;
-  max-width: calc(100% - 28px);
+  width: calc(100% - 28px);
+  max-width: none;
   margin: 10px 14px;
   padding: 3px;
   border-radius: 10px;
   background: #ffffff;
   flex: 0 0 auto;
+}
+
+.flic-workshop-reset-btn {
+  min-height: 36px;
+  margin-left: auto;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .flic-workshop-actionbar {
@@ -14674,7 +14683,7 @@ button.unit-ini-delete-btn:disabled {
 .flic-workshop-sourcebar {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   width: min(100%, 680px);
@@ -14682,13 +14691,6 @@ button.unit-ini-delete-btn:disabled {
 
 .flic-workshop-sourcebar.in-header {
   width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.flic-workshop-sourcebar-label {
-  color: var(--ink-dim);
-  font-size: 0.82rem;
-  font-weight: 700;
 }
 
 .flic-workshop-sourcebar-value {
@@ -14855,6 +14857,13 @@ button.unit-ini-delete-btn:disabled {
 
 .flic-workshop-preview-controls .flic-workshop-civ-picker .tech-picker-btn {
   min-height: 34px;
+}
+
+.flic-workshop-preview-controls .flic-workshop-civ-picker .tech-picker-btn,
+.flic-workshop-preview-controls .flic-workshop-checkbox-control,
+.flic-workshop-preview-controls .flic-workshop-check input,
+.flic-workshop-preview-controls input[type="range"] {
+  cursor: pointer;
 }
 
 .flic-workshop-preview-controls .flic-workshop-check {
@@ -15201,6 +15210,57 @@ button.unit-ini-delete-btn:disabled {
   font-weight: 800;
 }
 
+.flic-workshop-confirm-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(15, 16, 30, 0.26);
+  backdrop-filter: blur(2px);
+}
+
+.flic-workshop-overwrite-modal {
+  width: min(560px, 100%);
+  gap: 14px;
+}
+
+.flic-workshop-overwrite-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.flic-workshop-overwrite-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #8b5b10;
+  background: linear-gradient(145deg, #fff1c9, #ffd984);
+  font-size: 1.05rem;
+  font-weight: 900;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.flic-workshop-overwrite-head {
+  display: grid;
+  gap: 4px;
+}
+
+.flic-workshop-overwrite-paths {
+  max-height: 170px;
+}
+
+.flic-workshop-overwrite-confirm {
+  font-weight: 800;
+}
+
 .flic-workshop-export-editor-body {
   display: grid;
   gap: 7px;
@@ -15222,8 +15282,15 @@ button.unit-ini-delete-btn:disabled {
   cursor: pointer;
 }
 
+.flic-workshop-export-editor-option:has(input[type="radio"]:checked) {
+  border-color: rgba(11, 127, 120, 0.38);
+  background: rgba(232, 255, 252, 0.86);
+  box-shadow: 0 0 0 3px rgba(11, 127, 120, 0.1);
+}
+
 .flic-workshop-export-editor-option input {
   margin: 0;
+  accent-color: var(--accent);
 }
 
 .flic-workshop-export-editor-option .flic-workshop-export-editor-inline,
@@ -15257,6 +15324,11 @@ button.unit-ini-delete-btn:disabled {
 .flic-workshop-export-editor-inline.wide {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) 74px auto;
+}
+
+.flic-workshop-export-size-select {
+  display: grid;
+  grid-template-columns: auto 74px auto 74px;
 }
 
 .flic-workshop-export-popover input,

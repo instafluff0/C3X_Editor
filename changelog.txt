@@ -1,4 +1,4 @@
-* RELEASE 27.21.1
+* RELEASE 27.22
 - Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
 - Refined the FLC Workshop preview UI with a shorter modal, map-mode-style tabs, a frame-delay slider, and civilization thumbnail color selection based on each civ's default color.
 - Fixed the FLC Workshop modal shell so its background stays opaque and its size remains stable when switching tabs.
@@ -22,6 +22,12 @@
 - Moved FLC Workshop export/save completion notifications inside the modal and lowered the Units toolbar width threshold for showing the Workshop button.
 - Made FLC Workshop storyboard Current Size exports use the current preview frame dimensions, including user-adjusted width and height.
 - Cached FLC Workshop preview transforms by direction/settings and disabled unavailable facing buttons for animations that do not include every direction.
+- Added an FLC Workshop Reset control and reorganized export frame-size choices around original, current viewer, selected, and maximum sizes.
+- Replaced FLC Workshop overwrite prompts with a structured in-modal confirmation that lists the files to be replaced.
+- Made FLC Workshop exports default to current viewer size, palette, and delay, and made storyboard Save as FLC use the current Preview transforms.
+- Displayed FLC Workshop output directories relative to the Civ3 folder while preserving absolute paths for writes.
+- Displayed the FLC Workshop Info file path relative to the Civ3 folder when possible.
+- Removed the redundant FLC Workshop header file-type label and changed the modal close control to a text Close button.
 
 * RELEASE 27.21
 - Added async QA warnings for unit animation entries that reference files other than `.flc`, while preserving vanilla `DEAD=.` placeholders.
