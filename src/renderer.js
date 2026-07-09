@@ -12206,7 +12206,52 @@ function toUnitIniRelativePath(filePath, iniPath, fallbackIniPath = '') {
   const baseIniPath = toSlashPath(iniPath || fallbackIniPath || '').trim();
   const baseDir = getParentPath(baseIniPath);
   if (baseDir && full.startsWith(`${baseDir}/`)) return full.slice(baseDir.length + 1);
+  const baseUnitRoot = getUnitArtRootPath(baseDir);
+  const fullUnitRoot = getUnitArtRootPath(full);
+  if (baseDir && baseUnitRoot && fullUnitRoot && sameSlashPath(baseUnitRoot, fullUnitRoot)) {
+    const rel = makeSlashRelativePath(baseDir, full);
+    if (rel && !rel.startsWith('../../..')) return rel.replace(/\//g, '\\');
+  }
   return full;
+}
+
+function sameSlashPath(a, b) {
+  return toSlashPath(a).replace(/\/+$/, '').toLowerCase() === toSlashPath(b).replace(/\/+$/, '').toLowerCase();
+}
+
+function getUnitArtRootPath(value) {
+  const p = toSlashPath(value).replace(/\/+$/, '');
+  const marker = '/art/units';
+  const idx = p.toLowerCase().lastIndexOf(marker);
+  if (idx < 0) return '';
+  return p.slice(0, idx + marker.length);
+}
+
+function getAbsoluteRootKey(value) {
+  const p = toSlashPath(value).trim();
+  const drive = p.match(/^([a-zA-Z]:)\//);
+  if (drive) return drive[1].toLowerCase();
+  if (p.startsWith('/')) return '/';
+  return '';
+}
+
+function makeSlashRelativePath(fromDir, toPath) {
+  const from = toSlashPath(fromDir).replace(/\/+$/, '');
+  const to = toSlashPath(toPath).replace(/\/+$/, '');
+  if (!from || !to || getAbsoluteRootKey(from) !== getAbsoluteRootKey(to)) return '';
+  const fromParts = from.replace(/^[a-zA-Z]:\//, '').replace(/^\//, '').split('/').filter(Boolean);
+  const toParts = to.replace(/^[a-zA-Z]:\//, '').replace(/^\//, '').split('/').filter(Boolean);
+  let common = 0;
+  while (
+    common < fromParts.length
+    && common < toParts.length
+    && fromParts[common].toLowerCase() === toParts[common].toLowerCase()
+  ) {
+    common += 1;
+  }
+  const up = fromParts.slice(common).map(() => '..');
+  const down = toParts.slice(common);
+  return up.concat(down).join('/') || '.';
 }
 
 function toFileUrlFromPath(filePath) {

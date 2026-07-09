@@ -266,6 +266,14 @@ test('scenario save rewrites section-model unit INI animation paths to Windows r
                 ]
               },
               {
+                name: 'Sound Effects',
+                fields: [
+                  { key: 'DEFAULT', value: path.join(scenarioDir, 'Art', 'Units', 'TemplateUnit', 'TemplateDefault.wav') },
+                  { key: 'RUN', value: path.join(scenarioDir, 'Art', 'Units', 'Modern Armor', 'ModernArmorDeath.wav') },
+                  { key: 'ATTACK1', value: 'Art/Units/SharedUnit/SharedAttack.wav' }
+                ]
+              },
+              {
                 name: 'Timing',
                 fields: [
                   { key: 'DEFAULT', value: '0.42' },
@@ -301,8 +309,22 @@ test('scenario save rewrites section-model unit INI animation paths to Windows r
   assert.match(scenarioText, /DEFAULT=TemplateDefault\.flc/);
   assert.match(scenarioText, /RUN=TemplateRun\.flc/);
   assert.match(scenarioText, /ATTACK1=\.\.\\SharedUnit\\SharedAttack\.flc/);
+  assert.match(scenarioText, /DEFAULT=TemplateDefault\.wav/);
+  assert.match(scenarioText, /RUN=\.\.\\Modern Armor\\ModernArmorDeath\.wav/);
+  assert.match(scenarioText, /ATTACK1=\.\.\\SharedUnit\\SharedAttack\.wav/);
   assert.doesNotMatch(scenarioText, /MyScenario[\\/]/);
   assert.doesNotMatch(scenarioText, /Eldorado5[\\/]/);
+});
+
+test('Unit tab FLC and sound browse selections normalize to Unit INI relative paths', () => {
+  const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  assert.match(renderer, /function toUnitIniRelativePath\(filePath, iniPath, fallbackIniPath = ''\)/);
+  assert.match(renderer, /const baseUnitRoot = getUnitArtRootPath\(baseDir\)/);
+  assert.equal(renderer.includes("return rel.replace(/\\//g, '\\\\');"), true);
+  assert.match(
+    renderer,
+    /const nextRel = toUnitIniRelativePath\(filePath, targetIniPath, getUnitIniTargetPath\(entry\.animationName\)\);[\s\S]*if \(isSound\) row\.soundPath = nextRel;[\s\S]*else row\.relativePath = nextRel;/
+  );
 });
 
 test('scenario save blocks unresolved new animation folder names without INI edits', () => {

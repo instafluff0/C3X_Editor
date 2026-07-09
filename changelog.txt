@@ -1,5 +1,6 @@
 * RELEASE 27.22
 - Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
+- Fixed Units-tab FLC and sound browsing so valid unit animation and sound picks are stored relative to the unit animation folder instead of leaking absolute paths.
 - Refined the FLC Workshop preview UI with a shorter modal, map-mode-style tabs, a frame-delay slider, and civilization thumbnail color selection based on each civ's default color.
 - Fixed the FLC Workshop modal shell so its background stays opaque and its size remains stable when switching tabs.
 - Tightened the FLC Workshop layout with a narrower preview modal, in-modal animation switching, and civ-color-aware palette previews with smaller swatches.

@@ -14571,17 +14571,18 @@ function normalizeUnitIniSectionsForSave(sections, { entry, targetPath, scenario
     const name = String(section && section.name || '').trim();
     if (!name) return;
     const fields = [];
-    const isAnimations = name.toUpperCase() === 'ANIMATIONS';
-    (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
-      const key = String(field && field.key || '').trim();
-      if (!key) return;
-      const rawValue = String(field && field.value || '');
-      fields.push({
-        key,
-        value: isAnimations
-          ? normalizeUnitIniAnimationReferencePath(rawValue, { entry, targetPath, scenarioDir })
-          : rawValue
-      });
+      const sectionUpper = name.toUpperCase();
+      const isRuntimeReferenceSection = sectionUpper === 'ANIMATIONS' || sectionUpper === 'SOUND EFFECTS';
+      (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
+        const key = String(field && field.key || '').trim();
+        if (!key) return;
+        const rawValue = String(field && field.value || '');
+        fields.push({
+          key,
+          value: isRuntimeReferenceSection
+            ? normalizeUnitIniAnimationReferencePath(rawValue, { entry, targetPath, scenarioDir })
+            : rawValue
+        });
     });
     out.push({ name, fields });
   });
