@@ -654,11 +654,13 @@ test('CivAssist General tab matches Tokugawa 740 AD reference save', (t) => {
     civilian: 6,
     naval: 2,
     air: 0,
-    foreign: 1,
+    foreign: 0,
     damaged: 0,
     spent: 1,
     unitSupport: 62,
   });
+  assert.equal(report.military.units.some((row) => row.originalNationality === 'Germany'), true);
+  assert.equal(report.military.units.some((row) => row.foreign), false);
   assert.deepEqual(
     report.military.roster.map((row) => ({
       name: row.name,
@@ -670,7 +672,7 @@ test('CivAssist General tab matches Tokugawa 740 AD reference save', (t) => {
       civText: row.civText,
     })),
     [
-      { name: 'Worker', stats: '0 / 0 / 1', count: 6, experienceMix: [{ name: 'Regular', count: 3 }, { name: 'Veteran', count: 3 }], upgrade: '', upgradeCost: 0, civText: 'Japan, Germany' },
+      { name: 'Worker', stats: '0 / 0 / 1', count: 6, experienceMix: [{ name: 'Regular', count: 3 }, { name: 'Veteran', count: 3 }], upgrade: '', upgradeCost: 0, civText: 'Japan' },
       { name: 'Archer', stats: '2 / 1 / 1', count: 3, experienceMix: [{ name: 'Regular', count: 2 }, { name: 'Veteran', count: 1 }], upgrade: 'Longbowman', upgradeCost: 60, civText: 'Japan' },
       { name: 'Swordsman', stats: '3 / 2 / 1', count: 9, experienceMix: [{ name: 'Veteran', count: 8 }, { name: 'Elite', count: 1 }], upgrade: 'Medieval Infantry', upgradeCost: 30, civText: 'Japan' },
       { name: 'Pikeman', stats: '1 / 3 / 1', count: 2, experienceMix: [{ name: 'Veteran', count: 2 }], upgrade: 'Musketman', upgradeCost: 90, civText: 'Japan' },
@@ -680,6 +682,7 @@ test('CivAssist General tab matches Tokugawa 740 AD reference save', (t) => {
     ]
   );
   assert.ok(report.military.roster.every((row) => row.ref.sourceSignature === report.ruleSignatures.PRTO));
+  assert.ok(report.military.roster.every((row) => row.civs.length === 1 && row.civs[0].name === 'Japan'));
   assert.deepEqual(
     report.military.units.slice(0, 5).map((row) => ({
       description: row.description,
@@ -696,10 +699,10 @@ test('CivAssist General tab matches Tokugawa 740 AD reference save', (t) => {
       { description: 'Veteran Galley', health: '4/4', movement: '3/3', location: '71, 31', nationality: 'Japan' },
     ]
   );
-  const foreignWorker = report.military.units.find((row) => row.foreign);
-  assert.equal(foreignWorker.type, 'Worker');
-  assert.equal(foreignWorker.nationality, 'Germany');
-  assert.equal(foreignWorker.nationalityRef.sectionCode, 'RACE');
+  const capturedWorker = report.military.units.find((row) => row.originalNationality === 'Germany');
+  assert.equal(capturedWorker.type, 'Worker');
+  assert.equal(capturedWorker.nationality, 'Japan');
+  assert.equal(capturedWorker.nationalityRef.sectionCode, 'RACE');
   assert.equal(report.military.units.find((row) => row.type === 'Crusader').movement, '0/1');
 
   assert.deepEqual(report.alerts.status, [
@@ -967,6 +970,21 @@ test('Civ Advisor table links fill their columns and trade continuation rows omi
     /\.civassist-rival-table td > \.civassist-ref-chip\s*\{[\s\S]*?width: 100%;[\s\S]*?justify-content: flex-start;/,
     'civilization, government, and era chips should fill their table columns'
   );
+  assert.match(
+    renderer,
+    /const isCivChip = !!options\.civChip[\s\S]*?target\.tabKey === 'civilizations'/,
+    'Civ Advisor should centrally detect civilization reference chips'
+  );
+  assert.match(
+    renderer,
+    /if \(isCivChip\) button\.classList\.add\('civassist-civ-chip'\)/,
+    'linked civilization chips should get the fixed-width civ chip class'
+  );
+  assert.match(
+    styles,
+    /\.civassist-civ-chip\s*\{[\s\S]*?width: min\(150px, 100%\);/,
+    'civilization thumbnail chips should have a consistent visual length'
+  );
 });
 
 test('Civ Advisor Economy and Production tabs render saved-state reports', () => {
@@ -1029,7 +1047,7 @@ test('Civ Advisor Military tab separates roster and individual-unit views', () =
   assert.match(renderer, /function renderCivAssistMilitaryUnits\(military\) \{[\s\S]*?Search Individual Units\.\.\.[\s\S]*?state\.civAssist\.militaryUnitsSearch = search\.value[\s\S]*?\{ key: 'nationality', label: 'Civ', className: 'nationality' \}[\s\S]*?row\.health[\s\S]*?row\.movement[\s\S]*?row\.nationalityRef/);
   assert.match(renderer, /function refocusCivAssistMilitaryRosterSearch\(value, selectionStart, selectionEnd\)/);
   assert.match(renderer, /function refocusCivAssistMilitaryUnitsSearch\(value, selectionStart, selectionEnd\)/);
-  assert.doesNotMatch(renderer, /appendCivAssistMilitarySummary|Force Roster|Roster \(\$\{|label: 'Nationality'/);
+  assert.doesNotMatch(renderer, /appendCivAssistMilitarySummary|Force Roster|Roster \(\$\{|label: 'Nationality'|civassist-military-filter|All unit types|military-units-\$\{/);
   assert.match(renderer, /\{ key: 'military', label: 'Military' \}/);
   assert.match(renderer, /activeMilitarySubtab: \['roster', 'units'\]\.includes/);
   assert.match(renderer, /function civAssistRefMatchesCurrentRecord\(ref, currentSignature\) \{[\s\S]*?sourceRecord[\s\S]*?currentRecord/);
@@ -1042,9 +1060,10 @@ test('Civ Advisor Military tab separates roster and individual-unit views', () =
   assert.match(renderer, /function getCivAssistLinkTarget\(ref\) \{[\s\S]*?civAssistReferenceEntryMatchesSource\(ref, entry\)[\s\S]*?type: 'reference'/);
   assert.match(renderer, /button\.dataset\.subtabKey = tab\.key/);
   assert.match(styles, /\.civassist-military\s*\{[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\)/);
+  assert.match(styles, /\.civassist-military-controls\s*\{[\s\S]*?border: 0;[\s\S]*?background: transparent/);
   assert.match(styles, /\.civassist-military-roster-table col\.civ \{ width: 12%; \}/);
   assert.match(styles, /\.civassist-military-roster-search,\s*\.civassist-military-units-search\s*\{[\s\S]*?width: min\(640px, 100%\)/);
-  assert.doesNotMatch(styles, /civassist-military-summary/);
+  assert.doesNotMatch(styles, /civassist-military-summary|civassist-military-filter/);
   assert.match(styles, /\.civassist-subtab\[data-subtab-key="roster"\]\.active,\s*\.civassist-subtab\[data-subtab-key="units"\]\.active/);
 });
 
@@ -1122,9 +1141,24 @@ test('Civ Advisor tables expose Unit Table-style sortable headers', () => {
     /const columns = \[[\s\S]*?\.\.\.\(cities\.allCivs \? \[\{ key: 'civ', label: 'Civ'/,
     'Cities tab should add an owner Civ column when All Civs is selected'
   );
-  assert.match(renderer, /const columns = \[[\s\S]*?\.\.\.\(territory\.allCivs \? \[\{ key: 'civ', label: 'Civ'/);
-  assert.match(renderer, /const columns = \[[\s\S]*?\.\.\.\(economy\.allCivs \? \[\{ key: 'civ', label: 'Civ'/);
-  assert.match(renderer, /const hasAllCivs = !!production\.allCivs;[\s\S]*?<th>Civ<\/th>/);
+  assert.match(
+    renderer,
+    /const columns = \[[\s\S]*?\.\.\.\(territory\.allCivs \? \[\{ key: 'civ', label: 'Civ'/,
+    'Territory city list should add an owner Civ column when All Civs is selected'
+  );
+  assert.match(
+    renderer,
+    /const columns = \[[\s\S]*?\.\.\.\(economy\.allCivs \? \[\{ key: 'civ', label: 'Civ'/,
+    'Economy city list should add an owner Civ column when All Civs is selected'
+  );
+  assert.match(
+    renderer,
+    /const hasAllCivs = !!production\.allCivs;[\s\S]*const columns = \[[\s\S]*?\.\.\.\(hasAllCivs \? \[\{ key: 'civ', label: 'Civ'/,
+    'Production city list should add an owner Civ column when All Civs is selected'
+  );
+  assert.match(styles, /\.civassist-territory-city-table col\.civ \{ width: 12%; \}/);
+  assert.match(styles, /\.civassist-economy-table col\.civ \{ width: 12%; \}/);
+  assert.match(styles, /\.civassist-production-table col\.civ \{ width: 12%; \}/);
   assert.match(
     renderer,
     /state\.civAssist\.selectedPlayerID = Number\.isFinite\(resolvedPlayerID\) && \(resolvedPlayerID > 0 \|\| resolvedPlayerID === -1\)[\s\S]*?state\.civAssist\.report = result/,
@@ -1237,8 +1271,8 @@ test('Civ Advisor tables expose Unit Table-style sortable headers', () => {
   );
   assert.match(
     renderer,
-    /const productionRows = \(production\.rows \|\| \[\]\)\.filter[\s\S]*?productionRows\.forEach/,
-    'Production rows should be searchable before the table body is rendered'
+    /const productionRows = \(production\.rows \|\| \[\]\)\.filter[\s\S]*?sortCivAssistRows\(productionRows, columns, 'production'\)/,
+    'Production rows should be searchable before shared Civ Advisor sorting is applied'
   );
   assert.match(
     renderer,
@@ -1272,19 +1306,37 @@ test('Civ Advisor tables expose Unit Table-style sortable headers', () => {
   );
   assert.match(
     styles,
+    /\.civassist-rival-table th\s*\{[\s\S]*?position: sticky;[\s\S]*?top: 0;[\s\S]*?z-index: 4;/,
+    'Civ Advisor table headers should stay visible while scrolling table bodies'
+  );
+  assert.match(
+    styles,
+    /\.civassist-rival-table th:first-child,\s*\.civassist-rival-table td:first-child\s*\{[\s\S]*?position: sticky;[\s\S]*?left: 0;/,
+    'Civ Advisor first columns should stay visible during horizontal table scrolling'
+  );
+  assert.match(
+    styles,
+    /\.civassist-rival-table th:first-child\s*\{[\s\S]*?z-index: 6;/,
+    'Civ Advisor sticky header corner should layer above both header and first-column cells'
+  );
+  assert.match(
+    styles,
     /\.civassist-modal-body\s*\{[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\);[\s\S]*?overflow: hidden;/,
     'Civ Advisor should use inner table scrolling instead of a second modal-body scrollbar'
   );
   assert.match(
     styles,
-    /\.civassist-modal-body\.has-viewing-selector\s*\{[\s\S]*?grid-template-rows: auto auto minmax\(0, 1fr\);/,
-    'Civ Advisor should only add the extra selector row when multiple viewing civs are available'
+    /\.civassist-viewing-strip\s*\{[\s\S]*?margin-left: auto;/,
+    'Civ Advisor viewing-civ selector should share the tab row and align to the right'
   );
   assert.match(
     styles,
-    /\.civassist-viewing-civ-picker \.tech-picker-btn\s*\{[\s\S]*?border-radius: 999px;/,
-    'Civ Advisor viewing-civ selector should use the shared structured picker styling'
+    /\.civassist-viewing-civ-picker \.tech-picker-btn\s*\{[\s\S]*?min-height: 34px;[\s\S]*?font-weight: 800;/,
+    'Civ Advisor viewing-civ selector should customize sizing without overriding shared structured-picker corners'
   );
+  assert.match(styles, /\.civassist-viewing-civ-picker\s*\{[\s\S]*?width: 200px;[\s\S]*?max-width: 200px;/);
+  assert.match(styles, /\.civassist-viewing-civ-picker-menu\s*\{[\s\S]*?width: 200px;[\s\S]*?min-width: 200px;/);
+  assert.doesNotMatch(styles, /\.civassist-viewing-civ-picker [^{]+\{[^}]*border-radius:\s*999px;/);
   assert.match(
     styles,
     /\.civassist-tech-progress th,\s*\.civassist-tech-progress td\s*\{[\s\S]*?border: 1px solid rgba\(72, 84, 121, 0\.14\);/,

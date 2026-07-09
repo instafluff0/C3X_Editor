@@ -73015,6 +73015,9 @@ function navigateToCivAssistStructuredTarget(target) {
 function makeCivAssistReferenceChip(ref, label, options = {}) {
   const text = String(label == null ? '' : label);
   const target = getCivAssistLinkTarget(ref);
+  const isCivChip = !!options.civChip
+    || String(ref && ref.sectionCode || '').trim().toUpperCase() === 'RACE'
+    || (target && target.type === 'reference' && target.tabKey === 'civilizations');
   const appendColorSwatch = (parent) => {
     let slot = Number(options.colorSlot);
     if (target && target.type === 'reference' && target.tabKey === 'civilizations') {
@@ -73045,6 +73048,7 @@ function makeCivAssistReferenceChip(ref, label, options = {}) {
   if (!target) {
     const span = document.createElement('span');
     span.className = options.inline ? 'civassist-value' : 'civassist-ref-chip civassist-ref-chip-unlinked';
+    if (isCivChip) span.classList.add('civassist-civ-chip');
     if (ref && ref.sourceSignature) {
       const tooltip = 'From the selected save rules.\nOpen the matching scenario to enable links and thumbnails.';
       span.title = tooltip.replace(/\n/g, ' - ');
@@ -73059,6 +73063,7 @@ function makeCivAssistReferenceChip(ref, label, options = {}) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = options.inline ? 'civassist-ref-link-inline' : 'civassist-ref-chip';
+  if (isCivChip) button.classList.add('civassist-civ-chip');
   if (target.type === 'structured') button.classList.add('civassist-ref-chip-textonly');
   appendColorSwatch(button);
   if (target.type === 'reference') {
@@ -74665,17 +74670,30 @@ function renderCivAssistProduction(report) {
   const table = document.createElement('table');
   table.className = 'civassist-rival-table civassist-production-table';
   const hasAllCivs = !!production.allCivs;
-  table.innerHTML = `
-    <colgroup>
-      <col class="city">${hasAllCivs ? '<col class="civ">' : ''}<col class="producing"><col class="cost"><col class="collected">
-      <col class="per-turn"><col class="overrun"><col class="shields"><col class="turns"><col class="waste">
-    </colgroup>
-    <thead>
-      <tr>
-        <th>City</th>${hasAllCivs ? '<th>Civ</th>' : ''}<th>Producing</th><th>Cost</th><th>Collected</th>
-        <th>Per Turn</th><th>Overrun</th><th>Shields</th><th>Turns</th><th>% Waste</th>
-      </tr>
-    </thead>`;
+  const columns = [
+    { key: 'city', label: 'City', className: 'city' },
+    ...(hasAllCivs ? [{ key: 'civ', label: 'Civ', className: 'civ' }] : []),
+    { key: 'producing', label: 'Producing', className: 'producing' },
+    { key: 'cost', label: 'Cost', className: 'cost', num: true },
+    { key: 'collected', label: 'Collected', className: 'collected', num: true },
+    { key: 'perTurn', label: 'Per Turn', className: 'per-turn', num: true },
+    { key: 'overrun', label: 'Overrun', className: 'overrun', num: true },
+    { key: 'remaining', label: 'Shields', className: 'shields', num: true },
+    { key: 'turns', label: 'Turns', className: 'turns', num: true },
+    { key: 'wastePercent', label: '% Waste', className: 'waste', num: true },
+  ];
+  const colgroup = document.createElement('colgroup');
+  columns.forEach((column) => {
+    const col = document.createElement('col');
+    col.className = column.className;
+    colgroup.appendChild(col);
+  });
+  table.appendChild(colgroup);
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'production', column));
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
   const tbody = document.createElement('tbody');
   const productionQuery = String(state.civAssist.productionSearch || '').trim().toLowerCase();
   const productionRows = (production.rows || []).filter((row) => {
@@ -74694,7 +74712,7 @@ function renderCivAssistProduction(report) {
       row.wastePercent,
     ].some((value) => String(value == null ? '' : value).toLowerCase().includes(productionQuery));
   });
-  productionRows.forEach((row) => {
+  sortCivAssistRows(productionRows, columns, 'production').forEach((row) => {
     const tr = document.createElement('tr');
     const city = document.createElement('td');
     city.className = 'civassist-production-city';
@@ -74776,7 +74794,7 @@ function appendCivAssistMilitaryCivs(parent, civs) {
   const list = document.createElement('div');
   list.className = 'civassist-military-civ-list';
   items.forEach((item) => {
-    list.appendChild(makeCivAssistReferenceChip(item.ref, item.name, { inline: true }));
+    list.appendChild(makeCivAssistReferenceChip(item.ref, item.name, { inline: true, colorSlot: item.colorSlot }));
   });
   parent.appendChild(list);
 }
@@ -74904,10 +74922,8 @@ function renderCivAssistMilitaryUnits(military) {
   });
   heading.appendChild(search);
   section.appendChild(heading);
-  const filter = Number(state.civAssist.militaryTypeFilter);
   const unitsQuery = String(state.civAssist.militaryUnitsSearch || '').trim().toLowerCase();
   const rows = (military.units || []).filter((row) => {
-    if (!(filter < 0 || Number(row.typeIndex) === filter)) return false;
     if (!unitsQuery) return true;
     return [
       row.type,
@@ -74940,11 +74956,11 @@ function renderCivAssistMilitaryUnits(military) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, `military-units-${filter}`, column));
+  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'military-units', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  sortCivAssistRows(rows, columns, `military-units-${filter}`).forEach((row) => {
+  sortCivAssistRows(rows, columns, 'military-units').forEach((row) => {
     const tr = document.createElement('tr');
     if (row.damaged) tr.classList.add('is-damaged');
     if (row.spent) tr.classList.add('is-spent');
@@ -74961,7 +74977,7 @@ function renderCivAssistMilitaryUnits(military) {
     const location = document.createElement('td');
     location.textContent = row.location;
     const nationality = document.createElement('td');
-    nationality.appendChild(makeCivAssistReferenceChip(row.nationalityRef, row.nationality));
+    nationality.appendChild(makeCivAssistReferenceChip(row.nationalityRef, row.nationality, { colorSlot: row.colorSlot }));
     tr.append(unit, experience, health, moves, location, nationality);
     tbody.appendChild(tr);
   });
@@ -74996,29 +75012,6 @@ function renderCivAssistMilitary(report) {
     tabs.appendChild(button);
   });
   controls.appendChild(tabs);
-  if (state.civAssist.activeMilitarySubtab === 'units') {
-    const select = document.createElement('select');
-    select.className = 'civassist-military-filter';
-    const all = document.createElement('option');
-    all.value = '-1';
-    all.textContent = 'All unit types';
-    select.appendChild(all);
-    (military.roster || []).forEach((row) => {
-      const option = document.createElement('option');
-      option.value = String(row.typeIndex);
-      option.textContent = `${row.name} (${row.count})`;
-      select.appendChild(option);
-    });
-    const validFilter = (military.roster || []).some((row) => Number(row.typeIndex) === Number(state.civAssist.militaryTypeFilter));
-    if (!validFilter) state.civAssist.militaryTypeFilter = -1;
-    select.value = String(state.civAssist.militaryTypeFilter);
-    select.addEventListener('change', () => {
-      state.civAssist.militaryTypeFilter = Number(select.value);
-      renderCivAssistModal();
-      syncCurrentNavigationSnapshot();
-    });
-    controls.appendChild(select);
-  }
   wrap.appendChild(controls);
   wrap.appendChild(state.civAssist.activeMilitarySubtab === 'units'
     ? renderCivAssistMilitaryUnits(military)
@@ -75205,7 +75198,6 @@ function renderCivAssistModal() {
   const report = state.civAssist.report;
   syncCivAssistHeader();
   el.civAssistModalBody.replaceChildren();
-  el.civAssistModalBody.classList.remove('has-viewing-selector');
   if (state.civAssist.loading && (!report || !report.ok)) {
     const loading = document.createElement('div');
     loading.className = 'civassist-empty';
@@ -75260,12 +75252,9 @@ function renderCivAssistModal() {
     });
     tabs.appendChild(button);
   });
-  el.civAssistModalBody.appendChild(tabs);
   const viewingSelector = renderCivAssistViewingSelector(report);
-  if (viewingSelector) {
-    el.civAssistModalBody.classList.add('has-viewing-selector');
-    el.civAssistModalBody.appendChild(viewingSelector);
-  }
+  if (viewingSelector) tabs.appendChild(viewingSelector);
+  el.civAssistModalBody.appendChild(tabs);
   const content = state.civAssist.activeTab === 'trade'
     ? renderCivAssistTrade(report)
     : state.civAssist.activeTab === 'territory'

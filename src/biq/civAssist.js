@@ -1522,14 +1522,32 @@ function formatMovementThirds(value) {
 function makeMilitaryReport(context) {
   const {
     report, human, unitTypes, experienceLevels, races, gameRules, ruleSignatures, economy,
+    players, allPlayersMode,
   } = context;
-  const humanUnits = (report.units && report.units.records || [])
-    .filter((unit) => Number(unit.owner) === Number(human.playerID));
-  const humanCities = (report.cities && report.cities.records || [])
-    .filter((city) => Number(city.owner) === Number(human.playerID));
-  const cityByCoordinate = new Map(humanCities.map((city) => [`${city.x},${city.y}`, city.name || '']));
+  const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
+  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const selectedOwnerIDs = allPlayersMode ? activePlayerIDs : new Set([Number(human.playerID)]);
+  const selectedUnits = (report.units && report.units.records || [])
+    .filter((unit) => selectedOwnerIDs.has(Number(unit.owner)));
+  const selectedCities = (report.cities && report.cities.records || [])
+    .filter((city) => selectedOwnerIDs.has(Number(city.owner)));
+  const cityByCoordinate = new Map(selectedCities.map((city) => [`${city.x},${city.y}`, city.name || '']));
   const upgradeGoldPerShield = Math.max(0, Number(gameRules && gameRules.upgradeCost) || 3);
-  const unitRows = humanUnits.map((unit) => {
+  const makeUnitOwner = (unit) => {
+    const ownerPlayer = playerById.get(Number(unit && unit.owner)) || human || {};
+    const ownerRaceIndex = Number(ownerPlayer.raceID);
+    const ownerRaceName = recordName(races, ownerRaceIndex, 'RACE', '');
+    const ownerRace = races[ownerRaceIndex] || {};
+    return {
+      playerID: Number(ownerPlayer.playerID),
+      raceID: ownerRaceIndex,
+      name: ownerRaceName,
+      ref: makeRef('civilizations', 'RACE', ownerRaceIndex, ownerRaceName, ruleSignatures),
+      colorSlot: Number(ownerRace.defaultColor),
+    };
+  };
+  const unitRows = selectedUnits.map((unit) => {
+    const owner = makeUnitOwner(unit);
     const typeIndex = Number(unit.unitType);
     const type = unitTypes[typeIndex] || {};
     const experienceIndex = Number(unit.experienceLevel);
@@ -1540,7 +1558,7 @@ function makeMilitaryReport(context) {
     const movementUsed = Math.max(0, Number(unit.movementUsed) || 0);
     const remainingMovementThirds = Math.max(0, maxMovementThirds - movementUsed);
     const nationalityIndex = Number(unit.nationality);
-    const nationality = recordName(races, nationalityIndex, 'RACE', '');
+    const originalNationality = recordName(races, nationalityIndex, 'RACE', '');
     const typeName = recordName(unitTypes, typeIndex, 'PRTO', 'Unknown unit');
     return {
       id: Number(unit.id),
@@ -1559,9 +1577,14 @@ function makeMilitaryReport(context) {
       location: cityByCoordinate.get(`${unit.x},${unit.y}`) || `${unit.x}, ${unit.y}`,
       x: Number(unit.x),
       y: Number(unit.y),
-      nationality,
-      nationalityRef: makeRef('civilizations', 'RACE', nationalityIndex, nationality, ruleSignatures),
-      foreign: nationalityIndex >= 0 && nationalityIndex !== Number(human.raceID),
+      ownerPlayerID: owner.playerID,
+      ownerRaceID: owner.raceID,
+      nationality: owner.name,
+      nationalityRef: owner.ref,
+      colorSlot: owner.colorSlot,
+      originalNationality,
+      originalNationalityRef: makeRef('civilizations', 'RACE', nationalityIndex, originalNationality, ruleSignatures),
+      foreign: false,
       damaged: currentHealth < maxHealth,
       spent: remainingMovementThirds <= 0,
     };
@@ -1569,30 +1592,30 @@ function makeMilitaryReport(context) {
 
   const groups = new Map();
   unitRows.forEach((unit) => {
-    if (!groups.has(unit.typeIndex)) groups.set(unit.typeIndex, []);
-    groups.get(unit.typeIndex).push(unit);
+    const key = allPlayersMode ? `${unit.typeIndex}:${unit.ownerPlayerID}` : `${unit.typeIndex}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(unit);
   });
-  const roster = Array.from(groups.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([typeIndex, units]) => {
+  const roster = Array.from(groups.values())
+    .sort((a, b) => (
+      (Number(a[0] && a[0].typeIndex) - Number(b[0] && b[0].typeIndex))
+      || (Number(a[0] && a[0].ownerPlayerID) - Number(b[0] && b[0].ownerPlayerID))
+    ))
+    .map((units) => {
+      const typeIndex = Number(units[0] && units[0].typeIndex);
       const type = unitTypes[typeIndex] || {};
       const name = recordName(unitTypes, typeIndex, 'PRTO', 'Unknown unit');
-      const upgrade = resolveAvailableUpgrade(unitTypes, typeIndex, human.raceID);
+      const ownerRaceID = Number(units[0] && units[0].ownerRaceID);
+      const ownerRaceName = String(units[0] && units[0].nationality || '');
+      const ownerRaceRef = units[0] && units[0].nationalityRef;
+      const ownerColorSlot = Number(units[0] && units[0].colorSlot);
+      const upgrade = resolveAvailableUpgrade(unitTypes, typeIndex, ownerRaceID);
       const upgradeName = upgrade ? recordName(unitTypes, upgrade.index, 'PRTO', '') : '';
       const experienceMix = experienceLevels.map((level, index) => ({
         name: level.name || `Level ${index + 1}`,
         count: units.filter((unit) => unit.experienceIndex === index).length,
       })).filter((item) => item.count > 0);
-      const civMap = new Map();
-      units.forEach((unit) => {
-        const key = Number(unit.nationalityRef && unit.nationalityRef.biqIndex);
-        if (!Number.isFinite(key) || key < 0 || civMap.has(key)) return;
-        civMap.set(key, {
-          name: unit.nationality,
-          ref: unit.nationalityRef,
-        });
-      });
-      const civs = Array.from(civMap.values());
+      const civs = [{ name: ownerRaceName, ref: ownerRaceRef, colorSlot: ownerColorSlot }];
       return {
         typeIndex,
         name,
@@ -1616,6 +1639,7 @@ function makeMilitaryReport(context) {
     });
   const typeFor = (unit) => unitTypes[Number(unit.typeIndex)] || {};
   return {
+    allCivs: !!allPlayersMode,
     summary: {
       total: unitRows.length,
       combat: unitRows.filter((unit) => {
@@ -2711,6 +2735,8 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     gameRules: ruleRecord,
     ruleSignatures,
     economy,
+    players,
+    allPlayersMode,
   });
   const alerts = makeAlertsReport({
     report,

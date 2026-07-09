@@ -31,11 +31,14 @@
 - Added a player-only Civ Advisor Cities tab with search, live morale, corruption, waste, specialists, garrison, pollution, capital distance, and sortable neutral-styled rows, and kept Escape inside Civ Advisor search boxes from closing the modal.
 - Added a Civ Advisor Production tab with search, city thumbnails, a CivAssist-style city production table, linked build targets, shield-progress bars, remaining turns, projected overflow, saved city waste, and thumbnail-capable unit/improvement chips.
 - Added a Civ Advisor Military tab with searchable Unit Types and Individual Units views, linked unit-type upgrade paths, experience distributions, Civ columns, and individual-unit health, movement, and location.
+- Refined the Civ Advisor Military tab so the subtab controls are unframed, the Individual Units view relies on search instead of a duplicate unit-type filter, and Military Civ columns show current ownership instead of original unit nationality.
 - Fixed Civ Advisor Military subtabs so the active Unit Types/Individual Units control is visibly styled, and let unit chips keep thumbnails/links when PRTO identity matches the loaded bundle even if the renderer only has folded Units-tab records.
 - Fixed Civ Advisor Production and Military unit chips so Instafluff save-only duplicate PRTO rows, such as Samurai at save PRTO 137, resolve back to the visible primary Units-tab entry with thumbnails and links.
 - Added a non-obtrusive Civ Advisor Alerts tab with selectable current-save warnings, detailed trade/resource/tech drilldowns, diplomacy notes, production-overrun alerts, status metrics, and documented coverage for future historical alerts.
 - Refined Civ Advisor alerts so the Alerts tab manages enable/disable settings, active alerts appear as per-tab banners with tab badges, visible planned rows are removed, and enemy-negotiation alerts route to Diplomacy.
 - Matched Civ Advisor alert tab badges to the main app's raised numeric notification badge style.
+- Made Civ Advisor tables keep their header row and first column visible while scrolling, matching the Unit Table modal behavior.
+- Standardized Civ Advisor civilization chip widths and kept owner Civ columns available in All Civs city lists for Territory, Economy, and Production.
 - Documented the SAV source mapping for CivAssist II's General tab, including live `GAME`, `LEAD`, `CULT`, explored-tile intelligence, diplomacy, gold, and score-tail sources.
 - Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.
 - Fixed Units-tab FLC and sound browsing so valid unit animation and sound picks are stored relative to the unit animation folder instead of leaking absolute paths.
