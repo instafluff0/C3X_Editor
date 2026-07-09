@@ -319,7 +319,8 @@ test('scenario save rewrites section-model unit INI animation paths to Windows r
 test('Unit tab FLC and sound browse selections normalize to Unit INI relative paths', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   assert.match(renderer, /function toUnitIniRelativePath\(filePath, iniPath, fallbackIniPath = ''\)/);
-  assert.match(renderer, /const baseUnitRoot = getUnitArtRootPath\(baseDir\)/);
+  assert.match(renderer, /const logicalRel = makeUnitArtLogicalRelativePath\(full, baseDir\)/);
+  assert.match(renderer, /function getUnitArtFolderReference\(value\)/);
   assert.equal(renderer.includes("return rel.replace(/\\//g, '\\\\');"), true);
   assert.match(
     renderer,

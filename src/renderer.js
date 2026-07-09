@@ -11800,8 +11800,17 @@ function makeReferencePreviewTasks(tabKey, entry) {
   return tasks;
 }
 
-function getPreviewAvailableDirectionIndexes(preview) {
+function getPreviewCiv3Meta(preview) {
   const civ3 = preview && preview.meta && preview.meta.civ3 ? preview.meta.civ3 : {};
+  return {
+    numAnims: Number(civ3.numAnims || preview && preview.civ3NumAnims || 0),
+    animLength: Number(civ3.animLength || preview && preview.civ3AnimLength || 0),
+    directions: Number(civ3.directions || preview && preview.civ3Directions || 0)
+  };
+}
+
+function getPreviewAvailableDirectionIndexes(preview) {
+  const civ3 = getPreviewCiv3Meta(preview);
   const directionCount = Math.max(1, Math.min(8, Math.round(Number(civ3.numAnims) || 1)));
   const mask = Number(civ3.directions);
   if (Number.isFinite(mask) && mask > 0) {
@@ -11828,14 +11837,17 @@ function getPreviewDirectionPosition(preview, directionIndex) {
 
 function sliceBase64FramesByDirection(frames, preview, directionIndex) {
   if (!Array.isArray(frames) || frames.length < 1) return frames;
-  const civ3 = preview && preview.meta && preview.meta.civ3 ? preview.meta.civ3 : {};
+  const civ3 = getPreviewCiv3Meta(preview);
   const directionCount = Math.max(1, Math.min(8, Math.round(Number(civ3.numAnims) || 0)));
   const explicitPerDir = Math.round(Number(civ3.animLength) || 0);
-  const perDir = explicitPerDir > 0 ? explicitPerDir : Math.floor(frames.length / Math.max(1, directionCount || 8));
-  if (perDir < 1 || frames.length < perDir * Math.max(1, directionCount)) return frames;
+  const decodedBlockSize = explicitPerDir > 0 && directionCount > 0 && frames.length >= directionCount * (explicitPerDir + 1)
+    ? explicitPerDir + 1
+    : (explicitPerDir > 0 ? explicitPerDir : Math.floor(frames.length / Math.max(1, directionCount || 8)));
+  const displayFrameCount = explicitPerDir > 0 ? explicitPerDir : decodedBlockSize;
+  if (decodedBlockSize < 1 || displayFrameCount < 1 || frames.length < decodedBlockSize * Math.max(1, directionCount)) return frames;
   const dirPosition = getPreviewDirectionPosition(preview, directionIndex);
-  const start = dirPosition * perDir;
-  const end = Math.min(frames.length, start + perDir);
+  const start = dirPosition * decodedBlockSize;
+  const end = Math.min(frames.length, start + displayFrameCount);
   const subset = frames.slice(start, end);
   return subset.length ? subset : frames;
 }
@@ -12205,6 +12217,8 @@ function toUnitIniRelativePath(filePath, iniPath, fallbackIniPath = '') {
   if (!full) return '';
   const baseIniPath = toSlashPath(iniPath || fallbackIniPath || '').trim();
   const baseDir = getParentPath(baseIniPath);
+  const logicalRel = makeUnitArtLogicalRelativePath(full, baseDir);
+  if (logicalRel) return logicalRel;
   if (baseDir && full.startsWith(`${baseDir}/`)) return full.slice(baseDir.length + 1);
   const baseUnitRoot = getUnitArtRootPath(baseDir);
   const fullUnitRoot = getUnitArtRootPath(full);
@@ -12213,6 +12227,38 @@ function toUnitIniRelativePath(filePath, iniPath, fallbackIniPath = '') {
     if (rel && !rel.startsWith('../../..')) return rel.replace(/\//g, '\\');
   }
   return full;
+}
+
+function makeUnitArtLogicalRelativePath(filePath, baseDir) {
+  const baseFolder = getPathBaseName(baseDir);
+  if (!baseFolder) return '';
+  const target = getUnitArtFolderReference(filePath);
+  if (!target || !target.folder || !target.tail) return '';
+  const rel = sameText(target.folder, baseFolder)
+    ? target.tail
+    : `../${target.folder}/${target.tail}`;
+  return rel.replace(/\//g, '\\');
+}
+
+function getUnitArtFolderReference(value) {
+  const p = toSlashPath(value).replace(/^["']|["']$/g, '').trim();
+  const marker = '/art/units/';
+  const lower = p.toLowerCase();
+  let idx = lower.lastIndexOf(marker);
+  let start = idx >= 0 ? idx + marker.length : -1;
+  if (start < 0 && lower.startsWith('art/units/')) start = 'art/units/'.length;
+  if (start < 0) return null;
+  const rest = p.slice(start).replace(/^\/+/, '');
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  return {
+    folder: parts[0],
+    tail: parts.slice(1).join('/')
+  };
+}
+
+function sameText(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 }
 
 function sameSlashPath(a, b) {
@@ -13087,11 +13133,12 @@ function getFlicWorkshopViewerPaletteBase64() {
 }
 
 function renderFlicWorkshopTabs() {
+  const storyboardTabLabel = flicWorkshopModal.sourceKind === 'storyboard' ? 'Save as FLC' : 'Export Storyboard';
   const tabs = [
     ['preview', 'Preview', '▶'],
     ['info', 'Info', 'i'],
     ['palette', 'Palette', '▦'],
-    ['storyboard', 'Export', '▥']
+    ['storyboard', storyboardTabLabel, '▥']
   ];
   flicWorkshopModal.tabs.innerHTML = '';
   tabs.forEach(([key, label, icon]) => {
@@ -14247,7 +14294,7 @@ function renderFlicWorkshopStoryboardTab(body) {
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
   exportBtn.className = 'secondary flic-workshop-export-submit';
-  exportBtn.textContent = 'Export';
+  exportBtn.textContent = 'Export Storyboard';
   exportBtn.disabled = !flicWorkshopModal.sourcePath || !getFlicWorkshopOutputDirectoryInput(outputValue) || !window.c3xManager || typeof window.c3xManager.flicWorkshop !== 'function';
   exportBtn.addEventListener('click', async () => {
     const outputDir = getFlicWorkshopOutputDirectoryInput(outputValue);

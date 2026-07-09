@@ -520,7 +520,9 @@ test('renderer exposes the Units-tab FLC Workshop entry point', () => {
   assert.match(renderer, /Maximum Size \(\$\{maxWidth\} x \$\{maxHeight\}\)/);
   assert.match(renderer, /Maximum Frame Count \(64\)/);
   assert.match(renderer, /getFlicWorkshopCivilizationColorOptions\(\)/);
-  assert.match(renderer, /\['storyboard', 'Export', '▥'\]/);
+  assert.match(renderer, /const storyboardTabLabel = flicWorkshopModal\.sourceKind === 'storyboard' \? 'Save as FLC' : 'Export Storyboard'/);
+  assert.match(renderer, /\['storyboard', storyboardTabLabel, '▥'\]/);
+  assert.match(renderer, /exportBtn\.textContent = 'Export Storyboard'/);
   assert.doesNotMatch(renderer, /\['build'/);
   assert.doesNotMatch(renderer, /renderFlicWorkshopBuildTab/);
   assert.match(renderer, /const displayPalette = getFlicWorkshopDisplayPalette\(palette, civPalette, indexedFrames\)/);
@@ -658,6 +660,11 @@ test('FLC Workshop action selector and palette grid stay compact', () => {
   assert.match(renderer, /getFlicWorkshopToastHost\(\)\.appendChild\(toast\)/);
   assert.match(renderer, /hideFlicWorkshopToast\(\)/);
   assert.match(renderer, /function getPreviewAvailableDirectionIndexes\(preview\)/);
+  assert.match(renderer, /function getPreviewCiv3Meta\(preview\)/);
+  assert.match(renderer, /preview && preview\.civ3NumAnims/);
+  assert.match(renderer, /preview && preview\.civ3AnimLength/);
+  assert.match(renderer, /directionCount \* \(explicitPerDir \+ 1\)/);
+  assert.match(renderer, /const start = dirPosition \* decodedBlockSize/);
   assert.match(renderer, /btn\.disabled = disabled/);
   assert.match(renderer, /getFlicWorkshopPreviewForDisplay\(activeDirection\)/);
   assert.match(renderer, /displayPreviewCache/);
