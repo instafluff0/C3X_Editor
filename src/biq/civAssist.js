@@ -1980,11 +1980,18 @@ function makeAlertsReport(context) {
   const coverage = [
     {
       id: 'trade',
-      label: 'Trade opportunities and expiring deals',
+      label: 'Trade opportunities',
       status: 'Active',
-      note: 'Shows current buy/sell opportunities and timed deals that expire next turn.',
+      note: 'Shows current buy/sell opportunities.',
       tab: 'trade',
-      alertIds: ['buy-tech', 'buy-resource', 'sell-tech', 'sell-resource', 'rival-cash', 'trade-expiring'],
+      alertIds: ['buy-tech', 'buy-resource', 'sell-tech', 'sell-resource', 'rival-cash'],
+    },
+    {
+      id: 'trade-expiring',
+      label: 'Expiring trade deals',
+      status: 'Active',
+      note: 'Shows timed deals that expire next turn.',
+      tab: 'trade',
       alertIdPrefixes: ['trade-expiring-'],
     },
     {

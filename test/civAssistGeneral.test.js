@@ -818,7 +818,8 @@ test('CivAssist General tab matches Tokugawa 740 AD reference save', (t) => {
   assert.deepEqual(
     report.alerts.coverage.map((row) => ({ id: row.id, label: row.label, status: row.status, tab: row.tab })),
     [
-      { id: 'trade', label: 'Trade opportunities and expiring deals', status: 'Active', tab: 'trade' },
+      { id: 'trade', label: 'Trade opportunities', status: 'Active', tab: 'trade' },
+      { id: 'trade-expiring', label: 'Expiring trade deals', status: 'Active', tab: 'trade' },
       { id: 'diplomacy', label: 'Enemies willing to negotiate', status: 'Active', tab: 'diplomacy' },
       { id: 'production', label: 'Production overrun', status: 'Active', tab: 'production' },
       { id: 'economy', label: 'Treasury and city deficits', status: 'Active', tab: 'economy' },
@@ -955,6 +956,14 @@ test('Civ Advisor can inspect the same save from another active civ perspective'
   assert.equal(allReport.production.allCivs, true);
   assert.ok(allReport.production.rows.some((row) => row.city === 'Kyoto' && row.civ === 'Japan'));
   assert.ok(allReport.production.rows.some((row) => row.city === 'Rome' && row.civ === 'Rome'));
+  assert.equal(allReport.military.allCivs, true);
+  assert.equal(allReport.military.summary.total, 437);
+  assert.equal(allReport.military.units.length, 437);
+  assert.ok(allReport.military.summary.total > defaultReport.military.summary.total);
+  assert.ok(allReport.military.units.some((row) => row.type === 'Samurai' && row.nationality === 'Japan'));
+  assert.ok(allReport.military.units.some((row) => row.type === 'Worker' && row.nationality === 'Rome'));
+  assert.ok(allReport.military.roster.some((row) => row.name === 'Samurai' && row.civText === 'Japan' && row.count === 15));
+  assert.ok(allReport.military.roster.some((row) => row.name === 'Worker' && row.civText === 'Rome' && row.count === 9));
 });
 
 test('Civ Advisor table links fill their columns and trade continuation rows omit empty civ chips', () => {
@@ -1045,6 +1054,8 @@ test('Civ Advisor Military tab separates roster and individual-unit views', () =
   assert.match(renderer, /function renderCivAssistMilitary\(report\) \{[\s\S]*?Unit Types \(\$\{\(military\.roster \|\| \[\]\)\.length\}\)[\s\S]*?Individual Units \(\$\{\(military\.units \|\| \[\]\)\.length\}\)/);
   assert.match(renderer, /function renderCivAssistMilitaryRoster\(military\) \{[\s\S]*?Search Unit Types\.\.\.[\s\S]*?state\.civAssist\.militaryRosterSearch = search\.value[\s\S]*?\{ key: 'civText', label: 'Civ', className: 'civ' \}[\s\S]*?row\.upgradeRef[\s\S]*?row\.experienceMix[\s\S]*?appendCivAssistMilitaryCivs\(civ, row\.civs\)/);
   assert.match(renderer, /function renderCivAssistMilitaryUnits\(military\) \{[\s\S]*?Search Individual Units\.\.\.[\s\S]*?state\.civAssist\.militaryUnitsSearch = search\.value[\s\S]*?\{ key: 'nationality', label: 'Civ', className: 'nationality' \}[\s\S]*?row\.health[\s\S]*?row\.movement[\s\S]*?row\.nationalityRef/);
+  assert.match(renderer, /makeCivAssistReferenceChip\(item\.ref, item\.name, \{ inline: true, colorSlot: item\.colorSlot \}\)/);
+  assert.match(renderer, /makeCivAssistReferenceChip\(row\.nationalityRef, row\.nationality, \{ colorSlot: row\.colorSlot \}\)/);
   assert.match(renderer, /function refocusCivAssistMilitaryRosterSearch\(value, selectionStart, selectionEnd\)/);
   assert.match(renderer, /function refocusCivAssistMilitaryUnitsSearch\(value, selectionStart, selectionEnd\)/);
   assert.doesNotMatch(renderer, /appendCivAssistMilitarySummary|Force Roster|Roster \(\$\{|label: 'Nationality'|civassist-military-filter|All unit types|military-units-\$\{/);
@@ -1069,27 +1080,32 @@ test('Civ Advisor Military tab separates roster and individual-unit views', () =
 
 test('Civ Advisor Alerts tab groups current alerts without foregrounding the app', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
   const renderAlertsStart = renderer.indexOf('function renderCivAssistAlerts(report)');
   const renderAlertsEnd = renderer.indexOf('function renderCivAssistModal()', renderAlertsStart);
   const renderAlertsBody = renderer.slice(renderAlertsStart, renderAlertsEnd);
-  assert.match(renderAlertsBody, /Alert Settings/);
-  assert.match(renderAlertsBody, /renderCivAssistAlertCoverageRow\(row, currentRows\)/);
-  assert.doesNotMatch(renderAlertsBody, /Current Alerts/);
-  assert.doesNotMatch(renderer, /statusHeading\.textContent = 'Save Status'/);
-  assert.match(renderer, /function renderCivAssistTabAlertBanner\(report, tabKey\) \{[\s\S]*?getCivAssistTabAlerts\(report, tabKey\)[\s\S]*?civassist-tab-alerts/);
-  assert.match(renderer, /function renderCivAssistAlertCoverageRow\(coverage, currentRows\) \{[\s\S]*?checkbox\.type = 'checkbox'[\s\S]*?setCivAssistAlertCoverageEnabled/);
+  assert.match(renderAlertsBody, /Current Alerts/);
+  assert.match(renderAlertsBody, /Available Alerts/);
+  assert.match(renderAlertsBody, /renderCivAssistAlertCoverageRow\(row\)/);
+  assert.match(renderAlertsBody, /civassist-alert-line/);
+  assert.match(renderAlertsBody, /getCivAssistEnabledAlerts\(report\)/);
+  assert.match(renderer, /function renderCivAssistAlertCoverageRow\(coverage\) \{[\s\S]*?checkbox\.type = 'checkbox'[\s\S]*?setCivAssistAlertCoverageEnabled/);
   assert.match(renderer, /function civAssistCoverageMatchesAlert\(coverage, alert\) \{/);
   assert.match(renderer, /function getCivAssistAlertCoverageRows\(report\) \{[\s\S]*?toLowerCase\(\) === 'active'/);
+  assert.match(renderer, /CIV_ASSIST_DEFAULT_ALERT_COVERAGE_ENABLED = new Set\(\['trade', 'diplomacy', 'economy'\]\)/);
+  assert.match(renderer, /function isCivAssistAlertCoverageEnabled\(coverage\) \{[\s\S]*?Object\.prototype\.hasOwnProperty\.call\(overrides, id\)[\s\S]*?getDefaultCivAssistAlertCoverageEnabled\(id\)/);
+  assert.match(renderer, /function setCivAssistAlertCoverageEnabled\(coverage, enabled\) \{[\s\S]*?state\.settings\.civAdvisorAlertCoverageEnabled[\s\S]*?window\.c3xManager\.setSettings\(state\.settings\)/);
+  assert.match(renderer, /state\.settings\.civAdvisorAlertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled\(state\.settings\.civAdvisorAlertCoverageEnabled\)/);
+  assert.match(main, /civAdvisorAlertCoverageEnabled: \{\}/);
+  assert.match(main, /function normalizeCivAdvisorAlertCoverageEnabled\(value\) \{[\s\S]*?next\[id\] = value\[key\] === true/);
   assert.doesNotMatch(renderer, /<th>Check<\/th><th>Status<\/th><th>Notes<\/th>/);
-  assert.match(renderer, /count: tab\.key === 'alerts' \? 0 : getCivAssistTabAlerts\(report, tab\.key\)\.length/);
+  assert.doesNotMatch(renderAlertsBody, /civassist-alert-category|civassist-alert-severity/);
   assert.match(renderer, /function applyCivAssistAlertTarget\(alert\) \{[\s\S]*?state\.civAssist\.activeTradeSubtab = String\(alert\.subtab\)/);
   assert.match(renderer, /activeAlertID/);
-  assert.match(renderer, /civassist-tab-count dirty-dot-badge dirty-count-badge/);
   assert.doesNotMatch(renderer, /BrowserWindow\.getFocusedWindow\(\)\.focus\(\)/);
-  assert.match(styles, /\.civassist-tab-alerts\s*\{/);
+  assert.match(styles, /\.civassist-alerts-simple\s*\{/);
   assert.match(styles, /\.civassist-alert-coverage-row input\s*\{/);
-  assert.match(styles, /\.civassist-tab\[data-tab-key="alerts"\]\.active/);
 });
 
 test('Civ Advisor tables expose Unit Table-style sortable headers', () => {

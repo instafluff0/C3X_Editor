@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('c3xManager', {
   clipTextToEncodedByteLimit: (text, maxBytes, encoding) => ipcRenderer.sendSync('manager:clip-text-to-encoded-byte-limit', { text, maxBytes, encoding }),
   openFilePath: (filePath) => ipcRenderer.invoke('manager:open-file-path', filePath),
   openLogFolder: () => ipcRenderer.invoke('manager:open-log-folder'),
+  setCivAdvisorOverlayEnabled: (enabled) => ipcRenderer.invoke('manager:set-civ-advisor-overlay-enabled', !!enabled),
+  setCivAdvisorOverlayStatus: (status) => ipcRenderer.invoke('manager:set-civ-advisor-overlay-status', status || {}),
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
   getPathAccess: (paths) => ipcRenderer.invoke('manager:get-path-access', paths),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
@@ -182,6 +184,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
     ipcRenderer.on('manager:operation-progress', listener);
     return () => {
       ipcRenderer.removeListener('manager:operation-progress', listener);
+    };
+  },
+  onCivAdvisorOverlayOpenAlerts: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = () => handler();
+    ipcRenderer.on('manager:civ-advisor-overlay-open-alerts', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:civ-advisor-overlay-open-alerts', listener);
     };
   },
   getPreview: (payload) => ipcRenderer.invoke('manager:get-preview', payload),

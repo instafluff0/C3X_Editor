@@ -15942,6 +15942,11 @@ button.unit-ini-delete-btn:disabled {
 }
 
 .civassist-alerts {
+  grid-template-rows: auto minmax(180px, 1fr) minmax(150px, 0.75fr);
+}
+
+.civassist-alerts-simple {
+  grid-template-columns: minmax(320px, 0.42fr) minmax(0, 0.58fr);
   grid-template-rows: minmax(0, 1fr);
 }
 
@@ -16252,6 +16257,98 @@ button.unit-ini-delete-btn:disabled {
 .civassist-alert-detail-links .civassist-ref-chip {
   width: auto;
   max-width: 100%;
+}
+
+.civassist-alert-list {
+  grid-template-columns: 1fr;
+  gap: 5px;
+  padding: 8px;
+}
+
+.civassist-alert-line {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  width: 100%;
+  min-height: 0;
+  padding: 7px 9px 8px;
+  border: 1px solid rgba(36, 25, 64, 0.14);
+  border-left-width: 4px;
+  border-radius: 8px;
+  color: var(--ink);
+  background: #ffffff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.civassist-alert-line.severity-critical {
+  border-left-color: #c53a34;
+}
+
+.civassist-alert-line.severity-warning {
+  border-left-color: #d48728;
+}
+
+.civassist-alert-line.severity-opportunity {
+  border-left-color: #2e9389;
+}
+
+.civassist-alert-line.severity-info {
+  border-left-color: #5f72b2;
+}
+
+.civassist-alert-line.active {
+  border-color: rgba(36, 25, 64, 0.26);
+  background: #f9fbff;
+  box-shadow: inset 0 0 0 1px rgba(82, 100, 154, 0.13);
+}
+
+.civassist-alert-line:hover {
+  background: #fbfcff;
+}
+
+.civassist-alert-line strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.civassist-alert-line-detail {
+  overflow: hidden;
+  color: #59647b;
+  font-size: 0.66rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.civassist-alert-coverage-list {
+  gap: 4px;
+  padding: 8px;
+}
+
+.civassist-alert-coverage-row {
+  min-height: 34px;
+  padding: 5px 9px;
+}
+
+.civassist-alert-coverage-row strong {
+  font-size: 0.75rem;
+}
+
+.civassist-alert-coverage-body {
+  gap: 0;
+}
+
+.civassist-alert-coverage-note,
+.civassist-alert-coverage-meta,
+.civassist-alert-coverage-pill {
+  display: none;
 }
 
 .civassist-alert-value-pill,

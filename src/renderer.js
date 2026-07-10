@@ -115,6 +115,7 @@ const state = {
     activeCultureSubtab: 'city',
     activeMilitarySubtab: 'roster',
     activeAlertID: '',
+    alertsSeen: false,
     alertCoverageEnabled: {},
     militaryTypeFilter: -1,
     techSearch: '',
@@ -136,6 +137,7 @@ const state = {
     followingLatest: false,
     loadLatestOncePending: false,
     initializedForSession: false,
+    restoreOnLaunch: false,
     pollTimer: null,
     pollInFlight: false,
     latestObservations: {},
@@ -410,6 +412,8 @@ const state = {
     statusRisk: false
   }
 };
+
+const CIV_ASSIST_DEFAULT_ALERT_COVERAGE_ENABLED = new Set(['trade', 'diplomacy', 'economy']);
 
 const CIV3_PEDIA_ART_PATH_MAX_CHARS = 65;
 
@@ -7365,6 +7369,17 @@ function cloneStateMap(mapLike) {
   return Object.assign({}, mapLike || {});
 }
 
+function normalizeCivAssistAlertCoverageEnabled(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const next = {};
+  Object.keys(value).forEach((key) => {
+    const id = String(key || '').trim();
+    if (!id) return;
+    next[id] = value[key] === true;
+  });
+  return next;
+}
+
 function sanitizePersistedMapEditorTool(tool) {
   const next = Object.assign({}, tool || {});
   delete next.tileInfoUnitQuantity;
@@ -7557,7 +7572,7 @@ function sanitizeCivAssistView(view) {
     activeCultureSubtab: ['city', 'wonders'].includes(activeCultureSubtab) ? activeCultureSubtab : 'city',
     activeMilitarySubtab: ['roster', 'units'].includes(activeMilitarySubtab) ? activeMilitarySubtab : 'roster',
     activeAlertID: String(source.activeAlertID || ''),
-    alertCoverageEnabled: cloneStateMap(source.alertCoverageEnabled),
+    alertCoverageEnabled: normalizeCivAssistAlertCoverageEnabled(source.alertCoverageEnabled),
     militaryTypeFilter: Number.isFinite(Number(source.militaryTypeFilter)) ? Number(source.militaryTypeFilter) : -1,
     techSearch: String(source.techSearch || ''),
     citiesSearch: String(source.citiesSearch || ''),
@@ -7849,7 +7864,7 @@ function applyViewSnapshot(snapshot) {
   state.civAssist.activeCultureSubtab = civAssistView.activeCultureSubtab;
   state.civAssist.activeMilitarySubtab = civAssistView.activeMilitarySubtab;
   state.civAssist.activeAlertID = civAssistView.activeAlertID;
-  state.civAssist.alertCoverageEnabled = cloneStateMap(civAssistView.alertCoverageEnabled);
+  state.civAssist.alertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(civAssistView.alertCoverageEnabled);
   state.civAssist.militaryTypeFilter = civAssistView.militaryTypeFilter;
   state.civAssist.techSearch = civAssistView.techSearch;
   state.civAssist.citiesSearch = civAssistView.citiesSearch;
@@ -72498,15 +72513,29 @@ async function refreshCivAssistRecentSaves(options = {}) {
 
 function setCivAssistModalVisible(visible, options = {}) {
   state.civAssist.isOpen = !!visible;
+  if (window.c3xManager && typeof window.c3xManager.setCivAdvisorOverlayEnabled === 'function') {
+    void window.c3xManager.setCivAdvisorOverlayEnabled(!!visible);
+  }
+  if (state.settings) {
+    state.settings.civAdvisorOpenOnLaunch = !!visible;
+    if (window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
+      void window.c3xManager.setSettings(state.settings);
+    }
+  }
   if (!el.civAssistModalOverlay) return;
   el.civAssistModalOverlay.classList.toggle('hidden', !visible);
   el.civAssistModalOverlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
-  if (!visible) clearCivAssistPollTimer();
+  if (!visible) {
+    clearCivAssistPollTimer();
+    state.civAssist.alertsSeen = false;
+  }
+  syncCivAdvisorOverlayState();
   if (!options.skipHistorySync) syncCurrentNavigationSnapshot();
 }
 
 function openCivAssistModal(options = {}) {
   setCivAssistModalVisible(true, { skipHistorySync: !!options.skipHistorySync });
+  state.civAssist.alertsSeen = false;
   renderCivAssistModal();
   const loadMode = getCivAdvisorLoadMode();
   const firstOpen = !state.civAssist.initializedForSession;
@@ -72522,6 +72551,7 @@ function openCivAssistModal(options = {}) {
 }
 
 function closeCivAssistModal(options = {}) {
+  state.civAssist.alertsSeen = false;
   setCivAssistModalVisible(false, { skipHistorySync: !!options.skipHistorySync });
 }
 
@@ -72540,7 +72570,7 @@ function navigateFromCivAssistToTarget(target) {
       state.civAssist.activeCultureSubtab = before.civAssistView.activeCultureSubtab || 'city';
       state.civAssist.activeMilitarySubtab = before.civAssistView.activeMilitarySubtab || 'roster';
       state.civAssist.activeAlertID = before.civAssistView.activeAlertID || '';
-      state.civAssist.alertCoverageEnabled = cloneStateMap(before.civAssistView.alertCoverageEnabled);
+      state.civAssist.alertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(before.civAssistView.alertCoverageEnabled);
       state.civAssist.militaryTypeFilter = Number.isFinite(Number(before.civAssistView.militaryTypeFilter))
         ? Number(before.civAssistView.militaryTypeFilter)
         : -1;
@@ -72655,10 +72685,12 @@ async function loadCivAssistSave(filePath, options = {}) {
         state.civAssist.selectedCultureCityID = -1;
       }
       state.civAssist.report = result;
+      state.civAssist.alertsSeen = false;
       state.civAssist.error = '';
       state.civAssist.loadedSaveMeta = options.saveMeta || findRecentCivAssistSave(target) || null;
       state.civAssist.loadedFingerprint = String(options.fingerprint || getCivAssistSaveFingerprint(state.civAssist.loadedSaveMeta));
       setStatus(options.automatic ? 'Civ Advisor loaded the latest save.' : 'Civ Advisor save loaded.');
+      syncCivAdvisorOverlayState();
       syncCurrentNavigationSnapshot();
       return true;
     }
@@ -75038,8 +75070,32 @@ function applyCivAssistAlertTarget(alert) {
   if (tab === 'military' && ['roster', 'units'].includes(String(alert.subtab || ''))) {
     state.civAssist.activeMilitarySubtab = String(alert.subtab);
   }
+  if (tab === 'alerts') {
+    state.civAssist.activeAlertID = '';
+    state.civAssist.alertsSeen = true;
+    syncCivAdvisorOverlayState();
+  }
   renderCivAssistModal();
   syncCurrentNavigationSnapshot();
+}
+
+function getCivAssistCurrentAlertCount(report) {
+  return report && report.alerts && Array.isArray(report.alerts.current) ? report.alerts.current.length : 0;
+}
+
+function syncCivAdvisorOverlayState() {
+  if (!window.c3xManager || typeof window.c3xManager.setCivAdvisorOverlayStatus !== 'function') return;
+  void window.c3xManager.setCivAdvisorOverlayStatus({
+    hasAlerts: getCivAssistCurrentAlertCount(state.civAssist.report) > 0,
+    alertsSeen: !!state.civAssist.alertsSeen,
+    enabled: !!state.civAssist.isOpen
+  });
+}
+
+function markCivAssistAlertsSeen() {
+  if (state.civAssist.alertsSeen) return;
+  state.civAssist.alertsSeen = true;
+  syncCivAdvisorOverlayState();
 }
 
 function civAssistCoverageMatchesAlert(coverage, alert) {
@@ -75057,10 +75113,16 @@ function getCivAssistAlertCoverageRows(report) {
   return rows.filter((row) => String(row.status || '').toLowerCase() === 'active');
 }
 
+function getDefaultCivAssistAlertCoverageEnabled(id) {
+  return CIV_ASSIST_DEFAULT_ALERT_COVERAGE_ENABLED.has(String(id || ''));
+}
+
 function isCivAssistAlertCoverageEnabled(coverage) {
   const id = String(coverage && coverage.id || '');
   if (!id) return true;
-  return state.civAssist.alertCoverageEnabled && state.civAssist.alertCoverageEnabled[id] !== false;
+  const overrides = state.civAssist.alertCoverageEnabled || {};
+  if (Object.prototype.hasOwnProperty.call(overrides, id)) return overrides[id] === true;
+  return getDefaultCivAssistAlertCoverageEnabled(id);
 }
 
 function setCivAssistAlertCoverageEnabled(coverage, enabled) {
@@ -75070,6 +75132,12 @@ function setCivAssistAlertCoverageEnabled(coverage, enabled) {
     ...(state.civAssist.alertCoverageEnabled || {}),
     [id]: !!enabled
   };
+  if (state.settings) {
+    state.settings.civAdvisorAlertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(state.civAssist.alertCoverageEnabled);
+    if (window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
+      void window.c3xManager.setSettings(state.settings);
+    }
+  }
 }
 
 function isCivAssistAlertEnabled(report, alert) {
@@ -75083,17 +75151,7 @@ function getCivAssistEnabledAlerts(report) {
   return rows.filter((alert) => isCivAssistAlertEnabled(report, alert));
 }
 
-function getCivAssistTabAlerts(report, tabKey) {
-  const key = String(tabKey || '').trim();
-  if (!key || key === 'alerts') return [];
-  return getCivAssistEnabledAlerts(report).filter((alert) => String(alert && alert.tab || '') === key);
-}
-
-function countCivAssistCoverageMatches(coverage, currentRows) {
-  return (Array.isArray(currentRows) ? currentRows : []).filter((alert) => civAssistCoverageMatchesAlert(coverage, alert)).length;
-}
-
-function renderCivAssistAlertCoverageRow(coverage, currentRows) {
+function renderCivAssistAlertCoverageRow(coverage) {
   const row = document.createElement('label');
   row.className = 'civassist-alert-coverage-row';
   const enabled = isCivAssistAlertCoverageEnabled(coverage);
@@ -75110,75 +75168,21 @@ function renderCivAssistAlertCoverageRow(coverage, currentRows) {
   body.className = 'civassist-alert-coverage-body';
   const title = document.createElement('strong');
   title.textContent = String(coverage.label || 'Alert check');
-  const note = document.createElement('span');
-  note.className = 'civassist-alert-coverage-note';
-  note.textContent = String(coverage.note || '');
-  const meta = document.createElement('span');
-  meta.className = 'civassist-alert-coverage-meta';
-  const pill = document.createElement('span');
-  pill.className = `civassist-alert-coverage-pill ${String(coverage.status || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-  pill.textContent = String(coverage.status || '');
-  const count = document.createElement('span');
-  const matches = countCivAssistCoverageMatches(coverage, currentRows);
-  count.textContent = `${matches} current`;
-  meta.append(pill, count);
-  body.append(title, note, meta);
+  body.append(title);
   row.append(checkbox, body);
   return row;
 }
 
-function renderCivAssistTabAlertBanner(report, tabKey) {
-  const rows = getCivAssistTabAlerts(report, tabKey);
-  if (rows.length === 0) return null;
-  const section = document.createElement('section');
-  section.className = 'civassist-tab-alerts';
-  const heading = document.createElement('div');
-  heading.className = 'civassist-tab-alerts-heading';
-  const title = document.createElement('strong');
-  title.textContent = 'Alerts';
-  const count = document.createElement('span');
-  count.textContent = `${rows.length} item${rows.length === 1 ? '' : 's'}`;
-  heading.append(title, count);
-  section.appendChild(heading);
-  const list = document.createElement('div');
-  list.className = 'civassist-tab-alerts-list';
-  rows.forEach((alert) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `civassist-tab-alert-item severity-${String(alert.severity || 'info').toLowerCase()}`;
-    const meta = document.createElement('span');
-    meta.className = 'civassist-alert-card-meta';
-    const severity = document.createElement('span');
-    severity.className = 'civassist-alert-severity';
-    severity.textContent = getCivAssistAlertSeverityLabel(alert.severity);
-    const category = document.createElement('span');
-    category.className = 'civassist-alert-category';
-    category.textContent = String(alert.category || '');
-    meta.append(severity, category);
-    const alertTitle = document.createElement('strong');
-    alertTitle.textContent = String(alert.title || 'Alert');
-    const detail = document.createElement('span');
-    detail.textContent = String(alert.detail || '');
-    button.append(meta, alertTitle, detail);
-    button.addEventListener('click', () => {
-      state.civAssist.activeAlertID = String(alert.id || '');
-      applyCivAssistAlertTarget(alert);
-    });
-    list.appendChild(button);
-  });
-  section.appendChild(list);
-  return section;
-}
 
 function renderCivAssistAlerts(report) {
-  const alerts = report && report.alerts ? report.alerts : { current: [], status: [], coverage: [], counts: {} };
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-alerts';
-  const currentRows = Array.isArray(alerts.current) ? alerts.current : [];
+  wrap.className = 'civassist-alerts civassist-alerts-simple';
+  const currentRows = getCivAssistEnabledAlerts(report);
+
   const coverage = document.createElement('section');
   coverage.className = 'civassist-rivals civassist-alert-coverage';
   const coverageHeading = document.createElement('h3');
-  coverageHeading.textContent = 'Alert Settings';
+  coverageHeading.textContent = 'Available Alerts';
   coverage.appendChild(coverageHeading);
   const coverageRows = getCivAssistAlertCoverageRows(report);
   if (coverageRows.length === 0) {
@@ -75186,10 +75190,40 @@ function renderCivAssistAlerts(report) {
   } else {
     const list = document.createElement('div');
     list.className = 'civassist-alert-coverage-list';
-    coverageRows.forEach((row) => list.appendChild(renderCivAssistAlertCoverageRow(row, currentRows)));
+    coverageRows.forEach((row) => list.appendChild(renderCivAssistAlertCoverageRow(row)));
     coverage.appendChild(list);
   }
   wrap.appendChild(coverage);
+
+  const current = document.createElement('section');
+  current.className = 'civassist-rivals civassist-alert-current';
+  const currentHeading = document.createElement('h3');
+  currentHeading.textContent = 'Current Alerts';
+  current.appendChild(currentHeading);
+  if (currentRows.length === 0) {
+    current.appendChild(renderCivAssistEmptyState('No active alerts are available for this save.'));
+  } else {
+    const list = document.createElement('div');
+    list.className = 'civassist-alert-list';
+    currentRows.forEach((alert) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `civassist-alert-line severity-${String(alert.severity || 'info').toLowerCase()}`;
+      if (String(state.civAssist.activeAlertID || '') === String(alert.id || '')) {
+        button.classList.add('active');
+      }
+      const title = document.createElement('strong');
+      title.textContent = String(alert.title || 'Alert');
+      const detail = document.createElement('span');
+      detail.className = 'civassist-alert-line-detail';
+      detail.textContent = String(alert.detail || '');
+      button.append(title, detail);
+      button.addEventListener('click', () => applyCivAssistAlertTarget(alert));
+      list.appendChild(button);
+    });
+    current.appendChild(list);
+  }
+  wrap.appendChild(current);
   return wrap;
 }
 
@@ -75227,10 +75261,7 @@ function renderCivAssistModal() {
     { key: 'production', label: 'Production' },
     { key: 'military', label: 'Military' },
     { key: 'alerts', label: 'Alerts' }
-  ].map((tab) => ({
-    ...tab,
-    count: tab.key === 'alerts' ? 0 : getCivAssistTabAlerts(report, tab.key).length
-  }));
+  ];
   tabSpecs.forEach((tab) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -75239,14 +75270,12 @@ function renderCivAssistModal() {
     const label = document.createElement('span');
     label.textContent = tab.label;
     button.appendChild(label);
-    if (Number(tab.count) > 0) {
-      const count = document.createElement('span');
-      count.className = 'civassist-tab-count dirty-dot-badge dirty-count-badge';
-      count.textContent = String(tab.count);
-      button.appendChild(count);
-    }
     button.addEventListener('click', () => {
       state.civAssist.activeTab = tab.key;
+      if (tab.key === 'alerts') {
+        state.civAssist.activeAlertID = '';
+        markCivAssistAlertsSeen();
+      }
       renderCivAssistModal();
       syncCurrentNavigationSnapshot();
     });
@@ -75272,17 +75301,15 @@ function renderCivAssistModal() {
                 : state.civAssist.activeTab === 'production'
                   ? renderCivAssistProduction(report)
                   : state.civAssist.activeTab === 'military'
-                    ? renderCivAssistMilitary(report)
+                  ? renderCivAssistMilitary(report)
                     : state.civAssist.activeTab === 'alerts'
                       ? renderCivAssistAlerts(report)
                       : renderCivAssistGeneral(report);
   const contentShell = document.createElement('div');
   contentShell.className = 'civassist-content-shell';
-  const tabAlerts = renderCivAssistTabAlertBanner(report, state.civAssist.activeTab);
-  if (!tabAlerts) contentShell.classList.add('no-tab-alerts');
-  if (tabAlerts) contentShell.appendChild(tabAlerts);
   contentShell.appendChild(content);
   el.civAssistModalBody.appendChild(contentShell);
+  syncCivAdvisorOverlayState();
 }
 
 async function wireScenarioBrowseButton(button, input) {
@@ -75332,6 +75359,9 @@ async function init() {
     state.settings.reloadAfterSave = false;
   }
   state.settings.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(state.settings.civAdvisorLoadMode);
+  state.settings.civAdvisorOpenOnLaunch = state.settings.civAdvisorOpenOnLaunch === true;
+  state.settings.civAdvisorAlertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(state.settings.civAdvisorAlertCoverageEnabled);
+  state.civAssist.alertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(state.settings.civAdvisorAlertCoverageEnabled);
   state.settings.tooltipDelay = normalizeTooltipDelay(state.settings.tooltipDelay);
   if (typeof state.settings.mapAutoDockTileInfoLeft !== 'boolean') {
     state.settings.mapAutoDockTileInfoLeft = true;
@@ -75529,6 +75559,7 @@ async function init() {
       clearCivAssistPollTimer();
     }, { once: true });
   }
+  state.civAssist.restoreOnLaunch = !!state.settings.civAdvisorOpenOnLaunch;
   if (window.c3xManager && typeof window.c3xManager.onTooltipDelayMenuSelect === 'function') {
     state.tooltipDelayMenuUnsubscribe = window.c3xManager.onTooltipDelayMenuSelect((value) => {
       if (!state.settings) return;
@@ -75728,6 +75759,27 @@ async function init() {
         : `[C3X][${getDebugLogTimestamp()}][${entry.level}][${entry.category}] ${entry.msg}`;
       appendDebugLogLine(formatted);
     });
+  }
+  if (window.c3xManager && typeof window.c3xManager.onCivAdvisorOverlayOpenAlerts === 'function') {
+    state.civAdvisorOverlayOpenAlertsUnsubscribe = window.c3xManager.onCivAdvisorOverlayOpenAlerts(() => {
+      if (!state.civAssist.isOpen) return;
+      state.civAssist.activeTab = 'alerts';
+      state.civAssist.activeAlertID = '';
+      markCivAssistAlertsSeen();
+      renderCivAssistModal();
+      syncCurrentNavigationSnapshot();
+    });
+    window.addEventListener('beforeunload', () => {
+      if (state.civAdvisorOverlayOpenAlertsUnsubscribe) {
+        state.civAdvisorOverlayOpenAlertsUnsubscribe();
+        state.civAdvisorOverlayOpenAlertsUnsubscribe = null;
+      }
+    }, { once: true });
+  }
+  if (window.c3xManager && typeof window.c3xManager.setCivAdvisorOverlayEnabled === 'function') {
+    window.addEventListener('beforeunload', () => {
+      void window.c3xManager.setCivAdvisorOverlayEnabled(false);
+    }, { once: true });
   }
   if (window.c3xManager && typeof window.c3xManager.onOperationProgress === 'function') {
     window.c3xManager.onOperationProgress((entry) => {
@@ -76311,6 +76363,9 @@ async function init() {
 
   if (await shouldAutoLoad()) {
     await loadBundleAndRender({ usePersistedView: true });
+  }
+  if (state.civAssist.restoreOnLaunch) {
+    openCivAssistModal({ skipHistorySync: true });
   }
 }
 

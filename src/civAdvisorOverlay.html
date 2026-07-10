@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Civ Advisor Overlay</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    button {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid #9a8550;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #e1cf97 0%, #b99653 100%);
+      color: #56431d;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        inset 0 -1px 0 rgba(107, 79, 22, 0.24),
+        0 0 0 1px rgba(72, 53, 19, 0.26);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+
+    button:hover {
+      background: linear-gradient(180deg, #e7d79f 0%, #c09d5f 100%);
+    }
+
+    button.has-alerts {
+      border-color: #8e7640;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        inset 0 -1px 0 rgba(107, 79, 22, 0.24),
+        0 0 0 1px rgba(72, 53, 19, 0.26);
+    }
+
+    button.has-unseen-alerts {
+      border-color: #a68a45;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        inset 0 -1px 0 rgba(107, 79, 22, 0.24),
+        0 0 0 2px rgba(166, 138, 69, 0.24),
+        0 0 0 1px rgba(72, 53, 19, 0.26);
+    }
+
+    svg {
+      width: 17px;
+      height: 17px;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <button id="open-main" type="button" title="Open Civ Advisor alerts" aria-label="Open Civ Advisor alerts">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M12 3.5L21 19H3L12 3.5Z" fill="currentColor" opacity="0.98"></path>
+      <path d="M12 8.1V13.8" fill="none" stroke="#f6edc7" stroke-width="2.2" stroke-linecap="round"></path>
+      <circle cx="12" cy="16.7" r="1.15" fill="#f6edc7"></circle>
+    </svg>
+  </button>
+</body>
+</html>

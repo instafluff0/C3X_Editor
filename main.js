@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = requir
 const fs = require('node:fs');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
+const { execFile } = require('node:child_process');
 const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes, inspectAudioFileBasic } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const { handleFlicWorkshop } = require('./src/flcWorkshop');
@@ -13,8 +14,21 @@ const APP_SETTINGS_FILE = 'settings.json';
 const APP_NAME = 'Civ 3 C3X Modern Editor';
 const SUPPORTED_C3X_RELEASE = 'R27';
 const DEV_APP_ICON_PATH = path.join(__dirname, 'build', 'icon.png');
+const CIV_ADVISOR_OVERLAY_SIZE = 30;
+const CIV_ADVISOR_OVERLAY_OFFSET_X = 136;
+const CIV_ADVISOR_OVERLAY_OFFSET_Y = 11;
+const CIV_ADVISOR_OVERLAY_POLL_MS = 750;
+const CIV_ADVISOR_OVERLAY_PROBE_TIMEOUT_MS = 650;
 app.setName(APP_NAME);
 app.name = APP_NAME;
+
+let mainWindow = null;
+let civAdvisorOverlayWindow = null;
+let civAdvisorOverlayPollTimer = null;
+let civAdvisorOverlayProbeInFlight = false;
+let civAdvisorOverlayEnabled = false;
+let civAdvisorOverlayHasAlerts = false;
+let civAdvisorOverlayAlertsSeen = false;
 
 function applyAppIdentity() {
   app.setName(APP_NAME);
@@ -269,6 +283,17 @@ function normalizeCivAdvisorLoadMode(value) {
   return 'latest';
 }
 
+function normalizeCivAdvisorAlertCoverageEnabled(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const next = {};
+  Object.keys(value).forEach((key) => {
+    const id = String(key || '').trim();
+    if (!id) return;
+    next[id] = value[key] === true;
+  });
+  return next;
+}
+
 function normalizeAutoAddImportedResourceIcons(value) {
   return value !== false;
 }
@@ -379,6 +404,7 @@ let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentReloadAfterSave = startupReloadAfterSave;
 let currentCivAdvisorLoadMode = startupCivAdvisorLoadMode;
+let currentCivAdvisorOpenOnLaunch = false;
 let currentTooltipDelay = startupTooltipDelay;
 let currentAutoAddImportedResourceIcons = startupAutoAddImportedResourceIcons;
 let currentAutoAddImportedUnitIcons = startupAutoAddImportedUnitIcons;
@@ -583,6 +609,221 @@ async function openLogFolder() {
   }
 }
 
+function hideCivAdvisorOverlay() {
+  if (civAdvisorOverlayWindow && !civAdvisorOverlayWindow.isDestroyed() && civAdvisorOverlayWindow.isVisible()) {
+    civAdvisorOverlayWindow.hide();
+  }
+}
+
+function syncCivAdvisorOverlayWindowState() {
+  if (!civAdvisorOverlayWindow || civAdvisorOverlayWindow.isDestroyed()) return;
+  civAdvisorOverlayWindow.webContents.send('manager:civ-advisor-overlay-state', {
+    hasAlerts: civAdvisorOverlayHasAlerts,
+    alertsSeen: civAdvisorOverlayAlertsSeen,
+    enabled: civAdvisorOverlayEnabled
+  });
+}
+
+function stopCivAdvisorOverlayPolling() {
+  civAdvisorOverlayEnabled = false;
+  if (civAdvisorOverlayPollTimer) {
+    clearTimeout(civAdvisorOverlayPollTimer);
+    civAdvisorOverlayPollTimer = null;
+  }
+  hideCivAdvisorOverlay();
+}
+
+function createCivAdvisorOverlayWindow() {
+  if (process.platform !== 'win32') return null;
+  if (civAdvisorOverlayWindow && !civAdvisorOverlayWindow.isDestroyed()) return civAdvisorOverlayWindow;
+  civAdvisorOverlayWindow = new BrowserWindow({
+    width: CIV_ADVISOR_OVERLAY_SIZE,
+    height: CIV_ADVISOR_OVERLAY_SIZE,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    show: false,
+    focusable: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'src', 'civAdvisorOverlayPreload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  civAdvisorOverlayWindow.setAlwaysOnTop(true, 'pop-up-menu');
+  civAdvisorOverlayWindow.setHasShadow(false);
+  civAdvisorOverlayWindow.loadFile(path.join(__dirname, 'src', 'civAdvisorOverlay.html'));
+  civAdvisorOverlayWindow.on('closed', () => {
+    civAdvisorOverlayWindow = null;
+  });
+  civAdvisorOverlayWindow.webContents.on('did-finish-load', () => {
+    syncCivAdvisorOverlayWindowState();
+  });
+  return civAdvisorOverlayWindow;
+}
+
+function setCivAdvisorOverlayStatus(status = {}) {
+  civAdvisorOverlayHasAlerts = !!(status && status.hasAlerts);
+  civAdvisorOverlayAlertsSeen = !!(status && status.alertsSeen);
+  syncCivAdvisorOverlayWindowState();
+}
+
+function getCiv3WindowProbeScript() {
+  return `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class Win32Civ3Probe {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  public struct POINT { public int X; public int Y; }
+}
+"@
+$names = @("Conquests", "Civ3Conquests", "Civ3", "Civilization3", "Civilization III")
+$titlePattern = "Civilization|Civ\\s*III|Civ3|Conquests"
+$candidates = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+  $_.MainWindowHandle -ne 0 -and (
+    $names -contains $_.ProcessName -or
+    ($_.MainWindowTitle -match $titlePattern)
+  )
+}
+$fg = [Win32Civ3Probe]::GetForegroundWindow()
+$chosen = $null
+foreach ($proc in $candidates) {
+  if ($proc.MainWindowHandle -eq $fg) {
+    $chosen = $proc
+    break
+  }
+}
+if ($null -eq $chosen) {
+  $chosen = $candidates | Select-Object -First 1
+}
+if ($null -eq $chosen) {
+  @{ exists = $false; isForeground = $false; isMinimized = $false } | ConvertTo-Json -Compress
+  exit 0
+}
+$hwnd = [IntPtr]$chosen.MainWindowHandle
+$rect = New-Object Win32Civ3Probe+RECT
+$point = New-Object Win32Civ3Probe+POINT
+$point.X = 0
+$point.Y = 0
+$hasRect = [Win32Civ3Probe]::GetClientRect($hwnd, [ref]$rect)
+$hasPoint = [Win32Civ3Probe]::ClientToScreen($hwnd, [ref]$point)
+@{
+  exists = $true
+  isForeground = ($chosen.MainWindowHandle -eq $fg)
+  isMinimized = [Win32Civ3Probe]::IsIconic($hwnd)
+  clientX = $point.X
+  clientY = $point.Y
+  clientWidth = if ($hasRect) { $rect.Right - $rect.Left } else { 0 }
+  clientHeight = if ($hasRect) { $rect.Bottom - $rect.Top } else { 0 }
+  title = $chosen.MainWindowTitle
+  processName = $chosen.ProcessName
+} | ConvertTo-Json -Compress
+`;
+}
+
+function probeCiv3WindowInfo() {
+  if (process.platform !== 'win32') {
+    return Promise.resolve({ exists: false, isForeground: false, isMinimized: false });
+  }
+  return new Promise((resolve) => {
+    execFile('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      getCiv3WindowProbeScript()
+    ], { timeout: CIV_ADVISOR_OVERLAY_PROBE_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+      if (err) {
+        resolve({ exists: false, isForeground: false, isMinimized: false, error: err.message });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(String(stdout || '').trim() || '{}');
+        resolve({
+          exists: !!parsed.exists,
+          isForeground: !!parsed.isForeground,
+          isMinimized: !!parsed.isMinimized,
+          clientX: Number(parsed.clientX || 0),
+          clientY: Number(parsed.clientY || 0),
+          clientWidth: Number(parsed.clientWidth || 0),
+          clientHeight: Number(parsed.clientHeight || 0),
+          title: String(parsed.title || ''),
+          processName: String(parsed.processName || '')
+        });
+      } catch (_parseErr) {
+        resolve({ exists: false, isForeground: false, isMinimized: false });
+      }
+    });
+  });
+}
+
+function scheduleCivAdvisorOverlayPoll(delay = CIV_ADVISOR_OVERLAY_POLL_MS) {
+  if (!civAdvisorOverlayEnabled || process.platform !== 'win32') return;
+  if (civAdvisorOverlayPollTimer) clearTimeout(civAdvisorOverlayPollTimer);
+  civAdvisorOverlayPollTimer = setTimeout(() => {
+    civAdvisorOverlayPollTimer = null;
+    pollCivAdvisorOverlay();
+  }, delay);
+}
+
+async function pollCivAdvisorOverlay() {
+  if (!civAdvisorOverlayEnabled || process.platform !== 'win32') return;
+  if (civAdvisorOverlayProbeInFlight) {
+    scheduleCivAdvisorOverlayPoll();
+    return;
+  }
+  civAdvisorOverlayProbeInFlight = true;
+  try {
+    const civ = await probeCiv3WindowInfo();
+    const overlay = createCivAdvisorOverlayWindow();
+    const canShow = overlay
+      && !overlay.isDestroyed()
+      && civ.exists
+      && civ.isForeground
+      && !civ.isMinimized
+      && civ.clientWidth > 0
+      && civ.clientHeight > 0;
+    if (!canShow) {
+      hideCivAdvisorOverlay();
+      return;
+    }
+    const nextX = Math.round(civ.clientX + CIV_ADVISOR_OVERLAY_OFFSET_X);
+    const nextY = Math.round(civ.clientY + CIV_ADVISOR_OVERLAY_OFFSET_Y);
+    const [currentX, currentY] = overlay.getPosition();
+    if (currentX !== nextX || currentY !== nextY) {
+      overlay.setPosition(nextX, nextY, false);
+    }
+    if (!overlay.isVisible()) overlay.showInactive();
+  } finally {
+    civAdvisorOverlayProbeInFlight = false;
+    scheduleCivAdvisorOverlayPoll();
+  }
+}
+
+function setCivAdvisorOverlayEnabled(enabled) {
+  if (process.platform !== 'win32') {
+    stopCivAdvisorOverlayPolling();
+    return;
+  }
+  civAdvisorOverlayEnabled = !!enabled;
+  if (!civAdvisorOverlayEnabled) {
+    stopCivAdvisorOverlayPolling();
+    return;
+  }
+  createCivAdvisorOverlayWindow();
+  scheduleCivAdvisorOverlayPoll(0);
+}
+
 function createWindow() {
   const windowIcon = fs.existsSync(DEV_APP_ICON_PATH) ? DEV_APP_ICON_PATH : undefined;
   const win = new BrowserWindow({
@@ -598,6 +839,7 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+  mainWindow = win;
 
   const openExternalUrl = (url) => {
     const target = String(url || '').trim();
@@ -650,6 +892,11 @@ function createWindow() {
   });
   win.on('closed', () => {
     log.setForwarder(null);
+    if (mainWindow === win) mainWindow = null;
+    stopCivAdvisorOverlayPolling();
+    if (civAdvisorOverlayWindow && !civAdvisorOverlayWindow.isDestroyed()) {
+      civAdvisorOverlayWindow.close();
+    }
   });
 
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
@@ -1206,7 +1453,7 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
     }
   });
@@ -1245,6 +1492,8 @@ ipcMain.handle('manager:get-settings', async () => {
     runQualityChecks: true,
     reloadAfterSave: false,
     civAdvisorLoadMode: 'latest',
+    civAdvisorOpenOnLaunch: false,
+    civAdvisorAlertCoverageEnabled: {},
     tooltipDelay: 'medium',
     autoAddImportedResourceIcons: true,
     autoAddImportedUnitIcons: true,
@@ -1266,6 +1515,8 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.reloadAfterSave = normalizeReloadAfterSave(merged.reloadAfterSave);
   merged.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(merged.civAdvisorLoadMode);
+  merged.civAdvisorOpenOnLaunch = merged.civAdvisorOpenOnLaunch === true;
+  merged.civAdvisorAlertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(merged.civAdvisorAlertCoverageEnabled);
   merged.tooltipDelay = normalizeTooltipDelay(merged.tooltipDelay);
   merged.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(merged.autoAddImportedResourceIcons);
   merged.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(merged.autoAddImportedUnitIcons);
@@ -1284,6 +1535,8 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.reloadAfterSave = normalizeReloadAfterSave(inferred.reloadAfterSave);
   inferred.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(inferred.civAdvisorLoadMode);
+  inferred.civAdvisorOpenOnLaunch = inferred.civAdvisorOpenOnLaunch === true;
+  inferred.civAdvisorAlertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(inferred.civAdvisorAlertCoverageEnabled);
   inferred.tooltipDelay = normalizeTooltipDelay(inferred.tooltipDelay);
   inferred.autoAddImportedResourceIcons = normalizeAutoAddImportedResourceIcons(inferred.autoAddImportedResourceIcons);
   inferred.autoAddImportedUnitIcons = normalizeAutoAddImportedUnitIcons(inferred.autoAddImportedUnitIcons);
@@ -1300,6 +1553,7 @@ ipcMain.handle('manager:get-settings', async () => {
   currentRunQualityChecks = inferred.runQualityChecks;
   currentReloadAfterSave = inferred.reloadAfterSave;
   currentCivAdvisorLoadMode = inferred.civAdvisorLoadMode;
+  currentCivAdvisorOpenOnLaunch = inferred.civAdvisorOpenOnLaunch;
   currentTooltipDelay = inferred.tooltipDelay;
   currentAutoAddImportedResourceIcons = inferred.autoAddImportedResourceIcons;
   currentAutoAddImportedUnitIcons = inferred.autoAddImportedUnitIcons;
@@ -1320,7 +1574,7 @@ ipcMain.handle('manager:get-settings', async () => {
   applyLogContextFromPayload(inferred);
   const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
   const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
-  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, civAdvisor=${inferred.civAdvisorLoadMode}, tooltipDelay=${inferred.tooltipDelay}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${inferred.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${inferred.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${inferred.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}, qc=${inferred.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${inferred.reloadAfterSave ? 'on' : 'off'}, civAdvisor=${inferred.civAdvisorLoadMode}, civAdvisorOpenOnLaunch=${inferred.civAdvisorOpenOnLaunch ? 'on' : 'off'}, tooltipDelay=${inferred.tooltipDelay}, autoResourceIcons=${inferred.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${inferred.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${inferred.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${inferred.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${inferred.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${inferred.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${inferred.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
   log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
   if (inferred.mode === 'scenario') {
@@ -1340,6 +1594,8 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
     reloadAfterSave: normalizeReloadAfterSave(settings && settings.reloadAfterSave),
     civAdvisorLoadMode: normalizeCivAdvisorLoadMode(settings && settings.civAdvisorLoadMode),
+    civAdvisorOpenOnLaunch: settings && settings.civAdvisorOpenOnLaunch === true,
+    civAdvisorAlertCoverageEnabled: normalizeCivAdvisorAlertCoverageEnabled(settings && settings.civAdvisorAlertCoverageEnabled),
     tooltipDelay: normalizeTooltipDelay(settings && settings.tooltipDelay),
     autoAddImportedResourceIcons: normalizeAutoAddImportedResourceIcons(settings && settings.autoAddImportedResourceIcons),
     autoAddImportedUnitIcons: normalizeAutoAddImportedUnitIcons(settings && settings.autoAddImportedUnitIcons),
@@ -1357,7 +1613,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   log.setCiv3Root(normalized.civ3Path || '');
   applyLogContextFromPayload(normalized);
   log.configureFileLogging({ enabled: normalized.writeLogFiles, folder: normalized.logFolder });
-  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, civAdvisor=${normalized.civAdvisorLoadMode}, tooltipDelay=${normalized.tooltipDelay}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${normalized.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${normalized.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${normalized.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}, qc=${normalized.runQualityChecks ? 'on' : 'off'}, reloadAfterSave=${normalized.reloadAfterSave ? 'on' : 'off'}, civAdvisor=${normalized.civAdvisorLoadMode}, civAdvisorOpenOnLaunch=${normalized.civAdvisorOpenOnLaunch ? 'on' : 'off'}, tooltipDelay=${normalized.tooltipDelay}, autoResourceIcons=${normalized.autoAddImportedResourceIcons ? 'on' : 'off'}, autoUnitIcons=${normalized.autoAddImportedUnitIcons ? 'on' : 'off'}, unitBiqIndices=${normalized.showUnitBiqIndices ? 'on' : 'off'}, unitBiqIndexTooltips=${normalized.showUnitBiqIndexTooltips ? 'on' : 'off'}, unitReordering=${normalized.enableUnitReordering ? 'on' : 'off'}, autoBuildingCityIcons=${normalized.autoAddImportedBuildingCityIcons ? 'on' : 'off'}, autoScienceArrows=${normalized.autoUpdateScienceAdvisorArrows ? 'on' : 'off'}`);
   log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
   if (normalized.mode === 'scenario') {
     log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
@@ -1379,6 +1635,9 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   if (currentCivAdvisorLoadMode !== normalized.civAdvisorLoadMode) {
     currentCivAdvisorLoadMode = normalized.civAdvisorLoadMode;
     buildAppMenu();
+  }
+  if (currentCivAdvisorOpenOnLaunch !== normalized.civAdvisorOpenOnLaunch) {
+    currentCivAdvisorOpenOnLaunch = normalized.civAdvisorOpenOnLaunch;
   }
   if (currentTooltipDelay !== normalized.tooltipDelay) {
     currentTooltipDelay = normalized.tooltipDelay;
@@ -1483,6 +1742,28 @@ ipcMain.handle('manager:open-file-path', async (_event, filePath) => {
 
 ipcMain.handle('manager:open-log-folder', async () => {
   return openLogFolder();
+});
+
+ipcMain.handle('manager:set-civ-advisor-overlay-enabled', async (_event, enabled) => {
+  setCivAdvisorOverlayEnabled(!!enabled);
+  return { ok: true, supported: process.platform === 'win32' };
+});
+
+ipcMain.handle('manager:set-civ-advisor-overlay-status', async (_event, status) => {
+  setCivAdvisorOverlayStatus(status || {});
+  return { ok: true, supported: process.platform === 'win32' };
+});
+
+ipcMain.on('manager:civ-advisor-overlay-open-main', () => {
+  hideCivAdvisorOverlay();
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('manager:civ-advisor-overlay-open-alerts');
 });
 
 ipcMain.handle('manager:path-exists', async (_event, dirPath) => {
