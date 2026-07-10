@@ -92,6 +92,17 @@ function readStartupCivAdvisorLoadMode() {
   }
 }
 
+function readStartupCivAdvisorAllowOtherCivs() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return false;
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return raw && raw.civAdvisorAllowOtherCivs === true;
+  } catch (_err) {
+    return false;
+  }
+}
+
 function normalizeTooltipDelay(value) {
   const raw = String(value || 'medium').trim().toLowerCase();
   const aliases = {
@@ -387,6 +398,7 @@ const startupPerformanceMode = readStartupPerformanceMode();
 const startupRunQualityChecks = readStartupRunQualityChecks();
 const startupReloadAfterSave = readStartupReloadAfterSave();
 const startupCivAdvisorLoadMode = readStartupCivAdvisorLoadMode();
+const startupCivAdvisorAllowOtherCivs = readStartupCivAdvisorAllowOtherCivs();
 const startupTooltipDelay = readStartupTooltipDelay();
 const startupAutoAddImportedResourceIcons = readStartupAutoAddImportedResourceIcons();
 const startupAutoAddImportedUnitIcons = readStartupAutoAddImportedUnitIcons();
@@ -403,6 +415,7 @@ let currentPerformanceMode = startupPerformanceMode;
 let currentRunQualityChecks = startupRunQualityChecks;
 let currentReloadAfterSave = startupReloadAfterSave;
 let currentCivAdvisorLoadMode = startupCivAdvisorLoadMode;
+let currentCivAdvisorAllowOtherCivs = startupCivAdvisorAllowOtherCivs;
 let currentCivAdvisorOpenOnLaunch = false;
 let currentTooltipDelay = startupTooltipDelay;
 let currentAutoAddImportedResourceIcons = startupAutoAddImportedResourceIcons;
@@ -1022,6 +1035,19 @@ function sendCivAdvisorLoadModeSelection(mode) {
   target.webContents.send('manager:civ-advisor-load-mode-selected', currentCivAdvisorLoadMode);
 }
 
+function sendCivAdvisorAllowOtherCivsSelection(enabled) {
+  currentCivAdvisorAllowOtherCivs = enabled === true;
+  try {
+    persistSettingsPatch({ civAdvisorAllowOtherCivs: currentCivAdvisorAllowOtherCivs });
+  } catch (_err) {
+    // Best effort: renderer event below still applies setting for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:civ-advisor-allow-other-civs-selected', currentCivAdvisorAllowOtherCivs);
+}
+
 function sendTooltipDelaySelection(value) {
   currentTooltipDelay = normalizeTooltipDelay(value);
   try {
@@ -1301,7 +1327,14 @@ function buildAppMenu() {
             submenu: [
               { label: 'Choose Saves Manually', type: 'radio', checked: currentCivAdvisorLoadMode === 'manual', click: () => sendCivAdvisorLoadModeSelection('manual') },
               { label: 'Load Latest When Opened', type: 'radio', checked: currentCivAdvisorLoadMode === 'latest', click: () => sendCivAdvisorLoadModeSelection('latest') },
-              { label: 'Follow Latest While Open', type: 'radio', checked: currentCivAdvisorLoadMode === 'follow', click: () => sendCivAdvisorLoadModeSelection('follow') }
+              { label: 'Open With Auto-update Enabled', type: 'radio', checked: currentCivAdvisorLoadMode === 'follow', click: () => sendCivAdvisorLoadModeSelection('follow') },
+              { type: 'separator' },
+              {
+                label: 'Allow Viewing Other Civilizations',
+                type: 'checkbox',
+                checked: currentCivAdvisorAllowOtherCivs,
+                click: (item) => sendCivAdvisorAllowOtherCivsSelection(item && item.checked)
+              }
             ]
           },
           {
@@ -1491,6 +1524,7 @@ ipcMain.handle('manager:get-settings', async () => {
     runQualityChecks: true,
     reloadAfterSave: false,
     civAdvisorLoadMode: 'latest',
+    civAdvisorAllowOtherCivs: false,
     civAdvisorOpenOnLaunch: false,
     civAdvisorAlertCoverageEnabled: {},
     tooltipDelay: 'medium',
@@ -1514,6 +1548,7 @@ ipcMain.handle('manager:get-settings', async () => {
   merged.runQualityChecks = normalizeRunQualityChecks(merged.runQualityChecks);
   merged.reloadAfterSave = normalizeReloadAfterSave(merged.reloadAfterSave);
   merged.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(merged.civAdvisorLoadMode);
+  merged.civAdvisorAllowOtherCivs = merged.civAdvisorAllowOtherCivs === true;
   merged.civAdvisorOpenOnLaunch = merged.civAdvisorOpenOnLaunch === true;
   merged.civAdvisorAlertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(merged.civAdvisorAlertCoverageEnabled);
   merged.tooltipDelay = normalizeTooltipDelay(merged.tooltipDelay);
@@ -1534,6 +1569,7 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.runQualityChecks = normalizeRunQualityChecks(inferred.runQualityChecks);
   inferred.reloadAfterSave = normalizeReloadAfterSave(inferred.reloadAfterSave);
   inferred.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(inferred.civAdvisorLoadMode);
+  inferred.civAdvisorAllowOtherCivs = inferred.civAdvisorAllowOtherCivs === true;
   inferred.civAdvisorOpenOnLaunch = inferred.civAdvisorOpenOnLaunch === true;
   inferred.civAdvisorAlertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(inferred.civAdvisorAlertCoverageEnabled);
   inferred.tooltipDelay = normalizeTooltipDelay(inferred.tooltipDelay);
@@ -1552,6 +1588,7 @@ ipcMain.handle('manager:get-settings', async () => {
   currentRunQualityChecks = inferred.runQualityChecks;
   currentReloadAfterSave = inferred.reloadAfterSave;
   currentCivAdvisorLoadMode = inferred.civAdvisorLoadMode;
+  currentCivAdvisorAllowOtherCivs = inferred.civAdvisorAllowOtherCivs;
   currentCivAdvisorOpenOnLaunch = inferred.civAdvisorOpenOnLaunch;
   currentTooltipDelay = inferred.tooltipDelay;
   currentAutoAddImportedResourceIcons = inferred.autoAddImportedResourceIcons;
@@ -1593,6 +1630,7 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     runQualityChecks: normalizeRunQualityChecks(settings && settings.runQualityChecks),
     reloadAfterSave: normalizeReloadAfterSave(settings && settings.reloadAfterSave),
     civAdvisorLoadMode: normalizeCivAdvisorLoadMode(settings && settings.civAdvisorLoadMode),
+    civAdvisorAllowOtherCivs: settings && settings.civAdvisorAllowOtherCivs === true,
     civAdvisorOpenOnLaunch: settings && settings.civAdvisorOpenOnLaunch === true,
     civAdvisorAlertCoverageEnabled: normalizeCivAdvisorAlertCoverageEnabled(settings && settings.civAdvisorAlertCoverageEnabled),
     tooltipDelay: normalizeTooltipDelay(settings && settings.tooltipDelay),
@@ -1633,6 +1671,10 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
   }
   if (currentCivAdvisorLoadMode !== normalized.civAdvisorLoadMode) {
     currentCivAdvisorLoadMode = normalized.civAdvisorLoadMode;
+    buildAppMenu();
+  }
+  if (currentCivAdvisorAllowOtherCivs !== normalized.civAdvisorAllowOtherCivs) {
+    currentCivAdvisorAllowOtherCivs = normalized.civAdvisorAllowOtherCivs;
     buildAppMenu();
   }
   if (currentCivAdvisorOpenOnLaunch !== normalized.civAdvisorOpenOnLaunch) {
@@ -2024,8 +2066,10 @@ ipcMain.handle('manager:inspect-civ-advisor-save', async (_event, payload) => {
     const target = String(request.filePath || request.path || '');
     const result = await runWorkerTask('inspectCivAdvisorSave', {
       filePath: target,
+      civ3Path: request.civ3Path,
       selectedPlayerID: request.selectedPlayerID,
-      districtAlertContext: request.districtAlertContext || null
+      districtAlertContext: request.districtAlertContext || null,
+      includeMap: request.includeMap === true
     });
     if (!result || !result.ok) {
       log.warn('civAdvisor', `SAV inspect failed: ${result && result.error}`);

@@ -572,10 +572,10 @@ function parseCity(reader, index, savVersion) {
   city.uncorruptGoldPerTurn = reader.int32();
   city.luxGoldPerTurn = reader.int32();
   city.scienceGoldPerTurn = reader.int32();
-  city.treasuryGoldPerTurn = reader.int32();
-  city.entertainerCount = reader.int32();
-  city.scientistCount = reader.int32();
-  city.taxManCount = reader.int32();
+  city.addCash = reader.int32();
+  city.addLuxury = reader.int32();
+  city.addScience = reader.int32();
+  city.addTaxes = reader.int32();
   city.foodRequired = city.foodPerTurnForPopulation;
   city.productionLoss = city.corruptShieldsPerTurn;
   city.corruption = city.corruptGoldPerTurn;
@@ -584,10 +584,10 @@ function parseCity(reader, index, savVersion) {
   city.cashIncome = city.uncorruptGoldPerTurn;
   city.luxuryIncome = city.luxGoldPerTurn;
   city.scienceIncome = city.scienceGoldPerTurn;
-  city.taxIncome = city.treasuryGoldPerTurn;
-  city.specialistLuxuryIncome = city.entertainerCount;
-  city.specialistScienceIncome = city.scientistCount;
-  city.specialistTaxIncome = city.taxManCount;
+  city.taxIncome = city.addCash;
+  city.specialistLuxuryIncome = city.addLuxury;
+  city.specialistScienceIncome = city.addScience;
+  city.specialistTaxIncome = city.addTaxes;
   const fifthRead = reader.tell() - fifthBodyStart;
   if (fifthLength > fifthRead) reader.skip(fifthLength - fifthRead);
 
@@ -736,11 +736,16 @@ function summarizeCities(cities, names, players) {
       y: city.y,
       owner: city.owner,
       ownerName: ownerName(city.owner),
+      cityFlags: city.cityFlags,
       population: city.citizenCount,
       specialists: city.specialistCount,
       happyCitizens: citizens.filter((citizen) => Number(citizen.mood) === 0).length,
       unhappyCitizens: citizens.filter((citizen) => Number(citizen.mood) === 2).length,
       contentCitizens: citizens.filter((citizen) => Number(citizen.mood) === 1).length,
+      resistingCitizens: Math.max(0, citizens.filter((citizen) => {
+        const mood = Number(citizen.mood);
+        return mood !== 0 && mood !== 1 && mood !== 2;
+      }).length - city.specialistCount),
       alienCitizens: citizens.filter((citizen) => Number(citizen.nationality) >= 0 && Number(citizen.nationality) !== ownerRaceID).length,
       buildings: city.buildingCount,
       buildingRecords: city.buildings,
@@ -752,6 +757,7 @@ function summarizeCities(cities, names, players) {
       culture: city.culture,
       pollution: city.pollution,
       maintenanceGPT: city.maintenanceGPT,
+      totalFood: city.totalFood,
       foodRequired: city.foodRequired,
       foodIncome: city.foodIncome,
       productionLoss: city.productionLoss,
@@ -761,6 +767,10 @@ function summarizeCities(cities, names, players) {
       luxuryIncome: city.luxuryIncome,
       scienceIncome: city.scienceIncome,
       taxIncome: city.taxIncome,
+      addCash: city.addCash,
+      addLuxury: city.addLuxury,
+      addScience: city.addScience,
+      addTaxes: city.addTaxes,
       specialistLuxuryIncome: city.specialistLuxuryIncome,
       specialistScienceIncome: city.specialistScienceIncome,
       specialistTaxIncome: city.specialistTaxIncome,
@@ -813,6 +823,89 @@ function makeDebugBiqSection(code, records) {
     count: records.length,
     records,
     _modified: true,
+  };
+}
+
+function makeCivAdvisorMapData({ world, tiles, cities, units, colonies, players }) {
+  const cityIdToIndex = new Map((cities || []).map((city, index) => [Number(city.id), index]));
+  const colonyIdToIndex = new Map((colonies || []).map((colony, index) => [Number(colony.uniqueID), index]));
+  const capitalCityIds = new Set((players || [])
+    .map((player) => Number(player.capitalCity))
+    .filter((id) => Number.isFinite(id) && id >= 0));
+  return {
+    width: Number(world && world.width) || 0,
+    height: Number(world && world.height) || 0,
+    flags: Number(world && world.mapFlags) || 0,
+    tiles: (tiles || []).map((tile, index) => ({
+      index,
+      x: Number(tile.x) || 0,
+      y: Number(tile.y) || 0,
+      riverConnectionInfo: Number(tile.riverInfo) || 0,
+      border: 0,
+      ownerType: Number(tile.owner) >= 0 ? 3 : 0,
+      owner: Number(tile.owner),
+      resource: Number(tile.resource),
+      image: Number(tile.image) || 0,
+      file: Number(tile.file) || 0,
+      questionMark: Number(tile.unknown) || 0,
+      overlays: Number(tile.overlayBits) || 0,
+      baseRealTerrain: Number(tile.terrainBits) || 0,
+      bonuses: Number(tile.bonusBits) || 0,
+      riverCrossingData: Number(tile.riverData) || 0,
+      barbarianTribe: Number(tile.barbCampID),
+      city: cityIdToIndex.has(Number(tile.cityID)) ? cityIdToIndex.get(Number(tile.cityID)) : -1,
+      colony: colonyIdToIndex.has(Number(tile.colonyID)) ? colonyIdToIndex.get(Number(tile.colonyID)) : -1,
+      continent: Number(tile.continent) || 0,
+      victoryPointLocation: -1,
+      ruin: Number(tile.hasRuins) ? 1 : 0,
+      c3cOverlays: Number(tile.c3cOverlays) >>> 0,
+      c3cBaseRealTerrain: Number(tile.c3cBaseRealTerrain) || 0,
+      fogOfWar: 1,
+      c3cBonuses: Number(tile.c3cBonuses) >>> 0,
+      exploredBy: Number(tile.exploredBy) >>> 0,
+      visibleBy: (
+        (Number(tile.visibleToByUnits) >>> 0)
+        | (Number(tile.visibleTo2) >>> 0)
+        | (Number(tile.visibleToByCities) >>> 0)
+      ) >>> 0,
+    })),
+    cities: (cities || []).map((city, index) => ({
+      index,
+      hasWalls: 0,
+      hasPalace: capitalCityIds.has(Number(city.id)) ? 1 : 0,
+      name: city.name || `City ${city.id}`,
+      ownerType: 3,
+      owner: Number(city.owner),
+      buildings: [],
+      culture: Number(city.totalCulture) || 0,
+      size: Math.max(1, Number(city.citizenCount) || 1),
+      x: Number(city.x) || 0,
+      y: Number(city.y) || 0,
+      cityLevel: (Number(city.citizenCount) || 1) >= 13 ? 2 : ((Number(city.citizenCount) || 1) >= 7 ? 1 : 0),
+      borderLevel: Number(city.borderLevel) || 0,
+      useAutoName: 0,
+    })),
+    units: (units || []).map((unit, index) => ({
+      index,
+      name: unit.name || '',
+      ownerType: 3,
+      experienceLevel: Number(unit.experienceLevel) || 0,
+      owner: Number(unit.owner),
+      pRTONumber: Number(unit.unitType) || 0,
+      AIStrategy: 0,
+      x: Number(unit.x) || 0,
+      y: Number(unit.y) || 0,
+      customName: unit.name || '',
+      useCivilizationKing: 0,
+    })),
+    colonies: (colonies || []).map((colony, index) => ({
+      index,
+      ownerType: 3,
+      owner: Number(colony.controllingPlayer),
+      x: Number(colony.x) || 0,
+      y: Number(colony.y) || 0,
+      improvementType: 0,
+    })),
   };
 }
 
@@ -1060,6 +1153,16 @@ function inspectSavBuffer(input, options = {}) {
         colonies,
         players,
         names,
+      });
+    }
+    if (options && options.includeMapData) {
+      report.mapData = makeCivAdvisorMapData({
+        world,
+        tiles,
+        cities: parsedCities.realCities,
+        units: parsedUnits.units,
+        colonies,
+        players,
       });
     }
     return report;

@@ -1414,8 +1414,28 @@ test('large wrapped BIQ maps keep panning smooth with native scroll and bounded 
   );
   assert.match(
     rendererText,
-    /if \(state\.biqMapLayer === 'terrain' && state\.biqMapShowYields && tilePx >= 4\) \{[\s\S]*?for \(let i = 0; i < overlayPassItems\.length; i \+= 1\) \{[\s\S]*?drawTileYieldOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);[\s\S]*?logRedrawPhase\('yield-overlays', phaseStartedAt,[\s\S]*?overlayPassCount: overlayPassItems\.length/,
-    'yield icons should render as a bounded overlay pass over the same visible/chunk candidate tiles as the other map overlays'
+    /const isAdvisorTileRemembered = \(record\) => getAdvisorTileVisibility\(record\) > 0;[\s\S]*?const isAdvisorTileCurrentlyVisible = \(record\) => getAdvisorTileVisibility\(record\) === 2;[\s\S]*?const visibleOverlayPassItems = readOnly && advisorPerspective[\s\S]*?\? overlayPassItems\.filter\(\(item\) => isAdvisorTileRemembered\(item\.record\)\)[\s\S]*?drawCityOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);[\s\S]*?drawUnitOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);/,
+    'read-only advisor maps should draw remembered tile overlays/cities while leaving unit filtering to the unit overlay'
+  );
+  assert.match(
+    rendererText,
+    /const drawUnitOverlay = \(record, geom, screenX, screenY\) => \{[\s\S]*?if \(state\.biqMapShowUnits === false\) return;[\s\S]*?if \(readOnly && advisorPerspective && !isAdvisorTileCurrentlyVisible\(record\)\) return;/,
+    'read-only advisor maps should hide unit overlays on explored-but-not-currently-visible tiles'
+  );
+  assert.match(
+    rendererText,
+    /const drawHillyTerrainOverlay = \(heightPass = 'all'\) => \{[\s\S]*?const isMountainOrVolcano = realTerrain !== BIQ_TERRAIN\.HILLS;[\s\S]*?if \(heightPass === 'early' && isMountainOrVolcano\) return;[\s\S]*?if \(heightPass === 'late' && !isMountainOrVolcano\) return;[\s\S]*?drawHillyTerrainOverlay\('early'\);[\s\S]*?if \(pass === 'all' \|\| pass === 'height'\) \{[\s\S]*?drawHillyTerrainOverlay\('late'\);[\s\S]*?drawUnitOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);[\s\S]*?drawTileFeatureOverlays\(item\.record, item\.geom, item\.sx, item\.sy, 'height'\);/,
+    'mountain and volcano sprites should draw after per-tile rivers, cities, and units while hills stay in the early terrain pass'
+  );
+  assert.match(
+    rendererText,
+    /if \(state\.biqMapLayer === 'terrain' && state\.biqMapShowYields && tilePx >= 4\) \{[\s\S]*?for \(let i = 0; i < visibleOverlayPassItems\.length; i \+= 1\) \{[\s\S]*?drawTileYieldOverlay\(item\.record, item\.geom, item\.sx, item\.sy\);[\s\S]*?logRedrawPhase\('yield-overlays', phaseStartedAt,[\s\S]*?overlayPassCount: overlayPassItems\.length/,
+    'yield icons should render over the same bounded candidate tiles while respecting remembered advisor visibility'
+  );
+  assert.match(
+    rendererText,
+    /const drawMiniMapTerritoryOverlay = \(overlayCtx, metrics\) => \{[\s\S]*?!isAdvisorTileRemembered\(record\)[\s\S]*?const drawMiniMapCityOverlay = \(overlayCtx, metrics\) => \{[\s\S]*?!isAdvisorTileRemembered\(tiles\[idx\]\)[\s\S]*?const drawMiniMapResourceOverlay = \(overlayCtx, metrics\) => \{[\s\S]*?!isAdvisorTileRemembered\(record\)/,
+    'advisor minimap territory, cities, and resources should remain visible for remembered tiles while unexplored tiles stay black'
   );
   assert.match(
     rendererText,

@@ -66,8 +66,10 @@ function run() {
       result = auditBundle(payload);
     } else if (task === 'inspectCivAdvisorSave') {
       result = inspectCivAdvisorSaveFile(payload && (payload.filePath || payload.path), {
+        civ3Path: payload && payload.civ3Path,
         selectedPlayerID: payload && payload.selectedPlayerID,
-        districtAlertContext: payload && payload.districtAlertContext
+        districtAlertContext: payload && payload.districtAlertContext,
+        includeMap: payload && payload.includeMap === true
       });
     } else {
       throw new Error(`Unknown worker task: ${task || '(empty)'}`);

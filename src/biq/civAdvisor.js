@@ -5,6 +5,7 @@ const path = require('node:path');
 const { inflateSavIfNeeded, extractEmbeddedBiqFromSavBuffer } = require('./savExtract');
 const { parseAllSections, sectionRecordName } = require('./biqSections');
 const { inspectSavBuffer } = require('./savInspect');
+const { buildReferenceTabs, resolveScenarioSearchDirs } = require('../configCore');
 
 const TRAIT_BITS = Object.freeze([
   [1, 'Militaristic'],
@@ -31,6 +32,10 @@ const CIV_COLOR_SWATCHES = Object.freeze([
   '#e03535', '#6f7f2a', '#c7cddf', '#c4a46c', '#0f7a44', '#8066c7', '#c9e2c8', '#ffcc88',
   '#b6c1f0', '#e9c3f4', '#d9e1c9', '#9bd5c8', '#ffb3a2', '#d2b48c', '#94a3b8', '#111827',
 ]);
+const CIV_COLOR_DUPLICATE_FALLBACK_SLOTS = Object.freeze([
+  4, 10, 1, 3, 5, 6, 9, 0, 12, 13, 14, 15, 16, 17, 18, 19,
+  20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+]);
 
 const DISTRICT_COMPLETED_STATE = 1;
 const WONDER_COMPLETED_STATE = 2;
@@ -51,6 +56,7 @@ const RULE_SIGNATURE_FIELDS = Object.freeze({
   PRTO: ['name', 'civilopediaEntry'],
   GOVT: ['name', 'civilopediaEntry'],
   ERAS: ['name', 'civilopediaEntry'],
+  CULT: ['name'],
 });
 
 function section(parsed, code) {
@@ -113,6 +119,113 @@ function makeRef(tabKey, sectionCode, biqIndex, name, ruleSignatures) {
     name,
     sourceSignature: ruleSignatures && ruleSignatures[code] ? ruleSignatures[code] : null,
   };
+}
+
+function resolveCiv3RootPath(civ3Path) {
+  const raw = String(civ3Path || '').trim();
+  if (!raw) return '';
+  const base = path.basename(raw).toLowerCase();
+  if (base === 'conquests' || base === 'civ3ptw') return path.dirname(raw);
+  return raw;
+}
+
+function splitScenarioSearchFolderValue(value) {
+  return String(value || '')
+    .split(';')
+    .map((item) => item.trim())
+    .filter((item) => item && item !== '(none)' && item !== '(truncated)');
+}
+
+function makeSlimSaveArtEntry(entry, tabKey, scenarioPath, scenarioPaths) {
+  if (!entry) return null;
+  return {
+    tabKey,
+    id: String(entry.id || ''),
+    name: String(entry.name || entry.displayCivilopediaKey || entry.civilopediaKey || ''),
+    civilopediaKey: String(entry.civilopediaKey || ''),
+    displayCivilopediaKey: String(entry.displayCivilopediaKey || entry.civilopediaKey || ''),
+    biqIndex: Number.isFinite(Number(entry.biqIndex)) ? Number(entry.biqIndex) : null,
+    thumbPath: String(entry.thumbPath || ''),
+    iconPaths: Array.isArray(entry.iconPaths) ? entry.iconPaths.map((item) => String(item || '')).filter(Boolean) : [],
+    racePaths: Array.isArray(entry.racePaths) ? entry.racePaths.map((item) => String(item || '')).filter(Boolean) : [],
+    animationName: String(entry.animationName || ''),
+    scenarioPath: String(scenarioPath || ''),
+    scenarioPaths: Array.isArray(scenarioPaths) ? scenarioPaths.map((item) => String(item || '')).filter(Boolean) : []
+  };
+}
+
+function makeFieldBackedEmbeddedBiqTab(parsed) {
+  if (!parsed || !Array.isArray(parsed.sections)) return parsed;
+  return {
+    ...parsed,
+    sections: parsed.sections.map((section) => ({
+      ...section,
+      records: (Array.isArray(section && section.records) ? section.records : []).map((record) => {
+        if (!record || (Array.isArray(record.fields) && record.fields.length > 0)) return record;
+        const fields = Object.entries(record)
+          .filter(([key, value]) => key !== 'fields' && key !== 'english' && value != null && typeof value !== 'object')
+          .map(([key, value]) => ({
+            key,
+            baseKey: key,
+            label: key,
+            value: String(value),
+            editable: false
+          }));
+        return { ...record, fields };
+      })
+    }))
+  };
+}
+
+function buildCivAdvisorSaveArtContext(parsed, gameRules, options = {}) {
+  const civ3Path = String(options.civ3Path || '').trim();
+  if (!civ3Path || !parsed || !parsed.ok) return null;
+  try {
+    const folders = splitScenarioSearchFolderValue(gameRules && gameRules.scenarioSearchFolders);
+    const civ3Root = resolveCiv3RootPath(civ3Path);
+    const scenarioBasePath = civ3Root ? path.join(civ3Root, 'Conquests', 'Scenarios', '__civ_advisor_save__.biq') : '';
+    const scenarioSearchPaths = folders.length > 0
+      ? resolveScenarioSearchDirs({
+        scenarioPath: scenarioBasePath,
+        civ3Path,
+        folders,
+        includeMissing: false
+      })
+      : [];
+    const mode = scenarioSearchPaths.length > 0 ? 'scenario' : 'global';
+    const scenarioPath = mode === 'scenario' ? scenarioSearchPaths[0] : '';
+    const referenceTabs = buildReferenceTabs(civ3Path, {
+      mode,
+      scenarioPath,
+      scenarioPaths: scenarioSearchPaths,
+      biqTab: makeFieldBackedEmbeddedBiqTab(parsed)
+    });
+    const tabKeys = ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
+    const tabs = {};
+    tabKeys.forEach((tabKey) => {
+      const tab = referenceTabs && referenceTabs[tabKey];
+      const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+      tabs[tabKey] = {
+        entries: entries.map((entry) => makeSlimSaveArtEntry(entry, tabKey, scenarioPath, scenarioSearchPaths)).filter(Boolean)
+      };
+    });
+    return {
+      mode,
+      scenarioSearchFolders: folders,
+      scenarioPath,
+      scenarioSearchPaths,
+      tabs
+    };
+  } catch (err) {
+    return {
+      mode: 'unavailable',
+      error: err && err.message ? String(err.message) : 'Could not build save art context.',
+      scenarioSearchFolders: splitScenarioSearchFolderValue(gameRules && gameRules.scenarioSearchFolders),
+      scenarioPath: '',
+      scenarioSearchPaths: [],
+      tabs: {}
+    };
+  }
 }
 
 function formatYesNo(value) {
@@ -201,15 +314,82 @@ function readUInt8Safe(buf, offset, fallback = 0) {
   return buf.readUInt8(offset);
 }
 
-function activePlayers(players) {
+function activePlayers(players, game = null) {
+  const remainingMask = Number(game && game.remainingPlayersMask);
+  const hasRemainingMask = Number.isFinite(remainingMask) && remainingMask !== 0;
   return players
-    .filter((player) => Number(player && player.playerID) > 0 && Number(player.raceID) >= 0 && Number(player.capitalCity) >= 0)
+    .filter((player) => {
+      const playerID = Number(player && player.playerID);
+      if (!(playerID > 0) || Number(player && player.raceID) < 0) return false;
+      if (hasRemainingMask) return (((remainingMask >>> 0) & playerBitMask(playerID)) !== 0);
+      return Number(player && player.capitalCity) >= 0;
+    })
     .sort((a, b) => Number(a.playerID) - Number(b.playerID));
 }
 
-function findHumanPlayer(players, humanPlayersMask) {
+function findHumanPlayer(players, humanPlayersMask, game = null) {
   const mask = (Number(humanPlayersMask) || 0) >>> 0;
-  return activePlayers(players).find((player) => ((mask & (1 << Number(player.playerID))) !== 0)) || activePlayers(players)[0] || null;
+  const active = activePlayers(players, game);
+  return active.find((player) => ((mask & playerBitMask(Number(player.playerID))) !== 0)) || active[0] || null;
+}
+
+function normalizeColorSlot(value) {
+  const slot = Number(value);
+  return Number.isFinite(slot) && slot >= 0 ? Math.max(0, Math.min(31, slot | 0)) : null;
+}
+
+function getPlayerDefaultColorSlot(race = null) {
+  const defaultSlot = Number(race && race.defaultColor);
+  return normalizeColorSlot(defaultSlot);
+}
+
+function getPlayerUniqueColorSlot(race = null) {
+  const uniqueSlot = Number(race && race.uniqueColor);
+  return normalizeColorSlot(uniqueSlot);
+}
+
+function buildPlayerColorSlots(players, races) {
+  const slots = new Map();
+  const used = new Set();
+  const pushFallbacks = (out, race) => {
+    const defaultSlot = getPlayerDefaultColorSlot(race);
+    const uniqueSlot = getPlayerUniqueColorSlot(race);
+    if (defaultSlot !== null) out.push(defaultSlot);
+    if (uniqueSlot !== null && uniqueSlot !== defaultSlot) out.push(uniqueSlot);
+    CIV_COLOR_DUPLICATE_FALLBACK_SLOTS.forEach((slot) => out.push(slot));
+    for (let slot = 0; slot < 32; slot += 1) out.push(slot);
+  };
+  for (const player of players || []) {
+    const playerID = Number(player && player.playerID);
+    if (!Number.isFinite(playerID) || playerID < 0) continue;
+    const race = races && races[Number(player.raceID)] || null;
+    const candidates = [];
+    pushFallbacks(candidates, race);
+    let resolved = null;
+    for (const candidate of candidates) {
+      const slot = normalizeColorSlot(candidate);
+      if (slot === null || used.has(slot)) continue;
+      resolved = slot;
+      break;
+    }
+    if (resolved === null) resolved = getPlayerDefaultColorSlot(race);
+    if (resolved !== null) {
+      slots.set(playerID, resolved);
+      used.add(resolved);
+    }
+  }
+  return slots;
+}
+
+function getPlayerColorSlot(player, race = null, colorSlotsByPlayer = null) {
+  const playerID = Number(player && player.playerID);
+  if (colorSlotsByPlayer instanceof Map && colorSlotsByPlayer.has(playerID)) return colorSlotsByPlayer.get(playerID);
+  return getPlayerDefaultColorSlot(race);
+}
+
+function getPlayerColorCss(colorSlot) {
+  const slot = Number(colorSlot);
+  return CIV_COLOR_SWATCHES[Math.max(0, Number.isFinite(slot) ? slot : 0) % CIV_COLOR_SWATCHES.length];
 }
 
 function parsePlayerDetails(buf, players, cityById) {
@@ -279,8 +459,81 @@ function findInt32Vector(buf, from, values) {
   return -1;
 }
 
-function parseScoreTail(buf, report, players) {
-  const active = activePlayers(players);
+function parseScoreSummaryBlock(buf, report, players) {
+  const scores = new Map();
+  if (!Buffer.isBuffer(buf)) return scores;
+  const turnNumber = Number(report && report.game && report.game.turnNumber);
+  if (!Number.isFinite(turnNumber)) return scores;
+  const active = activePlayers(players, report && report.game);
+  const activeIDs = active
+    .map((player) => Number(player.playerID))
+    .filter((playerID) => Number.isInteger(playerID) && playerID >= 0 && playerID < 32);
+  if (activeIDs.length === 0) return scores;
+
+  const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
+  const start = Math.max(0, Number(report && report.parseOffsets && report.parseOffsets.cityEnd) || 0);
+  const max = buf.length - 24;
+  for (let off = start; off <= max; off += 1) {
+    if (readInt32Safe(buf, off, null) !== turnNumber) continue;
+    const year = readInt32Safe(buf, off + 4, null);
+    if (!Number.isInteger(year) || year < -4000 || year > 9999) continue;
+    const count = readInt32Safe(buf, off + 8, 0);
+    if (!Number.isInteger(count) || count < activeIDs.length || count > 32) continue;
+
+    const idsBase = off + 12;
+    const powersBase = idsBase + count * 4;
+    const scoreBase = powersBase + count * 4;
+    const cultureBase = scoreBase + count * 4;
+    if (cultureBase + count * 4 > buf.length) continue;
+
+    const ids = [];
+    const seen = new Set();
+    let validIDs = true;
+    for (let i = 0; i < count; i += 1) {
+      const playerID = readInt32Safe(buf, idsBase + i * 4, -1);
+      if (!Number.isInteger(playerID) || playerID < 0 || playerID >= 32 || seen.has(playerID)) {
+        validIDs = false;
+        break;
+      }
+      seen.add(playerID);
+      ids.push(playerID);
+    }
+    if (!validIDs) continue;
+    if (!activeIDs.every((playerID) => seen.has(playerID))) continue;
+
+    let matchedPowers = 0;
+    for (let i = 0; i < count; i += 1) {
+      const player = playerById.get(ids[i]);
+      if (!player) continue;
+      if (readInt32Safe(buf, powersBase + i * 4, null) === (Number(player.power) || 0)) {
+        matchedPowers += 1;
+      }
+    }
+    if (matchedPowers < Math.max(3, activeIDs.length)) continue;
+
+    const parsed = new Map();
+    let validScores = true;
+    for (let i = 0; i < count; i += 1) {
+      const score = readInt32Safe(buf, scoreBase + i * 4, null);
+      const culture = readInt32Safe(buf, cultureBase + i * 4, null);
+      if (!Number.isInteger(score) || score < 0 || score > 10000000 || !Number.isInteger(culture) || culture < 0) {
+        validScores = false;
+        break;
+      }
+      parsed.set(ids[i], {
+        power: readInt32Safe(buf, powersBase + i * 4, 0),
+        score,
+        culture,
+      });
+    }
+    if (!validScores) continue;
+    return parsed;
+  }
+  return scores;
+}
+
+function parseLegacyScoreTail(buf, report, players) {
+  const active = activePlayers(players, report && report.game);
   const powers = active.map((player) => Number(player.power) || 0);
   const base = findInt32Vector(buf, report.parseOffsets && report.parseOffsets.cityEnd, powers);
   const scores = new Map();
@@ -295,6 +548,11 @@ function parseScoreTail(buf, report, players) {
     });
   }
   return scores;
+}
+
+function parseScoreTail(buf, report, players) {
+  const summaryScores = parseScoreSummaryBlock(buf, report, players);
+  return summaryScores.size > 0 ? summaryScores : parseLegacyScoreTail(buf, report, players);
 }
 
 function parseKnownTiles(buf, report, humanMask) {
@@ -373,6 +631,11 @@ function parseTerritoryTiles(buf, report) {
     const len4 = buf.readUInt32LE(off4 + 4);
     const body4 = off4 + 8;
     const exploredBy = readInt32Safe(buf, body4, 0) >>> 0;
+    const visibleBy = (
+      (readInt32Safe(buf, body4 + 4, 0) >>> 0)
+      | (readInt32Safe(buf, body4 + 8, 0) >>> 0)
+      | (readInt32Safe(buf, body4 + 12, 0) >>> 0)
+    ) >>> 0;
     const cityWithWorkers = body4 + 22 <= buf.length ? buf.readInt16LE(body4 + 20) : -1;
     const coords = tileCoordsByIndex(width, index);
     tiles.push({
@@ -388,6 +651,7 @@ function parseTerritoryTiles(buf, report) {
       river: riverInfo !== 0 || riverData !== 0,
       c3cOverlays,
       exploredBy,
+      visibleBy,
       cityWithWorkers,
       roaded: (c3cOverlays & 0x01) !== 0,
       railroaded: (c3cOverlays & 0x02) !== 0,
@@ -403,12 +667,72 @@ function alignC3XChunkOffset(offset) {
   return (Number(offset) + 4) & ~3;
 }
 
-function parseC3XDistrictTileMap(buf) {
-  const bookend = Buffer.from([0x22, 0x43, 0x33, 0x58]);
-  if (!Buffer.isBuffer(buf) || buf.length < 12) return [];
-  if (!buf.subarray(buf.length - 4).equals(bookend)) return [];
+const C3X_MOD_SAVE_BOOKEND = Buffer.from([0x22, 0x43, 0x33, 0x58]);
+
+function getC3XModSaveSegment(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) {
+    return {
+      hasC3XSegment: false,
+      segmentSize: 0,
+      segmentStart: -1,
+      segmentEnd: -1,
+      chunks: [],
+    };
+  }
+  if (!buf.subarray(buf.length - 4).equals(C3X_MOD_SAVE_BOOKEND)) {
+    return {
+      hasC3XSegment: false,
+      segmentSize: 0,
+      segmentStart: -1,
+      segmentEnd: -1,
+      chunks: [],
+    };
+  }
   const segmentSize = buf.readInt32LE(buf.length - 8);
   const segmentStart = buf.length - segmentSize - 8;
+  const segmentEnd = segmentStart + segmentSize;
+  if (segmentSize <= 0 || segmentStart < 4 || segmentEnd > buf.length - 8
+    || !buf.subarray(segmentStart - 4, segmentStart).equals(C3X_MOD_SAVE_BOOKEND)) {
+    return {
+      hasC3XSegment: false,
+      segmentSize: 0,
+      segmentStart: -1,
+      segmentEnd: -1,
+      chunks: [],
+    };
+  }
+  const segment = buf.subarray(segmentStart, segmentEnd);
+  const chunks = [];
+  const knownLabels = [
+    'district_config_names',
+    'district_pending_requests',
+    'distribution_hub_records',
+    'district_tile_map',
+    'natural_wonder_districts',
+    'great_wall_auto_build_done_civs',
+  ];
+  for (const label of knownLabels) {
+    const labelOffset = segment.indexOf(Buffer.from(label, 'latin1'));
+    if (labelOffset >= 0) chunks.push(label);
+  }
+  return {
+    hasC3XSegment: true,
+    segmentSize,
+    segmentStart,
+    segmentEnd,
+    chunks,
+  };
+}
+
+function parseC3XDistrictTileMap(buf, c3xSegmentInfo = null) {
+  const bookend = Buffer.from([0x22, 0x43, 0x33, 0x58]);
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return [];
+  const info = c3xSegmentInfo && typeof c3xSegmentInfo === 'object'
+    ? c3xSegmentInfo
+    : getC3XModSaveSegment(buf);
+  if (!info.hasC3XSegment) return [];
+  const segmentSize = Number(info.segmentSize) || 0;
+  const segmentStart = Number(info.segmentStart);
   if (segmentSize <= 0 || segmentStart < 4 || !buf.subarray(segmentStart - 4, segmentStart).equals(bookend)) return [];
   const segment = buf.subarray(segmentStart, segmentStart + segmentSize);
   const label = Buffer.from('district_tile_map', 'latin1');
@@ -479,8 +803,13 @@ function getTechnologyPrerequisites(tech) {
     : prereqKeys.map((key) => source[key]);
 }
 
+function isTechnologyTradeable(tech) {
+  return (((Number(tech && tech.flags) || 0) >>> 0) & 0x80000) === 0;
+}
+
 function canTradeTechToPlayer(techs, techMasks, playerID, techIndex) {
   const tech = techs[techIndex] || {};
+  if (!isTechnologyTradeable(tech)) return false;
   const prerequisites = getTechnologyPrerequisites(tech);
   for (const value of prerequisites) {
     const prereq = Number(value);
@@ -706,6 +1035,18 @@ function isWonderBuilding(building) {
   return (otherChar & 4) !== 0 || smallWonderCharacteristics !== 0;
 }
 
+function getProductionFacet(orderType, order) {
+  if (!order) return 'other';
+  if (orderType === 1) return isWonderBuilding(order) ? 'wonders' : 'improvements';
+  if (orderType === 2) {
+    const unitClass = Number(order && order.unitClass);
+    if (unitClass === 0) return 'land';
+    if (unitClass === 1) return 'sea';
+    if (unitClass === 2) return 'air';
+  }
+  return 'other';
+}
+
 function clampCityArtIndex(value, max, fallback = 0) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -742,7 +1083,7 @@ function makeCityArtMetadata(city, context) {
 
 function makeCityOwnerContext(city, context) {
   const {
-    human, humanDetails, players, detailsByPlayer, races, ruleRecord, ruleSignatures,
+    human, humanDetails, players, detailsByPlayer, races, ruleRecord, ruleSignatures, colorSlotsByPlayer,
   } = context || {};
   const playerById = context && context.playerById instanceof Map
     ? context.playerById
@@ -759,7 +1100,7 @@ function makeCityOwnerContext(city, context) {
     ownerRaceID,
     civ: ownerName,
     civRef: makeRef('civilizations', 'RACE', ownerRaceID, ownerName, ruleSignatures),
-    colorSlot: Number(ownerRace && ownerRace.defaultColor),
+    colorSlot: getPlayerColorSlot(ownerPlayer, ownerRace, colorSlotsByPlayer),
     cityArt: makeCityArtMetadata(city, {
       player: ownerPlayer,
       playerDetails: ownerDetails,
@@ -792,10 +1133,10 @@ function estimateCultureWinDate({ currentTurn, currentCulture, culturePerTurn, l
 function makeCultureReport(context) {
   const {
     report, human, humanVisible, humanDetails, races, players, detailsByPlayer, techs, techMasks, buildings,
-    gameRules, ruleRecord, ruleSignatures, allPlayersMode,
+    gameRules, ruleRecord, ruleSignatures, allPlayersMode, colorSlotsByPlayer,
   } = context;
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
-  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const activePlayerIDs = new Set(activePlayers(players || [], report && report.game).map((player) => Number(player.playerID)));
   const selectedCityRecords = (report.cities && report.cities.records || [])
     .filter((city) => allPlayersMode ? activePlayerIDs.has(Number(city.owner)) : Number(city.owner) === Number(human.playerID));
   const humanCities = selectedCityRecords
@@ -815,6 +1156,7 @@ function makeCultureReport(context) {
         races,
         ruleRecord,
         ruleSignatures,
+        colorSlotsByPlayer,
       }),
     }));
   const defaultCityID = humanCities.some((city) => city.id === Number(human.capitalCity))
@@ -846,6 +1188,7 @@ function makeCultureReport(context) {
       races,
       ruleRecord,
       ruleSignatures,
+      colorSlotsByPlayer,
     });
     const ownerPlayer = cityOwner.player || human;
     const ownerCities = humanCities.filter((item) => Number(item.owner && item.owner.ownerPlayerID) === Number(ownerPlayer.playerID));
@@ -1003,11 +1346,11 @@ function civ3CityDistance(left, right, worldWidth) {
 
 function makeCitiesReport(context) {
   const {
-    report, human, humanDetails, races, ruleRecord, players, detailsByPlayer, ruleSignatures, allPlayersMode,
+    report, human, humanDetails, races, ruleRecord, players, detailsByPlayer, ruleSignatures, allPlayersMode, colorSlotsByPlayer,
   } = context;
   const allCities = report.cities && report.cities.records || [];
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
-  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const activePlayerIDs = new Set(activePlayers(players || [], report && report.game).map((player) => Number(player.playerID)));
   const selectedCities = allPlayersMode
     ? allCities.filter((city) => activePlayerIDs.has(Number(city.owner)))
     : allCities.filter((city) => Number(city.owner) === Number(human.playerID));
@@ -1039,7 +1382,7 @@ function makeCitiesReport(context) {
           ownerRaceID: Number(ownerPlayer.raceID),
           civ: ownerName,
           civRef: makeRef('civilizations', 'RACE', Number(ownerPlayer.raceID), ownerName, ruleSignatures),
-          colorSlot: Number(races[Number(ownerPlayer.raceID)] && races[Number(ownerPlayer.raceID)].defaultColor),
+          colorSlot: getPlayerColorSlot(ownerPlayer, races[Number(ownerPlayer.raceID)], colorSlotsByPlayer),
         } : {}),
         city: city.name || '',
         cityArt: makeCityArtMetadata(city, {
@@ -1064,7 +1407,7 @@ function makeCitiesReport(context) {
           ? `${Math.floor((waste * 100) / (Number(city.shieldsPerTurn) + waste))}%`
           : '0%',
         wasteValue: waste,
-        resistors: '',
+        resistors: Number(city.resistingCitizens) > 0 ? Number(city.resistingCitizens) : '',
         aliens: Number(city.alienCitizens) > 0 ? Number(city.alienCitizens) : '',
         entertainers: Number(city.specialistLuxuryIncome) > 0 ? Number(city.specialistLuxuryIncome) : '',
         taxmen: Number(city.specialistTaxIncome) > 0 ? Number(city.specialistTaxIncome) : '',
@@ -1117,8 +1460,8 @@ function territoryRatio(part, whole) {
 
 function makeTerritoryReport(context) {
   const {
-    buf, report, human, humanDetails, humanVisible, playerRows, terrainRecords, unitTypes, races, ruleRecord,
-    perspectiveMask, players, detailsByPlayer, ruleSignatures, allPlayersMode,
+    buf, report, human, humanDetails, humanVisible, playerRows, terrainRecords, unitTypes, races, ruleRecord, gameRules,
+    perspectiveMask, players, detailsByPlayer, ruleSignatures, allPlayersMode, colorSlotsByPlayer, c3xSegmentInfo,
   } = context;
   const tiles = parseTerritoryTiles(buf, report);
   const humanMask = (Number(perspectiveMask) || 0) >>> 0;
@@ -1134,12 +1477,22 @@ function makeTerritoryReport(context) {
   const explored = tiles.filter((tile) => ((Number(tile.exploredBy) >>> 0) & humanMask) !== 0);
   const exploredLand = explored.filter(isLand);
   const exploredWater = explored.filter(isWater);
-  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const activePlayerIDs = new Set(activePlayers(players || [], report && report.game).map((player) => Number(player.playerID)));
   const selectedOwnerIDs = allPlayersMode ? activePlayerIDs : new Set([Number(human.playerID)]);
   const ownedTiles = tiles.filter((tile) => selectedOwnerIDs.has(Number(tile.owner)));
   const ownedLand = ownedTiles.filter(isLand);
   const ownedDominationTiles = ownedTiles.filter(isDominationTile);
-  const districtTiles = parseC3XDistrictTileMap(buf);
+  const dominationTiles = tiles.filter(isDominationTile);
+  const dominationTerrainPercent = Math.max(0, Number(
+    report && report.game && Number.isFinite(Number(report.game.dominationTerrain))
+      ? report.game.dominationTerrain
+      : gameRules && gameRules.dominationTerrainPercent
+  ) || 0);
+  const dominationLimit = dominationTerrainPercent > 0 && dominationTiles.length > 0
+    ? Math.floor((dominationTiles.length * dominationTerrainPercent) / 100)
+    : '?';
+  const unclaimedDominationTiles = dominationTiles.filter((tile) => !activePlayerIDs.has(Number(tile.owner))).length;
+  const districtTiles = parseC3XDistrictTileMap(buf, c3xSegmentInfo);
   const districtCoordSet = new Set(districtTiles.map((tile) => `${Number(tile.x)},${Number(tile.y)}`));
   const ownedLandDistricts = ownedLand.filter((tile) => districtCoordSet.has(`${Number(tile.x)},${Number(tile.y)}`));
   const excludeDistrictMine = (tile) => {
@@ -1185,6 +1538,7 @@ function makeTerritoryReport(context) {
       races,
       ruleRecord,
       ruleSignatures,
+      colorSlotsByPlayer,
     });
     const assigned = cityTiles.get(Number(city.id)) || [];
     const assignedNonDistrict = assigned.filter((tile) => !districtCoordSet.has(`${Number(tile.x)},${Number(tile.y)}`));
@@ -1226,11 +1580,11 @@ function makeTerritoryReport(context) {
       waterPercent: territoryRatio(exploredWater.length, explored.length),
     },
     territory: {
-      dominationLimit: '?',
+      dominationLimit,
       tilesOwned: Number(humanVisible && humanVisible.land) || ownedTiles.length,
       dominationTiles: ownedDominationTiles.length,
-      tilesToLimit: '?',
-      unclaimedTiles: '?',
+      tilesToLimit: Number.isFinite(Number(dominationLimit)) ? Math.max(0, Number(dominationLimit) - ownedDominationTiles.length) : '?',
+      unclaimedTiles: unclaimedDominationTiles,
       citizensLimit: citizens,
       citizensLimitPercent: territoryRatio(citizens, totalKnownPopulation),
       districtInstances: districtTiles.length,
@@ -1284,16 +1638,136 @@ function sumTradeGpt(groups) {
   ), 0);
 }
 
+function computeGovernmentUnitSupport({ government, humanCities, report, human, unitTypes, ruleRecord }) {
+  const maxTownSize = Math.max(0, Number(ruleRecord && ruleRecord.maxCity1Size) || 6);
+  const maxCitySize = Math.max(maxTownSize, Number(ruleRecord && ruleRecord.maxCity2Size) || 12);
+  const units = report && report.units && Array.isArray(report.units.records) ? report.units.records : [];
+  const paidUnits = units.filter((unit) => {
+    if (Number(unit.owner) !== Number(human.playerID)) return false;
+    const unitType = unitTypes[Number(unit.unitType)] || {};
+    const isKing = (((Number(unitType.unitAbilities) || 0) >>> 0) & (1 << 29)) !== 0;
+    return Number(unit.nationality) === Number(human.raceID) && !isKing;
+  }).length;
+  const maintenanceFreeUnits = units.filter((unit) => {
+    if (Number(unit.owner) !== Number(human.playerID)) return false;
+    const unitType = unitTypes[Number(unit.unitType)] || {};
+    const isKing = (((Number(unitType.unitAbilities) || 0) >>> 0) & (1 << 29)) !== 0;
+    return Number(unit.nationality) !== Number(human.raceID) || isKing;
+  }).length;
+  let freeUnits = Number(government && government.freeUnits) || 0;
+  if (freeUnits < 0) freeUnits = paidUnits;
+  else {
+    for (const city of humanCities || []) {
+      const population = Math.max(0, Number(city.population) || 0);
+      freeUnits += population > maxCitySize
+        ? Math.max(0, Number(government && government.perMetropolis) || 0)
+        : population > maxTownSize
+          ? Math.max(0, Number(government && government.perCity) || 0)
+          : Math.max(0, Number(government && government.perTown) || 0);
+    }
+  }
+  const supportedUnits = Math.max(0, paidUnits - freeUnits);
+  const costPerUnit = Math.max(0, Number(government && government.costPerUnit) || 0);
+  return { paidUnits, freeUnits, maintenanceFreeUnits, supportedUnits, costPerUnit };
+}
+
+function clampInt(value, min, max) {
+  const n = Math.round(Number(value) || 0);
+  return Math.max(min, Math.min(max, n));
+}
+
+function governmentCorruptionWeight(government) {
+  const level = Number(government && government.corruption);
+  if (level === 0) return 0.55; // Minimal
+  if (level === 1) return 0.75; // Nuisance
+  if (level === 2) return 1.00; // Problematic
+  if (level === 3) return 1.30; // Rampant
+  if (level === 4) return 1.60; // Catastrophic
+  if (level === 5) return 0.95; // Communal: distribution differs, but empire-wide output is often near Problematic.
+  if (level === 6) return 0.00; // Off
+  return 1.00;
+}
+
+function governmentTilePenaltyMultiplier(currentGovernment, previewGovernment) {
+  const currentPenalty = Number(currentGovernment && currentGovernment.tilePenalty) !== 0;
+  const previewPenalty = Number(previewGovernment && previewGovernment.tilePenalty) !== 0;
+  if (currentPenalty === previewPenalty) return 1;
+  return previewPenalty ? 0.90 : 1.10;
+}
+
+function estimateGovernmentCommerceBonusDelta(row, currentGovernment, previewGovernment) {
+  const currentBonus = Math.max(0, Number(currentGovernment && currentGovernment.commerceBonus) || 0);
+  const previewBonus = Math.max(0, Number(previewGovernment && previewGovernment.commerceBonus) || 0);
+  const delta = previewBonus - currentBonus;
+  if (!delta) return 0;
+  const workedTilesEstimate = Math.max(0, Math.min(Number(row.size) + 1, Number(row.baseScience) + Number(row.baseLuxury) + Number(row.baseTaxes) + Number(row.corruption)));
+  return delta * workedTilesEstimate;
+}
+
+function scaleCityCommerceChannels(row, uncorruptedCommerce) {
+  const currentUncorrupted = Math.max(0, Number(row.baseScience) + Number(row.baseLuxury) + Number(row.baseTaxes));
+  if (currentUncorrupted <= 0 || uncorruptedCommerce <= 0) {
+    return { baseScience: 0, baseLuxury: 0, baseTaxes: 0 };
+  }
+  let baseScience = Math.round((Number(row.baseScience) || 0) * uncorruptedCommerce / currentUncorrupted);
+  let baseLuxury = Math.round((Number(row.baseLuxury) || 0) * uncorruptedCommerce / currentUncorrupted);
+  let baseTaxes = Math.max(0, uncorruptedCommerce - baseScience - baseLuxury);
+  const overflow = baseScience + baseLuxury + baseTaxes - uncorruptedCommerce;
+  if (overflow > 0) baseTaxes = Math.max(0, baseTaxes - overflow);
+  return { baseScience, baseLuxury, baseTaxes };
+}
+
+function estimateCityGovernmentPreview(row, currentGovernment, previewGovernment) {
+  const currentCorruptionWeight = governmentCorruptionWeight(currentGovernment);
+  const previewCorruptionWeight = governmentCorruptionWeight(previewGovernment);
+  const corruptionScale = currentCorruptionWeight > 0 ? previewCorruptionWeight / currentCorruptionWeight : 1;
+  const tilePenaltyMultiplier = governmentTilePenaltyMultiplier(currentGovernment, previewGovernment);
+  const savedGrossCommerce = Math.max(0, Number(row.baseScience) + Number(row.baseLuxury) + Number(row.baseTaxes) + Number(row.corruption));
+  const commerceBonusDelta = estimateGovernmentCommerceBonusDelta(row, currentGovernment, previewGovernment);
+  const grossCommerce = Math.max(0, Math.round((savedGrossCommerce + commerceBonusDelta) * tilePenaltyMultiplier));
+  const corruption = clampInt(Number(row.corruption) * corruptionScale, 0, grossCommerce);
+  const uncorruptedCommerce = Math.max(0, grossCommerce - corruption);
+  const channels = scaleCityCommerceChannels(row, uncorruptedCommerce);
+  const science = channels.baseScience + (Number(row.addedScience) || 0);
+  const luxury = channels.baseLuxury + (Number(row.addedLuxury) || 0);
+  const taxes = channels.baseTaxes + (Number(row.addedTaxes) || 0);
+  const savedGrossProduction = Math.max(0, Number(row.production) + Number(row.waste));
+  const grossProduction = Math.max(0, Math.round(savedGrossProduction * tilePenaltyMultiplier));
+  const waste = clampInt(Number(row.waste) * corruptionScale, 0, grossProduction);
+  const production = Math.max(0, grossProduction - waste);
+  return {
+    id: row.id,
+    name: row.name,
+    production,
+    waste,
+    wastePercent: percentage(waste, production + waste),
+    science,
+    luxury,
+    taxes,
+    baseScience: channels.baseScience,
+    baseLuxury: channels.baseLuxury,
+    baseTaxes: channels.baseTaxes,
+    addedScience: row.addedScience,
+    addedLuxury: row.addedLuxury,
+    addedTaxes: row.addedTaxes,
+    corruption,
+    corruptionPercent: percentage(corruption, uncorruptedCommerce + corruption),
+    maintenance: row.maintenance,
+    netGold: taxes - row.maintenance,
+    estimated: true,
+  };
+}
+
 function makeEconomyReport(context) {
   const {
     buf, report, human, humanDetails, humanVisible, governments, buildings, unitTypes,
     ruleRecord, techs, techMasks, players, detailsByPlayer, races, humanTradeTail, tradeRows, ruleSignatures,
-    allPlayersMode,
+    allPlayersMode, colorSlotsByPlayer,
   } = context;
   const governmentIndex = Number(humanDetails && humanDetails.government);
   const government = governments[governmentIndex] || {};
   const humanCities = (report.cities && report.cities.records || []).filter((city) => Number(city.owner) === Number(human.playerID));
-  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const activePlayerIDs = new Set(activePlayers(players || [], report && report.game).map((player) => Number(player.playerID)));
   const cityRowRecords = (report.cities && report.cities.records || [])
     .filter((city) => allPlayersMode ? activePlayerIDs.has(Number(city.owner)) : Number(city.owner) === Number(human.playerID));
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
@@ -1347,6 +1821,7 @@ function makeEconomyReport(context) {
       races,
       ruleRecord,
       ruleSignatures,
+      colorSlotsByPlayer,
     });
     const ownerCities = allPlayersMode
       ? (report.cities && report.cities.records || []).filter((item) => Number(item.owner) === Number(owner.ownerPlayerID))
@@ -1355,7 +1830,15 @@ function makeEconomyReport(context) {
     const corruption = Math.max(0, Number(city.corruption) || 0);
     const production = Math.max(0, Number(city.productionIncome) || 0);
     const cashIncome = Math.max(0, Number(city.cashIncome) || 0);
-    const taxes = Math.max(0, Number(city.taxIncome) || 0);
+    const baseScience = Math.max(0, Number(city.scienceIncome) || 0);
+    const baseLuxury = Math.max(0, Number(city.luxuryIncome) || 0);
+    const baseTaxes = Math.max(0, Number(city.taxIncome) || 0);
+    const addedScience = Math.max(0, Number(city.addScience) || Number(city.specialistScienceIncome) || 0);
+    const addedLuxury = Math.max(0, Number(city.addLuxury) || Number(city.specialistLuxuryIncome) || 0);
+    const addedTaxes = Math.max(0, Number(city.addTaxes) || Number(city.specialistTaxIncome) || 0);
+    const science = baseScience + addedScience;
+    const luxury = baseLuxury + addedLuxury;
+    const taxes = baseTaxes + addedTaxes;
     const maintenance = Math.max(0, Number(city.maintenanceGPT) || 0);
     const buildingStatuses = buildingOptions.map((option) => makeCityBuildingStatus({
       city,
@@ -1379,9 +1862,15 @@ function makeEconomyReport(context) {
       production,
       waste: productionLoss,
       wastePercent: percentage(productionLoss, production + productionLoss),
-      science: Math.max(0, Number(city.scienceIncome) || 0),
-      luxury: Math.max(0, Number(city.luxuryIncome) || 0),
+      science,
+      luxury,
       taxes,
+      baseScience,
+      baseLuxury,
+      baseTaxes,
+      addedScience,
+      addedLuxury,
+      addedTaxes,
       corruption,
       corruptionPercent: percentage(corruption, cashIncome + corruption),
       maintenance,
@@ -1390,34 +1879,8 @@ function makeEconomyReport(context) {
     };
   });
 
-  const maxTownSize = Math.max(0, Number(ruleRecord && ruleRecord.maxCity1Size) || 6);
-  const maxCitySize = Math.max(maxTownSize, Number(ruleRecord && ruleRecord.maxCity2Size) || 12);
-  let freeUnits = Number(government.freeUnits) || 0;
-  const maintenanceFreeUnits = (report.units && report.units.records || []).filter((unit) => {
-    if (Number(unit.owner) !== Number(human.playerID)) return false;
-    const unitType = unitTypes[Number(unit.unitType)] || {};
-    const isKing = (((Number(unitType.unitAbilities) || 0) >>> 0) & (1 << 29)) !== 0;
-    return Number(unit.nationality) !== Number(human.raceID) || isKing;
-  }).length;
-  const paidUnits = (report.units && report.units.records || []).filter((unit) => {
-    if (Number(unit.owner) !== Number(human.playerID)) return false;
-    const unitType = unitTypes[Number(unit.unitType)] || {};
-    const isKing = (((Number(unitType.unitAbilities) || 0) >>> 0) & (1 << 29)) !== 0;
-    return Number(unit.nationality) === Number(human.raceID) && !isKing;
-  }).length;
-  if (freeUnits < 0) freeUnits = paidUnits;
-  else {
-    for (const city of humanCities) {
-      const population = Math.max(0, Number(city.population) || 0);
-      freeUnits += population > maxCitySize
-        ? Math.max(0, Number(government.perMetropolis) || 0)
-        : population > maxTownSize
-          ? Math.max(0, Number(government.perCity) || 0)
-          : Math.max(0, Number(government.perTown) || 0);
-    }
-  }
-  const supportedUnits = Math.max(0, paidUnits - freeUnits);
-  const costPerUnit = Math.max(0, Number(government.costPerUnit) || 0);
+  const unitSupport = computeGovernmentUnitSupport({ government, humanCities, report, human, unitTypes, ruleRecord });
+  const { paidUnits, freeUnits, maintenanceFreeUnits, supportedUnits, costPerUnit } = unitSupport;
   const unitCosts = supportedUnits * costPerUnit;
   const outgoingGpt = tradeRows.reduce((sum, row) => (
     sum + sumTradeGpt(activeTradeGroups(humanTradeTail, row.playerID, report.game.turnNumber))
@@ -1431,10 +1894,10 @@ function makeEconomyReport(context) {
       && humanCities.some((city) => cityHasBuilding(city, buildingIndex))
   ));
   const interest = hasInterestWonder ? Math.min(50, Math.floor(treasury / 20)) : 0;
-  const fromCities = cityRows.reduce((sum, row) => sum + row.taxes + row.science + row.luxury + row.corruption, 0);
-  const fromTaxmen = humanCities.reduce((sum, city) => sum + Math.max(0, Number(city.specialistTaxIncome) || 0), 0);
-  const science = cityRows.reduce((sum, row) => sum + row.science, 0);
-  const entertainment = cityRows.reduce((sum, row) => sum + row.luxury, 0);
+  const fromCities = cityRows.reduce((sum, row) => sum + row.baseTaxes + row.baseScience + row.baseLuxury + row.corruption, 0);
+  const fromTaxmen = humanCities.reduce((sum, city) => sum + Math.max(0, Number(city.addTaxes) || Number(city.specialistTaxIncome) || 0), 0);
+  const science = cityRows.reduce((sum, row) => sum + row.baseScience, 0);
+  const entertainment = cityRows.reduce((sum, row) => sum + row.baseLuxury, 0);
   const corruption = cityRows.reduce((sum, row) => sum + row.corruption, 0);
   const maintenance = cityRows.reduce((sum, row) => sum + row.maintenance, 0);
   const income = fromCities + fromTaxmen + incomingGpt + interest;
@@ -1443,6 +1906,56 @@ function makeEconomyReport(context) {
   const scienceRate = Math.max(0, readLeadInt32(buf, human, 396, 0)) * 10;
   const luxuryRate = Math.max(0, readLeadInt32(buf, human, 392, 0)) * 10;
   const goldenAgeEnd = readLeadInt32(buf, human, 32, -1);
+  const governmentOptions = governments.map((option, index) => {
+    const name = recordName(governments, index, 'GOVT', '');
+    if (!name) return null;
+    return {
+      value: String(index),
+      label: name,
+      governmentIndex: index,
+      name,
+      current: index === governmentIndex,
+      freeUnits: Number(option && option.freeUnits) || 0,
+      perTown: Math.max(0, Number(option && option.perTown) || 0),
+      perCity: Math.max(0, Number(option && option.perCity) || 0),
+      perMetropolis: Math.max(0, Number(option && option.perMetropolis) || 0),
+      costPerUnit: Math.max(0, Number(option && option.costPerUnit) || 0),
+      corruption: Number(option && option.corruption) || 0,
+      tilePenalty: Number(option && option.tilePenalty) || 0,
+      commerceBonus: Number(option && option.commerceBonus) || 0,
+      scienceCap: Number(option && option.scienceCap) || 0,
+      requiresMaintenance: Number(option && option.requiresMaintenance) || 0,
+      ref: makeRef('governments', 'GOVT', index, name, ruleSignatures),
+    };
+  }).filter(Boolean);
+  const governmentPreviews = governmentOptions.map((option) => {
+    const previewGovernment = governments[Number(option.governmentIndex)] || {};
+    const previewUnitSupport = computeGovernmentUnitSupport({ government: previewGovernment, humanCities, report, human, unitTypes, ruleRecord });
+    const previewUnitCosts = previewUnitSupport.supportedUnits * previewUnitSupport.costPerUnit;
+    const previewCityRows = cityRows.map((row) => estimateCityGovernmentPreview(row, government, previewGovernment));
+    const previewFromCities = previewCityRows.reduce((sum, row) => sum + row.baseTaxes + row.baseScience + row.baseLuxury + row.corruption, 0);
+    const previewScience = previewCityRows.reduce((sum, row) => sum + row.baseScience, 0);
+    const previewEntertainment = previewCityRows.reduce((sum, row) => sum + row.baseLuxury, 0);
+    const previewCorruption = previewCityRows.reduce((sum, row) => sum + row.corruption, 0);
+    const previewMaintenance = previewCityRows.reduce((sum, row) => sum + row.maintenance, 0);
+    const previewIncome = previewFromCities + fromTaxmen + incomingGpt + interest;
+    const previewExpenses = previewScience + previewEntertainment + previewCorruption + previewMaintenance + previewUnitCosts + outgoingGpt;
+    return {
+      governmentIndex: option.governmentIndex,
+      name: option.name,
+      ref: option.ref,
+      current: option.current,
+      unitSupport: previewUnitSupport,
+      income: { fromCities: previewFromCities, fromTaxmen, fromOtherCivs: incomingGpt, interest, total: previewIncome },
+      expenses: { science: previewScience, entertainment: previewEntertainment, corruption: previewCorruption, maintenance: previewMaintenance, unitCosts: previewUnitCosts, toOtherCivs: outgoingGpt, total: previewExpenses },
+      netGain: previewIncome - previewExpenses,
+      cityRows: previewCityRows,
+      notes: [
+        'Unit support is recalculated exactly from saved units and cities.',
+        'City commerce, corruption, and waste are estimated from saved aggregate city output plus the selected government settings.',
+      ],
+    };
+  });
   return {
     administration: {
       government: recordName(governments, governmentIndex, 'GOVT', ''),
@@ -1459,6 +1972,9 @@ function makeEconomyReport(context) {
     expenses: { science, entertainment, corruption, maintenance, unitCosts, toOtherCivs: outgoingGpt, total: expenses },
     netGain,
     unitSupport: { paidUnits, freeUnits, maintenanceFreeUnits, supportedUnits, costPerUnit },
+    currentGovernmentIndex: governmentIndex,
+    governmentOptions,
+    governmentPreviews,
     defaultBuildingIndex,
     buildingOptions,
     cityRows,
@@ -1469,10 +1985,10 @@ function makeEconomyReport(context) {
 function makeProductionReport(context) {
   const {
     report, human, humanDetails, races, ruleRecord, buildings, unitTypes, players, detailsByPlayer, ruleSignatures,
-    allPlayersMode,
+    allPlayersMode, colorSlotsByPlayer,
   } = context;
   const productionFactor = bitSet(report.game && report.game.rules, 5) ? 5 : 10;
-  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const activePlayerIDs = new Set(activePlayers(players || [], report && report.game).map((player) => Number(player.playerID)));
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
   const rows = (report.cities && report.cities.records || [])
     .filter((city) => allPlayersMode ? activePlayerIDs.has(Number(city.owner)) : Number(city.owner) === Number(human.playerID))
@@ -1485,15 +2001,16 @@ function makeProductionReport(context) {
         races,
         ruleRecord,
         ruleSignatures,
+        colorSlotsByPlayer,
       });
       const orderType = Number(city.constructingType);
       const orderIndex = Number(city.constructingIndex);
       const records = orderType === 1 ? buildings : orderType === 2 ? unitTypes : [];
       const sectionCode = orderType === 1 ? 'BLDG' : orderType === 2 ? 'PRTO' : '';
       const tabKey = orderType === 1 ? 'improvements' : orderType === 2 ? 'units' : '';
-      const order = records[orderIndex] || {};
+      const order = records[orderIndex] || null;
       const name = sectionCode ? recordName(records, orderIndex, sectionCode, '') : '';
-      const baseCost = orderType === 1 ? Number(order.cost) : orderType === 2 ? Number(order.shieldCost) : 0;
+      const baseCost = orderType === 1 ? Number(order && order.cost) : orderType === 2 ? Number(order && order.shieldCost) : 0;
       const cost = Math.max(0, Number(baseCost) || 0) * (orderType === 1 ? productionFactor : 1);
       const collected = Math.max(0, Number(city.shieldsCollected) || 0);
       const perTurn = Math.max(0, Number(city.productionIncome) || 0);
@@ -1509,6 +2026,7 @@ function makeProductionReport(context) {
         producing: name || 'Nothing',
         producingRef: sectionCode ? makeRef(tabKey, sectionCode, orderIndex, name, ruleSignatures) : null,
         orderType: orderType === 1 ? 'Improvement' : orderType === 2 ? 'Unit' : '',
+        productionFacet: getProductionFacet(orderType, order),
         cost,
         collected,
         progressPercent: cost > 0 ? Math.max(0, Math.min(100, Math.round((collected * 100) / cost))) : 0,
@@ -1550,10 +2068,10 @@ function formatMovementThirds(value) {
 function makeMilitaryReport(context) {
   const {
     report, human, unitTypes, experienceLevels, races, gameRules, ruleSignatures, economy,
-    players, allPlayersMode,
+    players, allPlayersMode, colorSlotsByPlayer,
   } = context;
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
-  const activePlayerIDs = new Set(activePlayers(players || []).map((player) => Number(player.playerID)));
+  const activePlayerIDs = new Set(activePlayers(players || [], report && report.game).map((player) => Number(player.playerID)));
   const selectedOwnerIDs = allPlayersMode ? activePlayerIDs : new Set([Number(human.playerID)]);
   const selectedUnits = (report.units && report.units.records || [])
     .filter((unit) => selectedOwnerIDs.has(Number(unit.owner)));
@@ -1571,7 +2089,7 @@ function makeMilitaryReport(context) {
       raceID: ownerRaceIndex,
       name: ownerRaceName,
       ref: makeRef('civilizations', 'RACE', ownerRaceIndex, ownerRaceName, ruleSignatures),
-      colorSlot: Number(ownerRace.defaultColor),
+      colorSlot: getPlayerColorSlot(ownerPlayer, ownerRace, colorSlotsByPlayer),
     };
   };
   const unitRows = selectedUnits.map((unit) => {
@@ -1717,7 +2235,17 @@ function makeAlert(id, severity, category, title, detail, options = {}) {
     subtab: options.subtab || '',
     refs: Array.isArray(options.refs) ? options.refs.filter(Boolean) : [],
     detailRows: Array.isArray(options.detailRows) ? options.detailRows.filter(Boolean) : [],
+    mapTargets: Array.isArray(options.mapTargets) ? options.mapTargets.filter((target) => (
+      target && Number.isFinite(Number(target.x)) && Number.isFinite(Number(target.y))
+    )).map((target) => ({
+      x: Number(target.x),
+      y: Number(target.y),
+      label: String(target.label || ''),
+    })) : [],
     cityArt: options.cityArt || null,
+    amount: options.amount !== null && options.amount !== undefined && String(options.amount).trim() !== '' && Number.isFinite(Number(options.amount))
+      ? Number(options.amount)
+      : null,
     sort: Number.isFinite(Number(options.sort)) ? Number(options.sort) : 0,
   };
 }
@@ -2052,6 +2580,92 @@ function collectUnconnectedResourceWarnings(context) {
   }).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
+function collectForeignUnitWarnings(context) {
+  const {
+    territoryTiles, units, players, unitTypes, races, playerID, perspectiveMask, atWarPlayerIDs, ruleSignatures,
+  } = context || {};
+  const selectedPlayerID = Number(playerID);
+  const visibilityMask = (Number(perspectiveMask) || 0) >>> 0;
+  if (!Number.isFinite(selectedPlayerID) || visibilityMask === 0) return [];
+
+  const tileByCoord = new Map((territoryTiles || [])
+    .filter((tile) => Number(tile.owner) === selectedPlayerID && (((Number(tile.visibleBy) >>> 0) & visibilityMask) !== 0))
+    .map((tile) => [tileKey(tile.x, tile.y), tile]));
+  const playerByID = new Map((players || []).map((player) => [Number(player.playerID), player]));
+  const warOwners = atWarPlayerIDs instanceof Set
+    ? atWarPlayerIDs
+    : new Set(Array.isArray(atWarPlayerIDs) ? atWarPlayerIDs.map(Number) : []);
+  const stacks = new Map();
+
+  for (const unit of Array.isArray(units) ? units : []) {
+    const owner = Number(unit && unit.owner);
+    if (!Number.isFinite(owner) || owner < 0 || owner === selectedPlayerID) continue;
+    if (Number(unit && unit.loadedOnUnitID) >= 0) continue;
+    const typeIndex = Number(unit.unitType);
+    const typeRecord = unitTypes && unitTypes[typeIndex] || {};
+    const invisible = typeRecord.invisible === true
+      || Number(typeRecord.invisible) === 1
+      || canonicalKey(typeRecord.invisible) === 'true';
+    if (invisible) continue;
+    const key = tileKey(unit.x, unit.y);
+    const tile = tileByCoord.get(key);
+    if (!tile) continue;
+    if (!stacks.has(key)) stacks.set(key, { x: Number(tile.x), y: Number(tile.y), units: [] });
+    const player = playerByID.get(owner) || {};
+    const raceID = Number(player.raceID);
+    const nation = recordName(races, raceID, 'RACE', `Player ${owner}`);
+    const type = recordName(unitTypes, typeIndex, 'PRTO', 'Unknown unit');
+    stacks.get(key).units.push({
+      owner,
+      raceID,
+      nation,
+      typeIndex,
+      type,
+      atWar: warOwners.has(owner),
+      nationRef: makeRef('civilizations', 'RACE', raceID, nation, ruleSignatures),
+      typeRef: makeRef('units', 'PRTO', typeIndex, type, ruleSignatures),
+    });
+  }
+
+  return Array.from(stacks.values()).map((stack) => {
+    const ownerGroups = new Map();
+    stack.units.forEach((unit) => {
+      if (!ownerGroups.has(unit.owner)) {
+        ownerGroups.set(unit.owner, {
+          owner: unit.owner,
+          nation: unit.nation,
+          nationRef: unit.nationRef,
+          atWar: unit.atWar,
+          types: new Map(),
+        });
+      }
+      const ownerGroup = ownerGroups.get(unit.owner);
+      if (!ownerGroup.types.has(unit.typeIndex)) {
+        ownerGroup.types.set(unit.typeIndex, { name: unit.type, ref: unit.typeRef, count: 0 });
+      }
+      ownerGroup.types.get(unit.typeIndex).count += 1;
+    });
+    const owners = Array.from(ownerGroups.values()).map((owner) => ({
+      ...owner,
+      types: Array.from(owner.types.values()),
+    }));
+    const atWar = owners.some((owner) => owner.atWar);
+    const detail = owners.map((owner) => {
+      const types = owner.types.map((type) => `${type.count > 1 ? `${type.count} ` : ''}${type.name}`).join(', ');
+      return `${owner.nation} (${owner.atWar ? 'at war' : 'at peace'}): ${types}`;
+    }).join('; ');
+    return {
+      x: stack.x,
+      y: stack.y,
+      atWar,
+      unitCount: stack.units.length,
+      detail,
+      owners,
+      refs: uniqueRefs(owners.flatMap((owner) => [owner.nationRef, ...owner.types.map((type) => type.ref)])),
+    };
+  }).sort((a, b) => Number(b.atWar) - Number(a.atWar) || a.y - b.y || a.x - b.x);
+}
+
 function isTradeNetworkResource(resource) {
   const type = Number(resource && resource.type);
   return type === 1 || type === 2;
@@ -2154,10 +2768,66 @@ function summarizeTradeRows(rows, getRefs, limit = 4) {
   return source.length > shown.length ? `${shown.join('; ')}; and ${source.length - shown.length} more` : shown.join('; ');
 }
 
+function cityName(city) {
+  return String(city && (city.name || city.city) || `City ${Number(city && city.id) || 0}`).trim();
+}
+
+function cityMapTarget(city) {
+  if (!city || !Number.isFinite(Number(city.x)) || !Number.isFinite(Number(city.y))) return null;
+  return { x: Number(city.x), y: Number(city.y), label: cityName(city) };
+}
+
+function cityDetailRows(city, rows = []) {
+  const out = [];
+  if (city && Number.isFinite(Number(city.x)) && Number.isFinite(Number(city.y))) {
+    out.push({ label: 'Location', value: `${Number(city.x)},${Number(city.y)}` });
+  }
+  return out.concat(rows);
+}
+
+function cityFoodBoxSize(city) {
+  const population = Math.max(0, Number(city && city.population) || 0);
+  if (population <= 6) return 20;
+  if (population <= 12) return 40;
+  return 60;
+}
+
+function buildingHasBoolField(building, key) {
+  const normalized = canonicalKey(key);
+  const improvements = (Number(building && building.improvements) || 0) >>> 0;
+  if (normalized === 'allowcitylevel2') return (improvements & (1 << 11)) !== 0;
+  if (normalized === 'allowcitylevel3') return (improvements & (1 << 12)) !== 0;
+  return parseConfigBoolValue(getRecordIdentityValue(building, key), false);
+}
+
+function cityHasBuiltBuildingFlag(city, buildings, key) {
+  const records = Array.isArray(city && city.buildingRecords) ? city.buildingRecords : [];
+  return records.some((record) => {
+    if (Number(record && record.originalOwner) < 0) return false;
+    const building = Array.isArray(buildings) ? buildings[Number(record.buildingIndex)] : null;
+    return buildingHasBoolField(building, key);
+  });
+}
+
+function cityCanGrowFromCurrentSize(city, buildings, freshWaterCityIDs = new Set()) {
+  const population = Math.max(0, Number(city && city.population) || 0);
+  if (population < 6) return true;
+  if (population < 12) return freshWaterCityIDs.has(Number(city && city.id)) || cityHasBuiltBuildingFlag(city, buildings, 'allowcitylevel2');
+  return false;
+}
+
+function selectedAlertCityRecords(report, cities) {
+  const selectedIDs = new Set((cities && Array.isArray(cities.rows) ? cities.rows : [])
+    .map((row) => Number(row && row.id))
+    .filter((id) => Number.isFinite(id)));
+  return (report && report.cities && Array.isArray(report.cities.records) ? report.cities.records : [])
+    .filter((city) => selectedIDs.size === 0 || selectedIDs.has(Number(city.id)));
+}
+
 function makeAlertsReport(context) {
   const {
-    report, gameDate, timePlayed, economy, production, military, technology, cities, tradeRows, currentTradeRows,
-    unconnectedResources, districtOpportunities,
+    report, gameDate, timePlayed, economy, production, military, technology, territory, cities, tradeRows, currentTradeRows,
+    unconnectedResources, districtOpportunities, foreignUnitWarnings, pollutedTiles, buildings, freshWaterCityIDs,
   } = context;
   const alerts = [];
   const status = [
@@ -2189,7 +2859,196 @@ function makeAlertsReport(context) {
       'Cities',
       `${row.name} is running a local deficit`,
       `${row.name} nets ${row.netGold} gold after maintenance.`,
-      { tab: 'economy', sort: 20 }
+      { tab: 'economy', amount: row.netGold, sort: 20 }
+    ));
+  });
+
+  const cityRecords = selectedAlertCityRecords(report, cities);
+  cityRecords.forEach((city) => {
+    const foodStored = Math.max(0, Number(city.totalFood) || 0);
+    const foodIncome = Number(city.foodIncome) || 0;
+    const foodBox = cityFoodBoxSize(city);
+    const name = cityName(city);
+    if (foodIncome < 0 && foodStored + foodIncome < 0) {
+      alerts.push(makeAlert(
+        `city-starvation-${city.id}`,
+        'critical',
+        'Cities',
+        `${name} is about to starve`,
+        `${name} has ${foodStored} food stored and nets ${foodIncome} food.`,
+        {
+          tab: 'cities',
+          detailRows: cityDetailRows(city, [
+            { label: 'Stored food', value: foodStored },
+            { label: 'Net food', value: foodIncome },
+          ]),
+          sort: 32,
+        }
+      ));
+      return;
+    }
+    if (foodIncome > 0) {
+      const canGrow = cityCanGrowFromCurrentSize(city, buildings, freshWaterCityIDs);
+      if (canGrow && foodStored + foodIncome >= foodBox) {
+        alerts.push(makeAlert(
+          `city-growth-${city.id}`,
+          'opportunity',
+          'Cities',
+          `${name} is about to grow`,
+          `${name} will reach ${foodBox} food with +${foodIncome} food this turn.`,
+          {
+            tab: 'cities',
+            detailRows: cityDetailRows(city, [
+              { label: 'Stored food', value: foodStored },
+              { label: 'Net food', value: `+${foodIncome}` },
+              { label: 'Food box', value: foodBox },
+            ]),
+            sort: 130,
+          }
+        ));
+      } else if (!canGrow && (foodStored >= foodBox || (Number(city.population) > 12 && foodStored + foodIncome > foodBox))) {
+        alerts.push(makeAlert(
+          `city-food-waste-${city.id}`,
+          'warning',
+          'Cities',
+          `${name} is wasting food`,
+          `${name} has filled its ${foodBox}-food box but cannot grow past size ${Number(city.population) || 0}.`,
+          {
+            tab: 'cities',
+            detailRows: cityDetailRows(city, [
+              { label: 'Stored food', value: foodStored },
+              { label: 'Net food', value: `+${foodIncome}` },
+              { label: 'Food box', value: foodBox },
+            ]),
+            sort: 34,
+          }
+        ));
+      }
+    }
+  });
+
+  cityRecords.filter((city) => Number(city.resistingCitizens) > 0).forEach((city) => {
+    const name = cityName(city);
+    alerts.push(makeAlert(
+      `city-resistance-${city.id}`,
+      'critical',
+      'Cities',
+      `${name} is in resistance`,
+      `${name} has ${Number(city.resistingCitizens)} resisting citizen${Number(city.resistingCitizens) === 1 ? '' : 's'}.`,
+      {
+        tab: 'cities',
+        detailRows: cityDetailRows(city, [
+          { label: 'Resisting citizens', value: Number(city.resistingCitizens) },
+        ]),
+        sort: 36,
+      }
+    ));
+  });
+
+  const researchProgress = technology && technology.progress ? technology.progress : {};
+  const researchWaste = Number(researchProgress.endWastage && researchProgress.endWastage.beakers) || 0;
+  const remainingTurns = Number(researchProgress.remaining && researchProgress.remaining.turns) || 0;
+  const remainingBeakers = Number(researchProgress.remaining && researchProgress.remaining.beakers) || 0;
+  if (researchWaste > 0 && remainingTurns <= 1) {
+    alerts.push(makeAlert(
+      'research-overrun',
+      'warning',
+      'Techs',
+      `Research will overrun ${researchWaste} beakers`,
+      `${technology.currentProject || 'Current research'} needs ${remainingBeakers} more beakers and produces ${Number(technology.beakersPerTurn) || 0} beakers per turn.`,
+      {
+        tab: 'techs',
+        refs: uniqueRefs([technology.currentProjectRef]),
+        detailRows: [
+          { label: 'Research', items: technology.currentProjectRef ? [{ name: technology.currentProject, ref: technology.currentProjectRef }] : [] },
+          { label: 'Beakers per turn', value: Number(technology.beakersPerTurn) || 0 },
+          { label: 'Beakers needed', value: remainingBeakers },
+          { label: 'Overrun', value: `${researchWaste} beakers` },
+        ],
+        sort: 38,
+      }
+    ));
+  }
+
+  (production && production.rows || []).filter((row) => Number(row.overrun) > 0).forEach((row) => {
+    alerts.push(makeAlert(
+      `production-overrun-${row.cityID}`,
+      'warning',
+      'Production',
+      `${row.city} has production overrun`,
+      `${row.city} will overrun ${row.overrun} shield${Number(row.overrun) === 1 ? '' : 's'} (${row.overrunPercent}%) on ${row.producing}.`,
+      {
+        tab: 'production',
+        refs: uniqueRefs([row.producingRef]),
+        detailRows: [
+          { label: 'Build', items: row.producingRef ? [{ name: row.producing, ref: row.producingRef }] : [] },
+          { label: 'Overrun', value: `${row.overrun} shield${Number(row.overrun) === 1 ? '' : 's'}` },
+          { label: 'Overrun percent', value: `${row.overrunPercent}%` },
+        ],
+        amount: row.overrun,
+        sort: 42,
+      }
+    ));
+  });
+
+  (territory && territory.cityRows || []).filter((row) => Number(row.unimproved) > 0).forEach((row) => {
+    alerts.push(makeAlert(
+      `worked-unimproved-${row.id}`,
+      'warning',
+      'Territory',
+      `${row.city} is working unimproved tiles`,
+      `${row.city} is working ${row.unimproved} unimproved tile${Number(row.unimproved) === 1 ? '' : 's'}.`,
+      {
+        tab: 'territory',
+        detailRows: [
+          { label: 'Unimproved worked tiles', value: Number(row.unimproved) },
+        ],
+        amount: row.unimproved,
+        sort: 44,
+      }
+    ));
+  });
+
+  const polluted = Array.isArray(pollutedTiles) ? pollutedTiles : [];
+  if (polluted.length > 0) {
+    alerts.push(makeAlert(
+      'polluted-tiles',
+      'warning',
+      'Territory',
+      `${polluted.length} polluted tile${polluted.length === 1 ? '' : 's'} in our territory`,
+      polluted.map((tile, index) => `#${index + 1}: ${tile.x},${tile.y}`).join('; '),
+      {
+        tab: 'map',
+        mapTargets: polluted.map((tile, index) => ({ x: tile.x, y: tile.y, label: `Pollution #${index + 1}` })),
+        detailRows: polluted.map((tile, index) => ({ label: `Pollution #${index + 1}`, value: `${tile.x},${tile.y}` })),
+        sort: 46,
+      }
+    ));
+  }
+
+  (foreignUnitWarnings || []).forEach((row) => {
+    const unitLabel = `${row.unitCount} ${row.atWar ? 'enemy' : 'foreign'} unit${row.unitCount === 1 ? '' : 's'}`;
+    alerts.push(makeAlert(
+      `foreign-units-${row.x}-${row.y}`,
+      row.atWar ? 'critical' : 'warning',
+      'Military',
+      `${unitLabel} on our territory at ${row.x}, ${row.y}`,
+      row.detail,
+      {
+        tab: 'military',
+        subtab: 'units',
+        refs: row.refs,
+        mapTargets: [{ x: row.x, y: row.y, label: unitLabel }],
+        detailRows: row.owners.map((owner) => ({
+          label: `${owner.nation} (${owner.atWar ? 'at war' : 'at peace'})`,
+          labelRef: owner.nationRef,
+          items: owner.types.map((type) => ({
+            name: `${type.count > 1 ? `${type.count} ` : ''}${type.name}`,
+            ref: type.ref,
+          })),
+        })),
+        sort: 30,
+      }
     ));
   });
 
@@ -2347,6 +3206,11 @@ function makeAlertsReport(context) {
       {
         tab: 'territory',
         refs: uniqueRefs(unconnected.map((row) => row.ref)),
+        mapTargets: unconnected.flatMap((row) => row.tiles.map((tile) => ({
+          x: tile.x,
+          y: tile.y,
+          label: row.name,
+        }))),
         detailRows: unconnected.map((row) => ({
           label: row.name,
           labelRef: row.ref,
@@ -2368,6 +3232,7 @@ function makeAlertsReport(context) {
       {
         tab: 'culture',
         refs: uniqueRefs(districtBuildings.map((row) => row.ref)),
+        mapTargets: districtBuildings.map((row) => ({ x: row.tile.x, y: row.tile.y, label: `${row.city}: ${row.district}` })),
         detailRows: districtBuildings.map((row) => ({
           label: row.city,
           items: [{ name: row.name, ref: row.ref }],
@@ -2389,6 +3254,7 @@ function makeAlertsReport(context) {
       {
         tab: 'culture',
         refs: uniqueRefs(districtWonders.map((row) => row.ref)),
+        mapTargets: districtWonders.map((row) => ({ x: row.tile.x, y: row.tile.y, label: `${row.city}: ${row.district}` })),
         detailRows: districtWonders.map((row) => ({
           label: row.city,
           items: [{ name: row.name, ref: row.ref }],
@@ -2407,12 +3273,44 @@ function makeAlertsReport(context) {
 
   const coverage = [
     {
-      id: 'trade',
-      label: 'Trade opportunities',
+      id: 'trade-buy-tech',
+      label: 'Techs we can buy',
       status: 'Active',
-      note: 'Shows current buy/sell opportunities.',
+      note: 'Shows technology purchase opportunities from contacted rivals.',
       tab: 'trade',
-      alertIds: ['buy-tech', 'buy-resource', 'sell-tech', 'sell-resource', 'rival-cash'],
+      alertIds: ['buy-tech'],
+    },
+    {
+      id: 'trade-buy-resources',
+      label: 'Resources we can buy',
+      status: 'Active',
+      note: 'Shows resource purchase opportunities from contacted rivals.',
+      tab: 'trade',
+      alertIds: ['buy-resource'],
+    },
+    {
+      id: 'trade-sell-tech',
+      label: 'Techs we can sell',
+      status: 'Active',
+      note: 'Shows technology sale opportunities to contacted rivals.',
+      tab: 'trade',
+      alertIds: ['sell-tech'],
+    },
+    {
+      id: 'trade-sell-resources',
+      label: 'Resources we can sell',
+      status: 'Active',
+      note: 'Shows resource sale opportunities to contacted rivals.',
+      tab: 'trade',
+      alertIds: ['sell-resource'],
+    },
+    {
+      id: 'trade-rival-cash',
+      label: 'Rivals with notable cash',
+      status: 'Active',
+      note: 'Shows contacted rivals with enough gold to be worth checking.',
+      tab: 'trade',
+      alertIds: ['rival-cash'],
     },
     {
       id: 'trade-expiring',
@@ -2431,13 +3329,68 @@ function makeAlertsReport(context) {
       alertIds: ['will-talk'],
     },
     {
-      id: 'economy',
-      label: 'Treasury and city deficits',
+      id: 'research-overrun',
+      label: 'Research overrun',
       status: 'Active',
-      note: 'Uses the saved-state economy model used by the Economy tab.',
+      note: 'Shows last-turn research waste when current beaker output exceeds the remaining cost.',
+      tab: 'techs',
+      alertIds: ['research-overrun'],
+    },
+    {
+      id: 'economy-treasury',
+      label: 'Treasury deficit',
+      status: 'Active',
+      note: 'Shows when the national treasury cannot cover projected losses.',
       tab: 'economy',
       alertIds: ['economy-deficit'],
+    },
+    {
+      id: 'economy-city-deficits',
+      label: 'City local deficits',
+      status: 'Active',
+      note: 'Shows cities losing gold after maintenance.',
+      tab: 'economy',
       alertIdPrefixes: ['city-deficit-'],
+    },
+    {
+      id: 'city-starvation',
+      label: 'Cities about to starve',
+      status: 'Active',
+      note: 'Shows cities that will run out of stored food this turn.',
+      tab: 'cities',
+      alertIdPrefixes: ['city-starvation-'],
+    },
+    {
+      id: 'city-growth',
+      label: 'Cities about to grow',
+      status: 'Active',
+      note: 'Shows cities that can grow when this turn fills the food box.',
+      tab: 'cities',
+      alertIdPrefixes: ['city-growth-'],
+    },
+    {
+      id: 'city-resistance',
+      label: 'Cities in resistance',
+      status: 'Active',
+      note: 'Shows cities with resisting citizens in the saved city population data.',
+      tab: 'cities',
+      alertIdPrefixes: ['city-resistance-'],
+    },
+    {
+      id: 'city-food-waste',
+      label: 'Cities wasting food',
+      status: 'Active',
+      note: 'Shows cities that fill the food box but cannot grow past the current size cap.',
+      tab: 'cities',
+      alertIdPrefixes: ['city-food-waste-'],
+    },
+    {
+      id: 'city-production-overrun',
+      label: 'City production overrun',
+      status: 'Active',
+      note: 'Shows cities whose current shield output will exceed the remaining build cost.',
+      tab: 'production',
+      alertIdPrefixes: ['production-overrun-'],
     },
     {
       id: 'resources',
@@ -2448,12 +3401,46 @@ function makeAlertsReport(context) {
       alertIds: ['unconnected-resources'],
     },
     {
-      id: 'districts',
-      label: 'District build opportunities',
+      id: 'city-worked-unimproved',
+      label: 'Worked unimproved tiles',
       status: 'Active',
-      note: 'Uses the loaded C3X district and wonder configs with saved city-radius terrain.',
+      note: 'Shows cities assigning citizens to tiles without roads, irrigation, mines, forests, or districts.',
+      tab: 'territory',
+      alertIdPrefixes: ['worked-unimproved-'],
+    },
+    {
+      id: 'polluted-tiles',
+      label: 'Polluted tiles',
+      status: 'Active',
+      note: 'Shows polluted owned tiles and links them to the Civ Advisor map.',
+      tab: 'territory',
+      alertIds: ['polluted-tiles'],
+    },
+    {
+      id: 'foreign-units',
+      label: 'Foreign units in our territory',
+      status: 'Active',
+      note: 'Groups visible foreign units by tile and raises the severity when any unit owner is at war.',
+      tab: 'military',
+      alertIdPrefixes: ['foreign-units-'],
+    },
+    {
+      id: 'district-buildings',
+      label: 'District buildings available',
+      status: 'Active',
+      note: 'Shows improvements unlocked by existing or buildable districts.',
+      category: 'districts',
       tab: 'culture',
-      alertIds: ['district-building-opportunities', 'wonder-district-opportunities'],
+      alertIds: ['district-building-opportunities'],
+    },
+    {
+      id: 'district-wonders',
+      label: 'Wonder district sites',
+      status: 'Active',
+      note: 'Shows terrain-qualified Wonder District opportunities.',
+      category: 'districts',
+      tab: 'culture',
+      alertIds: ['wonder-district-opportunities'],
     },
   ];
 
@@ -2640,7 +3627,17 @@ function cultureComparisonLabel(subjectCulture, otherCulture) {
   return 'disdainful of';
 }
 
-function makeDiplomacyReport({ tradeRows, humanVisible, humanTradeTail, currentTurn }) {
+function makeCultureComparisonRef(label, cultureRecords, ruleSignatures) {
+  const aliases = {
+    impressedby: 'impressedwith',
+  };
+  const wanted = aliases[canonicalKey(label)] || canonicalKey(label);
+  const index = (cultureRecords || []).findIndex((record) => canonicalKey(record && record.name) === wanted);
+  if (index < 0) return null;
+  return makeRef('rules', 'CULT', index, recordName(cultureRecords, index, 'CULT', label), ruleSignatures);
+}
+
+function makeDiplomacyReport({ tradeRows, humanVisible, humanTradeTail, currentTurn, cultureRecords, ruleSignatures }) {
   const turn = Number(currentTurn) || 0;
   const humanPlayerID = Number(humanVisible && humanVisible.playerID);
   const rows = (tradeRows || []).map((row) => {
@@ -2651,14 +3648,18 @@ function makeDiplomacyReport({ tradeRows, humanVisible, humanTradeTail, currentT
       .filter((group) => Number(group.endTurn) > turn);
     const sellCount = (Number(row.sell && row.sell.technologyTotal) || 0) + (Number(row.sell && row.sell.resourceTotal) || 0);
     const buyCount = (Number(row.buy && row.buy.technologyTotal) || 0) + (Number(row.buy && row.buy.resourceTotal) || 0);
+    const ourCulture = cultureComparisonLabel(humanVisible && humanVisible.culture, row.culture);
+    const theirCulture = cultureComparisonLabel(row.culture, humanVisible && humanVisible.culture);
     return {
       playerID,
       nation: row.nation,
       nationRef: row.nationRef,
       color: row.color,
       colorSlot: row.colorSlot,
-      ourCulture: cultureComparisonLabel(humanVisible && humanVisible.culture, row.culture),
-      theirCulture: cultureComparisonLabel(row.culture, humanVisible && humanVisible.culture),
+      ourCulture,
+      ourCultureRef: makeCultureComparisonRef(ourCulture, cultureRecords, ruleSignatures),
+      theirCulture,
+      theirCultureRef: makeCultureComparisonRef(theirCulture, cultureRecords, ruleSignatures),
       contact: yesNo(row.hasContact),
       relation: row.relation,
       willTalk: yesNo(row.willTalk),
@@ -2738,6 +3739,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     inflated,
     extract,
     parsed,
+    includeMapData: options && options.includeMap === true,
   });
   if (!report.ok) return report;
 
@@ -2752,6 +3754,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
   const unitTypes = section(parsed, 'PRTO').records;
   const terrainRecords = section(parsed, 'TERR').records;
   const experienceLevels = section(parsed, 'EXPR').records;
+  const cultureRecords = section(parsed, 'CULT').records;
   const worldSizes = section(parsed, 'WSIZ').records;
   const ruleRecord = section(parsed, 'RULE').records[0] || {};
   const ruleSignatures = {
@@ -2762,11 +3765,14 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     PRTO: makeRuleSectionSignature('PRTO', unitTypes),
     GOVT: makeRuleSectionSignature('GOVT', governments),
     ERAS: makeRuleSectionSignature('ERAS', eras),
+    CULT: makeRuleSectionSignature('CULT', cultureRecords),
   };
+  const saveArtContext = buildCivAdvisorSaveArtContext(parsed, gameRules, options);
   const cityById = new Map((report.cities && report.cities.records || []).map((city) => [Number(city.id), city]));
   const players = Array.isArray(report.players) ? report.players : [];
-  const active = activePlayers(players);
-  const humanPlayer = findHumanPlayer(players, report.game && report.game.humanPlayersMask);
+  const active = activePlayers(players, report.game);
+  const colorSlotsByPlayer = buildPlayerColorSlots(active, races);
+  const humanPlayer = findHumanPlayer(players, report.game && report.game.humanPlayersMask, report.game);
   if (!humanPlayer) return { ok: false, error: 'No active human player found in SAV.' };
   const requestedPlayerID = Number(options && options.selectedPlayerID);
   const allPlayersMode = requestedPlayerID === -1;
@@ -2775,11 +3781,60 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     : null;
   const human = allPlayersMode ? humanPlayer : (selectedPlayer || humanPlayer);
   const perspectiveMask = playerBitMask(human.playerID) || ((Number(report.game && report.game.humanPlayersMask) || 0) >>> 0);
-
   const detailsByPlayer = parsePlayerDetails(inflated.buffer, players, cityById);
+
+  let map = null;
+  if (options && options.includeMap === true && report.mapData) {
+    const mapPerspectivePlayer = allPlayersMode ? humanPlayer : human;
+    const mapPerspectiveMask = playerBitMask(mapPerspectivePlayer.playerID)
+      || ((Number(report.game && report.game.humanPlayersMask) || 0) >>> 0);
+    const mapTiles = (report.mapData.tiles || []).map((tile) => {
+      const explored = ((Number(tile.exploredBy) >>> 0) & mapPerspectiveMask) !== 0;
+      const visibleNow = explored && (((Number(tile.visibleBy) >>> 0) & mapPerspectiveMask) !== 0);
+      return {
+        ...tile,
+        visibility: visibleNow ? 2 : (explored ? 1 : 0),
+      };
+    });
+    const compactRecords = (records, keys) => (records || []).map((record, index) => {
+      const out = { index };
+      keys.forEach((key) => {
+        if (record && Object.prototype.hasOwnProperty.call(record, key)) out[key] = record[key];
+      });
+      return out;
+    });
+    map = {
+      ...report.mapData,
+      tiles: mapTiles,
+      perspectivePlayerID: Number(mapPerspectivePlayer.playerID),
+      perspectiveNation: recordName(races, mapPerspectivePlayer.raceID, 'RACE', `Player ${mapPerspectivePlayer.playerID}`),
+      exploredTiles: mapTiles.filter((tile) => Number(tile.visibility) > 0).length,
+      visibleTiles: mapTiles.filter((tile) => Number(tile.visibility) === 2).length,
+      support: {
+        races: compactRecords(races, ['name', 'civilizationName', 'civilopediaEntry', 'defaultColor', 'cultureGroup']),
+        unitTypes: compactRecords(unitTypes, ['name', 'civilopediaEntry', 'iconIndex', 'unitClass', 'defence']),
+        terrain: compactRecords(terrainRecords, [
+          'name', 'civilopediaEntry', 'food', 'shields', 'commerce', 'foodBonus', 'shieldsBonus', 'commerceBonus',
+          'landmarkFood', 'landmarkShields', 'landmarkCommerce', 'landmarkFoodBonus', 'landmarkShieldsBonus', 'landmarkCommerceBonus',
+        ]),
+        eras: compactRecords(eras, ['name', 'civilopediaEntry']),
+        rule: compactRecords([ruleRecord], ['maxCity1Size', 'maxCity2Size', 'borderFactor']),
+        players: (players || []).map((player) => ({
+          index: Number(player.playerID),
+          name: `Player ${Number(player.playerID)}`,
+          civ: Number(player.raceID),
+          initialEra: Number(detailsByPlayer.get(Number(player.playerID))?.era) || 0,
+          customCivData: 0,
+          color: getPlayerColorSlot(player, races[Number(player.raceID)], colorSlotsByPlayer),
+        })),
+      },
+    };
+  }
+
   const playerById = new Map(players.map((player) => [Number(player.playerID), player]));
   const humanDetails = detailsByPlayer.get(human.playerID) || {};
   humanDetails.buffer = inflated.buffer;
+  const c3xSegmentInfo = getC3XModSaveSegment(inflated.buffer);
   const scoreTail = parseScoreTail(inflated.buffer, report, players);
   const known = parseKnownTiles(inflated.buffer, report, perspectiveMask);
   const useKnownPerspectiveCounts = Number(human.playerID) === Number(humanPlayer.playerID);
@@ -2796,13 +3851,13 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     populationByPlayer.set(owner, (populationByPlayer.get(owner) || 0) + (Number(city.population) || 0));
   }
 
+  const contactByPlayer = readLeadVectorInt32(inflated.buffer, human, 3732, 32);
   const visible = active
     .map((player) => {
       const details = detailsByPlayer.get(player.playerID) || {};
       const score = scoreTail.get(player.playerID) || {};
       const race = races[player.raceID] || {};
-      const defaultColorSlot = Number(race.defaultColor);
-      const colorSlot = defaultColorSlot;
+      const colorSlot = getPlayerColorSlot(player, race, colorSlotsByPlayer);
       return {
         playerID: player.playerID,
         raceID: player.raceID,
@@ -2810,7 +3865,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
         leader: race.name || '',
         traits: traitsForRace(race),
         colorSlot: Number.isFinite(colorSlot) ? colorSlot : null,
-        color: CIV_COLOR_SWATCHES[Math.max(0, Number.isFinite(colorSlot) ? colorSlot : 0) % CIV_COLOR_SWATCHES.length],
+        color: getPlayerColorCss(colorSlot),
         government: recordName(governments, details.government, 'GOVT', ''),
         governmentIndex: Number(details.government),
         era: recordName(eras, details.era, 'ERAS', ''),
@@ -2838,18 +3893,19 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
         capital: details.capitalName || '',
       };
     })
-    .filter((player) => player.land > 0);
+    .filter((player) => player.land > 0 || Number(player.playerID) === Number(human.playerID) || (Number(contactByPlayer[Number(player.playerID)]) || 0) !== 0);
 
   const humanRace = races[human.raceID] || {};
   const humanScore = scoreTail.get(human.playerID) || {};
+  const humanColorSlot = getPlayerColorSlot(human, humanRace, colorSlotsByPlayer);
   const humanVisible = visible.find((player) => player.playerID === human.playerID) || {
     playerID: human.playerID,
     raceID: human.raceID,
     nation: recordName(races, human.raceID, 'RACE', `Player ${human.playerID}`),
     leader: humanRace.name || '',
     traits: traitsForRace(humanRace),
-    colorSlot: Number.isFinite(Number(humanRace.defaultColor)) ? Number(humanRace.defaultColor) : null,
-    color: CIV_COLOR_SWATCHES[Math.max(0, Number.isFinite(Number(humanRace.defaultColor)) ? Number(humanRace.defaultColor) : 0) % CIV_COLOR_SWATCHES.length],
+    colorSlot: Number.isFinite(humanColorSlot) ? humanColorSlot : null,
+    color: getPlayerColorCss(humanColorSlot),
     government: recordName(governments, humanDetails.government, 'GOVT', ''),
     governmentIndex: Number(humanDetails.government),
     era: recordName(eras, humanDetails.era, 'ERAS', ''),
@@ -2867,7 +3923,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
   const viewingOptions = active.map((player) => {
     const details = detailsByPlayer.get(player.playerID) || {};
     const race = races[player.raceID] || {};
-    const defaultColorSlot = Number(race.defaultColor);
+    const colorSlot = getPlayerColorSlot(player, race, colorSlotsByPlayer);
     const nation = recordName(races, player.raceID, 'RACE', `Player ${player.playerID}`);
     const cityCount = (report.cities && report.cities.records || [])
       .filter((city) => Number(city.owner) === Number(player.playerID)).length;
@@ -2879,8 +3935,8 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
       label: nation,
       cityCount,
       isHuman: Number(player.playerID) === Number(humanPlayer.playerID),
-      colorSlot: Number.isFinite(defaultColorSlot) ? defaultColorSlot : null,
-      color: CIV_COLOR_SWATCHES[Math.max(0, Number.isFinite(defaultColorSlot) ? defaultColorSlot : 0) % CIV_COLOR_SWATCHES.length],
+      colorSlot: Number.isFinite(colorSlot) ? colorSlot : null,
+      color: getPlayerColorCss(colorSlot),
       government: recordName(governments, details.government, 'GOVT', ''),
       currentEra: recordName(eras, details.era, 'ERAS', ''),
       ref: makeRef('civilizations', 'RACE', player.raceID, nation, ruleSignatures),
@@ -2908,6 +3964,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
         cities: player.cities,
         land: player.land,
         population: player.population,
+        score: player.score,
       };
     });
 
@@ -2927,7 +3984,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     const player = playerById.get(Number(row.playerID));
     const playerDetails = detailsByPlayer.get(Number(row.playerID)) || {};
     const rivalTradeTail = tradeTailByPlayer.get(Number(row.playerID)) || { lists: new Map(), resourceStates: [], resourceCounts: [] };
-    const contact = readLeadVectorInt32(inflated.buffer, human, 3732, 32)[Number(row.playerID)] || 0;
+    const contact = contactByPlayer[Number(row.playerID)] || 0;
     const willTalk = readLeadVectorInt32(inflated.buffer, human, 2964, 32)[Number(row.playerID)] || 0;
     const sellTechs = [];
     const buyTechs = [];
@@ -3048,6 +4105,8 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     humanVisible,
     humanTradeTail,
     currentTurn: report.game && report.game.turnNumber,
+    cultureRecords,
+    ruleSignatures,
   });
 
   const victoryTypes = VICTORY_BITS
@@ -3088,6 +4147,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     ruleRecord,
     ruleSignatures,
     allPlayersMode,
+    colorSlotsByPlayer,
   });
   const cities = makeCitiesReport({
     report,
@@ -3099,6 +4159,8 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     detailsByPlayer,
     ruleSignatures,
     allPlayersMode,
+    colorSlotsByPlayer,
+    c3xSegmentInfo,
   });
   const economy = makeEconomyReport({
     buf: inflated.buffer,
@@ -3119,6 +4181,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     tradeRows,
     ruleSignatures,
     allPlayersMode,
+    colorSlotsByPlayer,
   });
   const production = makeProductionReport({
     report,
@@ -3132,6 +4195,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     detailsByPlayer,
     ruleSignatures,
     allPlayersMode,
+    colorSlotsByPlayer,
   });
   const territory = makeTerritoryReport({
     buf: inflated.buffer,
@@ -3145,10 +4209,12 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     unitTypes,
     races,
     ruleRecord,
+    gameRules,
     players,
     detailsByPlayer,
     ruleSignatures,
     allPlayersMode,
+    colorSlotsByPlayer,
   });
   const military = makeMilitaryReport({
     report,
@@ -3161,8 +4227,23 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     economy,
     players,
     allPlayersMode,
+    colorSlotsByPlayer,
   });
-  const districtRows = parseC3XDistrictTileMap(inflated.buffer);
+  const districtRows = parseC3XDistrictTileMap(inflated.buffer, c3xSegmentInfo);
+  const atWarPlayerIDs = new Set(active
+    .filter((player) => Number(player.playerID) !== Number(human.playerID) && relationFor(humanDetails, player.playerID).atWar)
+    .map((player) => Number(player.playerID)));
+  const foreignUnitWarnings = allPlayersMode ? [] : collectForeignUnitWarnings({
+    territoryTiles,
+    units: report.units && report.units.records,
+    players,
+    unitTypes,
+    races,
+    playerID: human.playerID,
+    perspectiveMask,
+    atWarPlayerIDs,
+    ruleSignatures,
+  });
   const unconnectedResources = allPlayersMode ? [] : collectUnconnectedResourceWarnings({
     territoryTiles,
     resources,
@@ -3171,6 +4252,12 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     playerID: human.playerID,
     ruleSignatures,
   });
+  const pollutedTiles = allPlayersMode ? [] : territoryTiles
+    .filter((tile) => Number(tile.owner) === Number(human.playerID) && (((Number(tile.c3cOverlays) || 0) >>> 0) & 0x40) !== 0)
+    .map((tile) => ({ x: tile.x, y: tile.y }));
+  const freshWaterCityIDs = new Set(territoryTiles
+    .filter((tile) => Number(tile.cityID) >= 0 && tile.river)
+    .map((tile) => Number(tile.cityID)));
   const districtOpportunities = collectDistrictOpportunityWarnings({
     districtAlertContext: options && options.districtAlertContext,
     report,
@@ -3189,11 +4276,16 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     production,
     military,
     technology,
+    territory,
     cities,
     tradeRows,
     currentTradeRows,
     unconnectedResources,
     districtOpportunities,
+    foreignUnitWarnings,
+    pollutedTiles,
+    buildings,
+    freshWaterCityIDs,
   });
 
   return {
@@ -3201,6 +4293,15 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     sourcePath: filePath,
     title,
     ruleSignatures,
+    saveArtContext,
+    saveMetadata: {
+      embeddedSearchPath: report.metadata && report.metadata.searchPath || '',
+      embeddedSaveFileName: report.metadata && report.metadata.saveFileName || '',
+      hasC3XSegment: !!c3xSegmentInfo.hasC3XSegment,
+      c3xSegmentSize: Number(c3xSegmentInfo.segmentSize) || 0,
+      c3xChunks: c3xSegmentInfo.chunks || [],
+      c3xDistrictInstanceCount: districtRows.length,
+    },
     humanPlayerID: Number(humanPlayer.playerID),
     selectedPlayerID: allPlayersMode ? -1 : Number(human.playerID),
     viewingCiv: {
@@ -3217,6 +4318,13 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     general: {
       gameInfo: [
         { label: 'Game Version', value: report.metadata.savMajorVersion === 24 && report.metadata.savMinorVersion === 10 ? 'C3C122' : `${report.metadata.savMajorVersion}.${report.metadata.savMinorVersion}` },
+        { label: 'Embedded Scenario', value: report.metadata && report.metadata.searchPath ? report.metadata.searchPath : 'Standard rules' },
+        {
+          label: 'C3X Save Data',
+          value: c3xSegmentInfo.hasC3XSegment
+            ? `Present${districtRows.length > 0 ? ` (${districtRows.length} district instance${districtRows.length === 1 ? '' : 's'})` : ''}`
+            : 'Not present',
+        },
         { label: 'Game Type', value: countBits32(report.game.humanPlayersMask) === 1 ? 'Single Player' : 'Multiplayer' },
         { label: 'Difficulty', value: recordName(difficulties, report.game.difficulty, 'DIFF', '') },
         { label: 'Victory Types', value: victoryTypes.join(', ') },
@@ -3233,7 +4341,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
       playerInfo: [
         { label: 'Civilization', value: humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', ''), ref: makeRef('civilizations', 'RACE', human.raceID, humanVisible ? humanVisible.nation : recordName(races, human.raceID, 'RACE', ''), ruleSignatures), color: humanVisible ? humanVisible.color : null, colorSlot: humanVisible ? humanVisible.colorSlot : null },
         { label: 'Traits', value: humanVisible ? humanVisible.traits.join(', ') : traitsForRace(races[human.raceID]).join(', ') },
-        { label: 'Score', value: String(humanVisible ? humanVisible.score : 0) },
+        { label: 'Score', value: String(humanVisible ? humanVisible.score : 0), rank: competitionRank(playerRows, 'score', human.playerID) },
         { label: 'Culture', value: String(humanVisible ? humanVisible.culture : 0) },
         { label: 'Culture Per Turn', value: String(humanVisible ? humanVisible.culturePerTurn : 0) },
         { label: 'Government', value: humanVisible ? humanVisible.government : '', ref: makeRef('governments', 'GOVT', humanVisible ? humanVisible.governmentIndex : -1, humanVisible ? humanVisible.government : '', ruleSignatures) },
@@ -3276,6 +4384,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     production,
     military,
     alerts,
+    map,
     debug: {
       humanPlayerID: humanPlayer.playerID,
       selectedPlayerID: allPlayersMode ? -1 : human.playerID,
@@ -3290,7 +4399,9 @@ module.exports = {
   _test: {
     canTradeTechToPlayer,
     collectDistrictOpportunityWarnings,
+    collectForeignUnitWarnings,
     collectUnconnectedResourceWarnings,
+    makeAlertsReport,
     normalizeDistrictAlertContext,
     tileMatchesDistrictBuildability,
   },

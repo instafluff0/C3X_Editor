@@ -1,4 +1,43 @@
 * RELEASE 27.22
+- Simplified Civ Advisor empty states so tabs show only the specific no-data message without the generic save-picker heading or Open SAV button.
+- Compacted the Civ Advisor Cities table by narrowing City, shortening headers, and removing Plus, Flip Risk, Rank, and blank specialist columns so it can fit the standard modal width.
+- Rebalanced the Civ Advisor Culture table and compacted its city picker so the table fits the standard modal width.
+- Compacted the Civ Advisor Production table columns so the selected-civ view fits within a 1046px-wide modal, kept Turns on one line, restored Production city-thumbnail hydration, and changed Waste to show shield waste with the percent in parentheses.
+- Added Civ Advisor Production facets for Improvements, Wonders, Land, Air, Sea, and Other above the Production search box.
+- Removed the Civ Advisor Diplomacy Info Sell/Buy count columns so the table can fit the 1146px modal width.
+- Folded single-alert details into Civ Advisor current-alert summary rows and preserved expanded alert groups when navigating away and back.
+- Added Civ Advisor Economy Science/Luxury simulation sliders that redistribute city commerce, derive Taxes, and compose with government previews.
+- Fixed Civ Advisor Economy simulation sliders so dragging is continuous, the track remainder stays light, and percent deltas do not overflow into the ledger.
+- Added subtle red/green cell shading to changed City Economy values when previewing simulated governments.
+- Improved Civ Advisor Economy government preview delta readability with larger, lighter inline change text.
+- Added a Civ Advisor Economy government picker that previews alternate government unit-support plus estimated city commerce/corruption/waste effects inline on the existing Economy values with red/green deltas and simulated-government labeling.
+- Made Civ Advisor grouped city alerts lead with the affected city names, listing several names before falling back to "and N more."
+- Filled Civ Advisor Territory domination limit, tiles-to-limit, and unclaimed-tile values from saved map/rule data, and compacted the City Territory table with shorter headers plus the shared Civ Advisor table-header weight.
+- Reworked Civ Advisor current-alert summaries into denser CivAssist-style sentence rows with inline counts and subtler expandable-row chrome.
+- Added explicit Civ Advisor save-mode detection for embedded scenario paths and C3X mod-save segments, and corrected Economy city rows to distinguish base saved commerce from City_Body AddCash/AddLuxury/AddScience/AddTaxes fields.
+- Kept Civ Advisor current-alert severity color on the row rail and summary text while leaving row backgrounds neutral for readability.
+- Fixed Civ Advisor Diplomacy culture comparison chips so matching SAVs activate their Rules -> Culture links and show a pointer cursor.
+- Removed the duplicate lower chevron from the collapsed Civ Advisor Available Alerts rail while keeping the rail body and header chevron clickable for expansion.
+- Linked Civ Advisor Diplomacy culture comparisons to their matching Rules -> Culture records when the loaded scenario rules match the SAV, using the same compact reference-chip styling as Current Era.
+- Fixed Civ Advisor General score parsing for `.SAV` files with explicit player-ID score summary blocks, including Tokugawa 1498 AD, added score rank display, added Rival Info score values, and aligned ranked value suffixes in Player Info.
+- Fixed Civ Advisor trade technology options so `.SAV` reports honor the embedded TECH `Cannot Be Traded` flag, matching CivAssist and Civ III negotiation screens for saves such as Tokugawa 1498 AD.
+- Cleared cached map territory border sprites at map render time so reverted or changed border rendering logic cannot leave stale recolored borders on the main map or minimap.
+- Fixed shared map rendering order so mountain and volcano terrain sprites draw after per-tile rivers, cities, units, and other overlays, matching Civ III isometric depth expectations in both the map editor and Civ Advisor map.
+- Split Civ Advisor reference thumbnails from Editor navigation links so `.SAV` chips can show save-native Civilopedia/PediaIcons art from embedded scenario search folders while links stay disabled until the loaded rules match.
+- Fixed Civ Advisor civilization swatches for `.SAV` reports by using embedded RACE colors with duplicate-color fallback instead of misreading live LEAD bytes as color slots, and kept contacted remaining rivals such as late-game Iroquois visible.
+- Split Civ Advisor alert coverage into granular trade, economy, and district checks so categories can expose focused toggles such as tech buys, city deficits, district buildings, and Wonder District sites.
+- Grouped Civ Advisor Available Alerts by advisor category with compact collapsible sections, visible category rails, clearer hover/focus states, enabled-count badges, and a dedicated Districts category.
+- Made the collapsed Civ Advisor Available Alerts rail self-identifying with an Alert Types label/count and aligned the Available Alerts and Current Alerts header heights.
+- Removed duplicate severity rails from individual Civ Advisor alert rows so grouped current alerts use a single left-side severity rail at the group level.
+- Added Civ Advisor current-state alerts for research overrun, city starvation/growth/resistance/food waste, production overrun, worked unimproved tiles, and polluted owned tiles, with map navigation for polluted tile targets.
+- Tightened Civ Advisor Available Alerts styling so expanded alert-type categories use dense readable rows instead of oversized nested cards.
+- Fixed Civ Advisor map fog rendering so never-seen tiles stay black while explored-but-currently-unseen tiles still show remembered terrain, overlays, cities, labels, and minimap markers without showing units.
+- Added visible foreign-unit territory alerts grouped per tile, with critical severity for enemy stacks at war and warning severity for peaceful foreign stacks.
+- Fixed Civ Advisor map cities using Ancient-era art by passing each SAV player's live current era into the shared map renderer.
+- Added a lazy-loaded, read-only Civ Advisor Map tab with player-perspective exploration and current-visibility fog, a masked minimap, and alert-driven coordinate highlighting/navigation using the shared map renderer.
+- Grouped Civ Advisor current alerts into compact expandable families, summarizing large city-deficit sets and sorting those cities by the largest deficit first.
+- Made Civ Advisor alternate-civilization viewing an opt-in File -> Settings option, defaulted every save reload back to the player civilization, and clarified that its auto-update menu choice controls the open-time default.
+- Fixed Civ Advisor current-alert rows collapsing below their text height when a save produces enough alerts to require scrolling.
 - Renamed internal Civ Advisor files, APIs, IPC channels, tests, and UI hooks away from CivAssist naming while keeping CivAssist II only as an external comparison reference.
 - Added Civ Advisor alerts for unconnected owned strategic/luxury resources, district-unlocked buildings, and terrain-aware Wonder District opportunities using the loaded C3X district/wonder config snapshot, while keeping production overrun, research overrun, city riot/pollution, and damaged-unit checks out of the Available Alerts list.
 - Moved Civ Advisor `.SAV` inspection onto the operation worker and reused the already-inflated save/rules data during report generation so large saves do not block the main process.

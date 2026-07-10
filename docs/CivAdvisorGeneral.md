@@ -97,6 +97,8 @@ For the reference save, the visible player order is the active `LEAD` player ord
 
 - Greece, Germany, England, Persia, City of Sparta, Spain, China, Aztecs, Mongols
 
+For late-game saves, do not use capital presence alone as the active-player test. Use `GAME.remainingPlayersMask` when it is present, then keep contacted remaining players even if they currently have zero known land/cities. The Tokugawa 1498 AD save depends on this: Iroquois has no capital/known land but is still in Japan's contact vector and appears on the in-game diplomacy screen.
+
 ## Rival Row Sources
 
 For visible rivals in the reference save:
@@ -105,12 +107,13 @@ For visible rivals in the reference save:
 - Relation comes from the human player's live `LEAD` diplomacy vector.
 - Government comes from `LEAD body +132`.
 - Current Era comes from `LEAD body +216`.
+- Color normally comes from embedded `RACE.defaultColor`. If multiple active saved players collide on the same slot, try unused `RACE.uniqueColor`, then a conservative fallback order that starts with Civ3 green slot `4`. Do not use live `LEAD body +8` as a display color; the Tokugawa 1498 AD save proves that field produces the wrong Japan/France/England/Iroquois/Inca swatches.
 - Gold is stored as two obfuscated/checksummed int32 values: `LEAD body +40` plus `LEAD body +44`.
 - Cities comes from `LEAD body +376`.
 - Land is known/explored land as described above.
 - Population is known/explored city population as described above.
 
-Japan's `Score: 760` appears in the untagged tail area between live city data and `TUTR`. For this save, find the active-player power vector from `LEAD body +12` values after `cityEnd`; the next active-player int32 vector is score, and the next vector is culture totals.
+Score appears in the untagged tail area between live city data and `TUTR`. Some saves store a current-turn score summary as `turn number`, `display year`, player count, player IDs, matching `LEAD body +12` power values, score values, and culture totals. The Tokugawa 1498 AD save depends on this explicit player-ID list because it includes an extra remaining player before France, England, Iroquois, and Inca. Older saves may still be parsed by finding the active-player power vector after `cityEnd`; the next active-player int32 vector is score, and the next vector is culture totals.
 
 The parser is covered by `test/civAdvisorGeneral.test.js`, which asserts every visible General value from the Tokugawa 740 AD screenshot when the local save is present.
 
@@ -118,7 +121,7 @@ The parser is covered by `test/civAdvisorGeneral.test.js`, which asserts every v
 
 The `.SAV` embedded BIQ rules are authoritative for Civ Advisor labels. Do not assume the currently loaded editor bundle is the same scenario as the selected save.
 
-Civ Advisor reference links and thumbnails must be conditional. For the General tab, `src/biq/civAdvisor.js` emits section signatures for:
+Civ Advisor reference links must be conditional. For the General tab, `src/biq/civAdvisor.js` emits section signatures for:
 
 - `RACE`: civilization name, Civilopedia key
 - `TECH`: technology name, Civilopedia key, era index
@@ -127,7 +130,7 @@ Civ Advisor reference links and thumbnails must be conditional. For the General 
 - `GOVT`: name, Civilopedia key
 - `ERAS`: name, Civilopedia key
 
-The renderer compares these save-embedded signatures against the currently loaded bundle before turning a value into a link or loading a current-bundle thumbnail. If a section signature differs, display the save-native text without a link. The Tokugawa reference save matches `Scenarios/Instafluff_Scenario.biq` for `RACE`, `GOOD`, `GOVT`, and `ERAS`; `test/civAdvisorGeneral.test.js` covers this.
+The renderer compares these save-embedded signatures against the currently loaded bundle before turning a value into a link. If a section signature differs, display the save-native text without a link. Thumbnails are separate: the SAV inspector builds a lightweight save-art context from the embedded BIQ rules plus embedded Scenario Search Folders, then resolves Civilopedia/PediaIcons/art from those save-native roots when available. A chip may therefore show a save-native thumbnail while remaining unlinked to the active Editor rules. The Tokugawa reference save matches `Scenarios/Instafluff_Scenario.biq` for `RACE`, `GOOD`, `GOVT`, and `ERAS`; `test/civAdvisorGeneral.test.js` covers this.
 
 ## Diplomacy
 
@@ -170,7 +173,7 @@ Current implemented Trade data:
 
 - Treasury gold reuses the General-tab live gold parse.
 - Current Trades lists non-war contacted rivals as Peace Treaty / Peace Treaty and also decodes timed resource deals from the saved treaty lists.
-- Trade Options technology columns use the tech civ bitmask plus prerequisite checks, and render as conditional links when the selected save rules match the loaded scenario.
+- Trade Options technology columns use the tech civ bitmask plus prerequisite checks, then reject technologies with `TECH.flags & 0x80000` (`Cannot Be Traded`). The Conquests code names this flag `ATF_Cannot_Be_Traded` and `Leader::could_buy_tech()` returns false when it is present. The Tokugawa 1498 AD save depends on this because its embedded `Scenarios\Custom.biq` rules mark the otherwise-missing French technologies `Music Theory` and `Navigation` as untradeable, matching CivAssist II and the in-game negotiation list.
 - Trade Options resource columns use each leader's resource availability table and resource-count array after the `LEAD` body, plus resource prerequisite tech checks.
 - The Trade UI intentionally uses Current/Sell/Buy subtabs instead of stacking all CivAssist II trade tables. Multi-value cells such as technologies and resources should stack normal reference chips vertically so thumbnails stay visible without squeezing labels into one line.
 
@@ -286,15 +289,18 @@ The remaining Miscellaneous groups should be split by subject rather than expose
 
 ## Economy Tab Notes
 
-CivAssist II's Economy screen is partly a hypothetical building simulator. Civ Advisor intentionally shows the saved Domestic Advisor economy and omits the checkbox simulator for now.
+CivAssist II's Economy screen is partly a hypothetical simulator. Civ Advisor's main Economy values intentionally show the saved Domestic Advisor economy. The supported what-ifs are the structured Government picker plus Science/Luxury rate sliders. Government preview recalculates unit support exactly from the save-native `GOVT` rules, current cities, and current owned units. It estimates city commerce, corruption, and shield waste from saved aggregate city output plus the selected government's corruption/waste level, tile penalty, and commerce bonus. Rate preview preserves each city preview's post-corruption budgetable commerce and redistributes it by the simulated Science/Luxury/Tax rates; specialists and building-added cash/luxury/science remain separate. When a simulation is active, the existing Economy values switch to the simulated context and show red/green deltas against the saved values.
 
 The saved `CITY` economy fields map to Civ3's `City_Body` as follows:
 
 - `ProductionLoss`, `Corruption`, `ProductionIncome`, `CashIncome`
 - `Luxury`, `Science`, `AddCash`
+- `AddLuxury`, `AddScience`, `AddTaxes`
 - `Improvements_Maintenance`
 
 National city income is `sum(CashIncome + Corruption)`. Expenses subtract science, luxury/entertainment, corruption, building maintenance, unit support, and outgoing GPT. Incoming GPT and treasury interest are income.
+
+The Economy city table displays local tax/luxury/science output with the city's saved `Add*` fields included. For example, in the non-C3X Tokugawa 1498 AD save, Iwakura's base `AddCash` is `30`, `AddTaxes` is `10`, `AddLuxury` is `5`, and the local row displays Taxes `40`, Luxury `5`, and Net Gold `24` after `16` maintenance. National totals remain based on the saved Domestic Advisor aggregate formula and should not be forced to CivAssist II's building-simulator totals without a separately verified simulator model.
 
 For Tokugawa 740 AD the saved-state totals are:
 
@@ -303,11 +309,15 @@ For Tokugawa 740 AD the saved-state totals are:
 - corruption `6`
 - maintenance `23`
 - unit costs `62`
-- net gain `+3`
+- net income `+3`
 
 The unit-support calculation should use live `UNIT` records for paid units, not the `LEAD` aggregate alone. In the Tokugawa save, Japan owns 38 units: 37 native Japanese units plus one captured German worker. Republic grants three free units for each size-12 city, and the captured worker is maintenance-free. Thus `(37 paid native units - 6 government support) * 2 GPT = 62 GPT`, matching the in-game Domestic Advisor.
 
 `LEAD body +392`, `+396`, and `+400` are the luxury, science, and tax slider steps. `+136` is mobilization level, and `+32` is the Golden Age ending turn. The Economy city table intentionally omits per-building status columns; building-status details belong in Culture/Wonders or a future focused workflow, not in the saved-state economy summary. Forbidden Palace and Secret Police HQ status comes from each city's `BINF` records and links through the conditional `BLDG` signature gate.
+
+Government preview should remain scoped to the currently selected save/player and reset when either changes. It should use the save's embedded government records rather than a hardcoded stock Civ3 government list, so modded government names and support rules are preserved. City-level government preview is an estimate, not exact CivAssist parity: full parity would need rank/distance corruption, OCN, courthouse/police-station effects, forbidden-palace behavior, communal distribution, tile-by-tile commerce bonus, tile penalty, and C3X corruption options.
+
+The General tab exposes the save's embedded scenario search path and C3X mod-save status. Do not infer C3X status from the currently loaded Editor mode or BIQ. A save has C3X data only when the inflated `.SAV` contains the `0x22 "C3X"` mod-save bookends and a valid appended segment. The Tokugawa 740 AD fixture has that segment and `90` district instances; the Tokugawa 1498 AD save embeds `Scenarios\Custom\` but has no C3X segment.
 
 ## Culture Tab Notes
 
@@ -349,6 +359,9 @@ For Tokugawa 740 AD this reproduces CivAssist's directly decoded rows:
 
 - exploration: `5000` world tiles, `1461` explored, split into `539` land and `922` water;
 - domination tiles: `185`, because CivAssist counts owned land plus coast and excludes sea/ocean;
+- domination limit: `1332`, using the saved domination terrain percentage against all domination-countable map tiles;
+- tiles to limit: `1147`, from domination limit minus current domination tiles;
+- unclaimed tiles: `432`, from domination-countable tiles with no active player territory owner;
 - workable owned land: `154`, which is the `26 worked + 128 unworked` basis for the lower improvement table;
 - improvement stats: Roaded `26 / 81`, Irrigated `14 / 8`, Mined `10 / 12`, Unroaded `0 / 47`, Unrailed `26 / 80`, Jungle or Marsh `0 / 0`.
 
@@ -372,7 +385,6 @@ After `inflateSavIfNeeded()`, read the segment size from the last eight bytes, s
 
 Still unresolved for 1:1 CivAssist Territory parity:
 
-- `Domination Limit`, `Tiles To Limit`, and visible `Unclaimed Tiles`;
 - CivAssist's Forested/Fully Improved/Partially Improved/Unimproved classifications;
 - exact city-row worked/mined/irrigated semantics where CivAssist appears to use more than the raw `cityWithWorkers` assignment.
 
@@ -411,6 +423,8 @@ For Tokugawa 740 AD this yields Kyoto building Samurai at `40 / 70`, `20` shield
 
 Production targets use `PRTO` or `BLDG` signatures, so thumbnails and links are enabled only when the save's embedded rule section matches the scenario currently loaded in the Editor. The UI should stay table-first for CivAssist-style scanning, with the producing item rendered as the normal Editor reference chip so matching units and improvements show thumbnails and navigate back to their tabs.
 
+Production faceted search uses row-level target classification: `BLDG` rows are Improvements or Wonders, `PRTO.unitClass` values map to Land, Sea, or Air, and unresolved/unknown construction falls into Other. Facets are additive and combine with the Production text search.
+
 ## Military Tab Notes
 
 The Military tab separates aggregate force composition from individual-unit condition. The Roster subtab groups the human player's live `UNIT` records by `UnitTypeID`; the Units subtab exposes each record's experience, health, remaining movement, position, and nationality.
@@ -429,6 +443,22 @@ Maximum health is `EXPR.baseHitPoints + PRTO.hitPointBonus`; current health subt
 Upgrade resolution must account for civilization-specific units. Starting at `PRTO.upgradeTo`, follow the chain until the first target whose `availableTo` mask contains the player's race. This maps Archer to Longbowman, Swordsman to Medieval Infantry, Pikeman to Musketman, and Galley to Caravel for Japan while skipping unavailable unique units. Upgrade price is the positive shield-cost difference multiplied by `RULE.upgradeCost` (`3` in the fixture).
 
 The Tokugawa fixture contains 38 units: 32 combat units, 6 civilians, 2 naval units, one foreign-national Worker, no damaged units, and one unit with no movement remaining. Unit and upgrade links use the exact raw 157-record `PRTO` signature from the loaded BIQ; the Units tab's synthetic era variants must not be used for this comparison.
+
+## Map Tab Notes
+
+The Map tab is a read-only presentation of the live SAV map. It reuses the shared map renderer for terrain art, overlays, cities, units, zoom/pan behavior, and the minimap, but supplies an explicit read-only mode that removes Paint, Select, tile mutation, Save, Undo, resize, and import behavior. The full map payload is requested only when the Map tab is opened so normal Civ Advisor loads and five-second polling do not continually transfer every tile through IPC.
+
+The fourth SAV `TILE` subrecord provides the perspective masks used by this tab:
+
+- `exploredBy` determines whether the selected player has ever explored a tile;
+- the current unit, secondary, and city visibility masks are combined to determine whether the tile is currently visible;
+- unexplored tiles are blacked out;
+- explored but currently unseen tiles retain remembered terrain, overlays, cities, labels, and minimap markers under a light fog tint, but omit live units;
+- currently visible tiles render normally.
+
+The selected Civ Advisor civilization supplies the perspective bit. The default is the real human player. `All Civs` deliberately falls back to that human perspective instead of revealing an omniscient map. The Tokugawa fixture verifies separate unexplored, explored/fogged, and currently-visible populations for Japan and verifies that Rome produces a different visibility map.
+
+Alerts may expose structured `mapTargets` with tile coordinates. Activating such an alert switches to Map, centers and highlights its first location, and offers Previous/Next controls when several locations are present. Foreign-unit, unconnected-resource, and district-opportunity alerts currently provide these targets.
 
 ## Alerts Tab Notes
 
@@ -450,4 +480,4 @@ Fixture-backed Tokugawa 740 AD current alerts are:
 - Kyoto production overrun info: Samurai wastes 10 shields in 2 turns.
 - Rival-cash info: Persia has 84 gold.
 
-Implemented alert coverage is current-save only: trade opportunities/expiring deals/cash, enemies willing to negotiate, production projections, saved-state economy, current research progress, city morale/pollution, and unit damage. Alerts that require comparing successive saves remain documented but hidden from the UI, notably rival government/era changes, city growth/shrink/specialist reassignment, and "new" trade opportunities. "Foreign units in our territory" remains deferred because it requires territory ownership lookup; foreign unit nationality alone is not equivalent.
+Implemented alert coverage is current-save only: trade opportunities/expiring deals/cash, enemies willing to negotiate, visible foreign-unit stacks in owned territory, production projections, saved-state economy, current research progress, city morale/pollution, and unit damage. Foreign-unit alerts use current unit ownership plus visible tile ownership, group multiple units on one tile into one alert, and become critical when any unit owner in the stack is at war with the selected civilization. Transported cargo and inherently invisible unit types are excluded because the current SAV model does not prove that those individual units are visible or detected. Alerts that require comparing successive saves remain documented but hidden from the UI, notably rival government/era changes, city growth/shrink/specialist reassignment, and "new" trade opportunities.

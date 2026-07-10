@@ -76,8 +76,14 @@ test('Civ Advisor UI exposes native recent-save selection and five-second follow
   assert.match(renderer, /save\.relativeName \|\| save\.fileName \|\| getPathTail\(save\.path\)/);
   assert.match(renderer, /browse\.textContent = 'Browse\.\.\.'/);
   assert.match(renderer, /state\.civAdvisor\.followingLatest = false;[\s\S]*?loadCivAdvisorSave\(selected/);
-  assert.match(main, /label: 'Civ Advisor'[\s\S]*?label: 'Choose Saves Manually'[\s\S]*?label: 'Load Latest When Opened'[\s\S]*?label: 'Follow Latest While Open'/);
+  assert.match(main, /label: 'Civ Advisor'[\s\S]*?label: 'Choose Saves Manually'[\s\S]*?label: 'Load Latest When Opened'[\s\S]*?label: 'Open With Auto-update Enabled'/);
+  assert.match(main, /label: 'Allow Viewing Other Civilizations'[\s\S]*?type: 'checkbox'[\s\S]*?checked: currentCivAdvisorAllowOtherCivs/);
+  assert.match(main, /civAdvisorAllowOtherCivs: false/);
   assert.match(main, /manager:list-recent-civ-advisor-saves/);
   assert.match(preload, /listRecentCivAdvisorSaves/);
   assert.match(preload, /onCivAdvisorLoadModeMenuSelect/);
+  assert.match(preload, /onCivAdvisorAllowOtherCivsMenuSelect/);
+  assert.match(renderer, /function renderCivAdvisorViewingSelector\(report\) \{[\s\S]*?state\.settings\.civAdvisorAllowOtherCivs !== true\) return null/);
+  assert.match(renderer, /const requestedPlayerID = Number\(options\.selectedPlayerID\);[\s\S]*?civAdvisorAllowOtherCivs === true[\s\S]*?\? requestedPlayerID[\s\S]*?: undefined/);
+  assert.match(renderer, /selectedPlayerID: nextID/);
 });

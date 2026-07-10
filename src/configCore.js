@@ -358,7 +358,9 @@ function friendlyFieldValue(sectionCode, key, value) {
       '1': 'Nuisance',
       '2': 'Problematic',
       '3': 'Rampant',
-      '4': 'Communal'
+      '4': 'Catastrophic',
+      '5': 'Communal',
+      '6': 'Off'
     };
     return map[v] ? `${map[v]} (${v})` : v;
   }
@@ -14967,6 +14969,7 @@ module.exports = {
   buildReferenceTabs,
   buildEffectiveReferenceTabs,
   resolveScenarioDir,
+  resolveScenarioSearchDirs,
   resolveBiqPath,
   inspectScenarioCivColorPalettes,
   createScenario,

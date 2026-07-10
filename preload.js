@@ -66,6 +66,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:civ-advisor-load-mode-selected', listener);
     };
   },
+  onCivAdvisorAllowOtherCivsMenuSelect: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, enabled) => handler(enabled);
+    ipcRenderer.on('manager:civ-advisor-allow-other-civs-selected', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:civ-advisor-allow-other-civs-selected', listener);
+    };
+  },
   onTooltipDelayMenuSelect: (handler) => {
     if (typeof handler !== 'function') {
       return () => {};
