@@ -1,4 +1,7 @@
 * RELEASE 27.22
+- Renamed internal Civ Advisor files, APIs, IPC channels, tests, and UI hooks away from CivAssist naming while keeping CivAssist II only as an external comparison reference.
+- Added Civ Advisor alerts for unconnected owned strategic/luxury resources, district-unlocked buildings, and terrain-aware Wonder District opportunities using the loaded C3X district/wonder config snapshot, while keeping production overrun, research overrun, city riot/pollution, and damaged-unit checks out of the Available Alerts list.
+- Moved Civ Advisor `.SAV` inspection onto the operation worker and reused the already-inflated save/rules data during report generation so large saves do not block the main process.
 - Added a Windows-only experimental Civ Advisor overlay button that appears over Civ 3 only while the Civ Advisor modal is open and Civ 3 is foregrounded.
 - Updated the release script to build a Windows portable app on Windows-like Bash hosts and a universal macOS DMG on macOS.
 - Added an initial Civ Advisor modal with `.SAV` file selection and a General tab parser that matches the Tokugawa 740 AD CivAssist reference screenshot for game info, player info, ranks, and visible rival rows.
@@ -43,6 +46,10 @@
 - Fixed Civ Advisor Military All Civs mode so unit-type counts and individual units aggregate active civilizations instead of staying on the selected player.
 - Simplified Civ Advisor Alerts so alert state stays inside the Alerts tab again, with a left-side coverage checklist and right-side current alert list instead of per-tab badges and banners.
 - Compacted the Civ Advisor Alerts tab further into CivAssist-style plain alert rows, removing per-row counts and category pills so more alert types can fit cleanly.
+- Tightened Civ Advisor tech trade filtering so buy/sell techs only appear when the other civ already meets the tech prerequisites.
+- Fixed Civ Advisor tech trade filtering to read saved TECH prerequisite arrays, so Trade and Alerts do not offer techs to civs missing prerequisite technologies.
+- Made the Civ Advisor Alerts coverage pane narrower and collapsible so current alerts can use more horizontal space.
+- Fixed Civ Advisor save loading with district/resource alert context enabled by restoring saved resource and river fields in the territory tile parser.
 - Standardized Civ Advisor civilization chip widths and kept owner Civ columns available in All Civs city lists for Territory, Economy, and Production.
 - Documented the SAV source mapping for CivAssist II's General tab, including live `GAME`, `LEAD`, `CULT`, explored-tile intelligence, diplomacy, gold, and score-tail sources.
 - Added a Units-tab FLC Workshop with legacy-compatible storyboard export/import, palette and FXM handling, Civ3 unit-FLC rebuild support, and civ-color-aware preview controls.

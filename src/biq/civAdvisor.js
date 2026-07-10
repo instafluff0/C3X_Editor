@@ -2,9 +2,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { inflateSavIfNeeded, extractEmbeddedBiqFromSavFile } = require('./savExtract');
+const { inflateSavIfNeeded, extractEmbeddedBiqFromSavBuffer } = require('./savExtract');
 const { parseAllSections, sectionRecordName } = require('./biqSections');
-const { inspectSavFile } = require('./savInspect');
+const { inspectSavBuffer } = require('./savInspect');
 
 const TRAIT_BITS = Object.freeze([
   [1, 'Militaristic'],
@@ -30,6 +30,17 @@ const CIV_COLOR_SWATCHES = Object.freeze([
   '#8fd6ff', '#7a58c9', '#b7e978', '#003d9e', '#0b8f24', '#f2e157', '#2ecad3', '#c218ff',
   '#e03535', '#6f7f2a', '#c7cddf', '#c4a46c', '#0f7a44', '#8066c7', '#c9e2c8', '#ffcc88',
   '#b6c1f0', '#e9c3f4', '#d9e1c9', '#9bd5c8', '#ffb3a2', '#d2b48c', '#94a3b8', '#111827',
+]);
+
+const DISTRICT_COMPLETED_STATE = 1;
+const WONDER_COMPLETED_STATE = 2;
+const WONDER_DISTRICT_ID = 1;
+const DEFAULT_DISTRICT_BUILDABLE_TERRAINS = Object.freeze(new Set([
+  'desert', 'plains', 'grassland', 'tundra', 'floodplain', 'hills',
+]));
+const TERRAIN_ID_TO_C3X_TOKEN = Object.freeze([
+  'desert', 'plains', 'grassland', 'tundra', 'floodplain', 'hills', 'mountains',
+  'forest', 'jungle', 'marsh', 'volcano', 'coast', 'sea', 'ocean',
 ]);
 
 const RULE_SIGNATURE_FIELDS = Object.freeze({
@@ -297,7 +308,10 @@ function parseKnownTiles(buf, report, humanMask) {
     if (off + 8 > buf.length || buf.subarray(off, off + 4).toString('latin1') !== 'TILE') break;
     const len1 = buf.readUInt32LE(off + 4);
     const body1 = off + 8;
+    const riverInfo = body1 + 1 <= buf.length ? buf.readUInt8(body1) : 0;
     const owner = body1 + 2 <= buf.length ? buf.readInt8(body1 + 1) : -1;
+    const resource = body1 + 8 <= buf.length ? buf.readInt32LE(body1 + 4) : -1;
+    const riverData = body1 + 18 <= buf.length ? buf.readUInt8(body1 + 17) : 0;
     const cityID = body1 + 24 <= buf.length ? buf.readInt16LE(body1 + 22) : -1;
     const off2 = off + 8 + len1;
     if (off2 + 8 > buf.length || buf.subarray(off2, off2 + 4).toString('latin1') !== 'TILE') break;
@@ -339,7 +353,10 @@ function parseTerritoryTiles(buf, report) {
     if (off + 8 > buf.length || buf.subarray(off, off + 4).toString('latin1') !== 'TILE') break;
     const len1 = buf.readUInt32LE(off + 4);
     const body1 = off + 8;
+    const riverInfo = body1 + 1 <= buf.length ? buf.readUInt8(body1) : 0;
     const owner = body1 + 2 <= buf.length ? buf.readInt8(body1 + 1) : -1;
+    const resource = body1 + 8 <= buf.length ? buf.readInt32LE(body1 + 4) : -1;
+    const riverData = body1 + 18 <= buf.length ? buf.readUInt8(body1 + 17) : 0;
     const cityID = body1 + 24 <= buf.length ? buf.readInt16LE(body1 + 22) : -1;
     const off2 = off + 8 + len1;
     if (off2 + 8 > buf.length || buf.subarray(off2, off2 + 4).toString('latin1') !== 'TILE') break;
@@ -364,7 +381,11 @@ function parseTerritoryTiles(buf, report) {
       y: coords.y,
       owner,
       cityID,
+      resource,
       terrainID,
+      riverInfo,
+      riverData,
+      river: riverInfo !== 0 || riverData !== 0,
       c3cOverlays,
       exploredBy,
       cityWithWorkers,
@@ -450,13 +471,19 @@ function playerHasTech(techMasks, techIndex, playerID) {
   return (mask & (1 << Number(playerID))) !== 0;
 }
 
-function hasTechPrereqs(techs, techMasks, playerID, techIndex, eraIndex) {
-  const tech = techs[techIndex] || {};
-  const techEra = Number(tech.era);
-  if (Number.isFinite(techEra) && techEra >= 0 && Number.isFinite(Number(eraIndex)) && techEra > Number(eraIndex)) return false;
+function getTechnologyPrerequisites(tech) {
   const prereqKeys = ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'];
-  for (const key of prereqKeys) {
-    const prereq = Number(tech[key]);
+  const source = tech || {};
+  return Array.isArray(source.prerequisites)
+    ? source.prerequisites
+    : prereqKeys.map((key) => source[key]);
+}
+
+function canTradeTechToPlayer(techs, techMasks, playerID, techIndex) {
+  const tech = techs[techIndex] || {};
+  const prerequisites = getTechnologyPrerequisites(tech);
+  for (const value of prerequisites) {
+    const prereq = Number(value);
     if (Number.isFinite(prereq) && prereq >= 0 && !playerHasTech(techMasks, prereq, playerID)) return false;
   }
   return true;
@@ -466,11 +493,12 @@ function hasResearchPrereqs(techs, techMasks, playerID, techIndex, eraIndex) {
   const tech = techs[techIndex] || {};
   const techEra = Number(tech.era);
   if (Number.isFinite(techEra) && techEra >= 0 && Number.isFinite(Number(eraIndex)) && techEra > Number(eraIndex)) return false;
-  const prerequisites = Array.isArray(tech.prerequisites) ? tech.prerequisites : [];
-  return prerequisites.every((value) => {
+  const prerequisites = getTechnologyPrerequisites(tech);
+  for (const value of prerequisites) {
     const prereq = Number(value);
-    return !Number.isFinite(prereq) || prereq < 0 || playerHasTech(techMasks, prereq, playerID);
-  });
+    if (Number.isFinite(prereq) && prereq >= 0 && !playerHasTech(techMasks, prereq, playerID)) return false;
+  }
+  return true;
 }
 
 function estimateTechCost(tech, techIndex, context) {
@@ -1708,6 +1736,418 @@ function uniqueRefs(refs, limit = 10) {
   return out;
 }
 
+function parseConfigBoolValue(value, fallback = false) {
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  if (!text) return fallback;
+  if (['1', 'true', 'yes', 'on', 'enabled'].includes(text)) return true;
+  if (['0', 'false', 'no', 'off', 'disabled'].includes(text)) return false;
+  return fallback;
+}
+
+function parseConfigIntValue(value, fallback = 0) {
+  const n = Number.parseInt(String(value == null ? '' : value).trim(), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function tokenizeConfigList(value) {
+  const text = String(value == null ? '' : value);
+  const items = [];
+  let current = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (ch === ',' && !quoted) {
+      const trimmed = current.trim();
+      if (trimmed) items.push(trimmed);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  const trimmed = current.trim();
+  if (trimmed) items.push(trimmed);
+  return items;
+}
+
+function configSectionFieldMap(section) {
+  const out = {};
+  for (const field of section && Array.isArray(section.fields) ? section.fields : []) {
+    const key = String(field && field.key || '').trim().toLowerCase();
+    if (!key) continue;
+    out[key] = String(field.value != null ? field.value : '');
+  }
+  return out;
+}
+
+function normalizeListKey(value) {
+  return canonicalKey(value);
+}
+
+function normalizeTerrainKey(value) {
+  const key = normalizeListKey(value);
+  const aliases = {
+    desert: 'desert',
+    deserts: 'desert',
+    plain: 'plains',
+    plains: 'plains',
+    grassland: 'grassland',
+    grasslands: 'grassland',
+    tundra: 'tundra',
+    tundras: 'tundra',
+    floodplain: 'floodplain',
+    floodplains: 'floodplain',
+    hill: 'hills',
+    hills: 'hills',
+    mountain: 'mountains',
+    mountains: 'mountains',
+    forest: 'forest',
+    forests: 'forest',
+    jungle: 'jungle',
+    jungles: 'jungle',
+    marsh: 'marsh',
+    marshes: 'marsh',
+    swamp: 'marsh',
+    swamps: 'marsh',
+    volcano: 'volcano',
+    volcanoes: 'volcano',
+    coast: 'coast',
+    coasts: 'coast',
+    sea: 'sea',
+    seas: 'sea',
+    ocean: 'ocean',
+    oceans: 'ocean',
+    river: 'river',
+    rivers: 'river',
+    any: 'any',
+  };
+  return aliases[key] || key;
+}
+
+function makeDistrictAlertConfig(section, fallbackIndex) {
+  const fields = configSectionFieldMap(section);
+  const name = String(fields.name || '').trim() || `District ${Number(fallbackIndex) + 1}`;
+  const list = (key) => tokenizeConfigList(fields[key]).map((item) => String(item || '').trim()).filter(Boolean);
+  return {
+    id: Number.isFinite(Number(section && section.index)) ? Number(section.index) : Number(fallbackIndex),
+    name,
+    key: normalizeListKey(name),
+    command: String(fields.command || '').trim(),
+    fields,
+    dependentImprovs: list('dependent_improvs'),
+    buildableOn: list('buildable_on'),
+    hasBuildableOn: Object.prototype.hasOwnProperty.call(fields, 'buildable_on'),
+    buildableOnRivers: parseConfigBoolValue(fields.buildable_on_rivers, false),
+    buildableWithoutRemoval: list('buildable_without_removal'),
+    buildableOnOverlays: list('buildable_on_overlays'),
+    buildableOnDistricts: list('buildable_on_districts'),
+    buildableAdjacentTo: list('buildable_adjacent_to'),
+    buildableAdjacentToDistricts: list('buildable_adjacent_to_districts'),
+    buildableAdjacentToOverlays: list('buildable_adjacent_to_overlays'),
+  };
+}
+
+function makeWonderAlertConfig(section, fallbackIndex) {
+  const config = makeDistrictAlertConfig(section, fallbackIndex);
+  const name = String(config.fields.name || '').trim() || `Wonder ${Number(fallbackIndex) + 1}`;
+  return {
+    ...config,
+    name,
+    key: normalizeListKey(name),
+    restrictedByCiv: [
+      'buildable_by_civs',
+      'buildable_by_civ_traits',
+      'buildable_by_civ_govs',
+      'buildable_by_civ_cultures',
+    ].some((key) => String(config.fields[key] || '').trim()),
+  };
+}
+
+function normalizeDistrictAlertContext(input) {
+  if (!input || typeof input !== 'object') return null;
+  const base = input.base && typeof input.base === 'object' ? input.base : {};
+  const districts = (Array.isArray(input.districts) ? input.districts : []).map(makeDistrictAlertConfig);
+  const wonders = (Array.isArray(input.wonders) ? input.wonders : []).map(makeWonderAlertConfig);
+  return {
+    base,
+    districts,
+    wonders,
+    districtsEnabled: parseConfigBoolValue(base.enable_districts, false),
+    wonderDistrictsEnabled: parseConfigBoolValue(base.enable_wonder_districts, false),
+    cityWorkRadius: Math.max(1, parseConfigIntValue(base.city_work_radius, 2)),
+  };
+}
+
+function tileKey(x, y) {
+  return `${Number(x)},${Number(y)}`;
+}
+
+function cityWorkableTiles(city, tiles, worldWidth, radius) {
+  if (!city || !Array.isArray(tiles)) return [];
+  const maxDistance = Math.max(1, Number(radius) || 2) + 1;
+  return tiles.filter((tile) => civ3CityDistance(city, tile, worldWidth) <= maxDistance);
+}
+
+function tileTerrainTokenSet(tile, terrainRecords) {
+  const set = new Set();
+  const terrainID = Number(tile && tile.terrainID);
+  const fixed = TERRAIN_ID_TO_C3X_TOKEN[terrainID];
+  if (fixed) set.add(normalizeTerrainKey(fixed));
+  const display = recordName(terrainRecords || [], terrainID, 'TERR', '');
+  if (display) set.add(normalizeTerrainKey(display));
+  if (tile && tile.river) set.add('river');
+  return set;
+}
+
+function terrainListMatchesTile(list, tile, terrainRecords, useDefault = true) {
+  const raw = Array.isArray(list) ? list : [];
+  if (raw.some((item) => normalizeTerrainKey(item) === 'any')) return true;
+  const wanted = raw.length > 0
+    ? new Set(raw.map(normalizeTerrainKey).filter(Boolean))
+    : (useDefault ? DEFAULT_DISTRICT_BUILDABLE_TERRAINS : new Set());
+  if (wanted.size === 0) return false;
+  const actual = tileTerrainTokenSet(tile, terrainRecords);
+  for (const token of wanted) {
+    if (actual.has(token)) return true;
+  }
+  return false;
+}
+
+function tileHasOverlayToken(tile, token, terrainRecords) {
+  const key = normalizeTerrainKey(token);
+  if (!key) return false;
+  if (key === 'road' || key === 'roads') return !!(tile && tile.roaded);
+  if (key === 'railroad' || key === 'railroads') return !!(tile && tile.railroaded);
+  if (key === 'mine' || key === 'mines') return !!(tile && tile.mined);
+  if (key === 'irrigation' || key === 'irrigated') return !!(tile && tile.irrigated);
+  if (key === 'river' || key === 'rivers') return !!(tile && tile.river);
+  return tileTerrainTokenSet(tile, terrainRecords).has(key);
+}
+
+function anyOverlayMatches(tile, tokens, terrainRecords) {
+  return (Array.isArray(tokens) ? tokens : []).some((token) => tileHasOverlayToken(tile, token, terrainRecords));
+}
+
+function adjacentTiles(tile, tileByCoord) {
+  if (!tile || !(tileByCoord instanceof Map)) return [];
+  const x = Number(tile.x);
+  const y = Number(tile.y);
+  const deltas = [
+    [-2, 0], [2, 0],
+    [-1, -1], [1, -1],
+    [-1, 1], [1, 1],
+    [0, -2], [0, 2],
+  ];
+  return deltas.map(([dx, dy]) => tileByCoord.get(tileKey(x + dx, y + dy))).filter(Boolean);
+}
+
+function completedDistrictAtTile(tile, districtByCoord, districtConfigs) {
+  const row = districtByCoord instanceof Map ? districtByCoord.get(tileKey(tile && tile.x, tile && tile.y)) : null;
+  if (!row || Number(row.state) !== DISTRICT_COMPLETED_STATE) return null;
+  const districtID = Number(row.districtID);
+  const config = (districtConfigs || [])[districtID] || null;
+  return {
+    row,
+    districtID,
+    name: config ? config.name : `District ${districtID}`,
+    key: config ? config.key : normalizeListKey(`District ${districtID}`),
+  };
+}
+
+function tileMatchesDistrictBuildability(config, tile, evalContext, wonderConfig = null) {
+  if (!config || !tile) return false;
+  if (Number(tile.cityID) >= 0) return false;
+  const terrainRecords = evalContext.terrainRecords || [];
+  const tileByCoord = evalContext.tileByCoord;
+  const districtByCoord = evalContext.districtByCoord;
+  const districtConfigs = evalContext.districtConfigs || [];
+  const buildableOn = wonderConfig ? wonderConfig.buildableOn : config.buildableOn;
+  const hasBuildableOn = wonderConfig ? wonderConfig.hasBuildableOn : config.hasBuildableOn;
+  const squareMatches = terrainListMatchesTile(buildableOn, tile, terrainRecords, !hasBuildableOn || buildableOn.length === 0);
+  const requiredOverlays = [...(config.buildableOnOverlays || []), ...((wonderConfig && wonderConfig.buildableOnOverlays) || [])];
+  const overlayRequired = requiredOverlays.length > 0;
+  if (overlayRequired && !anyOverlayMatches(tile, requiredOverlays, terrainRecords)) return false;
+  const overlayAllowed = anyOverlayMatches(tile, config.buildableWithoutRemoval, terrainRecords);
+  if ((config.buildableOnRivers || (wonderConfig && wonderConfig.buildableOnRivers)) && !tile.river) return false;
+  if (!squareMatches && !overlayAllowed && !overlayRequired) return false;
+
+  if ((config.buildableOnDistricts || []).length > 0) {
+    const current = completedDistrictAtTile(tile, districtByCoord, districtConfigs);
+    const wanted = new Set(config.buildableOnDistricts.map(normalizeListKey));
+    if (!current || !wanted.has(current.key)) return false;
+  }
+
+  const adjacent = adjacentTiles(tile, tileByCoord);
+  const adjacentTerrain = [...(config.buildableAdjacentTo || []), ...((wonderConfig && wonderConfig.buildableAdjacentTo) || [])];
+  if (adjacentTerrain.length > 0) {
+    const allowCity = adjacentTerrain.some((item) => normalizeListKey(item) === 'city');
+    const terrainTokens = adjacentTerrain.filter((item) => normalizeListKey(item) !== 'city');
+    const cityAdjacent = adjacent.some((item) => Number(item.cityID) >= 0);
+    if (cityAdjacent && !allowCity) return false;
+    const matches = (allowCity && cityAdjacent)
+      || adjacent.some((item) => terrainListMatchesTile(terrainTokens, item, terrainRecords, false));
+    if (!matches) return false;
+  }
+  const adjacentDistricts = config.buildableAdjacentToDistricts || [];
+  if (adjacentDistricts.length > 0) {
+    const wanted = new Set(adjacentDistricts.map(normalizeListKey));
+    const matches = adjacent.some((item) => {
+      const current = completedDistrictAtTile(item, districtByCoord, districtConfigs);
+      return current && wanted.has(current.key);
+    });
+    if (!matches) return false;
+  }
+  const adjacentOverlays = config.buildableAdjacentToOverlays || [];
+  if (adjacentOverlays.length > 0 && !adjacent.some((item) => anyOverlayMatches(item, adjacentOverlays, terrainRecords))) return false;
+  return true;
+}
+
+function cityHasCompletedDistrict(city, districtID, evalContext, options = {}) {
+  const tiles = cityWorkableTiles(city, evalContext.territoryTiles, evalContext.worldWidth, evalContext.cityWorkRadius);
+  return tiles.some((tile) => {
+    const current = completedDistrictAtTile(tile, evalContext.districtByCoord, evalContext.districtConfigs);
+    if (!current || Number(current.districtID) !== Number(districtID)) return false;
+    if (options.requireRiver && !tile.river) return false;
+    return true;
+  });
+}
+
+function findDistrictCandidateTile(city, districtConfig, evalContext, wonderConfig = null) {
+  if (!city || !districtConfig) return null;
+  const tiles = cityWorkableTiles(city, evalContext.territoryTiles, evalContext.worldWidth, evalContext.cityWorkRadius);
+  return tiles.find((tile) => Number(tile.owner) === Number(city.owner)
+    && tileMatchesDistrictBuildability(districtConfig, tile, evalContext, wonderConfig)) || null;
+}
+
+function collectUnconnectedResourceWarnings(context) {
+  const {
+    territoryTiles, resources, humanTradeTail, techMasks, playerID, ruleSignatures,
+  } = context || {};
+  if (!Array.isArray(territoryTiles) || !Array.isArray(resources) || !humanTradeTail || !Number.isFinite(Number(playerID))) return [];
+  const grouped = new Map();
+  for (const tile of territoryTiles) {
+    if (Number(tile.owner) !== Number(playerID)) continue;
+    const resourceID = Number(tile.resource);
+    if (!Number.isFinite(resourceID) || resourceID < 0 || resourceID >= resources.length) continue;
+    const resource = resources[resourceID];
+    if (!isTradeNetworkResource(resource)) continue;
+    if (!hasResourcePrereq(resource, techMasks, playerID)) continue;
+    const count = Number(humanTradeTail.resourceCounts && humanTradeTail.resourceCounts[resourceID]) || 0;
+    if (count > 0) continue;
+    if (!grouped.has(resourceID)) grouped.set(resourceID, []);
+    grouped.get(resourceID).push(tile);
+  }
+  return [...grouped.entries()].map(([resourceID, tiles]) => {
+    const name = resourceName(resources, resourceID) || `Resource ${resourceID}`;
+    return {
+      resourceID,
+      name,
+      count: tiles.length,
+      tiles: tiles.slice(0, 8).map((tile) => ({ x: tile.x, y: tile.y })),
+      ref: makeRef('resources', 'GOOD', resourceID, name, ruleSignatures),
+    };
+  }).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+function isTradeNetworkResource(resource) {
+  const type = Number(resource && resource.type);
+  return type === 1 || type === 2;
+}
+
+function collectDistrictOpportunityWarnings(context) {
+  const {
+    districtAlertContext, report, culture, buildings, terrainRecords, territoryTiles, districtRows, allPlayersMode,
+  } = context || {};
+  if (allPlayersMode) return { buildings: [], wonders: [] };
+  const cfg = normalizeDistrictAlertContext(districtAlertContext);
+  if (!cfg || !cfg.districtsEnabled || cfg.districts.length === 0) return { buildings: [], wonders: [] };
+  const worldWidth = Number(report && report.world && report.world.width) || 0;
+  const tileByCoord = new Map((territoryTiles || []).map((tile) => [tileKey(tile.x, tile.y), tile]));
+  const districtByCoord = new Map((districtRows || []).map((row) => [tileKey(row.x, row.y), row]));
+  const evalContext = {
+    territoryTiles: territoryTiles || [],
+    terrainRecords: terrainRecords || [],
+    worldWidth,
+    tileByCoord,
+    districtByCoord,
+    districtConfigs: cfg.districts,
+    cityWorkRadius: cfg.cityWorkRadius,
+  };
+  const nameToBuildingIndex = new Map((buildings || []).map((building, index) => [
+    normalizeListKey(recordName(buildings, index, 'BLDG', '')),
+    index,
+  ]));
+  const prereqByBuilding = new Map();
+  cfg.districts.forEach((district) => {
+    for (const item of district.dependentImprovs || []) {
+      const buildingIndex = nameToBuildingIndex.get(normalizeListKey(item));
+      if (!Number.isFinite(buildingIndex)) continue;
+      if (!prereqByBuilding.has(buildingIndex)) prereqByBuilding.set(buildingIndex, []);
+      prereqByBuilding.get(buildingIndex).push(district);
+    }
+  });
+
+  const cityById = new Map((report && report.cities && report.cities.records || []).map((city) => [Number(city.id), city]));
+  const buildingRowsByCity = culture && culture.buildingRowsByCity || {};
+  const buildingWarnings = [];
+  const wonderWarnings = [];
+  const wonderDistrict = cfg.districts[WONDER_DISTRICT_ID]
+    || cfg.districts.find((district) => normalizeListKey(district.name) === 'wonderdistrict')
+    || null;
+
+  for (const [cityIDText, rows] of Object.entries(buildingRowsByCity)) {
+    const city = cityById.get(Number(cityIDText));
+    if (!city || !Array.isArray(rows)) continue;
+    for (const row of rows) {
+      if (!row || row.statusKind !== 'available') continue;
+      const buildingIndex = Number(row.buildingIndex);
+      const building = buildings && buildings[buildingIndex];
+      const isWonder = isWonderBuilding(building);
+      const requiresRiverDistrict = (((Number(building && building.improvements) || 0) >>> 0) & 0x8000) !== 0;
+      const prereqDistricts = prereqByBuilding.get(buildingIndex) || [];
+      if (isWonder && cfg.wonderDistrictsEnabled && wonderDistrict && prereqDistricts.some((district) => Number(district.id) === WONDER_DISTRICT_ID)) {
+        const wonderConfig = cfg.wonders.find((wonder) => wonder.key === normalizeListKey(row.name)) || null;
+        if (wonderConfig && wonderConfig.restrictedByCiv) continue;
+        if (cityHasCompletedDistrict(city, WONDER_DISTRICT_ID, evalContext, { requireRiver: requiresRiverDistrict })) continue;
+        const candidate = findDistrictCandidateTile(city, wonderDistrict, evalContext, wonderConfig);
+        if (!candidate) continue;
+        if (districtByCoord.has(tileKey(candidate.x, candidate.y))) continue;
+        wonderWarnings.push({
+          cityID: Number(city.id),
+          city: city.name || `City ${city.id}`,
+          buildingIndex,
+          name: row.name,
+          ref: row.ref,
+          district: wonderDistrict.name,
+          tile: { x: candidate.x, y: candidate.y },
+        });
+        continue;
+      }
+      const missing = prereqDistricts.find((district) => !cityHasCompletedDistrict(city, district.id, evalContext, { requireRiver: requiresRiverDistrict }));
+      if (!missing || Number(missing.id) === WONDER_DISTRICT_ID) continue;
+      const candidate = findDistrictCandidateTile(city, missing, evalContext);
+      if (!candidate) continue;
+      buildingWarnings.push({
+        cityID: Number(city.id),
+        city: city.name || `City ${city.id}`,
+        buildingIndex,
+        name: row.name,
+        ref: row.ref,
+        district: missing.name,
+        tile: { x: candidate.x, y: candidate.y },
+      });
+    }
+  }
+  const sorter = (a, b) => String(a.city).localeCompare(String(b.city)) || String(a.name).localeCompare(String(b.name));
+  return {
+    buildings: buildingWarnings.sort(sorter),
+    wonders: wonderWarnings.sort(sorter),
+  };
+}
+
 function summarizeTradeRows(rows, getRefs, limit = 4) {
   const source = Array.isArray(rows) ? rows : [];
   const shown = source.slice(0, limit).map((row) => `${row.nation}: ${joinNames(getRefs(row), 3)}`).filter(Boolean);
@@ -1717,6 +2157,7 @@ function summarizeTradeRows(rows, getRefs, limit = 4) {
 function makeAlertsReport(context) {
   const {
     report, gameDate, timePlayed, economy, production, military, technology, cities, tradeRows, currentTradeRows,
+    unconnectedResources, districtOpportunities,
   } = context;
   const alerts = [];
   const status = [
@@ -1749,51 +2190,6 @@ function makeAlertsReport(context) {
       `${row.name} is running a local deficit`,
       `${row.name} nets ${row.netGold} gold after maintenance.`,
       { tab: 'economy', sort: 20 }
-    ));
-  });
-
-  (cities && cities.rows || []).forEach((row) => {
-    if (Number(row.plusValue) < 0) {
-      alerts.push(makeAlert(
-        `city-riot-${row.id}`,
-        'critical',
-        'Cities',
-        `${row.city} may riot`,
-        `${row.city} has more unhappy citizens than happy citizens.`,
-        { tab: 'cities', cityArt: row.cityArt, sort: 30 }
-      ));
-    }
-    if (Number(row.pollution) > 0) {
-      alerts.push(makeAlert(
-        `city-pollution-${row.id}`,
-        'warning',
-        'Cities',
-        `${row.city} has pollution`,
-        `${row.city} has ${row.pollution} pollution marker${Number(row.pollution) === 1 ? '' : 's'}.`,
-        { tab: 'cities', cityArt: row.cityArt, sort: 40 }
-      ));
-    }
-  });
-
-  const productionOverrunRows = (production && production.rows || []).filter((row) => Number(row.overrun) > 0);
-  productionOverrunRows.forEach((row) => {
-    alerts.push(makeAlert(
-      `production-overrun-${row.cityID}`,
-      Number(row.turns) <= 1 ? 'warning' : 'info',
-      'Production',
-      `${row.city} will overrun production`,
-      `${row.producing} is projected to waste ${row.overrun} shield${Number(row.overrun) === 1 ? '' : 's'}${Number(row.turns) > 0 ? ` in ${row.turns} turn${Number(row.turns) === 1 ? '' : 's'}` : ''}.`,
-      {
-        tab: 'production',
-        refs: [row.producingRef],
-        detailRows: [
-          { label: 'City', value: row.city },
-          { label: 'Build', items: [{ name: row.producing, ref: row.producingRef }] },
-          { label: 'Progress', value: `${row.collected} / ${row.cost} shields` },
-          { label: 'Projected waste', value: `${row.overrun} shield${Number(row.overrun) === 1 ? '' : 's'}` },
-        ],
-        sort: 50 + Math.max(0, Number(row.turns) || 0),
-      }
     ));
   });
 
@@ -1940,34 +2336,66 @@ function makeAlertsReport(context) {
     ));
   }
 
-  if (technology && technology.progress && technology.progress.remaining && Number(technology.progress.remaining.turns) <= 1) {
+  const unconnected = Array.isArray(unconnectedResources) ? unconnectedResources : [];
+  if (unconnected.length > 0) {
     alerts.push(makeAlert(
-      'research-overrun',
+      'unconnected-resources',
       'warning',
-      'Research',
-      `${technology.currentProject || 'Research'} completes next turn`,
-      `${technology.progress.remaining.beakers} beakers remain; end wastage is ${technology.progress.endWastage && technology.progress.endWastage.beakers || 0}.`,
+      'Resources',
+      `${unconnected.length} resource${unconnected.length === 1 ? '' : 's'} in our territory ${unconnected.length === 1 ? 'is' : 'are'} unconnected`,
+      unconnected.map((row) => `${row.name}: ${row.count} source${Number(row.count) === 1 ? '' : 's'}`).join('; '),
       {
-        tab: 'techs',
-        refs: [technology.currentProjectRef],
-        detailRows: [
-          { label: 'Project', items: [{ name: technology.currentProject, ref: technology.currentProjectRef }] },
-          { label: 'Remaining', value: `${technology.progress.remaining.beakers} beakers` },
-          { label: 'End wastage', value: `${technology.progress.endWastage && technology.progress.endWastage.beakers || 0} beakers` },
-        ],
-        sort: 130,
+        tab: 'territory',
+        refs: uniqueRefs(unconnected.map((row) => row.ref)),
+        detailRows: unconnected.map((row) => ({
+          label: row.name,
+          labelRef: row.ref,
+          value: row.tiles.map((tile) => `${tile.x},${tile.y}`).join('; '),
+        })),
+        sort: 150,
       }
     ));
   }
 
-  if (military && military.summary && Number(military.summary.damaged) > 0) {
+  const districtBuildings = districtOpportunities && Array.isArray(districtOpportunities.buildings) ? districtOpportunities.buildings : [];
+  if (districtBuildings.length > 0) {
     alerts.push(makeAlert(
-      'damaged-units',
-      'warning',
-      'Military',
-      `${military.summary.damaged} unit${Number(military.summary.damaged) === 1 ? '' : 's'} damaged`,
-      'Damaged units are visible in the Military units list.',
-      { tab: 'military', subtab: 'units', sort: 140 }
+      'district-building-opportunities',
+      'opportunity',
+      'Districts',
+      `${districtBuildings.length} building${districtBuildings.length === 1 ? '' : 's'} could unlock with districts`,
+      districtBuildings.slice(0, 6).map((row) => `${row.city}: ${row.name} via ${row.district}`).join('; '),
+      {
+        tab: 'culture',
+        refs: uniqueRefs(districtBuildings.map((row) => row.ref)),
+        detailRows: districtBuildings.map((row) => ({
+          label: row.city,
+          items: [{ name: row.name, ref: row.ref }],
+          value: `${row.district} at ${row.tile.x},${row.tile.y}`,
+        })),
+        sort: 160,
+      }
+    ));
+  }
+
+  const districtWonders = districtOpportunities && Array.isArray(districtOpportunities.wonders) ? districtOpportunities.wonders : [];
+  if (districtWonders.length > 0) {
+    alerts.push(makeAlert(
+      'wonder-district-opportunities',
+      'opportunity',
+      'Districts',
+      `${districtWonders.length} wonder${districtWonders.length === 1 ? '' : 's'} could unlock with Wonder Districts`,
+      districtWonders.slice(0, 6).map((row) => `${row.city}: ${row.name} at ${row.tile.x},${row.tile.y}`).join('; '),
+      {
+        tab: 'culture',
+        refs: uniqueRefs(districtWonders.map((row) => row.ref)),
+        detailRows: districtWonders.map((row) => ({
+          label: row.city,
+          items: [{ name: row.name, ref: row.ref }],
+          value: `${row.district} at ${row.tile.x},${row.tile.y}`,
+        })),
+        sort: 170,
+      }
     ));
   }
 
@@ -2003,14 +2431,6 @@ function makeAlertsReport(context) {
       alertIds: ['will-talk'],
     },
     {
-      id: 'production',
-      label: 'Production overrun',
-      status: 'Active',
-      note: 'Uses saved city production and projected shield overflow.',
-      tab: 'production',
-      alertIdPrefixes: ['production-overrun-'],
-    },
-    {
       id: 'economy',
       label: 'Treasury and city deficits',
       status: 'Active',
@@ -2020,29 +2440,20 @@ function makeAlertsReport(context) {
       alertIdPrefixes: ['city-deficit-'],
     },
     {
-      id: 'research',
-      label: 'Research completion overrun',
+      id: 'resources',
+      label: 'Unconnected resources',
       status: 'Active',
-      note: 'Fires when the current research project is due next turn.',
-      tab: 'techs',
-      alertIds: ['research-overrun'],
+      note: 'Compares owned resource tiles against the save trade-network resource counts.',
+      tab: 'territory',
+      alertIds: ['unconnected-resources'],
     },
     {
-      id: 'cities',
-      label: 'City riot and pollution warnings',
+      id: 'districts',
+      label: 'District build opportunities',
       status: 'Active',
-      note: 'Uses saved city morale and visible city pollution values.',
-      tab: 'cities',
-      alertIdPrefixes: ['city-riot-', 'city-pollution-'],
-    },
-    {
-      id: 'military',
-      label: 'Damaged units',
-      status: 'Active',
-      note: 'Uses saved unit health and links to the Military units list.',
-      tab: 'military',
-      subtab: 'units',
-      alertIds: ['damaged-units'],
+      note: 'Uses the loaded C3X district and wonder configs with saved city-radius terrain.',
+      tab: 'culture',
+      alertIds: ['district-building-opportunities', 'wonder-district-opportunities'],
     },
   ];
 
@@ -2275,7 +2686,7 @@ function makeDiplomacyReport({ tradeRows, humanVisible, humanTradeTail, currentT
     rows,
     coverage: [
       { label: 'Contact, relation, will talk', status: 'Active', note: 'Read from live LEAD diplomacy vectors.' },
-      { label: 'Culture comparison', status: 'Active', note: 'Ratio-based label using saved culture totals; exact CivAssist thresholds still need confirmation.' },
+      { label: 'Culture comparison', status: 'Active', note: 'Ratio-based label using saved culture totals; exact Civ Advisor thresholds still need confirmation.' },
       { label: 'Embassy, spy, ROP, MPP, alliances', status: 'Planned', note: 'Live save offsets are not yet verified, so the tab does not guess.' },
       { label: 'Trade context', status: 'Active', note: 'Shows active timed deal counts plus current buy/sell opportunity counts.' },
     ],
@@ -2313,15 +2724,21 @@ function resourceTradeItemsForExport(resources, techMasks, exporter, exporterTra
   return items;
 }
 
-function inspectCivAssistSaveFile(filePath, options = {}) {
+function inspectCivAdvisorSaveFile(filePath, options = {}) {
   if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: `SAV file not found: ${filePath || '(empty path)'}` };
-  const inflated = inflateSavIfNeeded(fs.readFileSync(filePath));
+  const raw = fs.readFileSync(filePath);
+  const inflated = inflateSavIfNeeded(raw);
   if (!inflated.ok) return inflated;
-  const extract = extractEmbeddedBiqFromSavFile(filePath);
+  const extract = extractEmbeddedBiqFromSavBuffer(inflated.buffer);
   if (!extract.ok) return extract;
   const parsed = parseAllSections(extract.buffer);
   if (!parsed.ok) return { ok: false, error: `Embedded BIQ parse failed: ${parsed.error || 'unknown error'}` };
-  const report = inspectSavFile(filePath);
+  const report = inspectSavBuffer(inflated.buffer, {
+    sourcePath: filePath,
+    inflated,
+    extract,
+    parsed,
+  });
   if (!report.ok) return report;
 
   const gameRules = section(parsed, 'GAME').records[0] || {};
@@ -2521,8 +2938,8 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
       const humanHas = playerHasTech(techMasks, i, human.playerID);
       const rivalHas = playerHasTech(techMasks, i, row.playerID);
       const item = { name: techName, ref: makeRef('technologies', 'TECH', i, techName, ruleSignatures) };
-      if (humanHas && !rivalHas && hasTechPrereqs(techs, techMasks, row.playerID, i, playerDetails.era)) sellTechs.push(item);
-      if (rivalHas && !humanHas && hasTechPrereqs(techs, techMasks, human.playerID, i, humanDetails.era)) buyTechs.push(item);
+      if (humanHas && !rivalHas && canTradeTechToPlayer(techs, techMasks, row.playerID, i)) sellTechs.push(item);
+      if (rivalHas && !humanHas && canTradeTechToPlayer(techs, techMasks, human.playerID, i)) buyTechs.push(item);
     }
     const rivalExportPlayer = {
       playerID: Number(row.playerID),
@@ -2745,6 +3162,25 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     players,
     allPlayersMode,
   });
+  const districtRows = parseC3XDistrictTileMap(inflated.buffer);
+  const unconnectedResources = allPlayersMode ? [] : collectUnconnectedResourceWarnings({
+    territoryTiles,
+    resources,
+    humanTradeTail,
+    techMasks,
+    playerID: human.playerID,
+    ruleSignatures,
+  });
+  const districtOpportunities = collectDistrictOpportunityWarnings({
+    districtAlertContext: options && options.districtAlertContext,
+    report,
+    culture,
+    buildings,
+    terrainRecords,
+    territoryTiles,
+    districtRows,
+    allPlayersMode,
+  });
   const alerts = makeAlertsReport({
     report,
     gameDate,
@@ -2756,6 +3192,8 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
     cities,
     tradeRows,
     currentTradeRows,
+    unconnectedResources,
+    districtOpportunities,
   });
 
   return {
@@ -2847,6 +3285,13 @@ function inspectCivAssistSaveFile(filePath, options = {}) {
 }
 
 module.exports = {
-  inspectCivAssistSaveFile,
+  inspectCivAdvisorSaveFile,
   makeRuleSectionSignature,
+  _test: {
+    canTradeTechToPlayer,
+    collectDistrictOpportunityWarnings,
+    collectUnconnectedResourceWarnings,
+    normalizeDistrictAlertContext,
+    tileMatchesDistrictBuildability,
+  },
 };

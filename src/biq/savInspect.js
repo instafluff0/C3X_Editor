@@ -942,11 +942,20 @@ function buildDebugBiqBufferFromSaveData({ extract, parsed, game, world, tiles, 
 }
 
 function inspectSavBuffer(input, options = {}) {
-  const inflated = inflateSavIfNeeded(input);
+  const suppliedInflated = options && options.inflated && Buffer.isBuffer(options.inflated.buffer)
+    ? options.inflated
+    : null;
+  const inflated = suppliedInflated || inflateSavIfNeeded(input);
   if (!inflated.ok) return inflated;
-  const extract = extractEmbeddedBiqFromSavBuffer(inflated.buffer);
+  const suppliedExtract = options && options.extract && options.extract.ok && Buffer.isBuffer(options.extract.buffer)
+    ? options.extract
+    : null;
+  const extract = suppliedExtract || extractEmbeddedBiqFromSavBuffer(inflated.buffer);
   if (!extract.ok) return extract;
-  const parsed = parseAllSections(extract.buffer);
+  const suppliedParsed = options && options.parsed && options.parsed.ok && Array.isArray(options.parsed.sections)
+    ? options.parsed
+    : null;
+  const parsed = suppliedParsed || parseAllSections(extract.buffer);
   if (!parsed.ok) return { ok: false, error: `Embedded BIQ parse failed: ${parsed.error || 'unknown error'}` };
 
   const names = {

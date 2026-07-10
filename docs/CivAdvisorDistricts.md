@@ -248,7 +248,7 @@ The Techs tab also needs a separate current-value correction: current code estim
 As of this note:
 
 - Civ Advisor already reads many saved city aggregate fields directly.
-- `src/biq/civAssist.js` parses `district_tile_map` for territory classification.
+- `src/biq/civAdvisor.js` parses `district_tile_map` for territory classification.
 - A regression covers the Tokugawa fixture's 90 saved district instances and 40 owned-land district tiles.
 - Civ Advisor does not yet parse `district_config_names`, `natural_wonder_districts`, or `distribution_hub_records` into a structured public report.
 - Civ Advisor does not yet load/match effective C3X district configs for district-based explanations or projections.

@@ -82,7 +82,7 @@
     </template>
 
     <div class="floating-tools" aria-label="Quick tools">
-      <button id="civassist-toggle" class="debug-fab civassist-fab" title="Open Civ Advisor">CA</button>
+      <button id="civadvisor-toggle" class="debug-fab civadvisor-fab" title="Open Civ Advisor">CA</button>
       <button id="files-read-toggle" class="debug-fab files-read-fab" title="Show files read">📄</button>
       <button id="debug-toggle" class="debug-fab" title="Open Debug Log">🛠</button>
       <div class="floating-font-controls" aria-label="Font size controls">
@@ -105,28 +105,28 @@
       <pre id="debug-log"></pre>
     </section>
 
-    <div id="civassist-modal-overlay" class="civassist-modal-overlay hidden" aria-hidden="true">
-      <div class="civassist-modal-panel" role="dialog" aria-modal="true" aria-label="Civ Advisor">
-        <div class="civassist-modal-header">
-          <div class="civassist-modal-head">
-            <strong id="civassist-modal-title">Civ Advisor</strong>
-            <span id="civassist-modal-source">No save loaded</span>
+    <div id="civadvisor-modal-overlay" class="civadvisor-modal-overlay hidden" aria-hidden="true">
+      <div class="civadvisor-modal-panel" role="dialog" aria-modal="true" aria-label="Civ Advisor">
+        <div class="civadvisor-modal-header">
+          <div class="civadvisor-modal-head">
+            <strong id="civadvisor-modal-title">Civ Advisor</strong>
+            <span id="civadvisor-modal-source">No save loaded</span>
           </div>
-          <div class="civassist-modal-actions">
-            <select id="civassist-save-select" class="mode-pill mode-select civassist-save-select" aria-label="Choose Civ III save">
+          <div class="civadvisor-modal-actions">
+            <select id="civadvisor-save-select" class="mode-pill mode-select civadvisor-save-select" aria-label="Choose Civ III save">
               <option value="">Choose SAV...</option>
               <optgroup label="Other">
                 <option value="__browse__">Browse...</option>
               </optgroup>
             </select>
-            <label class="bool-toggle civassist-auto-update" title="Check every 5 seconds and switch to the newest save">
-              <input id="civassist-follow-latest" type="checkbox" />
+            <label class="bool-toggle civadvisor-auto-update" title="Check every 5 seconds and switch to the newest save">
+              <input id="civadvisor-follow-latest" type="checkbox" />
               <span>Auto-update</span>
             </label>
-            <button id="civassist-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
+            <button id="civadvisor-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
           </div>
         </div>
-        <div id="civassist-modal-body" class="civassist-modal-body"></div>
+        <div id="civadvisor-modal-body" class="civadvisor-modal-body"></div>
       </div>
     </div>
 

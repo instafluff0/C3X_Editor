@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const { saveBundle, createScenario, deleteScenario, loadMapImport } = require('./configCore');
 const { auditBundle } = require('./bundleAudit');
+const { inspectCivAdvisorSaveFile } = require('./biq/civAdvisor');
 const log = require('./log');
 
 function resolveCiv3RootPath(civ3Path) {
@@ -63,6 +64,11 @@ function run() {
       result = loadMapImport(payload);
     } else if (task === 'validateBundle') {
       result = auditBundle(payload);
+    } else if (task === 'inspectCivAdvisorSave') {
+      result = inspectCivAdvisorSaveFile(payload && (payload.filePath || payload.path), {
+        selectedPlayerID: payload && payload.selectedPlayerID,
+        districtAlertContext: payload && payload.districtAlertContext
+      });
     } else {
       throw new Error(`Unknown worker task: ${task || '(empty)'}`);
     }

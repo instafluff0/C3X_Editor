@@ -1,4 +1,4 @@
-# CivAssist General Tab Notes
+# Civ Advisor General Tab Notes
 
 These notes capture the first pass at recreating CivAssist II's General tab from a `.SAV`.
 
@@ -112,13 +112,13 @@ For visible rivals in the reference save:
 
 Japan's `Score: 760` appears in the untagged tail area between live city data and `TUTR`. For this save, find the active-player power vector from `LEAD body +12` values after `cityEnd`; the next active-player int32 vector is score, and the next vector is culture totals.
 
-The parser is covered by `test/civAssistGeneral.test.js`, which asserts every visible General value from the Tokugawa 740 AD screenshot when the local save is present.
+The parser is covered by `test/civAdvisorGeneral.test.js`, which asserts every visible General value from the Tokugawa 740 AD screenshot when the local save is present.
 
 ## Rule Matching For Links
 
 The `.SAV` embedded BIQ rules are authoritative for Civ Advisor labels. Do not assume the currently loaded editor bundle is the same scenario as the selected save.
 
-Civ Advisor reference links and thumbnails must be conditional. For the General tab, `src/biq/civAssist.js` emits section signatures for:
+Civ Advisor reference links and thumbnails must be conditional. For the General tab, `src/biq/civAdvisor.js` emits section signatures for:
 
 - `RACE`: civilization name, Civilopedia key
 - `TECH`: technology name, Civilopedia key, era index
@@ -127,7 +127,7 @@ Civ Advisor reference links and thumbnails must be conditional. For the General 
 - `GOVT`: name, Civilopedia key
 - `ERAS`: name, Civilopedia key
 
-The renderer compares these save-embedded signatures against the currently loaded bundle before turning a value into a link or loading a current-bundle thumbnail. If a section signature differs, display the save-native text without a link. The Tokugawa reference save matches `Scenarios/Instafluff_Scenario.biq` for `RACE`, `GOOD`, `GOVT`, and `ERAS`; `test/civAssistGeneral.test.js` covers this.
+The renderer compares these save-embedded signatures against the currently loaded bundle before turning a value into a link or loading a current-bundle thumbnail. If a section signature differs, display the save-native text without a link. The Tokugawa reference save matches `Scenarios/Instafluff_Scenario.biq` for `RACE`, `GOOD`, `GOVT`, and `ERAS`; `test/civAdvisorGeneral.test.js` covers this.
 
 ## Diplomacy
 
@@ -137,7 +137,7 @@ This should be verified against another save before treating the offset as final
 
 ## Recommended Next Implementation Step
 
-Next CivAssist tabs should reuse `src/biq/civAssist.js` and add parser fields behind tests before exposing UI. Treat offsets validated only against this save, such as the diplomacy vector and score tail, as candidates for cross-save verification.
+Next Civ Advisor tabs should reuse `src/biq/civAdvisor.js` and add parser fields behind tests before exposing UI. Treat offsets validated only against this save, such as the diplomacy vector and score tail, as candidates for cross-save verification.
 
 ## Alerts Tab Notes
 

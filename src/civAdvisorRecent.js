@@ -8,7 +8,7 @@ function resolveCiv3RootPath(civ3Path) {
   return base === 'conquests' || base === 'civ3ptw' ? path.dirname(target) : target;
 }
 
-function listRecentCivAssistSaves(civ3Path, requestedLimit = 10) {
+function listRecentCivAdvisorSaves(civ3Path, requestedLimit = 10) {
   const root = resolveCiv3RootPath(civ3Path);
   const savesDir = root ? path.join(root, 'Conquests', 'Saves') : '';
   const limit = Math.max(1, Math.min(50, Number.parseInt(requestedLimit, 10) || 10));
@@ -51,6 +51,6 @@ function listRecentCivAssistSaves(civ3Path, requestedLimit = 10) {
 }
 
 module.exports = {
-  listRecentCivAssistSaves,
+  listRecentCivAdvisorSaves,
   resolveCiv3RootPath
 };

@@ -6,8 +6,7 @@ const { execFile } = require('node:child_process');
 const { loadBundle, previewSavePlan, previewFileDiff, deleteScenario, materializeMapTab, encodeTextBuffer, inspectScenarioCivColorPalettes, inspectAudioFileBasic } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 const { handleFlicWorkshop } = require('./src/flcWorkshop');
-const { inspectCivAssistSaveFile } = require('./src/biq/civAssist');
-const { listRecentCivAssistSaves } = require('./src/civAssistRecent');
+const { listRecentCivAdvisorSaves } = require('./src/civAdvisorRecent');
 const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -1834,11 +1833,11 @@ ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
   }
 });
 
-ipcMain.handle('manager:list-recent-civ-assist-saves', async (_event, payload) => {
+ipcMain.handle('manager:list-recent-civ-advisor-saves', async (_event, payload) => {
   try {
-    return listRecentCivAssistSaves(payload && payload.civ3Path, payload && payload.limit);
+    return listRecentCivAdvisorSaves(payload && payload.civ3Path, payload && payload.limit);
   } catch (err) {
-    log.error('civAssist', `Could not list recent SAV files: ${err.message}`);
+    log.error('civAdvisor', `Could not list recent SAV files: ${err.message}`);
     return { ok: false, error: err && err.message ? err.message : 'Could not list recent SAV files.', savesDir: '', saves: [] };
   }
 });
@@ -2017,23 +2016,25 @@ ipcMain.handle('manager:inspect-civ-color-palettes', async (_event, payload) => 
   }
 });
 
-ipcMain.handle('manager:inspect-civ-assist-save', async (_event, payload) => {
+ipcMain.handle('manager:inspect-civ-advisor-save', async (_event, payload) => {
   try {
     const request = payload && typeof payload === 'object' && !Buffer.isBuffer(payload)
       ? payload
       : { filePath: payload };
     const target = String(request.filePath || request.path || '');
-    const result = inspectCivAssistSaveFile(target, {
-      selectedPlayerID: request.selectedPlayerID
+    const result = await runWorkerTask('inspectCivAdvisorSave', {
+      filePath: target,
+      selectedPlayerID: request.selectedPlayerID,
+      districtAlertContext: request.districtAlertContext || null
     });
     if (!result || !result.ok) {
-      log.warn('civAssist', `SAV inspect failed: ${result && result.error}`);
+      log.warn('civAdvisor', `SAV inspect failed: ${result && result.error}`);
     } else {
-      log.info('civAssist', `Loaded ${log.rel(target)} for Civ Advisor.`);
+      log.info('civAdvisor', `Loaded ${log.rel(target)} for Civ Advisor.`);
     }
     return result;
   } catch (err) {
-    log.error('civAssist', `Threw: ${err.message}`);
+    log.error('civAdvisor', `Threw: ${err.message}`);
     return { ok: false, error: err && err.message ? err.message : 'Could not inspect SAV file.' };
   }
 });

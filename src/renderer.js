@@ -108,7 +108,7 @@ const state = {
   unitAvailabilityView: {
     showKingUnits: false
   },
-  civAssist: {
+  civAdvisor: {
     isOpen: false,
     activeTab: 'general',
     activeTradeSubtab: 'current',
@@ -117,6 +117,7 @@ const state = {
     activeAlertID: '',
     alertsSeen: false,
     alertCoverageEnabled: {},
+    alertCoverageCollapsed: false,
     militaryTypeFilter: -1,
     techSearch: '',
     citiesSearch: '',
@@ -413,7 +414,7 @@ const state = {
   }
 };
 
-const CIV_ASSIST_DEFAULT_ALERT_COVERAGE_ENABLED = new Set(['trade', 'diplomacy', 'economy']);
+const CIV_ADVISOR_DEFAULT_ALERT_COVERAGE_ENABLED = new Set(['trade', 'diplomacy', 'economy']);
 
 const CIV3_PEDIA_ART_PATH_MAX_CHARS = 65;
 
@@ -777,14 +778,14 @@ const el = {
   aboutBtn: document.getElementById('about-btn'),
   aboutModalOverlay: document.getElementById('about-modal-overlay'),
   aboutClose: document.getElementById('about-close'),
-  civAssistToggle: document.getElementById('civassist-toggle'),
-  civAssistModalOverlay: document.getElementById('civassist-modal-overlay'),
-  civAssistModalTitle: document.getElementById('civassist-modal-title'),
-  civAssistModalSource: document.getElementById('civassist-modal-source'),
-  civAssistSaveSelect: document.getElementById('civassist-save-select'),
-  civAssistFollowLatest: document.getElementById('civassist-follow-latest'),
-  civAssistClose: document.getElementById('civassist-close'),
-  civAssistModalBody: document.getElementById('civassist-modal-body'),
+  civAdvisorToggle: document.getElementById('civadvisor-toggle'),
+  civAdvisorModalOverlay: document.getElementById('civadvisor-modal-overlay'),
+  civAdvisorModalTitle: document.getElementById('civadvisor-modal-title'),
+  civAdvisorModalSource: document.getElementById('civadvisor-modal-source'),
+  civAdvisorSaveSelect: document.getElementById('civadvisor-save-select'),
+  civAdvisorFollowLatest: document.getElementById('civadvisor-follow-latest'),
+  civAdvisorClose: document.getElementById('civadvisor-close'),
+  civAdvisorModalBody: document.getElementById('civadvisor-modal-body'),
   filesReadToggle: document.getElementById('files-read-toggle'),
   filesReadModalOverlay: document.getElementById('files-read-modal-overlay'),
   filesReadModalBody: document.getElementById('files-read-modal-body'),
@@ -2678,7 +2679,7 @@ function isBlockingShortcutModalOpen() {
     return true;
   }
   if (isVisibleElement(el.aboutModalOverlay)
-    || isVisibleElement(el.civAssistModalOverlay)
+    || isVisibleElement(el.civAdvisorModalOverlay)
     || isVisibleElement(el.filesReadModalOverlay)
     || isVisibleElement(el.fileDiffModalOverlay)
     || isVisibleElement(el.saveProgressModalOverlay)) {
@@ -7369,7 +7370,7 @@ function cloneStateMap(mapLike) {
   return Object.assign({}, mapLike || {});
 }
 
-function normalizeCivAssistAlertCoverageEnabled(value) {
+function normalizeCivAdvisorAlertCoverageEnabled(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const next = {};
   Object.keys(value).forEach((key) => {
@@ -7548,7 +7549,7 @@ function sanitizeUnitAvailabilityView(view) {
   };
 }
 
-function sanitizeCivAssistView(view) {
+function sanitizeCivAdvisorView(view) {
   const source = view && typeof view === 'object' ? view : {};
   const activeTradeSubtab = String(source.activeTradeSubtab || 'current');
   const activeCultureSubtab = String(source.activeCultureSubtab || 'city');
@@ -7572,7 +7573,8 @@ function sanitizeCivAssistView(view) {
     activeCultureSubtab: ['city', 'wonders'].includes(activeCultureSubtab) ? activeCultureSubtab : 'city',
     activeMilitarySubtab: ['roster', 'units'].includes(activeMilitarySubtab) ? activeMilitarySubtab : 'roster',
     activeAlertID: String(source.activeAlertID || ''),
-    alertCoverageEnabled: normalizeCivAssistAlertCoverageEnabled(source.alertCoverageEnabled),
+    alertCoverageEnabled: normalizeCivAdvisorAlertCoverageEnabled(source.alertCoverageEnabled),
+    alertCoverageCollapsed: !!source.alertCoverageCollapsed,
     militaryTypeFilter: Number.isFinite(Number(source.militaryTypeFilter)) ? Number(source.militaryTypeFilter) : -1,
     techSearch: String(source.techSearch || ''),
     citiesSearch: String(source.citiesSearch || ''),
@@ -7636,7 +7638,7 @@ function captureViewSnapshot() {
     referenceUnitSort: sanitizeReferenceUnitSortMap(state.referenceUnitSort),
     unitTableView: sanitizeUnitTableView(state.unitTableView),
     unitAvailabilityView: sanitizeUnitAvailabilityView(state.unitAvailabilityView),
-    civAssistView: sanitizeCivAssistView(state.civAssist),
+    civAdvisorView: sanitizeCivAdvisorView(state.civAdvisor),
     referenceContextPaneVisible: cloneStateMap(state.referenceContextPaneVisible),
     biqSectionSelectionByTab: cloneStateMap(state.biqSectionSelectionByTab),
     biqRecordSelection: cloneStateMap(state.biqRecordSelection),
@@ -7858,26 +7860,27 @@ function applyViewSnapshot(snapshot) {
   state.referenceUnitSort = sanitizeReferenceUnitSortMap(snapshot.referenceUnitSort);
   state.unitTableView = sanitizeUnitTableView(snapshot.unitTableView);
   state.unitAvailabilityView = sanitizeUnitAvailabilityView(snapshot.unitAvailabilityView);
-  const civAssistView = sanitizeCivAssistView(snapshot.civAssistView);
-  state.civAssist.activeTab = civAssistView.activeTab;
-  state.civAssist.activeTradeSubtab = civAssistView.activeTradeSubtab;
-  state.civAssist.activeCultureSubtab = civAssistView.activeCultureSubtab;
-  state.civAssist.activeMilitarySubtab = civAssistView.activeMilitarySubtab;
-  state.civAssist.activeAlertID = civAssistView.activeAlertID;
-  state.civAssist.alertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(civAssistView.alertCoverageEnabled);
-  state.civAssist.militaryTypeFilter = civAssistView.militaryTypeFilter;
-  state.civAssist.techSearch = civAssistView.techSearch;
-  state.civAssist.citiesSearch = civAssistView.citiesSearch;
-  state.civAssist.productionSearch = civAssistView.productionSearch;
-  state.civAssist.militaryRosterSearch = civAssistView.militaryRosterSearch;
-  state.civAssist.militaryUnitsSearch = civAssistView.militaryUnitsSearch;
-  state.civAssist.cultureSearch = civAssistView.cultureSearch;
-  state.civAssist.selectedCultureCityID = civAssistView.selectedCultureCityID;
-  state.civAssist.showAllCultureBuildings = civAssistView.showAllCultureBuildings;
-  state.civAssist.selectedPlayerID = civAssistView.selectedPlayerID;
-  state.civAssist.sortState = civAssistView.sortState;
-  state.civAssist.savePath = civAssistView.savePath || state.civAssist.savePath || '';
-  state.civAssist.isOpen = civAssistView.isOpen;
+  const civAdvisorView = sanitizeCivAdvisorView(snapshot.civAdvisorView);
+  state.civAdvisor.activeTab = civAdvisorView.activeTab;
+  state.civAdvisor.activeTradeSubtab = civAdvisorView.activeTradeSubtab;
+  state.civAdvisor.activeCultureSubtab = civAdvisorView.activeCultureSubtab;
+  state.civAdvisor.activeMilitarySubtab = civAdvisorView.activeMilitarySubtab;
+  state.civAdvisor.activeAlertID = civAdvisorView.activeAlertID;
+  state.civAdvisor.alertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(civAdvisorView.alertCoverageEnabled);
+  state.civAdvisor.alertCoverageCollapsed = !!civAdvisorView.alertCoverageCollapsed;
+  state.civAdvisor.militaryTypeFilter = civAdvisorView.militaryTypeFilter;
+  state.civAdvisor.techSearch = civAdvisorView.techSearch;
+  state.civAdvisor.citiesSearch = civAdvisorView.citiesSearch;
+  state.civAdvisor.productionSearch = civAdvisorView.productionSearch;
+  state.civAdvisor.militaryRosterSearch = civAdvisorView.militaryRosterSearch;
+  state.civAdvisor.militaryUnitsSearch = civAdvisorView.militaryUnitsSearch;
+  state.civAdvisor.cultureSearch = civAdvisorView.cultureSearch;
+  state.civAdvisor.selectedCultureCityID = civAdvisorView.selectedCultureCityID;
+  state.civAdvisor.showAllCultureBuildings = civAdvisorView.showAllCultureBuildings;
+  state.civAdvisor.selectedPlayerID = civAdvisorView.selectedPlayerID;
+  state.civAdvisor.sortState = civAdvisorView.sortState;
+  state.civAdvisor.savePath = civAdvisorView.savePath || state.civAdvisor.savePath || '';
+  state.civAdvisor.isOpen = civAdvisorView.isOpen;
   state.referenceContextPaneVisible = cloneStateMap(snapshot.referenceContextPaneVisible);
   state.biqSectionSelectionByTab = cloneStateMap(snapshot.biqSectionSelectionByTab);
   state.biqRecordSelection = cloneStateMap(snapshot.biqRecordSelection);
@@ -7941,10 +7944,10 @@ function applyViewSnapshot(snapshot) {
       syncHistory: false
     });
   }
-  if (state.civAssist.isOpen) {
-    openCivAssistModal({ skipHistorySync: true });
+  if (state.civAdvisor.isOpen) {
+    openCivAdvisorModal({ skipHistorySync: true });
   } else {
-    setCivAssistModalVisible(false, { skipHistorySync: true });
+    setCivAdvisorModalVisible(false, { skipHistorySync: true });
   }
   updateNavButtons();
   persistCurrentViewSnapshot();
@@ -50571,13 +50574,13 @@ function biqMapArtRerender(meta = null) {
       return;
     }
     const pendingAssetKey = String(meta && meta.assetKey || state.biqMapRerenderPendingAssetKey || '');
-    if (CIV_ASSIST_CITY_ART_KEYS.has(pendingAssetKey)) {
+    if (CIV_ADVISOR_CITY_ART_KEYS.has(pendingAssetKey)) {
       state.biqMapRerenderNeedsFullRefresh = false;
       state.biqMapRerenderPendingAssetKey = '';
-      if (state.civAssist && state.civAssist.isOpen) {
-        const hydrated = refreshCivAssistCityThumbnails(pendingAssetKey);
-        if (!hydrated && ['culture', 'territory', 'cities', 'economy'].includes(String(state.civAssist.activeTab || ''))) {
-          renderCivAssistModal();
+      if (state.civAdvisor && state.civAdvisor.isOpen) {
+        const hydrated = refreshCivAdvisorCityThumbnails(pendingAssetKey);
+        if (!hydrated && ['culture', 'territory', 'cities', 'economy'].includes(String(state.civAdvisor.activeTab || ''))) {
+          renderCivAdvisorModal();
         }
       }
       return;
@@ -72205,10 +72208,10 @@ async function wireBrowseButton(button, input) {
   });
 }
 
-const CIV_ASSIST_RECENT_SAVE_LIMIT = 10;
-const CIV_ASSIST_POLL_INTERVAL_MS = 5000;
-const CIV_ASSIST_SAVE_SETTLE_MS = 1500;
-const CIV_ASSIST_CITY_ART_ASSETS = Object.freeze([
+const CIV_ADVISOR_RECENT_SAVE_LIMIT = 10;
+const CIV_ADVISOR_POLL_INTERVAL_MS = 5000;
+const CIV_ADVISOR_SAVE_SETTLE_MS = 1500;
+const CIV_ADVISOR_CITY_ART_ASSETS = Object.freeze([
   ['cityAmerc', 'Art/Cities/rAMER.pcx'],
   ['cityEuro', 'Art/Cities/rEURO.pcx'],
   ['cityRoman', 'Art/Cities/rROMAN.pcx'],
@@ -72220,7 +72223,7 @@ const CIV_ASSIST_CITY_ART_ASSETS = Object.freeze([
   ['cityMidEastWall', 'Art/Cities/MIDEASTWALL.pcx'],
   ['cityAsianWall', 'Art/Cities/ASIANWALL.pcx'],
 ]);
-const CIV_ASSIST_CITY_ART_KEYS = new Set(CIV_ASSIST_CITY_ART_ASSETS.map(([key]) => key));
+const CIV_ADVISOR_CITY_ART_KEYS = new Set(CIV_ADVISOR_CITY_ART_ASSETS.map(([key]) => key));
 
 function normalizeCivAdvisorLoadMode(value) {
   const raw = String(value || 'latest').trim().toLowerCase();
@@ -72233,24 +72236,24 @@ function getCivAdvisorLoadMode() {
   return normalizeCivAdvisorLoadMode(state.settings && state.settings.civAdvisorLoadMode);
 }
 
-function getCivAssistDefaultSavePath() {
-  if (state.civAssist.savePath) return state.civAssist.savePath;
+function getCivAdvisorDefaultSavePath() {
+  if (state.civAdvisor.savePath) return state.civAdvisor.savePath;
   const root = state.settings && state.settings.civ3Path ? String(state.settings.civ3Path) : '';
   if (!root) return '';
   const slash = root.includes('\\') && !root.includes('/') ? '\\' : '/';
   return `${root.replace(/[\\/]+$/, '')}${slash}Conquests${slash}Saves`;
 }
 
-function normalizeCivAssistPathKey(filePath) {
+function normalizeCivAdvisorPathKey(filePath) {
   return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
 }
 
-function getCivAssistSaveFingerprint(save) {
+function getCivAdvisorSaveFingerprint(save) {
   if (!save || !save.path) return '';
-  return `${normalizeCivAssistPathKey(save.path)}|${Number(save.modifiedMs || 0)}|${Number(save.size || 0)}`;
+  return `${normalizeCivAdvisorPathKey(save.path)}|${Number(save.modifiedMs || 0)}|${Number(save.size || 0)}`;
 }
 
-function formatCivAssistSaveTime(modifiedMs) {
+function formatCivAdvisorSaveTime(modifiedMs) {
   const value = Number(modifiedMs || 0);
   if (!Number.isFinite(value) || value <= 0) return '';
   try {
@@ -72265,27 +72268,27 @@ function formatCivAssistSaveTime(modifiedMs) {
   }
 }
 
-function findRecentCivAssistSave(filePath) {
-  const target = normalizeCivAssistPathKey(filePath);
+function findRecentCivAdvisorSave(filePath) {
+  const target = normalizeCivAdvisorPathKey(filePath);
   if (!target) return null;
-  return (state.civAssist.recentSaves || []).find((save) => normalizeCivAssistPathKey(save && save.path) === target) || null;
+  return (state.civAdvisor.recentSaves || []).find((save) => normalizeCivAdvisorPathKey(save && save.path) === target) || null;
 }
 
-function isCivAssistSaveStable(save) {
-  const fingerprint = getCivAssistSaveFingerprint(save);
+function isCivAdvisorSaveStable(save) {
+  const fingerprint = getCivAdvisorSaveFingerprint(save);
   if (!fingerprint) return false;
-  const key = normalizeCivAssistPathKey(save.path);
-  const previous = state.civAssist.latestObservations[key];
-  state.civAssist.latestObservations[key] = fingerprint;
-  return previous === fingerprint || (Date.now() - Number(save.modifiedMs || 0)) >= CIV_ASSIST_SAVE_SETTLE_MS;
+  const key = normalizeCivAdvisorPathKey(save.path);
+  const previous = state.civAdvisor.latestObservations[key];
+  state.civAdvisor.latestObservations[key] = fingerprint;
+  return previous === fingerprint || (Date.now() - Number(save.modifiedMs || 0)) >= CIV_ADVISOR_SAVE_SETTLE_MS;
 }
 
-function renderCivAssistSaveSelector() {
-  const select = el.civAssistSaveSelect;
+function renderCivAdvisorSaveSelector() {
+  const select = el.civAdvisorSaveSelect;
   if (!select) return;
-  const currentPath = String(state.civAssist.savePath || '');
-  const currentKey = normalizeCivAssistPathKey(currentPath);
-  const recent = Array.isArray(state.civAssist.recentSaves) ? state.civAssist.recentSaves : [];
+  const currentPath = String(state.civAdvisor.savePath || '');
+  const currentKey = normalizeCivAdvisorPathKey(currentPath);
+  const recent = Array.isArray(state.civAdvisor.recentSaves) ? state.civAdvisor.recentSaves : [];
   select.replaceChildren();
 
   const placeholder = document.createElement('option');
@@ -72293,7 +72296,7 @@ function renderCivAssistSaveSelector() {
   placeholder.textContent = 'Choose SAV...';
   select.appendChild(placeholder);
 
-  const currentIsRecent = recent.some((save) => normalizeCivAssistPathKey(save && save.path) === currentKey);
+  const currentIsRecent = recent.some((save) => normalizeCivAdvisorPathKey(save && save.path) === currentKey);
   if (currentPath && !currentIsRecent) {
     const selectedGroup = document.createElement('optgroup');
     selectedGroup.label = 'Selected File';
@@ -72311,7 +72314,7 @@ function renderCivAssistSaveSelector() {
     recent.forEach((save) => {
       const option = document.createElement('option');
       option.value = String(save.path || '');
-      const modified = formatCivAssistSaveTime(save.modifiedMs);
+      const modified = formatCivAdvisorSaveTime(save.modifiedMs);
       const label = save.relativeName || save.fileName || getPathTail(save.path);
       option.textContent = modified ? `${label} — ${modified}` : label;
       option.title = String(save.path || '');
@@ -72335,23 +72338,23 @@ function renderCivAssistSaveSelector() {
   otherGroup.appendChild(browse);
   select.appendChild(otherGroup);
   select.value = currentPath || '';
-  select.disabled = !!state.civAssist.loading;
+  select.disabled = !!state.civAdvisor.loading;
 }
 
-function renderCivAssistViewingCivThumb(holder, option) {
+function renderCivAdvisorViewingCivThumb(holder, option) {
   if (!holder || !option) return false;
   holder.innerHTML = '';
   if (option.entry) {
     loadReferenceListThumbnail('civilizations', option.entry, holder);
     return true;
   }
-  const target = option.ref ? getCivAssistReferenceEntry(option.ref) : null;
+  const target = option.ref ? getCivAdvisorReferenceEntry(option.ref) : null;
   if (target && target.type === 'reference' && target.entry) {
     loadReferenceListThumbnail(target.tabKey, target.entry, holder);
     return true;
   }
   const swatch = document.createElement('span');
-  swatch.className = 'civassist-color-swatch';
+  swatch.className = 'civadvisor-color-swatch';
   if (Number.isFinite(Number(option.colorSlot))) {
     const slot = Number(option.colorSlot);
     swatch.style.backgroundColor = getCivSlotUiColor(slot, (css) => {
@@ -72365,7 +72368,7 @@ function renderCivAssistViewingCivThumb(holder, option) {
   return true;
 }
 
-function getCivAssistViewingOptions(report) {
+function getCivAdvisorViewingOptions(report) {
   const options = Array.isArray(report && report.viewingOptions) ? report.viewingOptions : [];
   const civEntryByIndex = new Map(getCivilizationBitmaskOptions().map((option) => [String(option.value), option.entry || null]));
   return options
@@ -72386,16 +72389,16 @@ function getCivAssistViewingOptions(report) {
     });
 }
 
-function renderCivAssistViewingSelector(report) {
-  const options = getCivAssistViewingOptions(report);
+function renderCivAdvisorViewingSelector(report) {
+  const options = getCivAdvisorViewingOptions(report);
   if (options.length <= 1) return null;
-  const selectedID = Number.isFinite(Number(state.civAssist.selectedPlayerID)) && (Number(state.civAssist.selectedPlayerID) > 0 || Number(state.civAssist.selectedPlayerID) === -1)
-    ? Number(state.civAssist.selectedPlayerID)
+  const selectedID = Number.isFinite(Number(state.civAdvisor.selectedPlayerID)) && (Number(state.civAdvisor.selectedPlayerID) > 0 || Number(state.civAdvisor.selectedPlayerID) === -1)
+    ? Number(state.civAdvisor.selectedPlayerID)
     : Number(report && report.selectedPlayerID);
   const strip = document.createElement('div');
-  strip.className = 'civassist-viewing-strip';
+  strip.className = 'civadvisor-viewing-strip';
   const label = document.createElement('span');
-  label.className = 'civassist-viewing-label';
+  label.className = 'civadvisor-viewing-label';
   label.textContent = 'Civ';
   const picker = createReferencePicker({
     options,
@@ -72403,116 +72406,116 @@ function renderCivAssistViewingSelector(report) {
     includeNone: true,
     noneLabel: 'All Civs',
     searchPlaceholder: 'Search Civilizations...',
-    pickerClassName: 'civassist-viewing-civ-picker',
-    menuClassName: 'civassist-viewing-civ-picker-menu',
-    renderOptionThumb: ({ holder, option }) => renderCivAssistViewingCivThumb(holder, option),
+    pickerClassName: 'civadvisor-viewing-civ-picker',
+    menuClassName: 'civadvisor-viewing-civ-picker-menu',
+    renderOptionThumb: ({ holder, option }) => renderCivAdvisorViewingCivThumb(holder, option),
     resolveJumpTarget: (option) => option && option.entry ? option.entry : null,
     onJump: (entry) => navigateToReferenceEntry('civilizations', entry),
     onSelect: async (value) => {
       const nextID = Number(value);
       if (!Number.isFinite(nextID) || (nextID <= 0 && nextID !== -1)) return;
-      if (nextID === Number(state.civAssist.selectedPlayerID)) return;
-      const priorID = state.civAssist.selectedPlayerID;
-      state.civAssist.selectedPlayerID = nextID;
-      state.civAssist.selectedCultureCityID = -1;
-      renderCivAssistModal();
-      if (!state.civAssist.savePath) return;
-      const loaded = await loadCivAssistSave(state.civAssist.savePath, {
-        saveMeta: state.civAssist.loadedSaveMeta,
-        fingerprint: state.civAssist.loadedFingerprint
+      if (nextID === Number(state.civAdvisor.selectedPlayerID)) return;
+      const priorID = state.civAdvisor.selectedPlayerID;
+      state.civAdvisor.selectedPlayerID = nextID;
+      state.civAdvisor.selectedCultureCityID = -1;
+      renderCivAdvisorModal();
+      if (!state.civAdvisor.savePath) return;
+      const loaded = await loadCivAdvisorSave(state.civAdvisor.savePath, {
+        saveMeta: state.civAdvisor.loadedSaveMeta,
+        fingerprint: state.civAdvisor.loadedFingerprint
       });
       if (!loaded) {
-        state.civAssist.selectedPlayerID = priorID;
-        renderCivAssistModal();
+        state.civAdvisor.selectedPlayerID = priorID;
+        renderCivAdvisorModal();
         return;
       }
-      const selected = getCivAssistViewingOptions(state.civAssist.report)
-        .find((item) => Number(item.value) === Number(state.civAssist.selectedPlayerID));
-      setStatus(`Civ Advisor is viewing ${state.civAssist.selectedPlayerID === -1 ? 'All Civs' : selected ? selected.label : 'the selected civ'}.`);
+      const selected = getCivAdvisorViewingOptions(state.civAdvisor.report)
+        .find((item) => Number(item.value) === Number(state.civAdvisor.selectedPlayerID));
+      setStatus(`Civ Advisor is viewing ${state.civAdvisor.selectedPlayerID === -1 ? 'All Civs' : selected ? selected.label : 'the selected civ'}.`);
     }
   });
   strip.append(label, picker);
   return strip;
 }
 
-function syncCivAssistHeader(options = {}) {
-  if (el.civAssistModalTitle) {
-    el.civAssistModalTitle.textContent = 'Civ Advisor';
+function syncCivAdvisorHeader(options = {}) {
+  if (el.civAdvisorModalTitle) {
+    el.civAdvisorModalTitle.textContent = 'Civ Advisor';
   }
-  if (el.civAssistModalSource) {
-    const fileName = getPathTail(state.civAssist.savePath || '');
-    const modified = formatCivAssistSaveTime(state.civAssist.loadedSaveMeta && state.civAssist.loadedSaveMeta.modifiedMs);
+  if (el.civAdvisorModalSource) {
+    const fileName = getPathTail(state.civAdvisor.savePath || '');
+    const modified = formatCivAdvisorSaveTime(state.civAdvisor.loadedSaveMeta && state.civAdvisor.loadedSaveMeta.modifiedMs);
     if (!fileName) {
-      el.civAssistModalSource.textContent = state.civAssist.savesDir
-        ? `No save loaded from ${state.civAssist.savesDir}`
+      el.civAdvisorModalSource.textContent = state.civAdvisor.savesDir
+        ? `No save loaded from ${state.civAdvisor.savesDir}`
         : 'No save loaded';
     } else {
-      const sourceMode = state.civAssist.followingLatest ? 'Following latest' : 'Viewing selected save';
-      el.civAssistModalSource.textContent = `${sourceMode}${modified ? ` • Updated ${modified}` : ''}${state.civAssist.loading ? ' • Updating...' : ''}`;
+      const sourceMode = state.civAdvisor.followingLatest ? 'Following latest' : 'Viewing selected save';
+      el.civAdvisorModalSource.textContent = `${sourceMode}${modified ? ` • Updated ${modified}` : ''}${state.civAdvisor.loading ? ' • Updating...' : ''}`;
     }
   }
-  if (el.civAssistFollowLatest) {
-    el.civAssistFollowLatest.checked = state.civAssist.followingLatest;
-    el.civAssistFollowLatest.disabled = !!state.civAssist.loading;
+  if (el.civAdvisorFollowLatest) {
+    el.civAdvisorFollowLatest.checked = state.civAdvisor.followingLatest;
+    el.civAdvisorFollowLatest.disabled = !!state.civAdvisor.loading;
   }
-  if (options.renderSelector !== false) renderCivAssistSaveSelector();
+  if (options.renderSelector !== false) renderCivAdvisorSaveSelector();
 }
 
-function clearCivAssistPollTimer() {
-  if (!state.civAssist.pollTimer) return;
-  window.clearTimeout(state.civAssist.pollTimer);
-  state.civAssist.pollTimer = null;
+function clearCivAdvisorPollTimer() {
+  if (!state.civAdvisor.pollTimer) return;
+  window.clearTimeout(state.civAdvisor.pollTimer);
+  state.civAdvisor.pollTimer = null;
 }
 
-function scheduleCivAssistPoll() {
-  clearCivAssistPollTimer();
-  if (!state.civAssist.isOpen) return;
-  state.civAssist.pollTimer = window.setTimeout(() => {
-    state.civAssist.pollTimer = null;
-    void refreshCivAssistRecentSaves({
-      allowAutoLoad: state.civAssist.followingLatest || state.civAssist.loadLatestOncePending
+function scheduleCivAdvisorPoll() {
+  clearCivAdvisorPollTimer();
+  if (!state.civAdvisor.isOpen) return;
+  state.civAdvisor.pollTimer = window.setTimeout(() => {
+    state.civAdvisor.pollTimer = null;
+    void refreshCivAdvisorRecentSaves({
+      allowAutoLoad: state.civAdvisor.followingLatest || state.civAdvisor.loadLatestOncePending
     });
-  }, CIV_ASSIST_POLL_INTERVAL_MS);
+  }, CIV_ADVISOR_POLL_INTERVAL_MS);
 }
 
-async function refreshCivAssistRecentSaves(options = {}) {
-  if (state.civAssist.pollInFlight) return false;
-  if (!window.c3xManager || typeof window.c3xManager.listRecentCivAssistSaves !== 'function') return false;
-  state.civAssist.pollInFlight = true;
+async function refreshCivAdvisorRecentSaves(options = {}) {
+  if (state.civAdvisor.pollInFlight) return false;
+  if (!window.c3xManager || typeof window.c3xManager.listRecentCivAdvisorSaves !== 'function') return false;
+  state.civAdvisor.pollInFlight = true;
   try {
-    const result = await window.c3xManager.listRecentCivAssistSaves({
+    const result = await window.c3xManager.listRecentCivAdvisorSaves({
       civ3Path: state.settings && state.settings.civ3Path,
-      limit: CIV_ASSIST_RECENT_SAVE_LIMIT
+      limit: CIV_ADVISOR_RECENT_SAVE_LIMIT
     });
     if (!result || !result.ok) {
-      if (!state.civAssist.report) state.civAssist.error = String(result && result.error || 'Could not list recent SAV files.');
-      syncCivAssistHeader();
-      if (!state.civAssist.report) renderCivAssistModal();
+      if (!state.civAdvisor.report) state.civAdvisor.error = String(result && result.error || 'Could not list recent SAV files.');
+      syncCivAdvisorHeader();
+      if (!state.civAdvisor.report) renderCivAdvisorModal();
       return false;
     }
-    const previousRecentSignature = JSON.stringify((state.civAssist.recentSaves || []).map(getCivAssistSaveFingerprint));
-    state.civAssist.savesDir = String(result.savesDir || '');
-    state.civAssist.recentSaves = Array.isArray(result.saves) ? result.saves : [];
-    const recentSignature = JSON.stringify(state.civAssist.recentSaves.map(getCivAssistSaveFingerprint));
-    syncCivAssistHeader({ renderSelector: previousRecentSignature !== recentSignature });
-    const latest = state.civAssist.recentSaves[0];
-    if (!options.allowAutoLoad || !latest || !isCivAssistSaveStable(latest)) return true;
-    const fingerprint = getCivAssistSaveFingerprint(latest);
-    if (fingerprint && fingerprint === state.civAssist.loadedFingerprint) {
-      state.civAssist.loadLatestOncePending = false;
+    const previousRecentSignature = JSON.stringify((state.civAdvisor.recentSaves || []).map(getCivAdvisorSaveFingerprint));
+    state.civAdvisor.savesDir = String(result.savesDir || '');
+    state.civAdvisor.recentSaves = Array.isArray(result.saves) ? result.saves : [];
+    const recentSignature = JSON.stringify(state.civAdvisor.recentSaves.map(getCivAdvisorSaveFingerprint));
+    syncCivAdvisorHeader({ renderSelector: previousRecentSignature !== recentSignature });
+    const latest = state.civAdvisor.recentSaves[0];
+    if (!options.allowAutoLoad || !latest || !isCivAdvisorSaveStable(latest)) return true;
+    const fingerprint = getCivAdvisorSaveFingerprint(latest);
+    if (fingerprint && fingerprint === state.civAdvisor.loadedFingerprint) {
+      state.civAdvisor.loadLatestOncePending = false;
       return true;
     }
-    const loaded = await loadCivAssistSave(latest.path, { saveMeta: latest, fingerprint, automatic: true });
-    if (loaded) state.civAssist.loadLatestOncePending = false;
+    const loaded = await loadCivAdvisorSave(latest.path, { saveMeta: latest, fingerprint, automatic: true });
+    if (loaded) state.civAdvisor.loadLatestOncePending = false;
     return loaded;
   } finally {
-    state.civAssist.pollInFlight = false;
-    scheduleCivAssistPoll();
+    state.civAdvisor.pollInFlight = false;
+    scheduleCivAdvisorPoll();
   }
 }
 
-function setCivAssistModalVisible(visible, options = {}) {
-  state.civAssist.isOpen = !!visible;
+function setCivAdvisorModalVisible(visible, options = {}) {
+  state.civAdvisor.isOpen = !!visible;
   if (window.c3xManager && typeof window.c3xManager.setCivAdvisorOverlayEnabled === 'function') {
     void window.c3xManager.setCivAdvisorOverlayEnabled(!!visible);
   }
@@ -72522,77 +72525,78 @@ function setCivAssistModalVisible(visible, options = {}) {
       void window.c3xManager.setSettings(state.settings);
     }
   }
-  if (!el.civAssistModalOverlay) return;
-  el.civAssistModalOverlay.classList.toggle('hidden', !visible);
-  el.civAssistModalOverlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  if (!el.civAdvisorModalOverlay) return;
+  el.civAdvisorModalOverlay.classList.toggle('hidden', !visible);
+  el.civAdvisorModalOverlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
   if (!visible) {
-    clearCivAssistPollTimer();
-    state.civAssist.alertsSeen = false;
+    clearCivAdvisorPollTimer();
+    state.civAdvisor.alertsSeen = false;
   }
   syncCivAdvisorOverlayState();
   if (!options.skipHistorySync) syncCurrentNavigationSnapshot();
 }
 
-function openCivAssistModal(options = {}) {
-  setCivAssistModalVisible(true, { skipHistorySync: !!options.skipHistorySync });
-  state.civAssist.alertsSeen = false;
-  renderCivAssistModal();
+function openCivAdvisorModal(options = {}) {
+  setCivAdvisorModalVisible(true, { skipHistorySync: !!options.skipHistorySync });
+  state.civAdvisor.alertsSeen = false;
+  renderCivAdvisorModal();
   const loadMode = getCivAdvisorLoadMode();
-  const firstOpen = !state.civAssist.initializedForSession;
+  const firstOpen = !state.civAdvisor.initializedForSession;
   if (firstOpen) {
-    state.civAssist.initializedForSession = true;
-    state.civAssist.followingLatest = loadMode === 'follow';
-    state.civAssist.loadLatestOncePending = loadMode === 'latest';
+    state.civAdvisor.initializedForSession = true;
+    state.civAdvisor.followingLatest = loadMode === 'follow';
+    state.civAdvisor.loadLatestOncePending = loadMode === 'latest';
   }
-  syncCivAssistHeader();
-  if (loadMode === 'latest' && !state.civAssist.report) state.civAssist.loadLatestOncePending = true;
-  const allowAutoLoad = state.civAssist.followingLatest || state.civAssist.loadLatestOncePending;
-  void refreshCivAssistRecentSaves({ allowAutoLoad });
+  syncCivAdvisorHeader();
+  if (loadMode === 'latest' && !state.civAdvisor.report) state.civAdvisor.loadLatestOncePending = true;
+  const allowAutoLoad = state.civAdvisor.followingLatest || state.civAdvisor.loadLatestOncePending;
+  void refreshCivAdvisorRecentSaves({ allowAutoLoad });
 }
 
-function closeCivAssistModal(options = {}) {
-  state.civAssist.alertsSeen = false;
-  setCivAssistModalVisible(false, { skipHistorySync: !!options.skipHistorySync });
+function closeCivAdvisorModal(options = {}) {
+  state.civAdvisor.alertsSeen = false;
+  setCivAdvisorModalVisible(false, { skipHistorySync: !!options.skipHistorySync });
 }
 
-function navigateFromCivAssistToTarget(target) {
+function navigateFromCivAdvisorToTarget(target) {
   if (!target) return false;
   syncCurrentNavigationSnapshot();
   const before = captureViewSnapshot();
-  closeCivAssistModal({ skipHistorySync: true });
+  closeCivAdvisorModal({ skipHistorySync: true });
   const navigated = target.type === 'structured'
-    ? navigateToCivAssistStructuredTarget(target)
+    ? navigateToCivAdvisorStructuredTarget(target)
     : navigateToReferenceEntry(target.tabKey, target.entry, { preserveTabScroll: true });
   if (!navigated) {
-    if (before && before.civAssistView && before.civAssistView.isOpen) {
-      state.civAssist.activeTab = before.civAssistView.activeTab || 'general';
-      state.civAssist.activeTradeSubtab = before.civAssistView.activeTradeSubtab || 'current';
-      state.civAssist.activeCultureSubtab = before.civAssistView.activeCultureSubtab || 'city';
-      state.civAssist.activeMilitarySubtab = before.civAssistView.activeMilitarySubtab || 'roster';
-      state.civAssist.activeAlertID = before.civAssistView.activeAlertID || '';
-      state.civAssist.alertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(before.civAssistView.alertCoverageEnabled);
-      state.civAssist.militaryTypeFilter = Number.isFinite(Number(before.civAssistView.militaryTypeFilter))
-        ? Number(before.civAssistView.militaryTypeFilter)
+    if (before && before.civAdvisorView && before.civAdvisorView.isOpen) {
+      state.civAdvisor.activeTab = before.civAdvisorView.activeTab || 'general';
+      state.civAdvisor.activeTradeSubtab = before.civAdvisorView.activeTradeSubtab || 'current';
+      state.civAdvisor.activeCultureSubtab = before.civAdvisorView.activeCultureSubtab || 'city';
+      state.civAdvisor.activeMilitarySubtab = before.civAdvisorView.activeMilitarySubtab || 'roster';
+      state.civAdvisor.activeAlertID = before.civAdvisorView.activeAlertID || '';
+      state.civAdvisor.alertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(before.civAdvisorView.alertCoverageEnabled);
+      state.civAdvisor.alertCoverageCollapsed = !!before.civAdvisorView.alertCoverageCollapsed;
+      state.civAdvisor.militaryTypeFilter = Number.isFinite(Number(before.civAdvisorView.militaryTypeFilter))
+        ? Number(before.civAdvisorView.militaryTypeFilter)
         : -1;
-      state.civAssist.techSearch = before.civAssistView.techSearch || '';
-      state.civAssist.citiesSearch = before.civAssistView.citiesSearch || '';
-      state.civAssist.productionSearch = before.civAssistView.productionSearch || '';
-      state.civAssist.militaryRosterSearch = before.civAssistView.militaryRosterSearch || '';
-      state.civAssist.militaryUnitsSearch = before.civAssistView.militaryUnitsSearch || '';
-      state.civAssist.cultureSearch = before.civAssistView.cultureSearch || '';
-      state.civAssist.selectedCultureCityID = Number.isFinite(Number(before.civAssistView.selectedCultureCityID))
-        ? Number(before.civAssistView.selectedCultureCityID)
+      state.civAdvisor.techSearch = before.civAdvisorView.techSearch || '';
+      state.civAdvisor.citiesSearch = before.civAdvisorView.citiesSearch || '';
+      state.civAdvisor.productionSearch = before.civAdvisorView.productionSearch || '';
+      state.civAdvisor.militaryRosterSearch = before.civAdvisorView.militaryRosterSearch || '';
+      state.civAdvisor.militaryUnitsSearch = before.civAdvisorView.militaryUnitsSearch || '';
+      state.civAdvisor.cultureSearch = before.civAdvisorView.cultureSearch || '';
+      state.civAdvisor.selectedCultureCityID = Number.isFinite(Number(before.civAdvisorView.selectedCultureCityID))
+        ? Number(before.civAdvisorView.selectedCultureCityID)
         : -1;
-      state.civAssist.showAllCultureBuildings = !!before.civAssistView.showAllCultureBuildings;
-      state.civAssist.selectedPlayerID = Number.isFinite(Number(before.civAssistView.selectedPlayerID))
-        ? Number(before.civAssistView.selectedPlayerID)
+      state.civAdvisor.showAllCultureBuildings = !!before.civAdvisorView.showAllCultureBuildings;
+      state.civAdvisor.selectedPlayerID = Number.isFinite(Number(before.civAdvisorView.selectedPlayerID))
+        ? Number(before.civAdvisorView.selectedPlayerID)
         : -1;
-      state.civAssist.savePath = before.civAssistView.savePath || state.civAssist.savePath || '';
-      openCivAssistModal({ skipHistorySync: true });
+      state.civAdvisor.savePath = before.civAdvisorView.savePath || state.civAdvisor.savePath || '';
+      openCivAdvisorModal({ skipHistorySync: true });
     }
     return false;
   }
-  if (before && before.civAssistView && before.civAssistView.isOpen) {
+  if (before && before.civAdvisorView && before.civAdvisorView.isOpen) {
     const historyIndex = state.navHistoryIndex - 1;
     if (historyIndex >= 0 && historyIndex < state.navHistory.length) {
       state.navHistory[historyIndex] = before;
@@ -72603,117 +72607,156 @@ function navigateFromCivAssistToTarget(target) {
   return true;
 }
 
-async function pickCivAssistSave() {
+async function pickCivAdvisorSave() {
   if (!window.c3xManager || typeof window.c3xManager.pickFile !== 'function') {
-    state.civAssist.error = 'File picker is not available.';
-    renderCivAssistModal();
+    state.civAdvisor.error = 'File picker is not available.';
+    renderCivAdvisorModal();
     return;
   }
   const filePath = await window.c3xManager.pickFile({
-    defaultPath: getCivAssistDefaultSavePath(),
+    defaultPath: getCivAdvisorDefaultSavePath(),
     filters: [
       { name: 'Civ III Saves', extensions: ['sav'] },
       { name: 'All Files', extensions: ['*'] }
     ]
   });
   if (!filePath) {
-    renderCivAssistSaveSelector();
+    renderCivAdvisorSaveSelector();
     return false;
   }
-  const wasFollowing = state.civAssist.followingLatest;
-  const wasLoadLatestOncePending = state.civAssist.loadLatestOncePending;
-  state.civAssist.followingLatest = false;
-  state.civAssist.loadLatestOncePending = false;
-  syncCivAssistHeader();
-  const loaded = await loadCivAssistSave(filePath);
+  const wasFollowing = state.civAdvisor.followingLatest;
+  const wasLoadLatestOncePending = state.civAdvisor.loadLatestOncePending;
+  state.civAdvisor.followingLatest = false;
+  state.civAdvisor.loadLatestOncePending = false;
+  syncCivAdvisorHeader();
+  const loaded = await loadCivAdvisorSave(filePath);
   if (!loaded) {
-    state.civAssist.followingLatest = wasFollowing;
-    state.civAssist.loadLatestOncePending = wasLoadLatestOncePending;
+    state.civAdvisor.followingLatest = wasFollowing;
+    state.civAdvisor.loadLatestOncePending = wasLoadLatestOncePending;
   }
-  syncCivAssistHeader();
+  syncCivAdvisorHeader();
   return loaded;
 }
 
-async function loadCivAssistSave(filePath, options = {}) {
+function serializeCivAdvisorConfigSection(section, index) {
+  if (!section || !Array.isArray(section.fields)) return null;
+  const fields = section.fields
+    .map((field) => ({
+      key: String(field && field.key || '').trim(),
+      value: String(field && field.value != null ? field.value : '')
+    }))
+    .filter((field) => field.key);
+  if (fields.length === 0) return null;
+  return {
+    index,
+    marker: String(section.marker || section.type || ''),
+    fields
+  };
+}
+
+function makeCivAdvisorDistrictAlertContext() {
+  const tabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
+  const baseRows = tabs.base && Array.isArray(tabs.base.rows) ? tabs.base.rows : [];
+  const base = {};
+  for (const key of ['enable_districts', 'enable_wonder_districts', 'city_work_radius']) {
+    const row = baseRows.find((item) => String(item && item.key || '') === key);
+    if (row) base[key] = String(row.value != null ? row.value : '');
+  }
+  const districtSections = tabs.districts && tabs.districts.model && Array.isArray(tabs.districts.model.sections)
+    ? tabs.districts.model.sections.map(serializeCivAdvisorConfigSection).filter(Boolean)
+    : [];
+  const wonderSections = tabs.wonders && tabs.wonders.model && Array.isArray(tabs.wonders.model.sections)
+    ? tabs.wonders.model.sections.map(serializeCivAdvisorConfigSection).filter(Boolean)
+    : [];
+  if (Object.keys(base).length === 0 && districtSections.length === 0 && wonderSections.length === 0) return null;
+  return {
+    base,
+    districts: districtSections,
+    wonders: wonderSections
+  };
+}
+
+async function loadCivAdvisorSave(filePath, options = {}) {
   const target = String(filePath || '').trim();
   if (!target) return false;
-  if (!window.c3xManager || typeof window.c3xManager.inspectCivAssistSave !== 'function') {
-    state.civAssist.error = 'Civ Advisor save inspection is not available.';
-    renderCivAssistModal();
+  if (!window.c3xManager || typeof window.c3xManager.inspectCivAdvisorSave !== 'function') {
+    state.civAdvisor.error = 'Civ Advisor save inspection is not available.';
+    renderCivAdvisorModal();
     return false;
   }
-  const requestId = state.civAssist.loadRequestId + 1;
-  state.civAssist.loadRequestId = requestId;
+  const requestId = state.civAdvisor.loadRequestId + 1;
+  state.civAdvisor.loadRequestId = requestId;
   const previous = {
-    savePath: state.civAssist.savePath,
-    report: state.civAssist.report,
-    error: state.civAssist.error,
-    selectedPlayerID: state.civAssist.selectedPlayerID,
-    loadedFingerprint: state.civAssist.loadedFingerprint,
-    loadedSaveMeta: state.civAssist.loadedSaveMeta
+    savePath: state.civAdvisor.savePath,
+    report: state.civAdvisor.report,
+    error: state.civAdvisor.error,
+    selectedPlayerID: state.civAdvisor.selectedPlayerID,
+    loadedFingerprint: state.civAdvisor.loadedFingerprint,
+    loadedSaveMeta: state.civAdvisor.loadedSaveMeta
   };
-  state.civAssist.loading = true;
-  state.civAssist.error = '';
-  renderCivAssistModal();
+  state.civAdvisor.loading = true;
+  state.civAdvisor.error = '';
+  renderCivAdvisorModal();
   try {
-    const selectedPlayerID = Number.isFinite(Number(state.civAssist.selectedPlayerID)) && (Number(state.civAssist.selectedPlayerID) > 0 || Number(state.civAssist.selectedPlayerID) === -1)
-      ? Number(state.civAssist.selectedPlayerID)
+    const selectedPlayerID = Number.isFinite(Number(state.civAdvisor.selectedPlayerID)) && (Number(state.civAdvisor.selectedPlayerID) > 0 || Number(state.civAdvisor.selectedPlayerID) === -1)
+      ? Number(state.civAdvisor.selectedPlayerID)
       : undefined;
-    const result = await window.c3xManager.inspectCivAssistSave({
+    const result = await window.c3xManager.inspectCivAdvisorSave({
       filePath: target,
-      selectedPlayerID
+      selectedPlayerID,
+      districtAlertContext: makeCivAdvisorDistrictAlertContext()
     });
-    if (requestId !== state.civAssist.loadRequestId) return false;
+    if (requestId !== state.civAdvisor.loadRequestId) return false;
     if (!result || !result.ok) {
       const error = String(result && result.error || 'Could not read the selected SAV file.');
-      state.civAssist.savePath = previous.savePath;
-      state.civAssist.report = previous.report;
-      state.civAssist.selectedPlayerID = previous.selectedPlayerID;
-      state.civAssist.loadedFingerprint = previous.loadedFingerprint;
-      state.civAssist.loadedSaveMeta = previous.loadedSaveMeta;
-      state.civAssist.error = previous.report ? '' : error;
+      state.civAdvisor.savePath = previous.savePath;
+      state.civAdvisor.report = previous.report;
+      state.civAdvisor.selectedPlayerID = previous.selectedPlayerID;
+      state.civAdvisor.loadedFingerprint = previous.loadedFingerprint;
+      state.civAdvisor.loadedSaveMeta = previous.loadedSaveMeta;
+      state.civAdvisor.error = previous.report ? '' : error;
       setStatus(error, true);
       return false;
     } else {
-      state.civAssist.savePath = target;
+      state.civAdvisor.savePath = target;
       const resolvedPlayerID = Number(result.selectedPlayerID);
-      const previousSelectedPlayerID = Number(state.civAssist.selectedPlayerID);
-      state.civAssist.selectedPlayerID = Number.isFinite(resolvedPlayerID) && (resolvedPlayerID > 0 || resolvedPlayerID === -1)
+      const previousSelectedPlayerID = Number(state.civAdvisor.selectedPlayerID);
+      state.civAdvisor.selectedPlayerID = Number.isFinite(resolvedPlayerID) && (resolvedPlayerID > 0 || resolvedPlayerID === -1)
         ? resolvedPlayerID
         : 0;
-      if (Number.isFinite(previousSelectedPlayerID) && previousSelectedPlayerID > 0 && previousSelectedPlayerID !== state.civAssist.selectedPlayerID) {
-        state.civAssist.selectedCultureCityID = -1;
+      if (Number.isFinite(previousSelectedPlayerID) && previousSelectedPlayerID > 0 && previousSelectedPlayerID !== state.civAdvisor.selectedPlayerID) {
+        state.civAdvisor.selectedCultureCityID = -1;
       }
-      state.civAssist.report = result;
-      state.civAssist.alertsSeen = false;
-      state.civAssist.error = '';
-      state.civAssist.loadedSaveMeta = options.saveMeta || findRecentCivAssistSave(target) || null;
-      state.civAssist.loadedFingerprint = String(options.fingerprint || getCivAssistSaveFingerprint(state.civAssist.loadedSaveMeta));
+      state.civAdvisor.report = result;
+      state.civAdvisor.alertsSeen = false;
+      state.civAdvisor.error = '';
+      state.civAdvisor.loadedSaveMeta = options.saveMeta || findRecentCivAdvisorSave(target) || null;
+      state.civAdvisor.loadedFingerprint = String(options.fingerprint || getCivAdvisorSaveFingerprint(state.civAdvisor.loadedSaveMeta));
       setStatus(options.automatic ? 'Civ Advisor loaded the latest save.' : 'Civ Advisor save loaded.');
       syncCivAdvisorOverlayState();
       syncCurrentNavigationSnapshot();
       return true;
     }
   } catch (err) {
-    if (requestId !== state.civAssist.loadRequestId) return false;
+    if (requestId !== state.civAdvisor.loadRequestId) return false;
     const error = String(err && err.message || err || 'Could not read the selected SAV file.');
-    state.civAssist.savePath = previous.savePath;
-    state.civAssist.report = previous.report;
-    state.civAssist.selectedPlayerID = previous.selectedPlayerID;
-    state.civAssist.loadedFingerprint = previous.loadedFingerprint;
-    state.civAssist.loadedSaveMeta = previous.loadedSaveMeta;
-    state.civAssist.error = previous.report ? '' : error;
+    state.civAdvisor.savePath = previous.savePath;
+    state.civAdvisor.report = previous.report;
+    state.civAdvisor.selectedPlayerID = previous.selectedPlayerID;
+    state.civAdvisor.loadedFingerprint = previous.loadedFingerprint;
+    state.civAdvisor.loadedSaveMeta = previous.loadedSaveMeta;
+    state.civAdvisor.error = previous.report ? '' : error;
     setStatus(error, true);
     return false;
   } finally {
-    if (requestId === state.civAssist.loadRequestId) {
-      state.civAssist.loading = false;
-      renderCivAssistModal();
+    if (requestId === state.civAdvisor.loadRequestId) {
+      state.civAdvisor.loading = false;
+      renderCivAdvisorModal();
     }
   }
 }
 
-function getCivAssistReferenceEntry(ref) {
+function getCivAdvisorReferenceEntry(ref) {
   const tabKey = String(ref && ref.tabKey || '').trim();
   if (!tabKey || !state.bundle || !state.bundle.tabs) return null;
   const tab = state.bundle.tabs[tabKey];
@@ -72722,7 +72765,7 @@ function getCivAssistReferenceEntry(ref) {
   const sectionCode = String(ref && ref.sectionCode || '').trim().toUpperCase();
   const targetIndex = Number(ref && ref.biqIndex);
   const targetName = String(ref && ref.name || '').trim().toLowerCase();
-  const sourceValues = getCivAssistRefSourceValues(ref);
+  const sourceValues = getCivAdvisorRefSourceValues(ref);
   if (Number.isFinite(targetIndex) && targetIndex >= 0) {
     const byIndex = entries.find((entry, fallbackIdx) => {
       const candidates = [
@@ -72738,7 +72781,7 @@ function getCivAssistReferenceEntry(ref) {
       });
     });
     if (byIndex) {
-      if (sectionCode !== 'PRTO' || sourceValues.length === 0 || civAssistReferenceEntryMatchesSource(ref, byIndex)) {
+      if (sectionCode !== 'PRTO' || sourceValues.length === 0 || civAdvisorReferenceEntryMatchesSource(ref, byIndex)) {
         return byIndex;
       }
     }
@@ -72746,8 +72789,8 @@ function getCivAssistReferenceEntry(ref) {
   if (sectionCode === 'PRTO' && sourceValues.length > 0) {
     const bySourceIdentity = entries.find((entry) => {
       const entryValues = [
-        getCivAssistRecordIdentityValue(entry, 'name'),
-        getCivAssistRecordIdentityValue(entry, 'civilopediaEntry')
+        getCivAdvisorRecordIdentityValue(entry, 'name'),
+        getCivAdvisorRecordIdentityValue(entry, 'civilopediaEntry')
       ];
       return JSON.stringify(entryValues) === JSON.stringify(sourceValues);
     });
@@ -72762,7 +72805,7 @@ function getCivAssistReferenceEntry(ref) {
   return null;
 }
 
-function getCivAssistSignatureFields(sectionCode) {
+function getCivAdvisorSignatureFields(sectionCode) {
   switch (String(sectionCode || '').trim().toUpperCase()) {
     case 'RACE': return ['civilizationName', 'civilopediaEntry'];
     case 'TECH': return ['name', 'civilopediaEntry', 'era'];
@@ -72773,25 +72816,25 @@ function getCivAssistSignatureFields(sectionCode) {
   }
 }
 
-function getCivAssistPrimitiveText(value) {
-  if (Array.isArray(value)) return value.map(getCivAssistPrimitiveText).join('|');
+function getCivAdvisorPrimitiveText(value) {
+  if (Array.isArray(value)) return value.map(getCivAdvisorPrimitiveText).join('|');
   if (value == null) return '';
   return String(value).trim();
 }
 
-function getCivAssistCanonicalKey(value) {
+function getCivAdvisorCanonicalKey(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-function getCivAssistRecordIdentityValue(record, key) {
+function getCivAdvisorRecordIdentityValue(record, key) {
   if (!record || !key) return '';
-  if (Object.prototype.hasOwnProperty.call(record, key)) return getCivAssistPrimitiveText(record[key]);
-  const wanted = getCivAssistCanonicalKey(key);
-  const directKey = Object.keys(record).find((candidate) => getCivAssistCanonicalKey(candidate) === wanted);
-  if (directKey) return getCivAssistPrimitiveText(record[directKey]);
+  if (Object.prototype.hasOwnProperty.call(record, key)) return getCivAdvisorPrimitiveText(record[key]);
+  const wanted = getCivAdvisorCanonicalKey(key);
+  const directKey = Object.keys(record).find((candidate) => getCivAdvisorCanonicalKey(candidate) === wanted);
+  if (directKey) return getCivAdvisorPrimitiveText(record[directKey]);
   if (wanted === 'civilopediaentry') {
-    if (record.displayCivilopediaKey != null) return getCivAssistPrimitiveText(record.displayCivilopediaKey);
-    if (record.civilopediaKey != null) return getCivAssistPrimitiveText(record.civilopediaKey);
+    if (record.displayCivilopediaKey != null) return getCivAdvisorPrimitiveText(record.displayCivilopediaKey);
+    if (record.civilopediaKey != null) return getCivAdvisorPrimitiveText(record.civilopediaKey);
   }
   const fieldLists = [
     Array.isArray(record.fields) ? record.fields : [],
@@ -72800,14 +72843,14 @@ function getCivAssistRecordIdentityValue(record, key) {
   for (const fields of fieldLists) {
     const field = fields.find((item) => {
       const base = item && (item.baseKey || item.key || item.label);
-      return getCivAssistCanonicalKey(base) === wanted;
+      return getCivAdvisorCanonicalKey(base) === wanted;
     });
-    if (field) return getCivAssistPrimitiveText(field.value);
+    if (field) return getCivAdvisorPrimitiveText(field.value);
   }
   return '';
 }
 
-function getCivAssistRecordSignatureIndex(record, fallbackIndex) {
+function getCivAdvisorRecordSignatureIndex(record, fallbackIndex) {
   const candidates = [
     record && record.index,
     record && record.biqIndex,
@@ -72822,36 +72865,36 @@ function getCivAssistRecordSignatureIndex(record, fallbackIndex) {
   return fallbackIndex;
 }
 
-function getCivAssistSignatureRecord(signature, biqIndex) {
+function getCivAdvisorSignatureRecord(signature, biqIndex) {
   const targetIndex = Number(biqIndex);
   if (!signature || !Number.isFinite(targetIndex) || targetIndex < 0) return null;
   const records = Array.isArray(signature.records) ? signature.records : [];
   return records.find((record, fallbackIdx) => {
-    const index = getCivAssistRecordSignatureIndex(record, fallbackIdx);
+    const index = getCivAdvisorRecordSignatureIndex(record, fallbackIdx);
     return index === targetIndex;
   }) || null;
 }
 
-function getCivAssistRefSourceValues(ref) {
-  const sourceRecord = getCivAssistSignatureRecord(ref && ref.sourceSignature, ref && ref.biqIndex);
+function getCivAdvisorRefSourceValues(ref) {
+  const sourceRecord = getCivAdvisorSignatureRecord(ref && ref.sourceSignature, ref && ref.biqIndex);
   return sourceRecord && Array.isArray(sourceRecord.values) ? sourceRecord.values : [];
 }
 
-function makeCivAssistSectionSignature(sectionCode, records) {
+function makeCivAdvisorSectionSignature(sectionCode, records) {
   const code = String(sectionCode || '').trim().toUpperCase();
-  const fields = getCivAssistSignatureFields(code);
+  const fields = getCivAdvisorSignatureFields(code);
   const sourceRecords = Array.isArray(records) ? records : [];
   return {
     sectionCode: code,
     count: sourceRecords.length,
     records: sourceRecords.map((record, fallbackIndex) => ({
-      index: getCivAssistRecordSignatureIndex(record, fallbackIndex),
-      values: fields.map((key) => getCivAssistRecordIdentityValue(record, key))
+      index: getCivAdvisorRecordSignatureIndex(record, fallbackIndex),
+      values: fields.map((key) => getCivAdvisorRecordIdentityValue(record, key))
     }))
   };
 }
 
-function getCivAssistCurrentSectionRecords(sectionCode) {
+function getCivAdvisorCurrentSectionRecords(sectionCode) {
   const code = String(sectionCode || '').trim().toUpperCase();
   const tabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
   if (code === 'PRTO') {
@@ -72912,61 +72955,61 @@ function getCivAssistCurrentSectionRecords(sectionCode) {
   return [];
 }
 
-function getCivAssistCurrentSectionSignature(sectionCode) {
-  return makeCivAssistSectionSignature(sectionCode, getCivAssistCurrentSectionRecords(sectionCode));
+function getCivAdvisorCurrentSectionSignature(sectionCode) {
+  return makeCivAdvisorSectionSignature(sectionCode, getCivAdvisorCurrentSectionRecords(sectionCode));
 }
 
-function civAssistSignaturesEqual(a, b) {
+function civAdvisorSignaturesEqual(a, b) {
   return !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
 }
 
-function civAssistRefMatchesCurrentRecord(ref, currentSignature) {
+function civAdvisorRefMatchesCurrentRecord(ref, currentSignature) {
   const sourceSignature = ref && ref.sourceSignature;
   const sectionCode = String((ref && ref.sectionCode) || (sourceSignature && sourceSignature.sectionCode) || '').trim().toUpperCase();
   const targetIndex = Number(ref && ref.biqIndex);
   if (!sectionCode || !sourceSignature || !currentSignature || !Number.isFinite(targetIndex) || targetIndex < 0) return false;
-  const sourceRecord = getCivAssistSignatureRecord(sourceSignature, targetIndex);
-  const currentRecord = getCivAssistSignatureRecord(currentSignature, targetIndex);
+  const sourceRecord = getCivAdvisorSignatureRecord(sourceSignature, targetIndex);
+  const currentRecord = getCivAdvisorSignatureRecord(currentSignature, targetIndex);
   if (!sourceRecord || !currentRecord) return false;
   return JSON.stringify(sourceRecord.values || []) === JSON.stringify(currentRecord.values || []);
 }
 
-function civAssistRefMatchesFoldedCurrentRecord(ref, currentSignature) {
+function civAdvisorRefMatchesFoldedCurrentRecord(ref, currentSignature) {
   const sourceSignature = ref && ref.sourceSignature;
   const sectionCode = String((ref && ref.sectionCode) || (sourceSignature && sourceSignature.sectionCode) || '').trim().toUpperCase();
   if (sectionCode !== 'PRTO' || !sourceSignature || !currentSignature) return false;
   if (Number(currentSignature.count) >= Number(sourceSignature.count)) return false;
-  const sourceValues = getCivAssistRefSourceValues(ref);
+  const sourceValues = getCivAdvisorRefSourceValues(ref);
   if (sourceValues.length === 0) return false;
   const currentRecords = Array.isArray(currentSignature.records) ? currentSignature.records : [];
   return currentRecords.some((record) => JSON.stringify(record && record.values || []) === JSON.stringify(sourceValues));
 }
 
-function civAssistReferenceEntryMatchesSource(ref, entry) {
+function civAdvisorReferenceEntryMatchesSource(ref, entry) {
   const sectionCode = String(ref && ref.sectionCode || '').trim().toUpperCase();
   if (sectionCode !== 'PRTO' || !entry) return false;
-  const sourceValues = getCivAssistRefSourceValues(ref);
+  const sourceValues = getCivAdvisorRefSourceValues(ref);
   if (sourceValues.length === 0) return false;
   const entryValues = [
-    getCivAssistRecordIdentityValue(entry, 'name'),
-    getCivAssistRecordIdentityValue(entry, 'civilopediaEntry')
+    getCivAdvisorRecordIdentityValue(entry, 'name'),
+    getCivAdvisorRecordIdentityValue(entry, 'civilopediaEntry')
   ];
   return JSON.stringify(entryValues) === JSON.stringify(sourceValues);
 }
 
-function canLinkCivAssistRef(ref) {
+function canLinkCivAdvisorRef(ref) {
   const sourceSignature = ref && ref.sourceSignature;
   const sectionCode = String((ref && ref.sectionCode) || (sourceSignature && sourceSignature.sectionCode) || '').trim().toUpperCase();
   if (!sectionCode || !sourceSignature) return false;
-  const currentSignature = getCivAssistCurrentSectionSignature(sectionCode);
-  return civAssistSignaturesEqual(sourceSignature, currentSignature)
+  const currentSignature = getCivAdvisorCurrentSectionSignature(sectionCode);
+  return civAdvisorSignaturesEqual(sourceSignature, currentSignature)
     || (sectionCode === 'PRTO' && (
-      civAssistRefMatchesCurrentRecord(ref, currentSignature)
-      || civAssistRefMatchesFoldedCurrentRecord(ref, currentSignature)
+      civAdvisorRefMatchesCurrentRecord(ref, currentSignature)
+      || civAdvisorRefMatchesFoldedCurrentRecord(ref, currentSignature)
     ));
 }
 
-function getCivAssistStructuredTarget(ref) {
+function getCivAdvisorStructuredTarget(ref) {
   const tabKey = String(ref && ref.tabKey || '').trim();
   const sectionCode = String(ref && ref.sectionCode || '').trim().toUpperCase();
   if (!tabKey || !sectionCode || !state.bundle || !state.bundle.tabs) return null;
@@ -73006,11 +73049,11 @@ function getCivAssistStructuredTarget(ref) {
   };
 }
 
-function getCivAssistLinkTarget(ref) {
+function getCivAdvisorLinkTarget(ref) {
   if (!ref) return null;
-  const canLink = canLinkCivAssistRef(ref);
-  const entry = getCivAssistReferenceEntry(ref);
-  if (entry && (canLink || civAssistReferenceEntryMatchesSource(ref, entry))) {
+  const canLink = canLinkCivAdvisorRef(ref);
+  const entry = getCivAdvisorReferenceEntry(ref);
+  if (entry && (canLink || civAdvisorReferenceEntryMatchesSource(ref, entry))) {
     return {
       type: 'reference',
       tabKey: String(ref.tabKey || '').trim(),
@@ -73019,15 +73062,15 @@ function getCivAssistLinkTarget(ref) {
     };
   }
   if (!canLink) return null;
-  return getCivAssistStructuredTarget(ref);
+  return getCivAdvisorStructuredTarget(ref);
 }
 
-function getCivAssistReferenceTabTitle(tabKey) {
+function getCivAdvisorReferenceTabTitle(tabKey) {
   const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
   return String(tab && tab.title || tabKey || 'Reference');
 }
 
-function navigateToCivAssistStructuredTarget(target) {
+function navigateToCivAdvisorStructuredTarget(target) {
   if (!target || target.type !== 'structured') return false;
   const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[target.tabKey] : null;
   if (!tab || !Array.isArray(tab.sections)) return false;
@@ -73044,9 +73087,9 @@ function navigateToCivAssistStructuredTarget(target) {
   return true;
 }
 
-function makeCivAssistReferenceChip(ref, label, options = {}) {
+function makeCivAdvisorReferenceChip(ref, label, options = {}) {
   const text = String(label == null ? '' : label);
-  const target = getCivAssistLinkTarget(ref);
+  const target = getCivAdvisorLinkTarget(ref);
   const isCivChip = !!options.civChip
     || String(ref && ref.sectionCode || '').trim().toUpperCase() === 'RACE'
     || (target && target.type === 'reference' && target.tabKey === 'civilizations');
@@ -73059,7 +73102,7 @@ function makeCivAssistReferenceChip(ref, label, options = {}) {
     }
     if (Number.isFinite(slot) && slot >= 0) {
       const color = document.createElement('span');
-      color.className = 'civassist-color-swatch';
+      color.className = 'civadvisor-color-swatch';
       const applyColor = (css) => {
         if (color.isConnected) color.style.backgroundColor = css;
       };
@@ -73070,7 +73113,7 @@ function makeCivAssistReferenceChip(ref, label, options = {}) {
     }
     if (options.color) {
       const color = document.createElement('span');
-      color.className = 'civassist-color-swatch';
+      color.className = 'civadvisor-color-swatch';
       color.style.backgroundColor = options.color;
       parent.appendChild(color);
       return true;
@@ -73079,8 +73122,8 @@ function makeCivAssistReferenceChip(ref, label, options = {}) {
   };
   if (!target) {
     const span = document.createElement('span');
-    span.className = options.inline ? 'civassist-value' : 'civassist-ref-chip civassist-ref-chip-unlinked';
-    if (isCivChip) span.classList.add('civassist-civ-chip');
+    span.className = options.inline ? 'civadvisor-value' : 'civadvisor-ref-chip civadvisor-ref-chip-unlinked';
+    if (isCivChip) span.classList.add('civadvisor-civ-chip');
     if (ref && ref.sourceSignature) {
       const tooltip = 'From the selected save rules.\nOpen the matching scenario to enable links and thumbnails.';
       span.title = tooltip.replace(/\n/g, ' - ');
@@ -73094,48 +73137,48 @@ function makeCivAssistReferenceChip(ref, label, options = {}) {
   }
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = options.inline ? 'civassist-ref-link-inline' : 'civassist-ref-chip';
-  if (isCivChip) button.classList.add('civassist-civ-chip');
-  if (target.type === 'structured') button.classList.add('civassist-ref-chip-textonly');
+  button.className = options.inline ? 'civadvisor-ref-link-inline' : 'civadvisor-ref-chip';
+  if (isCivChip) button.classList.add('civadvisor-civ-chip');
+  if (target.type === 'structured') button.classList.add('civadvisor-ref-chip-textonly');
   appendColorSwatch(button);
   if (target.type === 'reference') {
     const thumb = document.createElement('span');
-    thumb.className = 'entry-thumb civassist-ref-thumb';
+    thumb.className = 'entry-thumb civadvisor-ref-thumb';
     thumb.dataset.thumbSize = options.inline ? '20' : '22';
     button.appendChild(thumb);
     loadReferenceListThumbnail(target.tabKey, target.entry, thumb);
   }
   const name = document.createElement('span');
-  name.className = 'civassist-ref-label';
+  name.className = 'civadvisor-ref-label';
   name.textContent = text || target.label || '';
   button.appendChild(name);
-  const tabTitle = getCivAssistReferenceTabTitle(target.tabKey);
+  const tabTitle = getCivAdvisorReferenceTabTitle(target.tabKey);
   const tooltip = `Open: ${name.textContent}\nTab: ${tabTitle}`;
   button.title = tooltip.replace(/\n/g, ' - ');
   attachRichTooltip(button, tooltip);
   button.addEventListener('click', () => {
-    const navigated = navigateFromCivAssistToTarget(target);
+    const navigated = navigateFromCivAdvisorToTarget(target);
     if (!navigated) setStatus(`Could not open ${name.textContent || 'reference'}.`, true);
   });
   return button;
 }
 
-function ensureCivAssistCityArtAssets() {
-  CIV_ASSIST_CITY_ART_ASSETS.forEach(([assetKey, assetPath]) => {
+function ensureCivAdvisorCityArtAssets() {
+  CIV_ADVISOR_CITY_ART_ASSETS.forEach(([assetKey, assetPath]) => {
     requestBiqMapArtAsset(assetKey, assetPath);
   });
 }
 
-function getCivAssistCityArtKey(cityArt) {
+function getCivAdvisorCityArtKey(cityArt) {
   const cultureIndex = Math.max(0, Math.min(4, parseIntLoose(cityArt && cityArt.cultureGroup, 2)));
   const noWallKeys = ['cityAmerc', 'cityEuro', 'cityRoman', 'cityMidEast', 'cityAsian'];
   const wallKeys = ['cityAmercWall', 'cityEuroWall', 'cityRomanWall', 'cityMidEastWall', 'cityAsianWall'];
   return cityArt && cityArt.hasWalls ? wallKeys[cultureIndex] : noWallKeys[cultureIndex];
 }
 
-function drawCivAssistCityThumb(canvas, cityArt) {
+function drawCivAdvisorCityThumb(canvas, cityArt) {
   if (!canvas || !cityArt) return false;
-  const assetKey = getCivAssistCityArtKey(cityArt);
+  const assetKey = getCivAdvisorCityArtKey(cityArt);
   const sheet = state.biqMapArtCache && state.biqMapArtCache[assetKey];
   if (!sheet) return false;
   const ctx = canvas.getContext('2d');
@@ -73169,86 +73212,86 @@ function drawCivAssistCityThumb(canvas, cityArt) {
   return true;
 }
 
-function makeCivAssistCityThumb(cityArt, label = '') {
-  ensureCivAssistCityArtAssets();
+function makeCivAdvisorCityThumb(cityArt, label = '') {
+  ensureCivAdvisorCityArtAssets();
   const thumb = document.createElement('span');
-  thumb.className = 'civassist-city-thumb';
-  thumb._civAssistCityArt = cityArt || null;
-  if (cityArt) thumb.dataset.cityArtKey = getCivAssistCityArtKey(cityArt);
+  thumb.className = 'civadvisor-city-thumb';
+  thumb._civAdvisorCityArt = cityArt || null;
+  if (cityArt) thumb.dataset.cityArtKey = getCivAdvisorCityArtKey(cityArt);
   const canvas = document.createElement('canvas');
   canvas.width = 34;
   canvas.height = 24;
   thumb.appendChild(canvas);
-  const drew = drawCivAssistCityThumb(canvas, cityArt);
+  const drew = drawCivAdvisorCityThumb(canvas, cityArt);
   thumb.classList.toggle('is-placeholder', !drew);
   thumb.title = label ? `${label} city graphic` : 'City graphic';
   return thumb;
 }
 
-function refreshCivAssistCityThumbnails(assetKey = '') {
-  if (!el.civAssistModalBody) return false;
+function refreshCivAdvisorCityThumbnails(assetKey = '') {
+  if (!el.civAdvisorModalBody) return false;
   const key = String(assetKey || '');
   let updated = 0;
-  el.civAssistModalBody.querySelectorAll('.civassist-city-thumb').forEach((thumb) => {
+  el.civAdvisorModalBody.querySelectorAll('.civadvisor-city-thumb').forEach((thumb) => {
     if (key && thumb.dataset.cityArtKey !== key) return;
-    const cityArt = thumb._civAssistCityArt;
+    const cityArt = thumb._civAdvisorCityArt;
     if (!cityArt) return;
     const canvas = thumb.querySelector('canvas');
     if (!canvas) return;
-    const drew = drawCivAssistCityThumb(canvas, cityArt);
+    const drew = drawCivAdvisorCityThumb(canvas, cityArt);
     thumb.classList.toggle('is-placeholder', !drew);
     if (drew) updated += 1;
   });
   return updated > 0;
 }
 
-function makeCivAssistCityName(city, labelText) {
+function makeCivAdvisorCityName(city, labelText) {
   const label = String(labelText == null ? city && (city.city || city.name) : labelText);
   const wrap = document.createElement('span');
-  wrap.className = 'civassist-city-name';
-  wrap.appendChild(makeCivAssistCityThumb(city && city.cityArt, label));
+  wrap.className = 'civadvisor-city-name';
+  wrap.appendChild(makeCivAdvisorCityThumb(city && city.cityArt, label));
   const text = document.createElement('span');
-  text.className = 'civassist-city-name-label';
+  text.className = 'civadvisor-city-name-label';
   text.textContent = label;
   wrap.appendChild(text);
   return wrap;
 }
 
-function makeCivAssistCityPicker(cities, selectedID, onSelect) {
-  ensureCivAssistCityArtAssets();
+function makeCivAdvisorCityPicker(cities, selectedID, onSelect) {
+  ensureCivAdvisorCityArtAssets();
   const selected = (cities || []).find((city) => Number(city.id) === Number(selectedID)) || (cities || [])[0] || null;
   const picker = document.createElement('div');
-  picker.className = 'civassist-city-picker';
+  picker.className = 'civadvisor-city-picker';
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'civassist-city-picker-button';
+  button.className = 'civadvisor-city-picker-button';
   button.setAttribute('aria-haspopup', 'listbox');
   button.setAttribute('aria-expanded', 'false');
   const buttonLabel = document.createElement('span');
-  buttonLabel.className = 'civassist-city-picker-current';
+  buttonLabel.className = 'civadvisor-city-picker-current';
   if (selected) {
-    buttonLabel.appendChild(makeCivAssistCityName(selected, `${selected.name} (${selected.culture})`));
+    buttonLabel.appendChild(makeCivAdvisorCityName(selected, `${selected.name} (${selected.culture})`));
   } else {
     buttonLabel.textContent = 'No city';
   }
   const chevron = document.createElement('span');
-  chevron.className = 'civassist-city-picker-chevron';
+  chevron.className = 'civadvisor-city-picker-chevron';
   chevron.textContent = '⌄';
   button.append(buttonLabel, chevron);
   const menu = document.createElement('div');
-  menu.className = 'civassist-city-picker-menu hidden';
+  menu.className = 'civadvisor-city-picker-menu hidden';
   menu.setAttribute('role', 'listbox');
   (cities || []).forEach((city) => {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = Number(city.id) === Number(selectedID)
-      ? 'civassist-city-picker-option active'
-      : 'civassist-city-picker-option';
+      ? 'civadvisor-city-picker-option active'
+      : 'civadvisor-city-picker-option';
     item.setAttribute('role', 'option');
     item.setAttribute('aria-selected', Number(city.id) === Number(selectedID) ? 'true' : 'false');
-    item.appendChild(makeCivAssistCityName(city, city.name));
+    item.appendChild(makeCivAdvisorCityName(city, city.name));
     const culture = document.createElement('span');
-    culture.className = 'civassist-city-picker-culture';
+    culture.className = 'civadvisor-city-picker-culture';
     culture.textContent = String(city.culture == null ? '' : city.culture);
     item.appendChild(culture);
     item.addEventListener('click', () => {
@@ -73281,35 +73324,35 @@ function makeCivAssistCityPicker(cities, selectedID, onSelect) {
   return picker;
 }
 
-function appendCivAssistInfoGroup(parent, title, fields) {
+function appendCivAdvisorInfoGroup(parent, title, fields) {
   const section = document.createElement('section');
-  section.className = 'civassist-info-section';
+  section.className = 'civadvisor-info-section';
   const heading = document.createElement('h3');
   heading.textContent = title;
   section.appendChild(heading);
   const list = document.createElement('dl');
-  list.className = 'civassist-kv-list';
+  list.className = 'civadvisor-kv-list';
   for (const field of fields || []) {
     const row = document.createElement('div');
-    row.className = 'civassist-kv-row';
+    row.className = 'civadvisor-kv-row';
     const dt = document.createElement('dt');
     dt.textContent = `${field.label}:`;
     const dd = document.createElement('dd');
     if (field.ref) {
-      dd.appendChild(makeCivAssistReferenceChip(field.ref, field.value, {
+      dd.appendChild(makeCivAdvisorReferenceChip(field.ref, field.value, {
         inline: true,
         color: field.color,
         colorSlot: field.colorSlot
       }));
     } else {
       const value = document.createElement('span');
-      value.className = field.muted ? 'civassist-muted-value' : 'civassist-value';
+      value.className = field.muted ? 'civadvisor-muted-value' : 'civadvisor-value';
       value.textContent = String(field.value == null ? '' : field.value);
       dd.appendChild(value);
     }
     if (field.rank) {
       const rank = document.createElement('span');
-      rank.className = 'civassist-rank';
+      rank.className = 'civadvisor-rank';
       rank.textContent = `(${field.rank})`;
       dd.appendChild(rank);
     }
@@ -73320,52 +73363,52 @@ function appendCivAssistInfoGroup(parent, title, fields) {
   parent.appendChild(section);
 }
 
-function renderCivAssistEmptyState(message, isError = false) {
+function renderCivAdvisorEmptyState(message, isError = false) {
   const wrap = document.createElement('div');
-  wrap.className = isError ? 'civassist-empty civassist-error' : 'civassist-empty';
+  wrap.className = isError ? 'civadvisor-empty civadvisor-error' : 'civadvisor-empty';
   const title = document.createElement('strong');
   title.textContent = isError ? 'Could not load save' : 'Select a Civ III save';
   const body = document.createElement('p');
-  body.textContent = message || 'Open a .SAV file to view CivAssist data.';
+  body.textContent = message || 'Open a .SAV file to view Civ Advisor data.';
   const button = document.createElement('button');
   button.className = 'secondary';
   button.type = 'button';
   button.textContent = 'Open SAV';
   button.addEventListener('click', () => {
-    void pickCivAssistSave();
+    void pickCivAdvisorSave();
   });
   wrap.append(title, body, button);
   return wrap;
 }
 
-function getCivAssistSortState(tableKey) {
+function getCivAdvisorSortState(tableKey) {
   const key = String(tableKey || '').trim();
   if (!key) return null;
-  if (!state.civAssist.sortState || typeof state.civAssist.sortState !== 'object') {
-    state.civAssist.sortState = {};
+  if (!state.civAdvisor.sortState || typeof state.civAdvisor.sortState !== 'object') {
+    state.civAdvisor.sortState = {};
   }
-  return state.civAssist.sortState[key] || null;
+  return state.civAdvisor.sortState[key] || null;
 }
 
-function setCivAssistSortState(tableKey, columnKey) {
+function setCivAdvisorSortState(tableKey, columnKey) {
   const key = String(tableKey || '').trim();
   const column = String(columnKey || '').trim();
   if (!key || !column) return;
-  const current = getCivAssistSortState(key);
+  const current = getCivAdvisorSortState(key);
   const sameColumn = current && current.columnKey === column;
   if (sameColumn && current.direction === 'desc') {
-    delete state.civAssist.sortState[key];
+    delete state.civAdvisor.sortState[key];
     syncCurrentNavigationSnapshot();
     return;
   }
-  state.civAssist.sortState[key] = {
+  state.civAdvisor.sortState[key] = {
     columnKey: column,
     direction: sameColumn && current.direction === 'asc' ? 'desc' : 'asc'
   };
   syncCurrentNavigationSnapshot();
 }
 
-function getCivAssistSortText(value) {
+function getCivAdvisorSortText(value) {
   if (Array.isArray(value)) {
     return value.map((item) => {
       if (!item || typeof item !== 'object') return String(item == null ? '' : item);
@@ -73375,7 +73418,7 @@ function getCivAssistSortText(value) {
   return String(value == null ? '' : value).trim();
 }
 
-function getCivAssistRowSortRawValue(row, column) {
+function getCivAdvisorRowSortRawValue(row, column) {
   if (!row || !column) return '';
   if (typeof column.sortValue === 'function') return column.sortValue(row);
   const key = String(column.key || '');
@@ -73385,14 +73428,14 @@ function getCivAssistRowSortRawValue(row, column) {
         : key === 'weReceive' ? 'weReceiveRefs'
           : '';
   if (refKey && Array.isArray(row[refKey]) && row[refKey].length > 0) {
-    return getCivAssistSortText(row[refKey]);
+    return getCivAdvisorSortText(row[refKey]);
   }
-  if (key === 'knownTo' && Array.isArray(row.knownTo)) return getCivAssistSortText(row.knownTo);
+  if (key === 'knownTo' && Array.isArray(row.knownTo)) return getCivAdvisorSortText(row.knownTo);
   return row[key];
 }
 
-function getCivAssistRowSortValue(row, column) {
-  const raw = getCivAssistRowSortRawValue(row, column);
+function getCivAdvisorRowSortValue(row, column) {
+  const raw = getCivAdvisorRowSortRawValue(row, column);
   if (column && column.num) {
     if (raw === '--') return { kind: 'number', value: null };
     const text = String(raw == null ? '' : raw).replace(/,/g, '').trim();
@@ -73401,11 +73444,11 @@ function getCivAssistRowSortValue(row, column) {
   }
   return {
     kind: 'text',
-    value: getCivAssistSortText(raw).toLowerCase()
+    value: getCivAdvisorSortText(raw).toLowerCase()
   };
 }
 
-function compareCivAssistSortValues(left, right, direction) {
+function compareCivAdvisorSortValues(left, right, direction) {
   const dir = direction === 'desc' ? -1 : 1;
   if (left.kind === 'number' && right.kind === 'number') {
     const leftMissing = left.value == null;
@@ -73422,9 +73465,9 @@ function compareCivAssistSortValues(left, right, direction) {
   }) * dir;
 }
 
-function sortCivAssistRows(rows, columns, tableKey) {
+function sortCivAdvisorRows(rows, columns, tableKey) {
   const items = Array.isArray(rows) ? rows.slice() : [];
-  const sort = getCivAssistSortState(tableKey);
+  const sort = getCivAdvisorSortState(tableKey);
   if (!sort || !sort.columnKey) return items;
   const column = (columns || []).find((item) => String(item && item.key || '') === sort.columnKey);
   if (!column) return items;
@@ -73432,9 +73475,9 @@ function sortCivAssistRows(rows, columns, tableKey) {
   return items
     .map((row, index) => ({ row, index }))
     .sort((a, b) => {
-      const result = compareCivAssistSortValues(
-        getCivAssistRowSortValue(a.row, column),
-        getCivAssistRowSortValue(b.row, column),
+      const result = compareCivAdvisorSortValues(
+        getCivAdvisorRowSortValue(a.row, column),
+        getCivAdvisorRowSortValue(b.row, column),
         direction
       );
       return result || (a.index - b.index);
@@ -73442,23 +73485,23 @@ function sortCivAssistRows(rows, columns, tableKey) {
     .map((item) => item.row);
 }
 
-function getCivAssistTradeGroupSortValue(group, column) {
+function getCivAdvisorTradeGroupSortValue(group, column) {
   const rows = group && Array.isArray(group.rows) ? group.rows : [];
   if (column && column.num) {
     const candidate = rows
-      .map((row) => getCivAssistRowSortValue(row, column))
+      .map((row) => getCivAdvisorRowSortValue(row, column))
       .find((value) => value && value.kind === 'number' && value.value != null);
     return candidate || { kind: 'number', value: null };
   }
   const values = rows
-    .map((row) => getCivAssistRowSortValue(row, column).value)
+    .map((row) => getCivAdvisorRowSortValue(row, column).value)
     .filter((value) => String(value || '').trim());
   return { kind: 'text', value: values.join(' | ') };
 }
 
-function sortCivAssistCurrentTradeRows(rows, columns, tableKey) {
+function sortCivAdvisorCurrentTradeRows(rows, columns, tableKey) {
   const source = Array.isArray(rows) ? rows : [];
-  const sort = getCivAssistSortState(tableKey);
+  const sort = getCivAdvisorSortState(tableKey);
   if (!sort || !sort.columnKey) return source.slice();
   const column = (columns || []).find((item) => String(item && item.key || '') === sort.columnKey);
   if (!column) return source.slice();
@@ -73473,9 +73516,9 @@ function sortCivAssistCurrentTradeRows(rows, columns, tableKey) {
   const direction = sort.direction === 'desc' ? 'desc' : 'asc';
   return groups
     .sort((a, b) => {
-      const result = compareCivAssistSortValues(
-        getCivAssistTradeGroupSortValue(a, column),
-        getCivAssistTradeGroupSortValue(b, column),
+      const result = compareCivAdvisorSortValues(
+        getCivAdvisorTradeGroupSortValue(a, column),
+        getCivAdvisorTradeGroupSortValue(b, column),
         direction
       );
       return result || (a.index - b.index);
@@ -73483,53 +73526,53 @@ function sortCivAssistCurrentTradeRows(rows, columns, tableKey) {
     .flatMap((group) => group.rows);
 }
 
-function appendCivAssistSortableHeaderCell(headerRow, tableKey, column) {
+function appendCivAdvisorSortableHeaderCell(headerRow, tableKey, column) {
   const th = document.createElement('th');
   const label = String(column && column.label || column && column.key || '');
-  const sort = getCivAssistSortState(tableKey);
+  const sort = getCivAdvisorSortState(tableKey);
   const isSorted = !!sort && String(sort.columnKey || '') === String(column && column.key || '');
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'civassist-sort-header-btn';
+  button.className = 'civadvisor-sort-header-btn';
   button.title = `Sort by ${label}`;
   button.setAttribute('aria-label', `Sort by ${label}`);
   const labelSpan = document.createElement('span');
-  labelSpan.className = 'civassist-sort-header-label';
+  labelSpan.className = 'civadvisor-sort-header-label';
   labelSpan.textContent = label;
   const indicator = document.createElement('span');
-  indicator.className = 'civassist-sort-indicator';
+  indicator.className = 'civadvisor-sort-indicator';
   indicator.textContent = isSorted ? (sort.direction === 'desc' ? '↓' : '↑') : '↕';
   button.append(labelSpan, indicator);
   button.addEventListener('click', () => {
-    setCivAssistSortState(tableKey, column.key);
-    renderCivAssistModal();
+    setCivAdvisorSortState(tableKey, column.key);
+    renderCivAdvisorModal();
   });
   th.appendChild(button);
-  th.classList.add('civassist-sortable-heading');
-  th.classList.toggle('civassist-sorted-heading', isSorted);
+  th.classList.add('civadvisor-sortable-heading');
+  th.classList.toggle('civadvisor-sorted-heading', isSorted);
   th.setAttribute('aria-sort', isSorted ? (sort.direction === 'desc' ? 'descending' : 'ascending') : 'none');
   headerRow.appendChild(th);
 }
 
-function renderCivAssistGeneral(report) {
+function renderCivAdvisorGeneral(report) {
   const general = report && report.general ? report.general : {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-general';
+  wrap.className = 'civadvisor-general';
   const infoGrid = document.createElement('div');
-  infoGrid.className = 'civassist-info-grid';
-  appendCivAssistInfoGroup(infoGrid, 'Game Info', general.gameInfo || []);
-  appendCivAssistInfoGroup(infoGrid, 'Player Info', general.playerInfo || []);
+  infoGrid.className = 'civadvisor-info-grid';
+  appendCivAdvisorInfoGroup(infoGrid, 'Game Info', general.gameInfo || []);
+  appendCivAdvisorInfoGroup(infoGrid, 'Player Info', general.playerInfo || []);
   wrap.appendChild(infoGrid);
 
   const rivals = document.createElement('section');
-  rivals.className = 'civassist-rivals';
+  rivals.className = 'civadvisor-rivals';
   const heading = document.createElement('h3');
   heading.textContent = 'Rival Info';
   rivals.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table';
+  table.className = 'civadvisor-rival-table';
   const columns = [
     { key: 'nation', label: 'Civ', width: 14, sortValue: (row) => row.nation },
     { key: 'traits', label: 'Traits', width: 20 },
@@ -73550,16 +73593,16 @@ function renderCivAssistGeneral(report) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'general-rivals', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'general-rivals', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  for (const rival of sortCivAssistRows(general.rivals || [], columns, 'general-rivals')) {
+  for (const rival of sortCivAdvisorRows(general.rivals || [], columns, 'general-rivals')) {
     const row = document.createElement('tr');
     if (rival.atWar) row.classList.add('at-war');
     const nation = document.createElement('td');
-    nation.className = 'civassist-nation-cell';
-    nation.appendChild(makeCivAssistReferenceChip(rival.nationRef, rival.nation, {
+    nation.className = 'civadvisor-nation-cell';
+    nation.appendChild(makeCivAdvisorReferenceChip(rival.nationRef, rival.nation, {
       color: rival.color,
       colorSlot: rival.colorSlot
     }));
@@ -73577,7 +73620,7 @@ function renderCivAssistGeneral(report) {
       const cell = document.createElement('td');
       if (index >= 4) cell.className = 'num';
       if (item.ref) {
-        cell.appendChild(makeCivAssistReferenceChip(item.ref, item.value));
+        cell.appendChild(makeCivAdvisorReferenceChip(item.ref, item.value));
       } else {
         cell.textContent = String(item.value == null ? '' : item.value);
       }
@@ -73592,7 +73635,7 @@ function renderCivAssistGeneral(report) {
   return wrap;
 }
 
-function getCivAssistTradeMultiRefs(row, columnKey) {
+function getCivAdvisorTradeMultiRefs(row, columnKey) {
   const mappings = {
     technologies: ['technologyRefs', 'technologyTotal', 'technologyTruncated'],
     resources: ['resourceRefs', 'resourceTotal', 'resourceTruncated'],
@@ -73611,16 +73654,16 @@ function getCivAssistTradeMultiRefs(row, columnKey) {
   };
 }
 
-function appendCivAssistTradeTable(parent, title, rows, columns, tableKey) {
+function appendCivAdvisorTradeTable(parent, title, rows, columns, tableKey) {
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-trade-section';
+  section.className = 'civadvisor-rivals civadvisor-trade-section';
   const heading = document.createElement('h3');
   heading.textContent = title;
   section.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-trade-table';
+  table.className = 'civadvisor-rival-table civadvisor-trade-table';
   const colgroup = document.createElement('colgroup');
   columns.forEach((column) => {
     const col = document.createElement('col');
@@ -73631,48 +73674,48 @@ function appendCivAssistTradeTable(parent, title, rows, columns, tableKey) {
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
   columns.forEach((column) => {
-    appendCivAssistSortableHeaderCell(headerRow, tableKey, column);
+    appendCivAdvisorSortableHeaderCell(headerRow, tableKey, column);
   });
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
   const visibleRows = tableKey === 'trade-current'
-    ? sortCivAssistCurrentTradeRows(rows || [], columns, tableKey)
-    : sortCivAssistRows(rows || [], columns, tableKey);
+    ? sortCivAdvisorCurrentTradeRows(rows || [], columns, tableKey)
+    : sortCivAdvisorRows(rows || [], columns, tableKey);
   visibleRows.forEach((row) => {
     const tr = document.createElement('tr');
     columns.forEach((column) => {
       const td = document.createElement('td');
       if (column.num) td.className = 'num';
       if (column.key === 'nation') {
-        td.className = 'civassist-nation-cell';
+        td.className = 'civadvisor-nation-cell';
         if (String(row.nation || '').trim()) {
-          td.appendChild(makeCivAssistReferenceChip(row.nationRef, row.nation, {
+          td.appendChild(makeCivAdvisorReferenceChip(row.nationRef, row.nation, {
             color: row.color,
             colorSlot: row.colorSlot
           }));
         } else {
-          tr.classList.add('civassist-trade-continuation');
+          tr.classList.add('civadvisor-trade-continuation');
         }
       } else {
-        const multiRefs = getCivAssistTradeMultiRefs(row, column.key);
+        const multiRefs = getCivAdvisorTradeMultiRefs(row, column.key);
         if (multiRefs) {
-          td.classList.add('civassist-multi-cell');
+          td.classList.add('civadvisor-multi-cell');
           if (column.num) td.classList.remove('num');
           const list = document.createElement('div');
-          list.className = 'civassist-stacked-links';
+          list.className = 'civadvisor-stacked-links';
           if (multiRefs.total > multiRefs.refs.length) {
             const count = document.createElement('span');
-            count.className = 'civassist-linked-count civassist-stacked-count';
+            count.className = 'civadvisor-linked-count civadvisor-stacked-count';
             count.textContent = `(${multiRefs.total})`;
             list.appendChild(count);
           }
           multiRefs.refs.forEach((ref) => {
-            list.appendChild(makeCivAssistReferenceChip(ref, ref.name || ref.label || ''));
+            list.appendChild(makeCivAdvisorReferenceChip(ref, ref.name || ref.label || ''));
           });
           if (multiRefs.truncated) {
             const more = document.createElement('span');
-            more.className = 'civassist-linked-more';
+            more.className = 'civadvisor-linked-more';
             more.textContent = '...';
             list.appendChild(more);
           }
@@ -73691,15 +73734,15 @@ function appendCivAssistTradeTable(parent, title, rows, columns, tableKey) {
   parent.appendChild(section);
 }
 
-function renderCivAssistTrade(report) {
+function renderCivAdvisorTrade(report) {
   const trade = report && report.trade ? report.trade : {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-trade';
+  wrap.className = 'civadvisor-trade';
   const top = document.createElement('div');
-  top.className = 'civassist-trade-top';
+  top.className = 'civadvisor-trade-top';
   const treasury = document.createElement('div');
-  treasury.className = 'civassist-info-grid civassist-trade-treasury';
-  appendCivAssistInfoGroup(treasury, 'Treasury', trade.treasury || []);
+  treasury.className = 'civadvisor-info-grid civadvisor-trade-treasury';
+  appendCivAdvisorInfoGroup(treasury, 'Treasury', trade.treasury || []);
   top.appendChild(treasury);
 
   const subtabs = [
@@ -73707,21 +73750,21 @@ function renderCivAssistTrade(report) {
     { key: 'sell', label: 'Sell', count: (trade.sellOptions || []).length },
     { key: 'buy', label: 'Buy', count: (trade.buyOptions || []).length },
   ];
-  const activeSubtab = subtabs.some((tab) => tab.key === state.civAssist.activeTradeSubtab)
-    ? state.civAssist.activeTradeSubtab
+  const activeSubtab = subtabs.some((tab) => tab.key === state.civAdvisor.activeTradeSubtab)
+    ? state.civAdvisor.activeTradeSubtab
     : 'current';
-  state.civAssist.activeTradeSubtab = activeSubtab;
+  state.civAdvisor.activeTradeSubtab = activeSubtab;
   const subtabBar = document.createElement('div');
-  subtabBar.className = 'civassist-subtabs';
+  subtabBar.className = 'civadvisor-subtabs';
   subtabs.forEach((tab) => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = activeSubtab === tab.key ? 'civassist-subtab active' : 'civassist-subtab';
+    button.className = activeSubtab === tab.key ? 'civadvisor-subtab active' : 'civadvisor-subtab';
     button.dataset.subtabKey = tab.key;
     button.textContent = `${tab.label} (${tab.count})`;
     button.addEventListener('click', () => {
-      state.civAssist.activeTradeSubtab = tab.key;
-      renderCivAssistModal();
+      state.civAdvisor.activeTradeSubtab = tab.key;
+      renderCivAdvisorModal();
       syncCurrentNavigationSnapshot();
     });
     subtabBar.appendChild(button);
@@ -73739,11 +73782,11 @@ function renderCivAssistTrade(report) {
     { key: 'maps', label: 'Maps', width: '7%' },
   ];
   if (activeSubtab === 'sell') {
-    appendCivAssistTradeTable(wrap, 'Options for Us to Sell', trade.sellOptions || [], optionColumns, 'trade-sell');
+    appendCivAdvisorTradeTable(wrap, 'Options for Us to Sell', trade.sellOptions || [], optionColumns, 'trade-sell');
   } else if (activeSubtab === 'buy') {
-    appendCivAssistTradeTable(wrap, 'Options for Us to Buy', trade.buyOptions || [], optionColumns, 'trade-buy');
+    appendCivAdvisorTradeTable(wrap, 'Options for Us to Buy', trade.buyOptions || [], optionColumns, 'trade-buy');
   } else {
-    appendCivAssistTradeTable(wrap, 'Current Trades', trade.currentTrades || [], [
+    appendCivAdvisorTradeTable(wrap, 'Current Trades', trade.currentTrades || [], [
       { key: 'nation', label: 'Civ', width: '22%' },
       { key: 'turnsLeft', label: 'Turns Left', num: true, width: '10%' },
       { key: 'weGive', label: 'We Give', width: '34%' },
@@ -73753,24 +73796,24 @@ function renderCivAssistTrade(report) {
   return wrap;
 }
 
-function renderCivAssistDiplomacy(report) {
+function renderCivAdvisorDiplomacy(report) {
   const diplomacy = report && report.diplomacy ? report.diplomacy : { summary: [], rows: [] };
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-diplomacy';
+  wrap.className = 'civadvisor-diplomacy';
   const top = document.createElement('div');
-  top.className = 'civassist-info-grid civassist-diplomacy-summary';
-  appendCivAssistInfoGroup(top, 'Diplomacy Summary', diplomacy.summary || []);
+  top.className = 'civadvisor-info-grid civadvisor-diplomacy-summary';
+  appendCivAdvisorInfoGroup(top, 'Diplomacy Summary', diplomacy.summary || []);
   wrap.appendChild(top);
 
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-diplomacy-section';
+  section.className = 'civadvisor-rivals civadvisor-diplomacy-section';
   const heading = document.createElement('h3');
   heading.textContent = 'Diplomacy Info';
   section.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-diplomacy-table';
+  table.className = 'civadvisor-rival-table civadvisor-diplomacy-table';
   const columns = [
     { key: 'nation', label: 'Civ', width: '16%' },
     { key: 'ourCulture', label: 'Our Culture', width: '11%' },
@@ -73793,18 +73836,18 @@ function renderCivAssistDiplomacy(report) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'diplomacy', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'diplomacy', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  sortCivAssistRows(diplomacy.rows || [], columns, 'diplomacy').forEach((row) => {
+  sortCivAdvisorRows(diplomacy.rows || [], columns, 'diplomacy').forEach((row) => {
     const tr = document.createElement('tr');
     columns.forEach((column) => {
       const td = document.createElement('td');
       if (column.num) td.className = 'num';
       if (column.key === 'nation') {
-        td.className = 'civassist-nation-cell';
-        td.appendChild(makeCivAssistReferenceChip(row.nationRef, row.nation, {
+        td.className = 'civadvisor-nation-cell';
+        td.appendChild(makeCivAdvisorReferenceChip(row.nationRef, row.nation, {
           color: row.color,
           colorSlot: row.colorSlot
         }));
@@ -73822,16 +73865,16 @@ function renderCivAssistDiplomacy(report) {
   return wrap;
 }
 
-function appendCivAssistLinkedItems(parent, items, emptyText = '') {
+function appendCivAdvisorLinkedItems(parent, items, emptyText = '') {
   const list = Array.isArray(items) ? items : [];
   if (list.length === 0) {
     parent.textContent = emptyText;
     return;
   }
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-tech-known-list';
+  wrap.className = 'civadvisor-tech-known-list';
   list.forEach((item) => {
-    wrap.appendChild(makeCivAssistReferenceChip(item.ref, item.name, {
+    wrap.appendChild(makeCivAdvisorReferenceChip(item.ref, item.name, {
       inline: true,
       color: item.color,
       colorSlot: item.colorSlot
@@ -73840,21 +73883,21 @@ function appendCivAssistLinkedItems(parent, items, emptyText = '') {
   parent.appendChild(wrap);
 }
 
-function appendCivAssistKnownPills(parent, items, emptyText = '') {
+function appendCivAdvisorKnownPills(parent, items, emptyText = '') {
   const list = Array.isArray(items) ? items : [];
   if (list.length === 0) {
     parent.textContent = emptyText;
     return;
   }
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-tech-known-pill-list';
+  wrap.className = 'civadvisor-tech-known-pill-list';
   list.forEach((item) => {
     const pill = document.createElement('span');
-    pill.className = 'civassist-tech-known-pill';
+    pill.className = 'civadvisor-tech-known-pill';
     pill.textContent = String(item && item.name || '');
     if (item && item.color) {
       const swatch = document.createElement('span');
-      swatch.className = 'civassist-color-swatch';
+      swatch.className = 'civadvisor-color-swatch';
       swatch.style.background = item.color;
       pill.prepend(swatch);
     }
@@ -73863,9 +73906,9 @@ function appendCivAssistKnownPills(parent, items, emptyText = '') {
   parent.appendChild(wrap);
 }
 
-function refocusCivAssistTechSearch(value, selectionStart, selectionEnd) {
-  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'techs') return;
-  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-tech-search');
+function refocusCivAdvisorTechSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAdvisor || !state.civAdvisor.isOpen || state.civAdvisor.activeTab !== 'techs') return;
+  const input = el.civAdvisorModalBody && el.civAdvisorModalBody.querySelector('.civadvisor-tech-search');
   if (!input) return;
   input.focus({ preventScroll: true });
   const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
@@ -73877,9 +73920,9 @@ function refocusCivAssistTechSearch(value, selectionStart, selectionEnd) {
   }
 }
 
-function refocusCivAssistCitiesSearch(value, selectionStart, selectionEnd) {
-  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'cities') return;
-  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-cities-search');
+function refocusCivAdvisorCitiesSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAdvisor || !state.civAdvisor.isOpen || state.civAdvisor.activeTab !== 'cities') return;
+  const input = el.civAdvisorModalBody && el.civAdvisorModalBody.querySelector('.civadvisor-cities-search');
   if (!input) return;
   input.focus({ preventScroll: true });
   const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
@@ -73891,9 +73934,9 @@ function refocusCivAssistCitiesSearch(value, selectionStart, selectionEnd) {
   }
 }
 
-function refocusCivAssistProductionSearch(value, selectionStart, selectionEnd) {
-  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'production') return;
-  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-production-search');
+function refocusCivAdvisorProductionSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAdvisor || !state.civAdvisor.isOpen || state.civAdvisor.activeTab !== 'production') return;
+  const input = el.civAdvisorModalBody && el.civAdvisorModalBody.querySelector('.civadvisor-production-search');
   if (!input) return;
   input.focus({ preventScroll: true });
   const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
@@ -73905,9 +73948,9 @@ function refocusCivAssistProductionSearch(value, selectionStart, selectionEnd) {
   }
 }
 
-function refocusCivAssistMilitaryRosterSearch(value, selectionStart, selectionEnd) {
-  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'military' || state.civAssist.activeMilitarySubtab !== 'roster') return;
-  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-military-roster-search');
+function refocusCivAdvisorMilitaryRosterSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAdvisor || !state.civAdvisor.isOpen || state.civAdvisor.activeTab !== 'military' || state.civAdvisor.activeMilitarySubtab !== 'roster') return;
+  const input = el.civAdvisorModalBody && el.civAdvisorModalBody.querySelector('.civadvisor-military-roster-search');
   if (!input) return;
   input.focus({ preventScroll: true });
   const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
@@ -73919,9 +73962,9 @@ function refocusCivAssistMilitaryRosterSearch(value, selectionStart, selectionEn
   }
 }
 
-function refocusCivAssistMilitaryUnitsSearch(value, selectionStart, selectionEnd) {
-  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'military' || state.civAssist.activeMilitarySubtab !== 'units') return;
-  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-military-units-search');
+function refocusCivAdvisorMilitaryUnitsSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAdvisor || !state.civAdvisor.isOpen || state.civAdvisor.activeTab !== 'military' || state.civAdvisor.activeMilitarySubtab !== 'units') return;
+  const input = el.civAdvisorModalBody && el.civAdvisorModalBody.querySelector('.civadvisor-military-units-search');
   if (!input) return;
   input.focus({ preventScroll: true });
   const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
@@ -73933,9 +73976,9 @@ function refocusCivAssistMilitaryUnitsSearch(value, selectionStart, selectionEnd
   }
 }
 
-function refocusCivAssistCultureSearch(value, selectionStart, selectionEnd) {
-  if (!state.civAssist || !state.civAssist.isOpen || state.civAssist.activeTab !== 'culture') return;
-  const input = el.civAssistModalBody && el.civAssistModalBody.querySelector('.civassist-culture-search');
+function refocusCivAdvisorCultureSearch(value, selectionStart, selectionEnd) {
+  if (!state.civAdvisor || !state.civAdvisor.isOpen || state.civAdvisor.activeTab !== 'culture') return;
+  const input = el.civAdvisorModalBody && el.civAdvisorModalBody.querySelector('.civadvisor-culture-search');
   if (!input) return;
   input.focus({ preventScroll: true });
   const start = Number.isFinite(selectionStart) ? selectionStart : String(value || '').length;
@@ -73947,20 +73990,20 @@ function refocusCivAssistCultureSearch(value, selectionStart, selectionEnd) {
   }
 }
 
-function renderCivAssistTechs(report) {
+function renderCivAdvisorTechs(report) {
   const technology = report && report.technology ? report.technology : {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-techs';
+  wrap.className = 'civadvisor-techs';
 
   const status = document.createElement('section');
-  status.className = 'civassist-tech-status';
+  status.className = 'civadvisor-tech-status';
   const heading = document.createElement('h3');
   heading.textContent = 'Research Status';
   status.appendChild(heading);
   const statusBody = document.createElement('div');
-  statusBody.className = 'civassist-tech-status-body';
+  statusBody.className = 'civadvisor-tech-status-body';
   const overview = document.createElement('dl');
-  overview.className = 'civassist-kv-list civassist-tech-summary-list';
+  overview.className = 'civadvisor-kv-list civadvisor-tech-summary-list';
   [
     { label: 'Current Era', value: technology.currentEra, ref: technology.currentEraRef },
     { label: 'Techs Known', value: technology.techsKnown },
@@ -73968,19 +74011,19 @@ function renderCivAssistTechs(report) {
     const dt = document.createElement('dt');
     dt.textContent = `${field.label}:`;
     const dd = document.createElement('dd');
-    if (field.ref) dd.appendChild(makeCivAssistReferenceChip(field.ref, field.value, { inline: true }));
+    if (field.ref) dd.appendChild(makeCivAdvisorReferenceChip(field.ref, field.value, { inline: true }));
     else dd.textContent = String(field.value == null ? '' : field.value);
     overview.append(dt, dd);
   });
   const skippedDt = document.createElement('dt');
   skippedDt.textContent = 'Optionals Skipped:';
   const skippedDd = document.createElement('dd');
-  appendCivAssistLinkedItems(skippedDd, technology.optionalSkipped || [], 'None');
+  appendCivAdvisorLinkedItems(skippedDd, technology.optionalSkipped || [], 'None');
   overview.append(skippedDt, skippedDd);
   statusBody.appendChild(overview);
 
   const project = document.createElement('dl');
-  project.className = 'civassist-kv-list civassist-tech-summary-list';
+  project.className = 'civadvisor-kv-list civadvisor-tech-summary-list';
   [
     { label: 'Currently Researching', value: technology.currentProject, ref: technology.currentProjectRef },
     { label: 'Science Rate', value: technology.scienceRate },
@@ -73989,7 +74032,7 @@ function renderCivAssistTechs(report) {
     const dt = document.createElement('dt');
     dt.textContent = `${field.label}:`;
     const dd = document.createElement('dd');
-    if (field.ref) dd.appendChild(makeCivAssistReferenceChip(field.ref, field.value, { inline: true }));
+    if (field.ref) dd.appendChild(makeCivAdvisorReferenceChip(field.ref, field.value, { inline: true }));
     else dd.textContent = String(field.value == null ? '' : field.value);
     project.append(dt, dd);
   });
@@ -73997,7 +74040,7 @@ function renderCivAssistTechs(report) {
 
   const progress = technology.progress || {};
   const progressTable = document.createElement('table');
-  progressTable.className = 'civassist-tech-progress';
+  progressTable.className = 'civadvisor-tech-progress';
   progressTable.innerHTML = '<thead><tr><th></th><th>Beakers</th><th>Turns</th></tr></thead>';
   const progressBody = document.createElement('tbody');
   [
@@ -74032,28 +74075,28 @@ function renderCivAssistTechs(report) {
   wrap.appendChild(status);
 
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-tech-section';
+  section.className = 'civadvisor-rivals civadvisor-tech-section';
   const tableHeading = document.createElement('h3');
-  tableHeading.className = 'civassist-tech-table-heading';
+  tableHeading.className = 'civadvisor-tech-table-heading';
   const search = document.createElement('input');
   search.type = 'search';
-  search.className = 'app-search-input civassist-tech-search';
+  search.className = 'app-search-input civadvisor-tech-search';
   search.placeholder = 'Search Techs...';
-  search.value = String(state.civAssist.techSearch || '');
+  search.value = String(state.civAdvisor.techSearch || '');
   search.addEventListener('input', () => {
     const selectionStart = search.selectionStart;
     const selectionEnd = search.selectionEnd;
-    state.civAssist.techSearch = search.value;
-    renderCivAssistModal();
+    state.civAdvisor.techSearch = search.value;
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
-    refocusCivAssistTechSearch(state.civAssist.techSearch, selectionStart, selectionEnd);
+    refocusCivAdvisorTechSearch(state.civAdvisor.techSearch, selectionStart, selectionEnd);
   });
   tableHeading.appendChild(search);
   section.appendChild(tableHeading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-tech-table';
+  table.className = 'civadvisor-rival-table civadvisor-tech-table';
   const columns = [
     { key: 'name', label: 'Technology' },
     { key: 'knownTo', label: 'Known To' },
@@ -74068,11 +74111,11 @@ function renderCivAssistTechs(report) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'techs', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'techs', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  const techQuery = String(state.civAssist.techSearch || '').trim().toLowerCase();
+  const techQuery = String(state.civAdvisor.techSearch || '').trim().toLowerCase();
   const techRows = (technology.rows || []).filter((tech) => {
     if (!techQuery) return true;
     return [
@@ -74083,21 +74126,21 @@ function renderCivAssistTechs(report) {
       tech.estimatedCost,
     ].some((value) => String(value == null ? '' : value).toLowerCase().includes(techQuery));
   });
-  sortCivAssistRows(techRows, columns, 'techs').forEach((tech) => {
+  sortCivAdvisorRows(techRows, columns, 'techs').forEach((tech) => {
     const tr = document.createElement('tr');
     tr.classList.add(`status-${tech.status || 'unavailable'}`);
     const name = document.createElement('td');
-    const techChip = makeCivAssistReferenceChip(tech.ref, tech.name);
+    const techChip = makeCivAdvisorReferenceChip(tech.ref, tech.name);
     name.appendChild(techChip);
     if (tech.optional) {
       const optional = document.createElement('span');
-      optional.className = 'civassist-tech-optional';
+      optional.className = 'civadvisor-tech-optional';
       optional.textContent = 'Optional';
       name.appendChild(optional);
     }
     const known = document.createElement('td');
-    known.className = 'civassist-tech-known-cell';
-    appendCivAssistKnownPills(known, tech.knownTo || [], '');
+    known.className = 'civadvisor-tech-known-cell';
+    appendCivAdvisorKnownPills(known, tech.knownTo || [], '');
     const cost = document.createElement('td');
     cost.className = 'num';
     cost.textContent = String(tech.estimatedCost == null ? '' : tech.estimatedCost);
@@ -74111,17 +74154,17 @@ function renderCivAssistTechs(report) {
   return wrap;
 }
 
-function appendCivAssistCultureTable(parent, title, rows, columns, tableKey) {
+function appendCivAdvisorCultureTable(parent, title, rows, columns, tableKey) {
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-culture-section';
+  section.className = 'civadvisor-rivals civadvisor-culture-section';
   const heading = document.createElement('h3');
   if (title && typeof title === 'object' && Number(title.nodeType) === 1) heading.appendChild(title);
   else heading.textContent = String(title || '');
   section.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-culture-table';
+  table.className = 'civadvisor-rival-table civadvisor-culture-table';
   const colgroup = document.createElement('colgroup');
   columns.forEach((column) => {
     const col = document.createElement('col');
@@ -74132,18 +74175,18 @@ function appendCivAssistCultureTable(parent, title, rows, columns, tableKey) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, tableKey, column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, tableKey, column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  sortCivAssistRows(rows || [], columns, tableKey).forEach((row) => {
+  sortCivAdvisorRows(rows || [], columns, tableKey).forEach((row) => {
     const tr = document.createElement('tr');
     tr.className = `status-${row.statusKind || 'unavailable'}`;
     columns.forEach((column) => {
       const td = document.createElement('td');
       if (column.num) td.className = 'num';
       if (column.ref) {
-        td.appendChild(makeCivAssistReferenceChip(row.ref, row[column.key] || row.name));
+        td.appendChild(makeCivAdvisorReferenceChip(row.ref, row[column.key] || row.name));
       } else {
         td.textContent = String(row[column.key] == null ? '' : row[column.key]);
       }
@@ -74157,28 +74200,28 @@ function appendCivAssistCultureTable(parent, title, rows, columns, tableKey) {
   parent.appendChild(section);
 }
 
-function renderCivAssistCulture(report) {
+function renderCivAdvisorCulture(report) {
   const culture = report && report.culture ? report.culture : {};
   const cities = Array.isArray(culture.cities) ? culture.cities : [];
-  const selectedID = cities.some((city) => Number(city.id) === Number(state.civAssist.selectedCultureCityID))
-    ? Number(state.civAssist.selectedCultureCityID)
+  const selectedID = cities.some((city) => Number(city.id) === Number(state.civAdvisor.selectedCultureCityID))
+    ? Number(state.civAdvisor.selectedCultureCityID)
     : Number(culture.defaultCityID);
-  state.civAssist.selectedCultureCityID = selectedID;
+  state.civAdvisor.selectedCultureCityID = selectedID;
   const selected = cities.find((city) => Number(city.id) === selectedID) || cities[0] || {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-culture';
+  wrap.className = 'civadvisor-culture';
 
   const cityInfo = document.createElement('section');
-  cityInfo.className = 'civassist-culture-city-info';
+  cityInfo.className = 'civadvisor-culture-city-info';
   const controls = document.createElement('div');
-  controls.className = 'civassist-culture-controls';
+  controls.className = 'civadvisor-culture-controls';
   const selectorLabel = document.createElement('label');
-  selectorLabel.className = 'civassist-culture-city-select';
+  selectorLabel.className = 'civadvisor-culture-city-select';
   const selectorText = document.createElement('span');
   selectorText.textContent = 'City';
-  const selector = makeCivAssistCityPicker(cities, selectedID, (cityID) => {
-    state.civAssist.selectedCultureCityID = Number(cityID);
-    renderCivAssistModal();
+  const selector = makeCivAdvisorCityPicker(cities, selectedID, (cityID) => {
+    state.civAdvisor.selectedCultureCityID = Number(cityID);
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
   });
   selectorLabel.append(selectorText, selector);
@@ -74186,13 +74229,13 @@ function renderCivAssistCulture(report) {
   cityInfo.appendChild(controls);
 
   const metrics = document.createElement('div');
-  metrics.className = 'civassist-culture-metrics';
+  metrics.className = 'civadvisor-culture-metrics';
   [
     { title: 'Single City', values: selected },
     { title: 'Civilization', values: culture.civilization || {} },
   ].forEach((group) => {
     const card = document.createElement('div');
-    card.className = 'civassist-culture-metric';
+    card.className = 'civadvisor-culture-metric';
     const title = document.createElement('strong');
     title.textContent = group.title;
     card.appendChild(title);
@@ -74226,7 +74269,7 @@ function renderCivAssistCulture(report) {
   const rows = Array.isArray(culture.buildingRowsByCity && culture.buildingRowsByCity[selectedID])
     ? culture.buildingRowsByCity[selectedID]
     : [];
-  const cultureQuery = String(state.civAssist.cultureSearch || '').trim().toLowerCase();
+  const cultureQuery = String(state.civAdvisor.cultureSearch || '').trim().toLowerCase();
   const visibleRows = rows.filter((row) => {
     if (!cultureQuery) return true;
     return [
@@ -74243,76 +74286,76 @@ function renderCivAssistCulture(report) {
   });
   const search = document.createElement('input');
   search.type = 'search';
-  search.className = 'app-search-input civassist-culture-search';
+  search.className = 'app-search-input civadvisor-culture-search';
   search.placeholder = 'Search Improvements & Wonders...';
-  search.value = String(state.civAssist.cultureSearch || '');
+  search.value = String(state.civAdvisor.cultureSearch || '');
   search.addEventListener('input', () => {
     const selectionStart = search.selectionStart;
     const selectionEnd = search.selectionEnd;
-    state.civAssist.cultureSearch = search.value;
-    renderCivAssistModal();
+    state.civAdvisor.cultureSearch = search.value;
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
-    refocusCivAssistCultureSearch(state.civAssist.cultureSearch, selectionStart, selectionEnd);
+    refocusCivAdvisorCultureSearch(state.civAdvisor.cultureSearch, selectionStart, selectionEnd);
   });
-  appendCivAssistCultureTable(wrap, search, visibleRows.map((row) => ({ ...row, name: row.name })), cityColumns.map((column, index) => (
+  appendCivAdvisorCultureTable(wrap, search, visibleRows.map((row) => ({ ...row, name: row.name })), cityColumns.map((column, index) => (
     index === 0 ? { ...column, ref: true } : column
   )), `culture-${selectedID}`);
   return wrap;
 }
 
-function formatCivAssistCountPercent(value, percent) {
+function formatCivAdvisorCountPercent(value, percent) {
   const text = String(value == null ? '' : value);
   const pct = String(percent || '').trim();
   return pct ? `${text} (${pct})` : text;
 }
 
-function renderCivAssistTerritory(report) {
+function renderCivAdvisorTerritory(report) {
   const territory = report && report.territory ? report.territory : {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-territory';
+  wrap.className = 'civadvisor-territory';
 
   const top = document.createElement('div');
-  top.className = 'civassist-territory-top';
+  top.className = 'civadvisor-territory-top';
   const exploration = territory.exploration || {};
   const territorySummary = territory.territory || {};
   const statistics = territory.statistics || {};
-  appendCivAssistInfoGroup(top, 'Exploration', [
+  appendCivAdvisorInfoGroup(top, 'Exploration', [
     { label: 'World Tiles', value: exploration.worldTiles },
-    { label: 'Explored Tiles', value: formatCivAssistCountPercent(exploration.exploredTiles || 0, exploration.exploredPercent) },
-    { label: 'Land', value: formatCivAssistCountPercent(exploration.land || 0, exploration.landPercent) },
-    { label: 'Water', value: formatCivAssistCountPercent(exploration.water || 0, exploration.waterPercent) },
+    { label: 'Explored Tiles', value: formatCivAdvisorCountPercent(exploration.exploredTiles || 0, exploration.exploredPercent) },
+    { label: 'Land', value: formatCivAdvisorCountPercent(exploration.land || 0, exploration.landPercent) },
+    { label: 'Water', value: formatCivAdvisorCountPercent(exploration.water || 0, exploration.waterPercent) },
   ]);
-  appendCivAssistInfoGroup(top, 'Territory', [
+  appendCivAdvisorInfoGroup(top, 'Territory', [
     { label: 'Domination Limit', value: territorySummary.dominationLimit },
     { label: 'Tiles Owned', value: territorySummary.tilesOwned },
     { label: 'Domination Tiles', value: territorySummary.dominationTiles },
     { label: 'Tiles To Limit', value: territorySummary.tilesToLimit },
     { label: 'Unclaimed Tiles', value: territorySummary.unclaimedTiles },
-    { label: 'Citizens Limit', value: formatCivAssistCountPercent(territorySummary.citizensLimit || 0, territorySummary.citizensLimitPercent) },
+    { label: 'Citizens Limit', value: formatCivAdvisorCountPercent(territorySummary.citizensLimit || 0, territorySummary.citizensLimitPercent) },
     { label: 'C3X District Tiles', value: `${territorySummary.ownedLandDistricts || 0} / ${territorySummary.districtInstances || 0}` },
   ]);
-  appendCivAssistInfoGroup(top, 'Statistics', [
+  appendCivAdvisorInfoGroup(top, 'Statistics', [
     { label: 'Cities', value: statistics.cities },
     { label: 'Citizens', value: statistics.citizens },
     { label: 'Specialists', value: statistics.specialists },
     { label: 'Tiles per City', value: statistics.tilesPerCity },
     { label: 'Worker Count', value: statistics.workerCount },
-    { label: 'Workers', value: formatCivAssistCountPercent(statistics.nativeWorkers || 0, statistics.nativeWorkersPercent) },
-    { label: 'Slaves', value: formatCivAssistCountPercent(statistics.slaveWorkers || 0, statistics.slaveWorkersPercent) },
+    { label: 'Workers', value: formatCivAdvisorCountPercent(statistics.nativeWorkers || 0, statistics.nativeWorkersPercent) },
+    { label: 'Slaves', value: formatCivAdvisorCountPercent(statistics.slaveWorkers || 0, statistics.slaveWorkersPercent) },
     { label: 'Workers per City', value: statistics.workersPerCity },
     { label: 'Tiles per Worker', value: statistics.tilesPerWorker },
   ]);
   wrap.appendChild(top);
 
   const improvementSection = document.createElement('section');
-  improvementSection.className = 'civassist-rivals civassist-territory-section';
+  improvementSection.className = 'civadvisor-rivals civadvisor-territory-section';
   const improvementHeading = document.createElement('h3');
   improvementHeading.textContent = 'Tile Improvements';
   improvementSection.appendChild(improvementHeading);
   const improvementScroller = document.createElement('div');
-  improvementScroller.className = 'civassist-table-scroll';
+  improvementScroller.className = 'civadvisor-table-scroll';
   const improvementTable = document.createElement('table');
-  improvementTable.className = 'civassist-rival-table civassist-territory-improvements-table';
+  improvementTable.className = 'civadvisor-rival-table civadvisor-territory-improvements-table';
   const improvementRows = Array.isArray(territory.improvementRows) ? territory.improvementRows : [];
   const improvementColgroup = document.createElement('colgroup');
   improvementRows.forEach(() => improvementColgroup.appendChild(document.createElement('col')));
@@ -74353,14 +74396,14 @@ function renderCivAssistTerritory(report) {
   wrap.appendChild(improvementSection);
 
   const citySection = document.createElement('section');
-  citySection.className = 'civassist-rivals civassist-territory-section';
+  citySection.className = 'civadvisor-rivals civadvisor-territory-section';
   const cityHeading = document.createElement('h3');
   cityHeading.textContent = 'City Territory';
   citySection.appendChild(cityHeading);
   const cityScroller = document.createElement('div');
-  cityScroller.className = 'civassist-table-scroll';
+  cityScroller.className = 'civadvisor-table-scroll';
   const cityTable = document.createElement('table');
-  cityTable.className = 'civassist-rival-table civassist-territory-city-table';
+  cityTable.className = 'civadvisor-rival-table civadvisor-territory-city-table';
   const columns = [
     { key: 'city', label: 'City', className: 'city' },
     ...(territory.allCivs ? [{ key: 'civ', label: 'Civ', className: 'civ' }] : []),
@@ -74386,17 +74429,17 @@ function renderCivAssistTerritory(report) {
   cityTable.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'territory-cities', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'territory-cities', column));
   thead.appendChild(headerRow);
   cityTable.appendChild(thead);
   const tbody = document.createElement('tbody');
-  sortCivAssistRows(territory.cityRows || [], columns, 'territory-cities').forEach((row) => {
+  sortCivAdvisorRows(territory.cityRows || [], columns, 'territory-cities').forEach((row) => {
     const tr = document.createElement('tr');
     columns.forEach((column) => {
       const td = document.createElement('td');
       if (column.num) td.className = 'num';
-      if (column.key === 'city') td.appendChild(makeCivAssistCityName(row, row.city));
-      else if (column.key === 'civ') td.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
+      if (column.key === 'city') td.appendChild(makeCivAdvisorCityName(row, row.city));
+      else if (column.key === 'civ') td.appendChild(makeCivAdvisorReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
       else if (column.key === 'waste' || column.key === 'corruption' || column.key === 'complete') td.textContent = `${row[column.key] || 0}${column.key === 'complete' ? '' : '%'}`;
       else td.textContent = String(row[column.key] == null ? '' : row[column.key]);
       tr.appendChild(td);
@@ -74410,33 +74453,33 @@ function renderCivAssistTerritory(report) {
   return wrap;
 }
 
-function renderCivAssistCities(report) {
+function renderCivAdvisorCities(report) {
   const cities = report && report.cities ? report.cities : {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-cities';
+  wrap.className = 'civadvisor-cities';
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-cities-section';
+  section.className = 'civadvisor-rivals civadvisor-cities-section';
   const heading = document.createElement('h3');
-  heading.className = 'civassist-cities-table-heading';
+  heading.className = 'civadvisor-cities-table-heading';
   const search = document.createElement('input');
   search.type = 'search';
-  search.className = 'app-search-input civassist-cities-search';
+  search.className = 'app-search-input civadvisor-cities-search';
   search.placeholder = 'Search Cities...';
-  search.value = String(state.civAssist.citiesSearch || '');
+  search.value = String(state.civAdvisor.citiesSearch || '');
   search.addEventListener('input', () => {
     const selectionStart = search.selectionStart;
     const selectionEnd = search.selectionEnd;
-    state.civAssist.citiesSearch = search.value;
-    renderCivAssistModal();
+    state.civAdvisor.citiesSearch = search.value;
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
-    refocusCivAssistCitiesSearch(state.civAssist.citiesSearch, selectionStart, selectionEnd);
+    refocusCivAdvisorCitiesSearch(state.civAdvisor.citiesSearch, selectionStart, selectionEnd);
   });
   heading.appendChild(search);
   section.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-cities-table';
+  table.className = 'civadvisor-rival-table civadvisor-cities-table';
   const columns = [
     { key: 'city', label: 'City', width: cities.allCivs ? 16 : 20 },
     ...(cities.allCivs ? [{ key: 'civ', label: 'Civ', width: 10 }] : []),
@@ -74468,25 +74511,25 @@ function renderCivAssistCities(report) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'cities', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'cities', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  const citiesQuery = String(state.civAssist.citiesSearch || '').trim().toLowerCase();
+  const citiesQuery = String(state.civAdvisor.citiesSearch || '').trim().toLowerCase();
   const cityRows = (cities.rows || []).filter((row) => {
     if (!citiesQuery) return true;
     return columns.some((column) => String(row[column.key] == null ? '' : row[column.key]).toLowerCase().includes(citiesQuery));
   });
-  sortCivAssistRows(cityRows, columns, 'cities').forEach((row) => {
+  sortCivAdvisorRows(cityRows, columns, 'cities').forEach((row) => {
     const tr = document.createElement('tr');
     columns.forEach((column, index) => {
       const td = document.createElement('td');
       if (column.num) td.classList.add('num');
       if (column.key === 'city') {
-        td.classList.add('civassist-city-name-cell');
-        td.appendChild(makeCivAssistCityName(row, row[column.key]));
+        td.classList.add('civadvisor-city-name-cell');
+        td.appendChild(makeCivAdvisorCityName(row, row[column.key]));
       } else if (column.key === 'civ') {
-        td.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
+        td.appendChild(makeCivAdvisorReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
       } else {
         td.textContent = String(row[column.key] == null ? '' : row[column.key]);
       }
@@ -74501,9 +74544,9 @@ function renderCivAssistCities(report) {
   return wrap;
 }
 
-function appendCivAssistEconomyLedger(parent, title, values, rows) {
+function appendCivAdvisorEconomyLedger(parent, title, values, rows) {
   const group = document.createElement('div');
-  group.className = 'civassist-economy-ledger-group';
+  group.className = 'civadvisor-economy-ledger-group';
   const heading = document.createElement('strong');
   heading.textContent = title;
   const list = document.createElement('dl');
@@ -74518,20 +74561,20 @@ function appendCivAssistEconomyLedger(parent, title, values, rows) {
   parent.appendChild(group);
 }
 
-function renderCivAssistEconomy(report) {
+function renderCivAdvisorEconomy(report) {
   const economy = report && report.economy ? report.economy : {};
   const administration = economy.administration || {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-economy';
+  wrap.className = 'civadvisor-economy';
 
   const top = document.createElement('div');
-  top.className = 'civassist-economy-top';
+  top.className = 'civadvisor-economy-top';
   const admin = document.createElement('section');
-  admin.className = 'civassist-info-section civassist-economy-admin';
+  admin.className = 'civadvisor-info-section civadvisor-economy-admin';
   const adminHeading = document.createElement('h3');
   adminHeading.textContent = 'Government & Administration';
   const adminList = document.createElement('dl');
-  adminList.className = 'civassist-kv-list';
+  adminList.className = 'civadvisor-kv-list';
   [
     ['Government', administration.government, administration.governmentRef],
     ['Mobilization', administration.mobilization],
@@ -74545,38 +74588,38 @@ function renderCivAssistEconomy(report) {
     const dd = document.createElement('dd');
     if (refLabel && ref) {
       const content = document.createElement('div');
-      content.className = 'civassist-economy-admin-building';
-      content.appendChild(makeCivAssistReferenceChip(ref, refLabel, { inline: true }));
+      content.className = 'civadvisor-economy-admin-building';
+      content.appendChild(makeCivAdvisorReferenceChip(ref, refLabel, { inline: true }));
       const status = document.createElement('span');
       status.textContent = String(value == null ? '' : value);
       content.appendChild(status);
       dd.appendChild(content);
-    } else if (ref) dd.appendChild(makeCivAssistReferenceChip(ref, value, { inline: true }));
+    } else if (ref) dd.appendChild(makeCivAdvisorReferenceChip(ref, value, { inline: true }));
     else dd.textContent = String(value == null ? '' : value);
     adminList.append(dt, dd);
   });
   admin.append(adminHeading, adminList);
 
   const national = document.createElement('section');
-  national.className = 'civassist-info-section civassist-economy-national';
+  national.className = 'civadvisor-info-section civadvisor-economy-national';
   const nationalHeading = document.createElement('h3');
   nationalHeading.textContent = 'National Economy';
   national.appendChild(nationalHeading);
   const sliders = document.createElement('div');
-  sliders.className = 'civassist-economy-sliders';
+  sliders.className = 'civadvisor-economy-sliders';
   [
     ['science', 'Science'],
     ['luxury', 'Luxury'],
     ['taxes', 'Taxes'],
   ].forEach(([key, label]) => {
     const row = document.createElement('div');
-    row.className = 'civassist-economy-slider';
+    row.className = 'civadvisor-economy-slider';
     const name = document.createElement('span');
     name.textContent = label;
     const track = document.createElement('span');
-    track.className = 'civassist-economy-slider-track';
+    track.className = 'civadvisor-economy-slider-track';
     const fill = document.createElement('span');
-    fill.className = `civassist-economy-slider-fill ${key}`;
+    fill.className = `civadvisor-economy-slider-fill ${key}`;
     fill.style.width = `${Math.max(0, Math.min(100, Number(economy.sliders && economy.sliders[key]) || 0))}%`;
     track.appendChild(fill);
     const value = document.createElement('strong');
@@ -74586,19 +74629,19 @@ function renderCivAssistEconomy(report) {
   });
   national.appendChild(sliders);
   const ledger = document.createElement('div');
-  ledger.className = 'civassist-economy-ledger';
-  appendCivAssistEconomyLedger(ledger, 'Income', economy.income, [
+  ledger.className = 'civadvisor-economy-ledger';
+  appendCivAdvisorEconomyLedger(ledger, 'Income', economy.income, [
     ['fromCities', 'From cities'], ['fromTaxmen', 'From taxmen'], ['fromOtherCivs', 'From other civs'],
     ['interest', 'From interest'], ['total', 'Total income'],
   ]);
-  appendCivAssistEconomyLedger(ledger, 'Expenses', economy.expenses, [
+  appendCivAdvisorEconomyLedger(ledger, 'Expenses', economy.expenses, [
     ['science', 'Science'], ['entertainment', 'Entertainment'], ['corruption', 'Corruption'],
     ['maintenance', 'Maintenance'], ['unitCosts', 'Unit support'], ['toOtherCivs', 'To other civs'],
     ['total', 'Total expenses'],
   ]);
   national.appendChild(ledger);
   const totals = document.createElement('div');
-  totals.className = 'civassist-economy-totals';
+  totals.className = 'civadvisor-economy-totals';
   const netLabel = document.createElement('span');
   netLabel.textContent = 'Net gain';
   const net = document.createElement('strong');
@@ -74614,16 +74657,16 @@ function renderCivAssistEconomy(report) {
   wrap.appendChild(top);
 
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-economy-cities';
+  section.className = 'civadvisor-rivals civadvisor-economy-cities';
   const heading = document.createElement('h3');
   const headingText = document.createElement('span');
   headingText.textContent = 'City Economy';
   heading.appendChild(headingText);
   section.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-economy-table';
+  table.className = 'civadvisor-rival-table civadvisor-economy-table';
   const columns = [
     { key: 'name', label: 'City', className: 'city' },
     ...(economy.allCivs ? [{ key: 'civ', label: 'Civ', className: 'civ' }] : []),
@@ -74646,20 +74689,20 @@ function renderCivAssistEconomy(report) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'economy-cities', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'economy-cities', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  sortCivAssistRows(economy.cityRows || [], columns, 'economy-cities').forEach((row) => {
+  sortCivAdvisorRows(economy.cityRows || [], columns, 'economy-cities').forEach((row) => {
     const tr = document.createElement('tr');
     columns.forEach((column) => {
       const td = document.createElement('td');
       if (column.num) td.className = 'num';
       if (column.key === 'name') {
-        td.classList.add('civassist-city-name-cell');
-        td.appendChild(makeCivAssistCityName(row, row.name));
+        td.classList.add('civadvisor-city-name-cell');
+        td.appendChild(makeCivAdvisorCityName(row, row.name));
       } else if (column.key === 'civ') {
-        td.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
+        td.appendChild(makeCivAdvisorReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
       } else if (column.key === 'waste') td.textContent = `${row.waste} (${row.wastePercent}%)`;
       else if (column.key === 'corruption') td.textContent = `${row.corruption} (${row.corruptionPercent}%)`;
       else td.textContent = String(row[column.key] == null ? '' : row[column.key]);
@@ -74674,33 +74717,33 @@ function renderCivAssistEconomy(report) {
   return wrap;
 }
 
-function renderCivAssistProduction(report) {
+function renderCivAdvisorProduction(report) {
   const production = report && report.production ? report.production : {};
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-production';
+  wrap.className = 'civadvisor-production';
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-production-section';
+  section.className = 'civadvisor-rivals civadvisor-production-section';
   const heading = document.createElement('h3');
-  heading.className = 'civassist-production-table-heading';
+  heading.className = 'civadvisor-production-table-heading';
   const search = document.createElement('input');
   search.type = 'search';
-  search.className = 'app-search-input civassist-production-search';
+  search.className = 'app-search-input civadvisor-production-search';
   search.placeholder = 'Search Production...';
-  search.value = String(state.civAssist.productionSearch || '');
+  search.value = String(state.civAdvisor.productionSearch || '');
   search.addEventListener('input', () => {
     const selectionStart = search.selectionStart;
     const selectionEnd = search.selectionEnd;
-    state.civAssist.productionSearch = search.value;
-    renderCivAssistModal();
+    state.civAdvisor.productionSearch = search.value;
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
-    refocusCivAssistProductionSearch(state.civAssist.productionSearch, selectionStart, selectionEnd);
+    refocusCivAdvisorProductionSearch(state.civAdvisor.productionSearch, selectionStart, selectionEnd);
   });
   heading.appendChild(search);
   section.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-production-table';
+  table.className = 'civadvisor-rival-table civadvisor-production-table';
   const hasAllCivs = !!production.allCivs;
   const columns = [
     { key: 'city', label: 'City', className: 'city' },
@@ -74723,11 +74766,11 @@ function renderCivAssistProduction(report) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'production', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'production', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  const productionQuery = String(state.civAssist.productionSearch || '').trim().toLowerCase();
+  const productionQuery = String(state.civAdvisor.productionSearch || '').trim().toLowerCase();
   const productionRows = (production.rows || []).filter((row) => {
     if (!productionQuery) return true;
     return [
@@ -74744,24 +74787,24 @@ function renderCivAssistProduction(report) {
       row.wastePercent,
     ].some((value) => String(value == null ? '' : value).toLowerCase().includes(productionQuery));
   });
-  sortCivAssistRows(productionRows, columns, 'production').forEach((row) => {
+  sortCivAdvisorRows(productionRows, columns, 'production').forEach((row) => {
     const tr = document.createElement('tr');
     const city = document.createElement('td');
-    city.className = 'civassist-production-city';
-    city.appendChild(makeCivAssistCityName(row, row.city || ''));
+    city.className = 'civadvisor-production-city';
+    city.appendChild(makeCivAdvisorCityName(row, row.city || ''));
     const civ = document.createElement('td');
-    if (hasAllCivs) civ.appendChild(makeCivAssistReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
+    if (hasAllCivs) civ.appendChild(makeCivAdvisorReferenceChip(row.civRef, row.civ, { inline: true, colorSlot: row.colorSlot }));
     const producing = document.createElement('td');
-    const item = makeCivAssistReferenceChip(row.producingRef, row.producing);
-    item.classList.add('civassist-production-item');
+    const item = makeCivAdvisorReferenceChip(row.producingRef, row.producing);
+    item.classList.add('civadvisor-production-item');
     producing.appendChild(item);
     const cost = document.createElement('td');
     cost.className = 'num';
     cost.textContent = String(row.cost == null ? '' : row.cost);
     const collected = document.createElement('td');
-    collected.className = 'civassist-production-collected';
+    collected.className = 'civadvisor-production-collected';
     const progress = document.createElement('div');
-    progress.className = 'civassist-production-progress';
+    progress.className = 'civadvisor-production-progress';
     const progressLine = document.createElement('div');
     const progressText = document.createElement('strong');
     progressText.textContent = `${row.collected} / ${row.cost}`;
@@ -74769,7 +74812,7 @@ function renderCivAssistProduction(report) {
     progressPercent.textContent = `${row.progressPercent}%`;
     progressLine.append(progressText, progressPercent);
     const track = document.createElement('div');
-    track.className = 'civassist-production-progress-track';
+    track.className = 'civadvisor-production-progress-track';
     const fill = document.createElement('span');
     fill.style.width = `${Math.max(0, Math.min(100, Number(row.progressPercent) || 0))}%`;
     track.appendChild(fill);
@@ -74798,13 +74841,13 @@ function renderCivAssistProduction(report) {
   scroller.appendChild(table);
   section.appendChild(scroller);
   wrap.appendChild(section);
-  if (!tbody.childElementCount) wrap.appendChild(renderCivAssistEmptyState('No active city production found.'));
+  if (!tbody.childElementCount) wrap.appendChild(renderCivAdvisorEmptyState('No active city production found.'));
   return wrap;
 }
 
-function appendCivAssistExperienceMix(parent, items) {
+function appendCivAdvisorExperienceMix(parent, items) {
   const list = document.createElement('div');
-  list.className = 'civassist-military-experience-mix';
+  list.className = 'civadvisor-military-experience-mix';
   (items || []).forEach((item) => {
     const badge = document.createElement('span');
     const label = document.createElement('span');
@@ -74817,44 +74860,44 @@ function appendCivAssistExperienceMix(parent, items) {
   parent.appendChild(list);
 }
 
-function appendCivAssistMilitaryCivs(parent, civs) {
+function appendCivAdvisorMilitaryCivs(parent, civs) {
   const items = Array.isArray(civs) ? civs : [];
   if (!items.length) {
     parent.textContent = '--';
     return;
   }
   const list = document.createElement('div');
-  list.className = 'civassist-military-civ-list';
+  list.className = 'civadvisor-military-civ-list';
   items.forEach((item) => {
-    list.appendChild(makeCivAssistReferenceChip(item.ref, item.name, { inline: true, colorSlot: item.colorSlot }));
+    list.appendChild(makeCivAdvisorReferenceChip(item.ref, item.name, { inline: true, colorSlot: item.colorSlot }));
   });
   parent.appendChild(list);
 }
 
-function renderCivAssistMilitaryRoster(military) {
+function renderCivAdvisorMilitaryRoster(military) {
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-military-section';
+  section.className = 'civadvisor-rivals civadvisor-military-section';
   const heading = document.createElement('h3');
-  heading.className = 'civassist-military-table-heading';
+  heading.className = 'civadvisor-military-table-heading';
   const search = document.createElement('input');
   search.type = 'search';
-  search.className = 'app-search-input civassist-military-roster-search';
+  search.className = 'app-search-input civadvisor-military-roster-search';
   search.placeholder = 'Search Unit Types...';
-  search.value = String(state.civAssist.militaryRosterSearch || '');
+  search.value = String(state.civAdvisor.militaryRosterSearch || '');
   search.addEventListener('input', () => {
     const selectionStart = search.selectionStart;
     const selectionEnd = search.selectionEnd;
-    state.civAssist.militaryRosterSearch = search.value;
-    renderCivAssistModal();
+    state.civAdvisor.militaryRosterSearch = search.value;
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
-    refocusCivAssistMilitaryRosterSearch(state.civAssist.militaryRosterSearch, selectionStart, selectionEnd);
+    refocusCivAdvisorMilitaryRosterSearch(state.civAdvisor.militaryRosterSearch, selectionStart, selectionEnd);
   });
   heading.appendChild(search);
   section.appendChild(heading);
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-military-roster-table';
+  table.className = 'civadvisor-rival-table civadvisor-military-roster-table';
   const columns = [
     { key: 'name', label: 'Unit Type', className: 'unit' },
     { key: 'stats', label: 'A / D / M', className: 'stats' },
@@ -74874,11 +74917,11 @@ function renderCivAssistMilitaryRoster(military) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'military-roster', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'military-roster', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  const rosterQuery = String(state.civAssist.militaryRosterSearch || '').trim().toLowerCase();
+  const rosterQuery = String(state.civAdvisor.militaryRosterSearch || '').trim().toLowerCase();
   const rosterRows = (military.roster || []).filter((row) => {
     if (!rosterQuery) return true;
     return [
@@ -74893,12 +74936,12 @@ function renderCivAssistMilitaryRoster(military) {
       (row.experienceMix || []).map((item) => `${item.name} ${item.count}`).join(' '),
     ].some((value) => String(value == null ? '' : value).toLowerCase().includes(rosterQuery));
   });
-  sortCivAssistRows(rosterRows, columns, 'military-roster').forEach((row) => {
+  sortCivAdvisorRows(rosterRows, columns, 'military-roster').forEach((row) => {
     const tr = document.createElement('tr');
     const unit = document.createElement('td');
-    unit.appendChild(makeCivAssistReferenceChip(row.ref, row.name));
+    unit.appendChild(makeCivAdvisorReferenceChip(row.ref, row.name));
     const stats = document.createElement('td');
-    stats.className = 'civassist-military-stats';
+    stats.className = 'civadvisor-military-stats';
     stats.textContent = row.stats;
     const cost = document.createElement('td');
     cost.className = 'num';
@@ -74906,17 +74949,17 @@ function renderCivAssistMilitaryRoster(military) {
     const upgrade = document.createElement('td');
     if (row.upgradeRef) {
       const content = document.createElement('div');
-      content.className = 'civassist-military-upgrade';
-      content.appendChild(makeCivAssistReferenceChip(row.upgradeRef, row.upgrade));
+      content.className = 'civadvisor-military-upgrade';
+      content.appendChild(makeCivAdvisorReferenceChip(row.upgradeRef, row.upgrade));
       const upgradeCost = document.createElement('span');
       upgradeCost.textContent = `${row.upgradeCost} gold`;
       content.appendChild(upgradeCost);
       upgrade.appendChild(content);
     } else upgrade.textContent = '--';
     const experience = document.createElement('td');
-    appendCivAssistExperienceMix(experience, row.experienceMix);
+    appendCivAdvisorExperienceMix(experience, row.experienceMix);
     const civ = document.createElement('td');
-    appendCivAssistMilitaryCivs(civ, row.civs);
+    appendCivAdvisorMilitaryCivs(civ, row.civs);
     const total = document.createElement('td');
     total.className = 'num';
     total.textContent = String(row.count);
@@ -74934,27 +74977,27 @@ function renderCivAssistMilitaryRoster(military) {
   return section;
 }
 
-function renderCivAssistMilitaryUnits(military) {
+function renderCivAdvisorMilitaryUnits(military) {
   const section = document.createElement('section');
-  section.className = 'civassist-rivals civassist-military-section';
+  section.className = 'civadvisor-rivals civadvisor-military-section';
   const heading = document.createElement('h3');
-  heading.className = 'civassist-military-table-heading';
+  heading.className = 'civadvisor-military-table-heading';
   const search = document.createElement('input');
   search.type = 'search';
-  search.className = 'app-search-input civassist-military-units-search';
+  search.className = 'app-search-input civadvisor-military-units-search';
   search.placeholder = 'Search Individual Units...';
-  search.value = String(state.civAssist.militaryUnitsSearch || '');
+  search.value = String(state.civAdvisor.militaryUnitsSearch || '');
   search.addEventListener('input', () => {
     const selectionStart = search.selectionStart;
     const selectionEnd = search.selectionEnd;
-    state.civAssist.militaryUnitsSearch = search.value;
-    renderCivAssistModal();
+    state.civAdvisor.militaryUnitsSearch = search.value;
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
-    refocusCivAssistMilitaryUnitsSearch(state.civAssist.militaryUnitsSearch, selectionStart, selectionEnd);
+    refocusCivAdvisorMilitaryUnitsSearch(state.civAdvisor.militaryUnitsSearch, selectionStart, selectionEnd);
   });
   heading.appendChild(search);
   section.appendChild(heading);
-  const unitsQuery = String(state.civAssist.militaryUnitsSearch || '').trim().toLowerCase();
+  const unitsQuery = String(state.civAdvisor.militaryUnitsSearch || '').trim().toLowerCase();
   const rows = (military.units || []).filter((row) => {
     if (!unitsQuery) return true;
     return [
@@ -74968,9 +75011,9 @@ function renderCivAssistMilitaryUnits(military) {
     ].some((value) => String(value == null ? '' : value).toLowerCase().includes(unitsQuery));
   });
   const scroller = document.createElement('div');
-  scroller.className = 'civassist-table-scroll';
+  scroller.className = 'civadvisor-table-scroll';
   const table = document.createElement('table');
-  table.className = 'civassist-rival-table civassist-military-units-table';
+  table.className = 'civadvisor-rival-table civadvisor-military-units-table';
   const columns = [
     { key: 'type', label: 'Unit', className: 'unit' },
     { key: 'experience', label: 'Experience', className: 'experience' },
@@ -74988,16 +75031,16 @@ function renderCivAssistMilitaryUnits(military) {
   table.appendChild(colgroup);
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  columns.forEach((column) => appendCivAssistSortableHeaderCell(headerRow, 'military-units', column));
+  columns.forEach((column) => appendCivAdvisorSortableHeaderCell(headerRow, 'military-units', column));
   thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  sortCivAssistRows(rows, columns, 'military-units').forEach((row) => {
+  sortCivAdvisorRows(rows, columns, 'military-units').forEach((row) => {
     const tr = document.createElement('tr');
     if (row.damaged) tr.classList.add('is-damaged');
     if (row.spent) tr.classList.add('is-spent');
     const unit = document.createElement('td');
-    unit.appendChild(makeCivAssistReferenceChip(row.typeRef, row.type));
+    unit.appendChild(makeCivAdvisorReferenceChip(row.typeRef, row.type));
     const experience = document.createElement('td');
     experience.textContent = row.experience;
     const health = document.createElement('td');
@@ -75009,7 +75052,7 @@ function renderCivAssistMilitaryUnits(military) {
     const location = document.createElement('td');
     location.textContent = row.location;
     const nationality = document.createElement('td');
-    nationality.appendChild(makeCivAssistReferenceChip(row.nationalityRef, row.nationality, { colorSlot: row.colorSlot }));
+    nationality.appendChild(makeCivAdvisorReferenceChip(row.nationalityRef, row.nationality, { colorSlot: row.colorSlot }));
     tr.append(unit, experience, health, moves, location, nationality);
     tbody.appendChild(tr);
   });
@@ -75019,39 +75062,39 @@ function renderCivAssistMilitaryUnits(military) {
   return section;
 }
 
-function renderCivAssistMilitary(report) {
+function renderCivAdvisorMilitary(report) {
   const military = report && report.military ? report.military : { summary: {}, roster: [], units: [] };
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-military';
+  wrap.className = 'civadvisor-military';
   const controls = document.createElement('div');
-  controls.className = 'civassist-military-controls';
+  controls.className = 'civadvisor-military-controls';
   const tabs = document.createElement('div');
-  tabs.className = 'civassist-subtabs';
+  tabs.className = 'civadvisor-subtabs';
   [
     { key: 'roster', label: `Unit Types (${(military.roster || []).length})` },
     { key: 'units', label: `Individual Units (${(military.units || []).length})` },
   ].forEach((tab) => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = state.civAssist.activeMilitarySubtab === tab.key ? 'civassist-subtab active' : 'civassist-subtab';
+    button.className = state.civAdvisor.activeMilitarySubtab === tab.key ? 'civadvisor-subtab active' : 'civadvisor-subtab';
     button.dataset.subtabKey = tab.key;
     button.textContent = tab.label;
     button.addEventListener('click', () => {
-      state.civAssist.activeMilitarySubtab = tab.key;
-      renderCivAssistModal();
+      state.civAdvisor.activeMilitarySubtab = tab.key;
+      renderCivAdvisorModal();
       syncCurrentNavigationSnapshot();
     });
     tabs.appendChild(button);
   });
   controls.appendChild(tabs);
   wrap.appendChild(controls);
-  wrap.appendChild(state.civAssist.activeMilitarySubtab === 'units'
-    ? renderCivAssistMilitaryUnits(military)
-    : renderCivAssistMilitaryRoster(military));
+  wrap.appendChild(state.civAdvisor.activeMilitarySubtab === 'units'
+    ? renderCivAdvisorMilitaryUnits(military)
+    : renderCivAdvisorMilitaryRoster(military));
   return wrap;
 }
 
-function getCivAssistAlertSeverityLabel(severity) {
+function getCivAdvisorAlertSeverityLabel(severity) {
   switch (String(severity || '').toLowerCase()) {
     case 'critical': return 'Critical';
     case 'warning': return 'Warning';
@@ -75060,45 +75103,45 @@ function getCivAssistAlertSeverityLabel(severity) {
   }
 }
 
-function applyCivAssistAlertTarget(alert) {
+function applyCivAdvisorAlertTarget(alert) {
   const tab = String(alert && alert.tab || '').trim();
   if (!tab) return;
-  state.civAssist.activeTab = tab;
+  state.civAdvisor.activeTab = tab;
   if (tab === 'trade' && ['current', 'sell', 'buy'].includes(String(alert.subtab || ''))) {
-    state.civAssist.activeTradeSubtab = String(alert.subtab);
+    state.civAdvisor.activeTradeSubtab = String(alert.subtab);
   }
   if (tab === 'military' && ['roster', 'units'].includes(String(alert.subtab || ''))) {
-    state.civAssist.activeMilitarySubtab = String(alert.subtab);
+    state.civAdvisor.activeMilitarySubtab = String(alert.subtab);
   }
   if (tab === 'alerts') {
-    state.civAssist.activeAlertID = '';
-    state.civAssist.alertsSeen = true;
+    state.civAdvisor.activeAlertID = '';
+    state.civAdvisor.alertsSeen = true;
     syncCivAdvisorOverlayState();
   }
-  renderCivAssistModal();
+  renderCivAdvisorModal();
   syncCurrentNavigationSnapshot();
 }
 
-function getCivAssistCurrentAlertCount(report) {
+function getCivAdvisorCurrentAlertCount(report) {
   return report && report.alerts && Array.isArray(report.alerts.current) ? report.alerts.current.length : 0;
 }
 
 function syncCivAdvisorOverlayState() {
   if (!window.c3xManager || typeof window.c3xManager.setCivAdvisorOverlayStatus !== 'function') return;
   void window.c3xManager.setCivAdvisorOverlayStatus({
-    hasAlerts: getCivAssistCurrentAlertCount(state.civAssist.report) > 0,
-    alertsSeen: !!state.civAssist.alertsSeen,
-    enabled: !!state.civAssist.isOpen
+    hasAlerts: getCivAdvisorCurrentAlertCount(state.civAdvisor.report) > 0,
+    alertsSeen: !!state.civAdvisor.alertsSeen,
+    enabled: !!state.civAdvisor.isOpen
   });
 }
 
-function markCivAssistAlertsSeen() {
-  if (state.civAssist.alertsSeen) return;
-  state.civAssist.alertsSeen = true;
+function markCivAdvisorAlertsSeen() {
+  if (state.civAdvisor.alertsSeen) return;
+  state.civAdvisor.alertsSeen = true;
   syncCivAdvisorOverlayState();
 }
 
-function civAssistCoverageMatchesAlert(coverage, alert) {
+function civAdvisorCoverageMatchesAlert(coverage, alert) {
   if (!coverage || !alert) return false;
   const alertID = String(alert.id || '');
   if (!alertID) return false;
@@ -75108,64 +75151,64 @@ function civAssistCoverageMatchesAlert(coverage, alert) {
   return false;
 }
 
-function getCivAssistAlertCoverageRows(report) {
+function getCivAdvisorAlertCoverageRows(report) {
   const rows = report && report.alerts && Array.isArray(report.alerts.coverage) ? report.alerts.coverage : [];
   return rows.filter((row) => String(row.status || '').toLowerCase() === 'active');
 }
 
-function getDefaultCivAssistAlertCoverageEnabled(id) {
-  return CIV_ASSIST_DEFAULT_ALERT_COVERAGE_ENABLED.has(String(id || ''));
+function getDefaultCivAdvisorAlertCoverageEnabled(id) {
+  return CIV_ADVISOR_DEFAULT_ALERT_COVERAGE_ENABLED.has(String(id || ''));
 }
 
-function isCivAssistAlertCoverageEnabled(coverage) {
+function isCivAdvisorAlertCoverageEnabled(coverage) {
   const id = String(coverage && coverage.id || '');
   if (!id) return true;
-  const overrides = state.civAssist.alertCoverageEnabled || {};
+  const overrides = state.civAdvisor.alertCoverageEnabled || {};
   if (Object.prototype.hasOwnProperty.call(overrides, id)) return overrides[id] === true;
-  return getDefaultCivAssistAlertCoverageEnabled(id);
+  return getDefaultCivAdvisorAlertCoverageEnabled(id);
 }
 
-function setCivAssistAlertCoverageEnabled(coverage, enabled) {
+function setCivAdvisorAlertCoverageEnabled(coverage, enabled) {
   const id = String(coverage && coverage.id || '');
   if (!id) return;
-  state.civAssist.alertCoverageEnabled = {
-    ...(state.civAssist.alertCoverageEnabled || {}),
+  state.civAdvisor.alertCoverageEnabled = {
+    ...(state.civAdvisor.alertCoverageEnabled || {}),
     [id]: !!enabled
   };
   if (state.settings) {
-    state.settings.civAdvisorAlertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(state.civAssist.alertCoverageEnabled);
+    state.settings.civAdvisorAlertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(state.civAdvisor.alertCoverageEnabled);
     if (window.c3xManager && typeof window.c3xManager.setSettings === 'function') {
       void window.c3xManager.setSettings(state.settings);
     }
   }
 }
 
-function isCivAssistAlertEnabled(report, alert) {
-  const coverageRows = getCivAssistAlertCoverageRows(report);
-  const match = coverageRows.find((coverage) => civAssistCoverageMatchesAlert(coverage, alert));
-  return match ? isCivAssistAlertCoverageEnabled(match) : true;
+function isCivAdvisorAlertEnabled(report, alert) {
+  const coverageRows = getCivAdvisorAlertCoverageRows(report);
+  const match = coverageRows.find((coverage) => civAdvisorCoverageMatchesAlert(coverage, alert));
+  return match ? isCivAdvisorAlertCoverageEnabled(match) : true;
 }
 
-function getCivAssistEnabledAlerts(report) {
+function getCivAdvisorEnabledAlerts(report) {
   const rows = report && report.alerts && Array.isArray(report.alerts.current) ? report.alerts.current : [];
-  return rows.filter((alert) => isCivAssistAlertEnabled(report, alert));
+  return rows.filter((alert) => isCivAdvisorAlertEnabled(report, alert));
 }
 
-function renderCivAssistAlertCoverageRow(coverage) {
+function renderCivAdvisorAlertCoverageRow(coverage) {
   const row = document.createElement('label');
-  row.className = 'civassist-alert-coverage-row';
-  const enabled = isCivAssistAlertCoverageEnabled(coverage);
+  row.className = 'civadvisor-alert-coverage-row';
+  const enabled = isCivAdvisorAlertCoverageEnabled(coverage);
   if (!enabled) row.classList.add('disabled');
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.checked = enabled;
   checkbox.addEventListener('change', () => {
-    setCivAssistAlertCoverageEnabled(coverage, checkbox.checked);
-    renderCivAssistModal();
+    setCivAdvisorAlertCoverageEnabled(coverage, checkbox.checked);
+    renderCivAdvisorModal();
     syncCurrentNavigationSnapshot();
   });
   const body = document.createElement('span');
-  body.className = 'civassist-alert-coverage-body';
+  body.className = 'civadvisor-alert-coverage-body';
   const title = document.createElement('strong');
   title.textContent = String(coverage.label || 'Alert check');
   body.append(title);
@@ -75174,51 +75217,67 @@ function renderCivAssistAlertCoverageRow(coverage) {
 }
 
 
-function renderCivAssistAlerts(report) {
+function renderCivAdvisorAlerts(report) {
   const wrap = document.createElement('div');
-  wrap.className = 'civassist-alerts civassist-alerts-simple';
-  const currentRows = getCivAssistEnabledAlerts(report);
+  wrap.className = 'civadvisor-alerts civadvisor-alerts-simple';
+  const coverageCollapsed = !!state.civAdvisor.alertCoverageCollapsed;
+  if (coverageCollapsed) wrap.classList.add('coverage-collapsed');
+  const currentRows = getCivAdvisorEnabledAlerts(report);
 
   const coverage = document.createElement('section');
-  coverage.className = 'civassist-rivals civassist-alert-coverage';
+  coverage.className = 'civadvisor-rivals civadvisor-alert-coverage';
   const coverageHeading = document.createElement('h3');
-  coverageHeading.textContent = 'Available Alerts';
+  const coverageTitle = document.createElement('span');
+  coverageTitle.textContent = 'Available Alerts';
+  const coverageToggle = document.createElement('button');
+  coverageToggle.type = 'button';
+  coverageToggle.className = 'civadvisor-alert-coverage-toggle';
+  coverageToggle.textContent = coverageCollapsed ? '>' : '<';
+  coverageToggle.title = coverageCollapsed ? 'Show available alerts' : 'Hide available alerts';
+  coverageToggle.setAttribute('aria-label', coverageToggle.title);
+  coverageToggle.setAttribute('aria-expanded', coverageCollapsed ? 'false' : 'true');
+  coverageToggle.addEventListener('click', () => {
+    state.civAdvisor.alertCoverageCollapsed = !state.civAdvisor.alertCoverageCollapsed;
+    renderCivAdvisorModal();
+    syncCurrentNavigationSnapshot();
+  });
+  coverageHeading.append(coverageTitle, coverageToggle);
   coverage.appendChild(coverageHeading);
-  const coverageRows = getCivAssistAlertCoverageRows(report);
+  const coverageRows = getCivAdvisorAlertCoverageRows(report);
   if (coverageRows.length === 0) {
-    coverage.appendChild(renderCivAssistEmptyState('No active alert coverage is available for this save.'));
+    coverage.appendChild(renderCivAdvisorEmptyState('No active alert coverage is available for this save.'));
   } else {
     const list = document.createElement('div');
-    list.className = 'civassist-alert-coverage-list';
-    coverageRows.forEach((row) => list.appendChild(renderCivAssistAlertCoverageRow(row)));
+    list.className = 'civadvisor-alert-coverage-list';
+    coverageRows.forEach((row) => list.appendChild(renderCivAdvisorAlertCoverageRow(row)));
     coverage.appendChild(list);
   }
   wrap.appendChild(coverage);
 
   const current = document.createElement('section');
-  current.className = 'civassist-rivals civassist-alert-current';
+  current.className = 'civadvisor-rivals civadvisor-alert-current';
   const currentHeading = document.createElement('h3');
   currentHeading.textContent = 'Current Alerts';
   current.appendChild(currentHeading);
   if (currentRows.length === 0) {
-    current.appendChild(renderCivAssistEmptyState('No active alerts are available for this save.'));
+    current.appendChild(renderCivAdvisorEmptyState('No active alerts are available for this save.'));
   } else {
     const list = document.createElement('div');
-    list.className = 'civassist-alert-list';
+    list.className = 'civadvisor-alert-list';
     currentRows.forEach((alert) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = `civassist-alert-line severity-${String(alert.severity || 'info').toLowerCase()}`;
-      if (String(state.civAssist.activeAlertID || '') === String(alert.id || '')) {
+      button.className = `civadvisor-alert-line severity-${String(alert.severity || 'info').toLowerCase()}`;
+      if (String(state.civAdvisor.activeAlertID || '') === String(alert.id || '')) {
         button.classList.add('active');
       }
       const title = document.createElement('strong');
       title.textContent = String(alert.title || 'Alert');
       const detail = document.createElement('span');
-      detail.className = 'civassist-alert-line-detail';
+      detail.className = 'civadvisor-alert-line-detail';
       detail.textContent = String(alert.detail || '');
       button.append(title, detail);
-      button.addEventListener('click', () => applyCivAssistAlertTarget(alert));
+      button.addEventListener('click', () => applyCivAdvisorAlertTarget(alert));
       list.appendChild(button);
     });
     current.appendChild(list);
@@ -75227,28 +75286,28 @@ function renderCivAssistAlerts(report) {
   return wrap;
 }
 
-function renderCivAssistModal() {
-  if (!el.civAssistModalBody) return;
-  const report = state.civAssist.report;
-  syncCivAssistHeader();
-  el.civAssistModalBody.replaceChildren();
-  if (state.civAssist.loading && (!report || !report.ok)) {
+function renderCivAdvisorModal() {
+  if (!el.civAdvisorModalBody) return;
+  const report = state.civAdvisor.report;
+  syncCivAdvisorHeader();
+  el.civAdvisorModalBody.replaceChildren();
+  if (state.civAdvisor.loading && (!report || !report.ok)) {
     const loading = document.createElement('div');
-    loading.className = 'civassist-empty';
+    loading.className = 'civadvisor-empty';
     loading.textContent = 'Reading save...';
-    el.civAssistModalBody.appendChild(loading);
+    el.civAdvisorModalBody.appendChild(loading);
     return;
   }
-  if (state.civAssist.error) {
-    el.civAssistModalBody.appendChild(renderCivAssistEmptyState(state.civAssist.error, true));
+  if (state.civAdvisor.error) {
+    el.civAdvisorModalBody.appendChild(renderCivAdvisorEmptyState(state.civAdvisor.error, true));
     return;
   }
   if (!report || !report.ok) {
-    el.civAssistModalBody.appendChild(renderCivAssistEmptyState('Open a .SAV file to view CivAssist data.'));
+    el.civAdvisorModalBody.appendChild(renderCivAdvisorEmptyState('Open a .SAV file to view Civ Advisor data.'));
     return;
   }
   const tabs = document.createElement('div');
-  tabs.className = 'civassist-tabs';
+  tabs.className = 'civadvisor-tabs';
   const tabSpecs = [
     { key: 'general', label: 'General' },
     { key: 'territory', label: 'Territory' },
@@ -75265,50 +75324,50 @@ function renderCivAssistModal() {
   tabSpecs.forEach((tab) => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = state.civAssist.activeTab === tab.key ? 'civassist-tab active' : 'civassist-tab';
+    button.className = state.civAdvisor.activeTab === tab.key ? 'civadvisor-tab active' : 'civadvisor-tab';
     button.dataset.tabKey = tab.key;
     const label = document.createElement('span');
     label.textContent = tab.label;
     button.appendChild(label);
     button.addEventListener('click', () => {
-      state.civAssist.activeTab = tab.key;
+      state.civAdvisor.activeTab = tab.key;
       if (tab.key === 'alerts') {
-        state.civAssist.activeAlertID = '';
-        markCivAssistAlertsSeen();
+        state.civAdvisor.activeAlertID = '';
+        markCivAdvisorAlertsSeen();
       }
-      renderCivAssistModal();
+      renderCivAdvisorModal();
       syncCurrentNavigationSnapshot();
     });
     tabs.appendChild(button);
   });
-  const viewingSelector = renderCivAssistViewingSelector(report);
+  const viewingSelector = renderCivAdvisorViewingSelector(report);
   if (viewingSelector) tabs.appendChild(viewingSelector);
-  el.civAssistModalBody.appendChild(tabs);
-  const content = state.civAssist.activeTab === 'trade'
-    ? renderCivAssistTrade(report)
-    : state.civAssist.activeTab === 'territory'
-      ? renderCivAssistTerritory(report)
-      : state.civAssist.activeTab === 'diplomacy'
-        ? renderCivAssistDiplomacy(report)
-        : state.civAssist.activeTab === 'techs'
-          ? renderCivAssistTechs(report)
-          : state.civAssist.activeTab === 'culture'
-            ? renderCivAssistCulture(report)
-            : state.civAssist.activeTab === 'cities'
-              ? renderCivAssistCities(report)
-              : state.civAssist.activeTab === 'economy'
-                ? renderCivAssistEconomy(report)
-                : state.civAssist.activeTab === 'production'
-                  ? renderCivAssistProduction(report)
-                  : state.civAssist.activeTab === 'military'
-                  ? renderCivAssistMilitary(report)
-                    : state.civAssist.activeTab === 'alerts'
-                      ? renderCivAssistAlerts(report)
-                      : renderCivAssistGeneral(report);
+  el.civAdvisorModalBody.appendChild(tabs);
+  const content = state.civAdvisor.activeTab === 'trade'
+    ? renderCivAdvisorTrade(report)
+    : state.civAdvisor.activeTab === 'territory'
+      ? renderCivAdvisorTerritory(report)
+      : state.civAdvisor.activeTab === 'diplomacy'
+        ? renderCivAdvisorDiplomacy(report)
+        : state.civAdvisor.activeTab === 'techs'
+          ? renderCivAdvisorTechs(report)
+          : state.civAdvisor.activeTab === 'culture'
+            ? renderCivAdvisorCulture(report)
+            : state.civAdvisor.activeTab === 'cities'
+              ? renderCivAdvisorCities(report)
+              : state.civAdvisor.activeTab === 'economy'
+                ? renderCivAdvisorEconomy(report)
+                : state.civAdvisor.activeTab === 'production'
+                  ? renderCivAdvisorProduction(report)
+                  : state.civAdvisor.activeTab === 'military'
+                  ? renderCivAdvisorMilitary(report)
+                    : state.civAdvisor.activeTab === 'alerts'
+                      ? renderCivAdvisorAlerts(report)
+                      : renderCivAdvisorGeneral(report);
   const contentShell = document.createElement('div');
-  contentShell.className = 'civassist-content-shell';
+  contentShell.className = 'civadvisor-content-shell';
   contentShell.appendChild(content);
-  el.civAssistModalBody.appendChild(contentShell);
+  el.civAdvisorModalBody.appendChild(contentShell);
   syncCivAdvisorOverlayState();
 }
 
@@ -75360,8 +75419,8 @@ async function init() {
   }
   state.settings.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(state.settings.civAdvisorLoadMode);
   state.settings.civAdvisorOpenOnLaunch = state.settings.civAdvisorOpenOnLaunch === true;
-  state.settings.civAdvisorAlertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(state.settings.civAdvisorAlertCoverageEnabled);
-  state.civAssist.alertCoverageEnabled = normalizeCivAssistAlertCoverageEnabled(state.settings.civAdvisorAlertCoverageEnabled);
+  state.settings.civAdvisorAlertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(state.settings.civAdvisorAlertCoverageEnabled);
+  state.civAdvisor.alertCoverageEnabled = normalizeCivAdvisorAlertCoverageEnabled(state.settings.civAdvisorAlertCoverageEnabled);
   state.settings.tooltipDelay = normalizeTooltipDelay(state.settings.tooltipDelay);
   if (typeof state.settings.mapAutoDockTileInfoLeft !== 'boolean') {
     state.settings.mapAutoDockTileInfoLeft = true;
@@ -75535,31 +75594,31 @@ async function init() {
       state.settings.civAdvisorLoadMode = normalizeCivAdvisorLoadMode(mode);
       void window.c3xManager.setSettings(state.settings);
       if (state.settings.civAdvisorLoadMode === 'manual') {
-        state.civAssist.followingLatest = false;
-        state.civAssist.loadLatestOncePending = false;
+        state.civAdvisor.followingLatest = false;
+        state.civAdvisor.loadLatestOncePending = false;
         setStatus('Civ Advisor will use manually selected saves.');
       } else if (state.settings.civAdvisorLoadMode === 'follow') {
-        state.civAssist.followingLatest = true;
-        state.civAssist.loadLatestOncePending = false;
+        state.civAdvisor.followingLatest = true;
+        state.civAdvisor.loadLatestOncePending = false;
         setStatus('Civ Advisor will follow the latest save while open.');
-        if (state.civAssist.isOpen) void refreshCivAssistRecentSaves({ allowAutoLoad: true });
+        if (state.civAdvisor.isOpen) void refreshCivAdvisorRecentSaves({ allowAutoLoad: true });
       } else {
-        state.civAssist.followingLatest = false;
-        state.civAssist.loadLatestOncePending = true;
+        state.civAdvisor.followingLatest = false;
+        state.civAdvisor.loadLatestOncePending = true;
         setStatus('Civ Advisor will load the latest save when opened.');
-        if (state.civAssist.isOpen) void refreshCivAssistRecentSaves({ allowAutoLoad: true });
+        if (state.civAdvisor.isOpen) void refreshCivAdvisorRecentSaves({ allowAutoLoad: true });
       }
-      syncCivAssistHeader();
+      syncCivAdvisorHeader();
     });
     window.addEventListener('beforeunload', () => {
       if (state.civAdvisorLoadModeMenuUnsubscribe) {
         state.civAdvisorLoadModeMenuUnsubscribe();
         state.civAdvisorLoadModeMenuUnsubscribe = null;
       }
-      clearCivAssistPollTimer();
+      clearCivAdvisorPollTimer();
     }, { once: true });
   }
-  state.civAssist.restoreOnLaunch = !!state.settings.civAdvisorOpenOnLaunch;
+  state.civAdvisor.restoreOnLaunch = !!state.settings.civAdvisorOpenOnLaunch;
   if (window.c3xManager && typeof window.c3xManager.onTooltipDelayMenuSelect === 'function') {
     state.tooltipDelayMenuUnsubscribe = window.c3xManager.onTooltipDelayMenuSelect((value) => {
       if (!state.settings) return;
@@ -75762,11 +75821,11 @@ async function init() {
   }
   if (window.c3xManager && typeof window.c3xManager.onCivAdvisorOverlayOpenAlerts === 'function') {
     state.civAdvisorOverlayOpenAlertsUnsubscribe = window.c3xManager.onCivAdvisorOverlayOpenAlerts(() => {
-      if (!state.civAssist.isOpen) return;
-      state.civAssist.activeTab = 'alerts';
-      state.civAssist.activeAlertID = '';
-      markCivAssistAlertsSeen();
-      renderCivAssistModal();
+      if (!state.civAdvisor.isOpen) return;
+      state.civAdvisor.activeTab = 'alerts';
+      state.civAdvisor.activeAlertID = '';
+      markCivAdvisorAlertsSeen();
+      renderCivAdvisorModal();
       syncCurrentNavigationSnapshot();
     });
     window.addEventListener('beforeunload', () => {
@@ -75864,67 +75923,67 @@ async function init() {
       el.debugDrawer.classList.add('hidden');
     });
   }
-  if (el.civAssistToggle) {
-    el.civAssistToggle.addEventListener('click', () => {
-      openCivAssistModal();
+  if (el.civAdvisorToggle) {
+    el.civAdvisorToggle.addEventListener('click', () => {
+      openCivAdvisorModal();
     });
   }
-  if (el.civAssistSaveSelect) {
-    el.civAssistSaveSelect.addEventListener('change', () => {
-      const selected = String(el.civAssistSaveSelect.value || '');
+  if (el.civAdvisorSaveSelect) {
+    el.civAdvisorSaveSelect.addEventListener('change', () => {
+      const selected = String(el.civAdvisorSaveSelect.value || '');
       if (!selected || selected === '__separator__') {
-        renderCivAssistSaveSelector();
+        renderCivAdvisorSaveSelector();
         return;
       }
       if (selected === '__browse__') {
-        renderCivAssistSaveSelector();
-        void pickCivAssistSave();
+        renderCivAdvisorSaveSelector();
+        void pickCivAdvisorSave();
         return;
       }
-      const wasFollowing = state.civAssist.followingLatest;
-      const wasLoadLatestOncePending = state.civAssist.loadLatestOncePending;
-      state.civAssist.followingLatest = false;
-      state.civAssist.loadLatestOncePending = false;
-      syncCivAssistHeader();
-      if (normalizeCivAssistPathKey(selected) === normalizeCivAssistPathKey(state.civAssist.savePath) && state.civAssist.report) {
+      const wasFollowing = state.civAdvisor.followingLatest;
+      const wasLoadLatestOncePending = state.civAdvisor.loadLatestOncePending;
+      state.civAdvisor.followingLatest = false;
+      state.civAdvisor.loadLatestOncePending = false;
+      syncCivAdvisorHeader();
+      if (normalizeCivAdvisorPathKey(selected) === normalizeCivAdvisorPathKey(state.civAdvisor.savePath) && state.civAdvisor.report) {
         setStatus('Civ Advisor save pinned.');
         return;
       }
-      const saveMeta = findRecentCivAssistSave(selected);
-      void loadCivAssistSave(selected, {
+      const saveMeta = findRecentCivAdvisorSave(selected);
+      void loadCivAdvisorSave(selected, {
         saveMeta,
-        fingerprint: getCivAssistSaveFingerprint(saveMeta)
+        fingerprint: getCivAdvisorSaveFingerprint(saveMeta)
       }).then((loaded) => {
         if (!loaded) {
-          state.civAssist.followingLatest = wasFollowing;
-          state.civAssist.loadLatestOncePending = wasLoadLatestOncePending;
+          state.civAdvisor.followingLatest = wasFollowing;
+          state.civAdvisor.loadLatestOncePending = wasLoadLatestOncePending;
         }
-        syncCivAssistHeader();
+        syncCivAdvisorHeader();
       });
     });
   }
-  if (el.civAssistFollowLatest) {
-    el.civAssistFollowLatest.addEventListener('change', () => {
-      state.civAssist.followingLatest = !!el.civAssistFollowLatest.checked;
-      state.civAssist.loadLatestOncePending = false;
-      syncCivAssistHeader();
-      if (state.civAssist.followingLatest) {
+  if (el.civAdvisorFollowLatest) {
+    el.civAdvisorFollowLatest.addEventListener('change', () => {
+      state.civAdvisor.followingLatest = !!el.civAdvisorFollowLatest.checked;
+      state.civAdvisor.loadLatestOncePending = false;
+      syncCivAdvisorHeader();
+      if (state.civAdvisor.followingLatest) {
         setStatus('Civ Advisor is following the latest save.');
-        void refreshCivAssistRecentSaves({ allowAutoLoad: true });
+        void refreshCivAdvisorRecentSaves({ allowAutoLoad: true });
       } else {
         setStatus('Civ Advisor paused on the selected save.');
       }
     });
   }
-  if (el.civAssistClose) {
-    el.civAssistClose.addEventListener('click', () => {
-      closeCivAssistModal();
+  if (el.civAdvisorClose) {
+    el.civAdvisorClose.addEventListener('click', () => {
+      closeCivAdvisorModal();
     });
   }
-  if (el.civAssistModalOverlay) {
-    el.civAssistModalOverlay.addEventListener('click', (ev) => {
-      if (ev.target === el.civAssistModalOverlay) {
-        closeCivAssistModal();
+  if (el.civAdvisorModalOverlay) {
+    el.civAdvisorModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.civAdvisorModalOverlay) {
+        closeCivAdvisorModal();
       }
     });
   }
@@ -76242,11 +76301,11 @@ async function init() {
       ev.stopPropagation();
       return;
     }
-    if (el.civAssistModalOverlay && !el.civAssistModalOverlay.classList.contains('hidden') && ev.key === 'Escape') {
+    if (el.civAdvisorModalOverlay && !el.civAdvisorModalOverlay.classList.contains('hidden') && ev.key === 'Escape') {
       const target = ev.target;
       if (target instanceof HTMLInputElement
         && target.classList.contains('app-search-input')
-        && el.civAssistModalOverlay.contains(target)) {
+        && el.civAdvisorModalOverlay.contains(target)) {
         if (target.value) {
           target.value = '';
           target.dispatchEvent(new Event('input', { bubbles: true }));
@@ -76255,7 +76314,7 @@ async function init() {
         ev.stopPropagation();
         return;
       }
-      closeCivAssistModal();
+      closeCivAdvisorModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;
@@ -76364,8 +76423,8 @@ async function init() {
   if (await shouldAutoLoad()) {
     await loadBundleAndRender({ usePersistedView: true });
   }
-  if (state.civAssist.restoreOnLaunch) {
-    openCivAssistModal({ skipHistorySync: true });
+  if (state.civAdvisor.restoreOnLaunch) {
+    openCivAdvisorModal({ skipHistorySync: true });
   }
 }
 

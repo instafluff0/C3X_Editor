@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
   getPathAccess: (paths) => ipcRenderer.invoke('manager:get-path-access', paths),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
-  listRecentCivAssistSaves: (payload) => ipcRenderer.invoke('manager:list-recent-civ-assist-saves', payload),
+  listRecentCivAdvisorSaves: (payload) => ipcRenderer.invoke('manager:list-recent-civ-advisor-saves', payload),
   createScenario: (payload) => ipcRenderer.invoke('manager:create-scenario', payload),
   deleteScenario: (payload) => ipcRenderer.invoke('manager:delete-scenario', payload),
   relaunch: () => ipcRenderer.invoke('manager:relaunch'),
@@ -208,6 +208,6 @@ contextBridge.exposeInMainWorld('c3xManager', {
   previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload),
   inspectAudioFile: (filePath) => ipcRenderer.invoke('manager:inspect-audio-file', filePath),
   inspectCivColorPalettes: (payload) => ipcRenderer.invoke('manager:inspect-civ-color-palettes', payload),
-  inspectCivAssistSave: (payload) => ipcRenderer.invoke('manager:inspect-civ-assist-save', payload),
+  inspectCivAdvisorSave: (payload) => ipcRenderer.invoke('manager:inspect-civ-advisor-save', payload),
   flicWorkshop: (payload) => ipcRenderer.invoke('manager:flic-workshop', payload)
 });
