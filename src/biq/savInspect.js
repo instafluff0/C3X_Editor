@@ -603,6 +603,8 @@ function parseCity(reader, index, savVersion) {
     const citizenLength = reader.uint32();
     const citizenBody = reader.bytes(citizenLength);
     city.citizens.push({
+      isSpecialist: citizenLength >= 5 ? citizenBody.readUInt8(4) === 0 : false,
+      workerType: citizenLength >= 320 ? citizenBody.readInt32LE(316) : -1,
       mood: citizenLength >= 268 ? citizenBody.readInt32LE(264) : -1,
       nationality: citizenLength >= 292 ? citizenBody.readInt32LE(288) : -1,
     });
@@ -737,8 +739,10 @@ function summarizeCities(cities, names, players) {
       owner: city.owner,
       ownerName: ownerName(city.owner),
       cityFlags: city.cityFlags,
+      yearBuilt: city.yearBuilt,
       population: city.citizenCount,
       specialists: city.specialistCount,
+      citizens,
       happyCitizens: citizens.filter((citizen) => Number(citizen.mood) === 0).length,
       unhappyCitizens: citizens.filter((citizen) => Number(citizen.mood) === 2).length,
       contentCitizens: citizens.filter((citizen) => Number(citizen.mood) === 1).length,

@@ -668,9 +668,9 @@ test('Civ Advisor General tab matches Tokugawa 740 AD reference save', (t) => {
         costPerUnit: row.unitSupport.costPerUnit,
       })),
     [
-      { name: 'Monarchy', current: false, unitCosts: 29, netGain: 16, freeUnits: 8, supportedUnits: 29, costPerUnit: 1 },
+      { name: 'Monarchy', current: false, unitCosts: 29, netGain: 55, freeUnits: 8, supportedUnits: 29, costPerUnit: 1 },
       { name: 'Republic', current: true, unitCosts: 62, netGain: 3, freeUnits: 6, supportedUnits: 31, costPerUnit: 2 },
-      { name: 'Feudalism', current: false, unitCosts: 99, netGain: -54, freeUnits: 4, supportedUnits: 33, costPerUnit: 3 },
+      { name: 'Feudalism', current: false, unitCosts: 99, netGain: -15, freeUnits: 4, supportedUnits: 33, costPerUnit: 3 },
     ]
   );
   assert.equal(report.economy.defaultBuildingIndex, 4);
@@ -688,7 +688,7 @@ test('Civ Advisor General tab matches Tokugawa 740 AD reference save', (t) => {
   );
   assert.ok(report.economy.buildingOptions.every((row) => row.ref.sectionCode === 'BLDG'));
   assert.deepEqual(
-    report.economy.cityRows.map(({ buildingStatuses, cityArt, baseScience, baseLuxury, baseTaxes, addedScience, addedLuxury, addedTaxes, ...row }) => ({
+    report.economy.cityRows.map(({ buildingStatuses, cityArt, baseScience, baseLuxury, baseTaxes, addedScience, addedLuxury, addedTaxes, commerceSimulation, productionSimulation, ...row }) => ({
       ...row,
       marketplaceStatus: buildingStatuses.find((item) => item.buildingIndex === report.economy.defaultBuildingIndex).status,
       courthouseStatus: buildingStatuses.find((item) => item.buildingIndex === 6).status,
@@ -709,6 +709,33 @@ test('Civ Advisor General tab matches Tokugawa 740 AD reference save', (t) => {
   assert.ok(report.economy.cityRows.every((row) => (
     row.buildingStatuses.find((item) => item.buildingIndex === report.economy.defaultBuildingIndex).ref.sectionCode === 'BLDG'
   )));
+  const osakaEconomy = report.economy.cityRows.find((row) => row.name === 'Osaka');
+  assert.deepEqual(
+    {
+      source: osakaEconomy.productionSimulation.source,
+      rawProduction: osakaEconomy.productionSimulation.rawProduction,
+      unmultipliedProduction: osakaEconomy.productionSimulation.unmultipliedProduction,
+      productionMultiplier: osakaEconomy.productionSimulation.productionMultiplier,
+      waste: osakaEconomy.productionSimulation.waste,
+      inferenceAmbiguity: osakaEconomy.commerceSimulation.inferenceAmbiguity,
+      rawCommerce: osakaEconomy.commerceSimulation.rawCommerce,
+      grossCommerce: osakaEconomy.commerceSimulation.grossCommerce,
+      corruption: osakaEconomy.commerceSimulation.corruption,
+      wealthIncome: osakaEconomy.commerceSimulation.wealthIncome,
+    },
+    {
+      source: 'saved-output-inferred',
+      rawProduction: 21,
+      unmultipliedProduction: 19,
+      productionMultiplier: 4,
+      waste: 2,
+      inferenceAmbiguity: 2,
+      rawCommerce: 42,
+      grossCommerce: 48,
+      corruption: 6,
+      wealthIncome: 2,
+    }
+  );
 
   assert.equal(report.production.productionFactor, 10);
   assert.deepEqual(
@@ -1170,6 +1197,28 @@ test('Civ Advisor map UI reuses the map renderer in read-only mode and lazy-load
   assert.match(styles, /\.civadvisor-map[\s\S]*?\.biq-map-toolbar\.read-only/);
 });
 
+test('Civ Advisor main and overlay buttons share the CA brown-gold treatment', () => {
+  const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  const overlayHtml = fs.readFileSync(path.join(__dirname, '..', 'src', 'civAdvisorOverlay.html'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
+  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+
+  assert.match(indexHtml, /id="civadvisor-toggle"[^>]*>CA<\/button>/);
+  assert.match(main, /const CIV_ADVISOR_OVERLAY_SIZE = 38;/);
+  assert.match(overlayHtml, /<span class="civ-advisor-button-mark" aria-hidden="true">CA<\/span>/);
+  assert.doesNotMatch(overlayHtml, /<svg\b/);
+  assert.match(
+    overlayHtml,
+    /button\s*\{[\s\S]*?width: 38px;[\s\S]*?height: 38px;[\s\S]*?border: 1px solid #9a8550;[\s\S]*?border-radius: 999px;[\s\S]*?background: linear-gradient\(180deg, #e1cf97 0%, #b99653 100%\);[\s\S]*?color: #56431d;/,
+    'the Civ 3 overlay button should use the shared CA brown-gold visual treatment'
+  );
+  assert.match(
+    styles,
+    /\.civadvisor-fab\s*\{[\s\S]*?width: 38px;[\s\S]*?height: 38px;[\s\S]*?border: 1px solid #9a8550;[\s\S]*?color: #56431d;[\s\S]*?background: linear-gradient\(180deg, #e1cf97 0%, #b99653 100%\);/,
+    'the main floating Civ Advisor button should use the same CA brown-gold visual treatment'
+  );
+});
+
 test('Civ Advisor table links fill their columns and trade continuation rows omit empty civ chips', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
   const styles = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
@@ -1216,12 +1265,24 @@ test('Civ Advisor Economy and Production tabs render saved-state reports', () =>
   assert.match(renderer, /function renderCivAdvisorEconomy\(report\) \{[\s\S]*?City Economy[\s\S]*?sortCivAdvisorRows\(economy\.cityRows \|\| \[\][\s\S]*?makeCivAdvisorCityName\(row, row\.name\)/);
   assert.match(renderer, /economyPreviewGovernmentIndex: -1/);
   assert.match(renderer, /economyPreviewScienceRate: null[\s\S]*?economyPreviewLuxuryRate: null/);
-  assert.match(renderer, /function getCivAdvisorEconomyRateSimulation\(economy\) \{[\s\S]*?savedScience[\s\S]*?savedLuxury[\s\S]*?taxes[\s\S]*?changed:/);
+  assert.match(renderer, /function getCivAdvisorEconomyRateSimulation\(economy\) \{[\s\S]*?savedScience[\s\S]*?savedLuxury[\s\S]*?rawStateScience == null \? NaN : Number\(rawStateScience\)[\s\S]*?rawStateLuxury == null \? NaN : Number\(rawStateLuxury\)[\s\S]*?taxes[\s\S]*?changed:/);
+  assert.match(renderer, /function distributeCivAdvisorEconomyRates\(total, rates\) \{[\s\S]*?civAdvisorRateStep\(rates && rates\.science\)[\s\S]*?civAdvisorIntDiv\(scienceStep \* budgetable \+ 5, 10\)[\s\S]*?civAdvisorIntDiv\(luxuryStep \* budgetable \+ 5, 10\)[\s\S]*?budgetable - science - luxury/);
+  assert.match(renderer, /function applyCivAdvisorEconomyCommerceMultipliers\(channels, simulation\) \{[\s\S]*?scienceMultiplier[\s\S]*?luxuryMultiplier[\s\S]*?taxMultiplier[\s\S]*?wealthIncome/);
   assert.match(renderer, /function makeCivAdvisorEconomyRatePreview\(economy, basePreview, rates\) \{[\s\S]*?makeCivAdvisorEconomyRateCityRow[\s\S]*?sliders: \{ science: rates\.science, luxury: rates\.luxury, taxes: rates\.taxes \}/);
+  assert.match(renderer, /\{ key: 'size', label: 'Pop', className: 'size', num: true \}/);
+  assert.doesNotMatch(renderer, /\{ key: 'size', label: 'Size', className: 'size', num: true \}/);
   assert.match(renderer, /function getCivAdvisorEconomyGovernmentPreview\(economy\) \{[\s\S]*?economy\.governmentPreviews[\s\S]*?selectedGovernmentIndex/);
+  assert.match(renderer, /function isCivAdvisorEconomyGovernmentSimulated\(economy\) \{[\s\S]*?selectedGovernmentIndex !== currentGovernmentIndex/);
+  assert.match(renderer, /function makeCivAdvisorEconomySectionHeading\(title, badges = \[\]\) \{[\s\S]*?civadvisor-section-heading-with-badges[\s\S]*?civadvisor-section-heading-badges/);
+  assert.match(renderer, /makeCivAdvisorEconomySectionHeading\('Government & Administration', \[[\s\S]*?isCivAdvisorEconomyGovernmentSimulated\(economy\)[\s\S]*?Government simulated/);
+  assert.match(renderer, /makeCivAdvisorEconomySectionHeading\('National Economy', \[[\s\S]*?rateSimulation\.changed[\s\S]*?Rates simulated/);
   assert.match(renderer, /function getCivAdvisorEconomyPreview\(economy\) \{[\s\S]*?getCivAdvisorEconomyGovernmentPreview\(economy\)[\s\S]*?getCivAdvisorEconomyRateSimulation\(economy\)[\s\S]*?makeCivAdvisorEconomyRatePreview\(economy, governmentPreview, rates\)/);
   assert.match(renderer, /function makeCivAdvisorGovernmentPicker\(economy, administration, preview\) \{[\s\S]*?menuPortalRoot: \(\) => document\.body[\s\S]*?getOptionMetaText:[\s\S]*?Current save[\s\S]*?Simulated[\s\S]*?state\.civAdvisor\.economyPreviewGovernmentIndex = Number\.isFinite\(next\)[\s\S]*?renderCivAdvisorModal\(\)/);
-  assert.match(renderer, /civadvisor-economy-slider-input[\s\S]*?track\.type = 'range'[\s\S]*?track\.style\.setProperty\('--rate-value'[\s\S]*?setCivAdvisorEconomyRateSimulation\(economy[\s\S]*?setValueText\(updatedValue\)[\s\S]*?track\.addEventListener\('change'[\s\S]*?renderCivAdvisorModal\(\)/);
+  assert.match(renderer, /state\.civAdvisor\.economyPreviewScienceRate = null[\s\S]*?state\.civAdvisor\.economyPreviewLuxuryRate = null[\s\S]*?const resolvedPlayerID = Number\(result\.selectedPlayerID\)/);
+  assert.match(renderer, /civadvisor-economy-slider-input[\s\S]*?track\.type = 'range'[\s\S]*?track\.max = '100'[\s\S]*?setCivAdvisorEconomyRateSimulation\(economy[\s\S]*?setValueText\(updatedValue\)[\s\S]*?track\.addEventListener\('change'[\s\S]*?renderCivAdvisorModal\(\)/);
+  assert.match(renderer, /function setCivAdvisorEconomyRateSimulation\(economy, science, luxury, changedKey = null\) \{[\s\S]*?if \(nextScience \+ nextLuxury > 100\) \{[\s\S]*?changedKey === 'science'[\s\S]*?nextScience = Math\.max\(0, 100 - nextLuxury\)[\s\S]*?else nextLuxury = Math\.max\(0, 100 - nextScience\)/);
+  assert.match(renderer, /setCivAdvisorEconomyRateSimulation\(economy, next, latestRates\.luxury, 'science'\)/);
+  assert.match(renderer, /setCivAdvisorEconomyRateSimulation\(economy, latestRates\.science, next, 'luxury'\)/);
   const sliderInputHandler = renderer.match(/track\.addEventListener\('input', \(\) => \{([\s\S]*?)\n      \}\);/);
   assert.ok(sliderInputHandler, 'expected Economy slider input handler');
   assert.doesNotMatch(sliderInputHandler[1], /renderCivAdvisorModal/, 'Economy sliders should not rerender while dragging');
@@ -1236,7 +1297,9 @@ test('Civ Advisor Economy and Production tabs render saved-state reports', () =>
   assert.doesNotMatch(styles, /civadvisor-economy-building-picker|civadvisor-economy-building-status|building-status/);
   assert.match(styles, /\.civadvisor-economy-government-picker-menu\.tech-picker-menu-portaled \{[\s\S]*?z-index: 1300;/);
   assert.match(styles, /\.civadvisor-economy-delta \{[\s\S]*?font-size: 0\.72rem;[\s\S]*?font-weight: 650;/);
-  assert.match(styles, /\.civadvisor-economy-slider \{[\s\S]*?minmax\(78px, max-content\)[\s\S]*?\.civadvisor-economy-slider-input \{[\s\S]*?background: linear-gradient\(to right, var\(--rate-color\) 0 var\(--rate-value\), #edf0f6 var\(--rate-value\) 100%\)[\s\S]*?\.civadvisor-economy-slider-input\.luxury \{[\s\S]*?--rate-color: #b56ea8;/);
+  assert.match(styles, /\.civadvisor-economy-sliders \{[\s\S]*?grid-auto-rows: 28px;[\s\S]*?\.civadvisor-economy-slider \{[\s\S]*?52px minmax\(110px, 1fr\) 42px[\s\S]*?min-height: 28px;[\s\S]*?\.civadvisor-economy-slider-input \{[\s\S]*?width: 100%;[\s\S]*?accent-color: #55588a;/);
+  assert.match(styles, /\.civadvisor-section-heading-with-badges \{[\s\S]*?justify-content: space-between;[\s\S]*?\.civadvisor-section-heading-badges \{/);
+  assert.doesNotMatch(styles, /--rate-value|--rate-color|::-webkit-slider-thumb|linear-gradient\(to right, var\(--rate-color\)/);
   assert.match(styles, /\.civadvisor-economy-table td\.civadvisor-economy-cell-changed\.positive \{[\s\S]*?rgba\(20, 118, 93, 0\.06\)[\s\S]*?\.civadvisor-economy-table td\.civadvisor-economy-cell-changed\.negative \{[\s\S]*?rgba\(179, 69, 56, 0\.06\)/);
   assert.match(renderer, /function renderCivAdvisorProduction\(report\) \{[\s\S]*?search\.placeholder = 'Search Production\.\.\.'[\s\S]*?state\.civAdvisor\.productionSearch = search\.value[\s\S]*?makeCivAdvisorCityName\(row, row\.city \|\| ''\)[\s\S]*?makeCivAdvisorReferenceChip\(row\.producingRef, row\.producing\)[\s\S]*?civadvisor-production-progress/);
   assert.doesNotMatch(renderer, /heading\.textContent = 'City Production'/);
@@ -1964,8 +2027,8 @@ test('Civ Advisor General tab resolves active rival colors and contacted remaini
   const republicPreview = report.economy.governmentPreviews.find((row) => row.name === 'Republic');
   assert.ok(anarchyPreview && republicPreview);
   assert.equal(report.economy.netGain, 376);
-  assert.equal(anarchyPreview.netGain, 52);
-  assert.equal(republicPreview.netGain, 1154);
+  assert.equal(anarchyPreview.netGain, -553);
+  assert.equal(republicPreview.netGain, 1738);
   assert.deepEqual(
     republicPreview.cityRows
       .filter((row) => ['Kyoto', 'Amsterdam'].includes(row.name))
@@ -1980,8 +2043,8 @@ test('Civ Advisor General tab resolves active rival colors and contacted remaini
         estimated: row.estimated,
       })),
     [
-      { name: 'Kyoto', production: 57, waste: 0, science: 69, taxes: 103, corruption: 0, netGold: 81, estimated: true },
-      { name: 'Amsterdam', production: 8, waste: 6, science: 7, taxes: 10, corruption: 6, netGold: 6, estimated: true },
+      { name: 'Kyoto', production: 57, waste: 0, science: 200, taxes: 296, corruption: 0, netGold: 274, estimated: true },
+      { name: 'Amsterdam', production: 7, waste: 7, science: 8, taxes: 17, corruption: 11, netGold: 13, estimated: true },
     ],
     'government previews should estimate visible city-level commerce/waste changes, not only unit support'
   );

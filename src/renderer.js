@@ -73009,6 +73009,8 @@ async function loadCivAdvisorSave(filePath, options = {}) {
       return false;
     } else {
       state.civAdvisor.savePath = target;
+      state.civAdvisor.economyPreviewScienceRate = null;
+      state.civAdvisor.economyPreviewLuxuryRate = null;
       const resolvedPlayerID = Number(result.selectedPlayerID);
       const previousSelectedPlayerID = Number(state.civAdvisor.selectedPlayerID);
       state.civAdvisor.selectedPlayerID = Number.isFinite(resolvedPlayerID) && (resolvedPlayerID > 0 || resolvedPlayerID === -1)
@@ -74915,8 +74917,10 @@ function getCivAdvisorEconomyRateSimulation(economy) {
   const sliders = economy && economy.sliders ? economy.sliders : {};
   const savedScience = clampCivAdvisorEconomyRate(sliders.science, 0);
   const savedLuxury = clampCivAdvisorEconomyRate(sliders.luxury, 0);
-  const stateScience = Number(state.civAdvisor.economyPreviewScienceRate);
-  const stateLuxury = Number(state.civAdvisor.economyPreviewLuxuryRate);
+  const rawStateScience = state.civAdvisor.economyPreviewScienceRate;
+  const rawStateLuxury = state.civAdvisor.economyPreviewLuxuryRate;
+  const stateScience = rawStateScience == null ? NaN : Number(rawStateScience);
+  const stateLuxury = rawStateLuxury == null ? NaN : Number(rawStateLuxury);
   let science = Number.isFinite(stateScience) ? clampCivAdvisorEconomyRate(stateScience, savedScience) : savedScience;
   let luxury = Number.isFinite(stateLuxury) ? clampCivAdvisorEconomyRate(stateLuxury, savedLuxury) : savedLuxury;
   if (science + luxury > 100) luxury = Math.max(0, 100 - science);
@@ -74932,26 +74936,59 @@ function getCivAdvisorEconomyRateSimulation(economy) {
   };
 }
 
-function setCivAdvisorEconomyRateSimulation(economy, science, luxury) {
+function setCivAdvisorEconomyRateSimulation(economy, science, luxury, changedKey = null) {
   const saved = getCivAdvisorEconomyRateSimulation(economy);
-  const nextScience = clampCivAdvisorEconomyRate(science, saved.savedScience);
+  let nextScience = clampCivAdvisorEconomyRate(science, saved.savedScience);
   let nextLuxury = clampCivAdvisorEconomyRate(luxury, saved.savedLuxury);
-  if (nextScience + nextLuxury > 100) nextLuxury = Math.max(0, 100 - nextScience);
+  if (nextScience + nextLuxury > 100) {
+    if (changedKey === 'science') nextScience = Math.max(0, 100 - nextLuxury);
+    else nextLuxury = Math.max(0, 100 - nextScience);
+  }
   state.civAdvisor.economyPreviewScienceRate = nextScience === saved.savedScience ? null : nextScience;
   state.civAdvisor.economyPreviewLuxuryRate = nextLuxury === saved.savedLuxury ? null : nextLuxury;
 }
 
+function civAdvisorIntDiv(value, divisor) {
+  const n = Number(value) || 0;
+  const d = Number(divisor) || 1;
+  return n < 0 ? Math.ceil(n / d) : Math.floor(n / d);
+}
+
+function civAdvisorRateStep(value) {
+  const n = Math.round((Number(value) || 0) / 10);
+  return Math.max(0, Math.min(10, n));
+}
+
 function distributeCivAdvisorEconomyRates(total, rates) {
-  const budgetable = Math.max(0, Number(total) || 0);
-  const science = Math.max(0, Math.min(budgetable, Math.round(budgetable * (Number(rates && rates.science) || 0) / 100)));
-  const luxury = Math.max(0, Math.min(budgetable - science, Math.round(budgetable * (Number(rates && rates.luxury) || 0) / 100)));
+  const budgetable = Math.max(0, Math.round(Number(total) || 0));
+  const scienceStep = civAdvisorRateStep(rates && rates.science);
+  const luxuryStep = civAdvisorRateStep(rates && rates.luxury);
+  const science = Math.max(0, Math.min(budgetable, civAdvisorIntDiv(scienceStep * budgetable + 5, 10)));
+  let luxury = Math.max(0, Math.min(budgetable, civAdvisorIntDiv(luxuryStep * budgetable + 5, 10)));
+  if (budgetable < science + luxury) luxury = Math.max(0, budgetable - science);
   const taxes = Math.max(0, budgetable - science - luxury);
   return { science, luxury, taxes };
 }
 
+function applyCivAdvisorEconomyCommerceMultipliers(channels, simulation) {
+  const scienceMultiplier = Math.max(0, Number(simulation && simulation.scienceMultiplier) || 2);
+  const luxuryMultiplier = Math.max(0, Number(simulation && simulation.luxuryMultiplier) || 2);
+  const taxMultiplier = Math.max(0, Number(simulation && simulation.taxMultiplier) || 2);
+  const wealthIncome = Math.max(0, Number(simulation && simulation.wealthIncome) || 0);
+  return {
+    science: civAdvisorIntDiv(Math.max(0, Number(channels && channels.science) || 0) * scienceMultiplier, 2),
+    luxury: civAdvisorIntDiv(Math.max(0, Number(channels && channels.luxury) || 0) * luxuryMultiplier, 2),
+    taxes: civAdvisorIntDiv(Math.max(0, Number(channels && channels.taxes) || 0) * taxMultiplier, 2) + wealthIncome,
+  };
+}
+
 function makeCivAdvisorEconomyRateCityRow(row, rates) {
-  const budgetableCommerce = Math.max(0, Number(row && row.baseScience) + Number(row && row.baseLuxury) + Number(row && row.baseTaxes));
-  const channels = distributeCivAdvisorEconomyRates(budgetableCommerce, rates);
+  const simulation = row && row.commerceSimulation;
+  const budgetableCommerce = simulation && Number.isFinite(Number(simulation.rawCommerce))
+    ? Math.max(0, Number(simulation.rawCommerce) || 0)
+    : Math.max(0, Number(row && row.baseScience) + Number(row && row.baseLuxury) + Number(row && row.baseTaxes));
+  const rawChannels = distributeCivAdvisorEconomyRates(budgetableCommerce, rates);
+  const channels = applyCivAdvisorEconomyCommerceMultipliers(rawChannels, simulation);
   const addedScience = Math.max(0, Number(row && row.addedScience) || 0);
   const addedLuxury = Math.max(0, Number(row && row.addedLuxury) || 0);
   const addedTaxes = Math.max(0, Number(row && row.addedTaxes) || 0);
@@ -75007,6 +75044,38 @@ function getCivAdvisorEconomyGovernmentPreview(economy) {
     .find((preview) => Number(preview && preview.governmentIndex) === selectedGovernmentIndex) || null;
 }
 
+function isCivAdvisorEconomyGovernmentSimulated(economy) {
+  const currentGovernmentIndex = Number(economy && economy.currentGovernmentIndex);
+  const selectedGovernmentIndex = Number(state.civAdvisor.economyPreviewGovernmentIndex);
+  return Number.isFinite(currentGovernmentIndex)
+    && Number.isFinite(selectedGovernmentIndex)
+    && selectedGovernmentIndex >= 0
+    && selectedGovernmentIndex !== currentGovernmentIndex;
+}
+
+function makeCivAdvisorEconomySimulationBadge(label) {
+  const badge = document.createElement('span');
+  badge.className = 'civadvisor-economy-simulated-badge';
+  badge.textContent = label || 'Simulated';
+  return badge;
+}
+
+function makeCivAdvisorEconomySectionHeading(title, badges = []) {
+  const heading = document.createElement('h3');
+  heading.className = 'civadvisor-section-heading-with-badges';
+  const label = document.createElement('span');
+  label.textContent = title;
+  heading.appendChild(label);
+  const activeBadges = badges.filter(Boolean);
+  if (activeBadges.length > 0) {
+    const badgeWrap = document.createElement('span');
+    badgeWrap.className = 'civadvisor-section-heading-badges';
+    activeBadges.forEach((badge) => badgeWrap.appendChild(badge));
+    heading.appendChild(badgeWrap);
+  }
+  return heading;
+}
+
 function getCivAdvisorEconomyPreview(economy) {
   const governmentPreview = getCivAdvisorEconomyGovernmentPreview(economy);
   const rates = getCivAdvisorEconomyRateSimulation(economy);
@@ -75017,29 +75086,6 @@ function getCivAdvisorEconomyPreview(economy) {
 function formatCivAdvisorEconomyDelta(value) {
   const n = Number(value) || 0;
   return `${n > 0 ? '+' : ''}${n}`;
-}
-
-function makeCivAdvisorEconomyPercentValue(value, savedValue, options = {}) {
-  const current = Number(value) || 0;
-  const saved = Number(savedValue) || 0;
-  const wrap = document.createElement('span');
-  wrap.className = 'civadvisor-economy-rate-value';
-  const main = document.createElement('span');
-  main.textContent = `${current}%`;
-  wrap.appendChild(main);
-  const delta = current - saved;
-  if (delta !== 0) {
-    const deltaEl = document.createElement('span');
-    deltaEl.className = 'civadvisor-economy-delta';
-    const higherIsBetter = options.higherIsBetter !== false;
-    const goodDelta = higherIsBetter ? delta > 0 : delta < 0;
-    const badDelta = higherIsBetter ? delta < 0 : delta > 0;
-    if (goodDelta) deltaEl.classList.add('positive');
-    else if (badDelta) deltaEl.classList.add('negative');
-    deltaEl.textContent = `${delta > 0 ? '+' : ''}${delta}%`;
-    wrap.appendChild(deltaEl);
-  }
-  return wrap;
 }
 
 function makeCivAdvisorEconomyValue(value, savedValue, options = {}) {
@@ -75177,8 +75223,9 @@ function renderCivAdvisorEconomy(report) {
   top.className = 'civadvisor-economy-top';
   const admin = document.createElement('section');
   admin.className = 'civadvisor-info-section civadvisor-economy-admin';
-  const adminHeading = document.createElement('h3');
-  adminHeading.textContent = 'Government & Administration';
+  const adminHeading = makeCivAdvisorEconomySectionHeading('Government & Administration', [
+    isCivAdvisorEconomyGovernmentSimulated(economy) ? makeCivAdvisorEconomySimulationBadge('Government simulated') : null,
+  ]);
   const adminList = document.createElement('dl');
   adminList.className = 'civadvisor-kv-list';
   [
@@ -75194,14 +75241,6 @@ function renderCivAdvisorEconomy(report) {
     const dd = document.createElement('dd');
     if (label === 'Government') {
       dd.appendChild(makeCivAdvisorGovernmentPicker(economy, administration, preview));
-      const previewGovernmentIndex = Number(preview && preview.governmentIndex);
-      const currentGovernmentIndex = Number(economy && economy.currentGovernmentIndex);
-      if (Number.isFinite(previewGovernmentIndex) && previewGovernmentIndex !== currentGovernmentIndex) {
-        const simulated = document.createElement('span');
-        simulated.className = 'civadvisor-economy-simulated-badge';
-        simulated.textContent = 'Simulated';
-        dd.appendChild(simulated);
-      }
     } else if (refLabel && ref) {
       const content = document.createElement('div');
       content.className = 'civadvisor-economy-admin-building';
@@ -75218,12 +75257,13 @@ function renderCivAdvisorEconomy(report) {
 
   const national = document.createElement('section');
   national.className = 'civadvisor-info-section civadvisor-economy-national';
-  const nationalHeading = document.createElement('h3');
-  nationalHeading.textContent = 'National Economy';
+  const rateSimulation = getCivAdvisorEconomyRateSimulation(economy);
+  const nationalHeading = makeCivAdvisorEconomySectionHeading('National Economy', [
+    rateSimulation.changed ? makeCivAdvisorEconomySimulationBadge('Rates simulated') : null,
+  ]);
   national.appendChild(nationalHeading);
   const sliders = document.createElement('div');
   sliders.className = 'civadvisor-economy-sliders';
-  const rateSimulation = getCivAdvisorEconomyRateSimulation(economy);
   const displayedRates = preview && preview.sliders ? preview.sliders : rateSimulation;
   [
     ['science', 'Science'],
@@ -75238,9 +75278,8 @@ function renderCivAdvisorEconomy(report) {
     let track;
     const currentValue = clampCivAdvisorEconomyRate(displayedRates && displayedRates[key], 0);
     const value = document.createElement('strong');
-    const savedValue = clampCivAdvisorEconomyRate(rateSimulation && rateSimulation[`saved${key[0].toUpperCase()}${key.slice(1)}`], currentValue);
     const setValueText = (nextValue) => {
-      value.replaceChildren(makeCivAdvisorEconomyPercentValue(nextValue, savedValue, { higherIsBetter: key !== 'taxes' }));
+      value.textContent = `${clampCivAdvisorEconomyRate(nextValue, 0)}%`;
     };
     if (key === 'taxes') {
       track = document.createElement('span');
@@ -75254,20 +75293,18 @@ function renderCivAdvisorEconomy(report) {
       track.className = `civadvisor-economy-slider-input ${key}`;
       track.type = 'range';
       track.min = '0';
-      track.max = String(key === 'science' ? 100 - clampCivAdvisorEconomyRate(displayedRates && displayedRates.luxury, 0) : 100 - clampCivAdvisorEconomyRate(displayedRates && displayedRates.science, 0));
+      track.max = '100';
       track.step = '10';
       track.value = String(currentValue);
-      track.style.setProperty('--rate-value', `${currentValue}%`);
       track.setAttribute('aria-label', `${label} rate`);
       track.addEventListener('input', () => {
         const next = clampCivAdvisorEconomyRate(track.value, currentValue);
         const latestRates = getCivAdvisorEconomyRateSimulation(economy);
-        if (key === 'science') setCivAdvisorEconomyRateSimulation(economy, next, latestRates.luxury);
-        else setCivAdvisorEconomyRateSimulation(economy, latestRates.science, next);
+        if (key === 'science') setCivAdvisorEconomyRateSimulation(economy, next, latestRates.luxury, 'science');
+        else setCivAdvisorEconomyRateSimulation(economy, latestRates.science, next, 'luxury');
         const updatedRates = getCivAdvisorEconomyRateSimulation(economy);
         const updatedValue = clampCivAdvisorEconomyRate(updatedRates && updatedRates[key], next);
         track.value = String(updatedValue);
-        track.style.setProperty('--rate-value', `${updatedValue}%`);
         setValueText(updatedValue);
       });
       track.addEventListener('change', () => {
@@ -75323,7 +75360,7 @@ function renderCivAdvisorEconomy(report) {
   const columns = [
     { key: 'name', label: 'City', className: 'city' },
     ...(economy.allCivs ? [{ key: 'civ', label: 'Civ', className: 'civ' }] : []),
-    { key: 'size', label: 'Size', className: 'size', num: true },
+    { key: 'size', label: 'Pop', className: 'size', num: true },
     { key: 'production', label: 'Shields', className: 'production', num: true },
     { key: 'waste', label: 'Waste', className: 'waste', sortValue: (row) => row.waste, num: true },
     { key: 'science', label: 'Science', className: 'science', num: true },

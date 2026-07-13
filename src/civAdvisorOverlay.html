@@ -20,11 +20,11 @@
     }
 
     button {
-      width: 30px;
-      height: 30px;
+      width: 38px;
+      height: 38px;
       padding: 0;
       border: 1px solid #9a8550;
-      border-radius: 6px;
+      border-radius: 999px;
       background: linear-gradient(180deg, #e1cf97 0%, #b99653 100%);
       color: #56431d;
       box-shadow:
@@ -34,6 +34,9 @@
       cursor: pointer;
       display: grid;
       place-items: center;
+      font-size: 0.78rem;
+      font-weight: 900;
+      line-height: 1;
     }
 
     button:hover {
@@ -57,20 +60,15 @@
         0 0 0 1px rgba(72, 53, 19, 0.26);
     }
 
-    svg {
-      width: 17px;
-      height: 17px;
+    .civ-advisor-button-mark {
       display: block;
+      transform: translateY(-0.5px);
     }
   </style>
 </head>
 <body>
   <button id="open-main" type="button" title="Open Civ Advisor alerts" aria-label="Open Civ Advisor alerts">
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M12 3.5L21 19H3L12 3.5Z" fill="currentColor" opacity="0.98"></path>
-      <path d="M12 8.1V13.8" fill="none" stroke="#f6edc7" stroke-width="2.2" stroke-linecap="round"></path>
-      <circle cx="12" cy="16.7" r="1.15" fill="#f6edc7"></circle>
-    </svg>
+    <span class="civ-advisor-button-mark" aria-hidden="true">CA</span>
   </button>
 </body>
 </html>

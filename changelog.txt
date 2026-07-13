@@ -1,4 +1,11 @@
 * RELEASE 27.22
+- Replaced the Civ Advisor Economy government-preview corruption/waste heuristic with a source-shaped `compute_corrupted_yield` model covering distance/rank, OCN, corruption-reduction buildings, pseudo-capitals, difficulty scaling, specialist corruption reduction, and caps.
+- Improved Civ Advisor Economy rate simulation by resolving ambiguous per-city raw-commerce inference with a city-level midpoint tie-breaker and moved Government/Rate simulated labels into their section headers.
+- Added source-backed Civ Advisor Economy yield simulation metadata for inferred raw commerce and raw production, including Civ3 production multiplier handling so government previews no longer treat post-multiplied shields as raw shields.
+- Reworked Civ Advisor Economy Science/Luxury rate simulation to follow Civ3's per-city rounded slider allocation and building commerce multipliers instead of redistributing already-multiplied saved totals.
+- Kept Civ Advisor Economy Science and Luxury slider thumbs on a stable 0-100 scale so changing one rate no longer visually shifts the other.
+- Renamed the Civ Advisor Economy city Size column to Pop and equalized the Science, Luxury, and Taxes slider row spacing.
+- Unified the main and overlay Civ Advisor buttons around a CA mark with the Civ 3 overlay's brown-gold treatment.
 - Simplified Civ Advisor empty states so tabs show only the specific no-data message without the generic save-picker heading or Open SAV button.
 - Compacted the Civ Advisor Cities table by narrowing City, shortening headers, and removing Plus, Flip Risk, Rank, and blank specialist columns so it can fit the standard modal width.
 - Rebalanced the Civ Advisor Culture table and compacted its city picker so the table fits the standard modal width.
@@ -7,7 +14,9 @@
 - Removed the Civ Advisor Diplomacy Info Sell/Buy count columns so the table can fit the 1146px modal width.
 - Folded single-alert details into Civ Advisor current-alert summary rows and preserved expanded alert groups when navigating away and back.
 - Added Civ Advisor Economy Science/Luxury simulation sliders that redistribute city commerce, derive Taxes, and compose with government previews.
-- Fixed Civ Advisor Economy simulation sliders so dragging is continuous, the track remainder stays light, and percent deltas do not overflow into the ledger.
+- Reworked Civ Advisor Economy simulation sliders to use the standard app range-control styling, reset to saved rates on load, and omit inline slider deltas.
+- Fixed Civ Advisor Economy simulated rate initialization so a cleared preview state uses the SAV's science/luxury rates instead of coercing null to 0%.
+- Corrected Civ Advisor Economy simulation to only show the Government simulated badge for actual government changes.
 - Added subtle red/green cell shading to changed City Economy values when previewing simulated governments.
 - Improved Civ Advisor Economy government preview delta readability with larger, lighter inline change text.
 - Added a Civ Advisor Economy government picker that previews alternate government unit-support plus estimated city commerce/corruption/waste effects inline on the existing Economy values with red/green deltas and simulated-government labeling.

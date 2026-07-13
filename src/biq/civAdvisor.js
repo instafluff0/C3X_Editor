@@ -1676,6 +1676,518 @@ function clampInt(value, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function civ3IntDiv(value, divisor) {
+  const n = Number(value) || 0;
+  const d = Number(divisor) || 1;
+  return n < 0 ? Math.ceil(n / d) : Math.floor(n / d);
+}
+
+function civ3MapXDist(mapInfo, x1, x2) {
+  const width = Math.max(0, Number(mapInfo && mapInfo.width) || 0);
+  let ret = Math.abs((Number(x1) || 0) - (Number(x2) || 0));
+  if ((((Number(mapInfo && mapInfo.flags) || 0) >>> 0) & 1) !== 0 && width > 0 && width / 2 < ret) {
+    ret = width - ret;
+  }
+  return Math.max(0, ret);
+}
+
+function civ3MapYDist(mapInfo, y1, y2) {
+  const height = Math.max(0, Number(mapInfo && mapInfo.height) || 0);
+  let ret = Math.abs((Number(y1) || 0) - (Number(y2) || 0));
+  if ((((Number(mapInfo && mapInfo.flags) || 0) >>> 0) & 2) !== 0 && height > 0 && height / 2 < ret) {
+    ret = height - ret;
+  }
+  return Math.max(0, ret);
+}
+
+function civ3MapDist(mapInfo, left, right) {
+  if (!left || !right) return 0;
+  const xDist = civ3MapXDist(mapInfo, left.x, right.x);
+  const yDist = civ3MapYDist(mapInfo, left.y, right.y);
+  const larger = Math.max(xDist, yDist);
+  const smaller = Math.min(xDist, yDist);
+  return larger - civ3IntDiv(civ3IntDiv(xDist + yDist, 2) - smaller + 1, 2);
+}
+
+function civ3CorruptionRankDistance(mapInfo, capital, city) {
+  if (!capital || !city) return 0;
+  const xDist = civ3MapXDist(mapInfo, capital.x, city.x);
+  const yDist = civ3MapYDist(mapInfo, capital.y, city.y);
+  const larger = Math.max(xDist, yDist);
+  const smaller = Math.min(xDist, yDist);
+  return larger - civ3IntDiv(civ3IntDiv(xDist + yDist, 2) - smaller + 1, 2);
+}
+
+function cityWasFoundedNoLaterThan(left, right) {
+  const leftYear = Number(left && left.yearBuilt);
+  const rightYear = Number(right && right.yearBuilt);
+  if (Number.isFinite(leftYear) && Number.isFinite(rightYear) && leftYear !== rightYear) {
+    return leftYear < rightYear;
+  }
+  return Number(left && left.id) < Number(right && right.id);
+}
+
+function cityHasActiveCorruptionBuilding(city, buildings, buildingIndex, techMasks, playerID, governmentIndex) {
+  if (!cityHasBuilding(city, buildingIndex)) return false;
+  const building = buildings && buildings[Number(buildingIndex)];
+  if (!isBuildingActiveForCityYield(building, techMasks, playerID, governmentIndex)) return false;
+  return ((((Number(building && building.improvements) || 0) >>> 0) & 0x100) !== 0);
+}
+
+function buildingMatchesCorruptionWonderGovernment(building, governmentIndex) {
+  const reqGovernment = Number(building && building.reqGovernment);
+  return !Number.isFinite(reqGovernment) || reqGovernment < 0 || reqGovernment === Number(governmentIndex);
+}
+
+function buildingReducesCorruptionAsWonder(building) {
+  return ((((Number(building && building.smallWonderCharacteristics) || 0) >>> 0) & 0x20) !== 0);
+}
+
+function buildingIsSmallOrGreatWonder(building) {
+  const otherChar = (Number(building && building.otherChar) || 0) >>> 0;
+  return (otherChar & 0x0c) !== 0;
+}
+
+function makeCorruptionWonderLocations(cities, buildings) {
+  const locationsByOwner = new Map();
+  for (const city of cities || []) {
+    const owner = Number(city && city.owner);
+    if (!Number.isFinite(owner)) continue;
+    for (const record of city && city.buildingRecords || []) {
+      if (Number(record && record.originalOwner) < 0) continue;
+      const buildingIndex = Number(record && record.buildingIndex);
+      const building = buildings && buildings[buildingIndex];
+      if (!buildingReducesCorruptionAsWonder(building) || !buildingIsSmallOrGreatWonder(building)) continue;
+      if (!locationsByOwner.has(owner)) locationsByOwner.set(owner, []);
+      locationsByOwner.get(owner).push({ buildingIndex, building, city });
+    }
+  }
+  return locationsByOwner;
+}
+
+function getWorldOptimalCityCount(context) {
+  const worldSizes = context && context.worldSizes || [];
+  const worldSizeIndex = Number(context && context.report && context.report.world && context.report.world.worldSize);
+  const worldSize = worldSizes[worldSizeIndex] || worldSizes[0] || {};
+  return Math.max(1, Number(worldSize.optimalNumberOfCities) || 1);
+}
+
+function getPlayerDifficulty(context, player) {
+  const playerDifficulty = Number(player && player.difficulty);
+  if (Number.isFinite(playerDifficulty) && playerDifficulty >= 0) return playerDifficulty;
+  const gameDifficulty = Number(context && context.report && context.report.game && context.report.game.difficulty);
+  return Number.isFinite(gameDifficulty) && gameDifficulty >= 0 ? gameDifficulty : 0;
+}
+
+function countPlayerCorruptionWonders(context, playerID) {
+  const locations = context && context.corruptionWonderLocationsByOwner
+    ? context.corruptionWonderLocationsByOwner.get(Number(playerID))
+    : [];
+  return Array.isArray(locations) ? locations.length : 0;
+}
+
+function computeLeaderOptimalCityNumber(context, playerID, governmentIndex) {
+  const player = context && context.playerById && context.playerById.get(Number(playerID));
+  const government = context && context.governments && context.governments[Number(governmentIndex)] || {};
+  const corruptionType = Number(government && government.corruption);
+  const baseOCN = getWorldOptimalCityCount(context);
+  const forbiddenPalaceCount = countPlayerCorruptionWonders(context, playerID);
+  let optimal = baseOCN + civ3IntDiv(forbiddenPalaceCount * baseOCN * 3, corruptionType !== 5 ? 8 : 1);
+  const race = context && context.races && context.races[Number(player && player.raceID)] || {};
+  if ((((Number(race && race.bonuses) || 0) >>> 0) & 2) !== 0) optimal += civ3IntDiv(baseOCN, 4);
+  if (corruptionType === 0 || corruptionType === 1) optimal += civ3IntDiv(baseOCN, 8);
+  else if (corruptionType === 2) optimal += civ3IntDiv(baseOCN, 16);
+  else if (corruptionType === 5) optimal += baseOCN * 2;
+
+  if (Number(playerID) !== Number(context && context.humanPlayerID)) {
+    const gameDifficulty = Number(context && context.report && context.report.game && context.report.game.difficulty) || 0;
+    if (gameDifficulty >= 5) optimal += civ3IntDiv(baseOCN, 2);
+    else if (gameDifficulty >= 4) optimal += civ3IntDiv(baseOCN, 4);
+    else if (gameDifficulty >= 3) optimal += civ3IntDiv(baseOCN, 8);
+  }
+
+  const difficulty = context && context.difficulties && context.difficulties[getPlayerDifficulty(context, player)] || {};
+  optimal = civ3IntDiv((Number(difficulty.percentOptimal) || 100) * optimal, 100);
+  return Math.max(1, optimal);
+}
+
+function computeCorruptionBuildingEffect(context, city, playerID, governmentIndex) {
+  let effect = 0;
+  const buildings = context && context.buildings || [];
+  for (let buildingIndex = 0; buildingIndex < buildings.length; buildingIndex += 1) {
+    if (cityHasActiveCorruptionBuilding(city, buildings, buildingIndex, context && context.techMasks, playerID, governmentIndex)) {
+      effect += 1;
+    }
+  }
+  if (Number(city && city.id) === Number(context && context.playerById && context.playerById.get(Number(playerID)) && context.playerById.get(Number(playerID)).capitalCity)) {
+    effect += 10;
+  }
+  return effect;
+}
+
+function findNearestCorruptionPseudoCapital(context, city, playerID, governmentIndex, currentDistance) {
+  let effectBonus = 0;
+  let nearestDistance = Math.max(0, Number(currentDistance) || 0);
+  const locations = context && context.corruptionWonderLocationsByOwner
+    ? context.corruptionWonderLocationsByOwner.get(Number(playerID))
+    : [];
+  for (const location of locations || []) {
+    if (!buildingMatchesCorruptionWonderGovernment(location && location.building, governmentIndex)) continue;
+    const pseudoCapital = location && location.city;
+    if (!pseudoCapital) continue;
+    if (Number(pseudoCapital.id) === Number(city && city.id)) effectBonus += 7;
+    const distance = civ3MapDist(context && context.mapInfo, pseudoCapital, city);
+    if (distance < nearestDistance) nearestDistance = distance;
+  }
+  return { effectBonus, nearestDistance };
+}
+
+function computeCityCorruptionRank(context, city, capital, playerID, governmentIndex) {
+  const government = context && context.governments && context.governments[Number(governmentIndex)] || {};
+  if (Number(government.corruption) === 5) {
+    const playerCities = context && context.citiesByOwner && context.citiesByOwner.get(Number(playerID)) || [];
+    return civ3IntDiv(playerCities.length, 2);
+  }
+  const ownDistance = civ3MapDist(context && context.mapInfo, capital, city);
+  let rank = 0;
+  const playerCities = context && context.citiesByOwner && context.citiesByOwner.get(Number(playerID)) || [];
+  for (const other of playerCities) {
+    if (Number(other && other.id) === Number(city && city.id)) continue;
+    const otherRankDistance = civ3CorruptionRankDistance(context && context.mapInfo, capital, other);
+    if (ownDistance < otherRankDistance) {
+      rank += 1;
+    } else if (ownDistance === otherRankDistance && cityWasFoundedNoLaterThan(other, city)) {
+      rank += 1;
+    }
+  }
+  return rank;
+}
+
+function getSpecialistCorruptionReduction(context, city) {
+  const citizenTypes = context && context.citizenTypes || [];
+  let reduction = 0;
+  for (const citizen of city && city.citizens || []) {
+    if (!citizen || citizen.isSpecialist !== true) continue;
+    const workerType = Number(citizen.workerType);
+    if (!Number.isFinite(workerType) || workerType < 0) continue;
+    reduction += Math.max(0, Number(citizenTypes[workerType] && citizenTypes[workerType].corruption) || 0);
+  }
+  return reduction;
+}
+
+function computeCorruptedYield(city, grossYield, isProduction, context, governmentOverrideIndex = null) {
+  const gross = Math.max(0, Math.round(Number(grossYield) || 0));
+  if (gross < 1) return 0;
+  const status = (Number(city && city.cityFlags) || 0) >>> 0;
+  if (isProduction && (status & 1) !== 0) return gross;
+  const playerID = Number(city && city.owner);
+  const player = context && context.playerById && context.playerById.get(playerID);
+  const capital = context && context.cityById && context.cityById.get(Number(player && player.capitalCity));
+  if (!player || !capital) return 0;
+  const governmentIndex = Number.isFinite(Number(governmentOverrideIndex))
+    ? Number(governmentOverrideIndex)
+    : Number(context && context.detailsByPlayer && context.detailsByPlayer.get(playerID) && context.detailsByPlayer.get(playerID).government);
+  const government = context && context.governments && context.governments[governmentIndex] || {};
+  const corruptionType = Number(government.corruption);
+  if (corruptionType === 4) return gross;
+  if (corruptionType === 6) return 0;
+
+  let buildingEffect = computeCorruptionBuildingEffect(context, city, playerID, governmentIndex);
+  const worldOCN = getWorldOptimalCityCount(context);
+  let optimalCityNumber = computeLeaderOptimalCityNumber(context, playerID, governmentIndex);
+  optimalCityNumber += civ3IntDiv(worldOCN * buildingEffect, 4);
+  if (isProduction && (status & 2) !== 0) optimalCityNumber += civ3IntDiv(worldOCN, 4);
+  optimalCityNumber = Math.max(1, optimalCityNumber);
+
+  const distanceToCapital = civ3MapDist(context && context.mapInfo, capital, city);
+  const pseudoCapital = findNearestCorruptionPseudoCapital(context, city, playerID, governmentIndex, distanceToCapital);
+  buildingEffect += pseudoCapital.effectBonus;
+  let distanceFactor = civ3IntDiv(((context && context.mapInfo && context.mapInfo.width) || 0) + ((context && context.mapInfo && context.mapInfo.height) || 0), 4);
+  if (corruptionType === 0) {
+    distanceFactor = civ3IntDiv(pseudoCapital.nearestDistance * 3, 4);
+  } else if (corruptionType === 5) {
+    distanceFactor = civ3IntDiv(distanceFactor, 4);
+  } else if (corruptionType === 1 || corruptionType === 2) {
+    distanceFactor = pseudoCapital.nearestDistance;
+  } else if (corruptionType === 3) {
+    distanceFactor = civ3IntDiv(pseudoCapital.nearestDistance * 3, 2);
+  }
+
+  const connectedToCapital = typeof (context && context.hasTradeConnectionToCapital) === 'function'
+    ? context.hasTradeConnectionToCapital(city, capital, playerID)
+    : true;
+  if (!connectedToCapital) distanceFactor = civ3IntDiv(distanceFactor * 5, 4);
+  const maxDistanceFactor = Math.max(2, civ3IntDiv(((context && context.mapInfo && context.mapInfo.width) || 0) + ((context && context.mapInfo && context.mapInfo.height) || 0), 4));
+  distanceFactor = clampInt(distanceFactor, 2, maxDistanceFactor);
+  if (isProduction && (status & 2) !== 0) distanceFactor = civ3IntDiv(distanceFactor + 1, 2);
+  for (let i = 0; i < buildingEffect; i += 1) distanceFactor = civ3IntDiv(distanceFactor + 1, 2);
+
+  let cityRank = computeCityCorruptionRank(context, city, capital, playerID, governmentIndex);
+  if (optimalCityNumber <= cityRank) cityRank = cityRank * 2 - optimalCityNumber;
+  const mapFactor = Math.max(1, civ3IntDiv(((context && context.mapInfo && context.mapInfo.width) || 0) + ((context && context.mapInfo && context.mapInfo.height) || 0), 4));
+  const denominator = mapFactor * optimalCityNumber;
+  let corrupted = denominator > 0
+    ? civ3IntDiv(
+      mapFactor * civ3IntDiv(cityRank * gross + 1, 2)
+        + distanceFactor * gross * optimalCityNumber
+        + civ3IntDiv(denominator, 2),
+      denominator,
+    )
+    : 0;
+  corrupted = Math.max(0, corrupted - getSpecialistCorruptionReduction(context, city));
+  const difficulty = context && context.difficulties && context.difficulties[getPlayerDifficulty(context, player)] || {};
+  corrupted = civ3IntDiv((Number(difficulty.corruptionPercent) || 100) * corrupted, 100);
+  const capMultiplier = Math.max(0, 9 - buildingEffect);
+  const cap = civ3IntDiv(capMultiplier * gross, 10);
+  return Math.max(0, Math.min(corrupted, Math.max(0, cap)));
+}
+
+function makeCorruptedYieldContext(context) {
+  const report = context && context.report || {};
+  const cityRecords = report.cities && report.cities.records || [];
+  const playerById = new Map((context && context.players || []).map((player) => [Number(player.playerID), player]));
+  const cityById = new Map(cityRecords.map((city) => [Number(city.id), city]));
+  const citiesByOwner = new Map();
+  for (const city of cityRecords) {
+    const owner = Number(city && city.owner);
+    if (!citiesByOwner.has(owner)) citiesByOwner.set(owner, []);
+    citiesByOwner.get(owner).push(city);
+  }
+  return {
+    ...context,
+    report,
+    playerById,
+    cityById,
+    citiesByOwner,
+    corruptionWonderLocationsByOwner: makeCorruptionWonderLocations(cityRecords, context && context.buildings || []),
+    humanPlayerID: Number(context && context.human && context.human.playerID),
+    mapInfo: {
+      width: Math.max(0, Number(report.world && report.world.width) || 0),
+      height: Math.max(0, Number(report.world && report.world.height) || 0),
+      flags: (Number(report.world && report.world.mapFlags) || 0) >>> 0,
+    },
+    hasTradeConnectionToCapital: context && context.hasTradeConnectionToCapital,
+  };
+}
+
+function civ3CommerceRateStep(rate) {
+  const n = Math.round((Number(rate) || 0) / 10);
+  return Math.max(0, Math.min(10, n));
+}
+
+function allocateCiv3RawCommerce(rawCommerce, scienceRate, luxuryRate) {
+  const commerce = Math.max(0, Math.round(Number(rawCommerce) || 0));
+  const scienceStep = civ3CommerceRateStep(scienceRate);
+  const luxuryStep = civ3CommerceRateStep(luxuryRate);
+  const science = civ3IntDiv(scienceStep * commerce + 5, 10);
+  let luxury = civ3IntDiv(luxuryStep * commerce + 5, 10);
+  if (commerce < science + luxury) luxury = Math.max(0, commerce - science);
+  const taxes = Math.max(0, commerce - science - luxury);
+  return { science, luxury, taxes };
+}
+
+function applyCiv3CommerceMultipliers(rawChannels, commerceSimulation) {
+  const scienceMultiplier = Math.max(0, Number(commerceSimulation && commerceSimulation.scienceMultiplier) || 2);
+  const luxuryMultiplier = Math.max(0, Number(commerceSimulation && commerceSimulation.luxuryMultiplier) || 2);
+  const taxMultiplier = Math.max(0, Number(commerceSimulation && commerceSimulation.taxMultiplier) || 2);
+  const wealthIncome = Math.max(0, Number(commerceSimulation && commerceSimulation.wealthIncome) || 0);
+  const science = civ3IntDiv(Math.max(0, Number(rawChannels && rawChannels.science) || 0) * scienceMultiplier, 2);
+  const luxury = civ3IntDiv(Math.max(0, Number(rawChannels && rawChannels.luxury) || 0) * luxuryMultiplier, 2);
+  const taxes = civ3IntDiv(Math.max(0, Number(rawChannels && rawChannels.taxes) || 0) * taxMultiplier, 2) + wealthIncome;
+  return { science, luxury, taxes };
+}
+
+function isBuildingActiveForCityYield(building, techMasks, playerID, governmentIndex) {
+  if (!building) return false;
+  const reqGovernment = Number(building.reqGovernment);
+  if (Number.isFinite(reqGovernment) && reqGovernment >= 0 && reqGovernment !== Number(governmentIndex)) return false;
+  const obsoleteBy = Number(building.obsoleteBy);
+  if (Number.isFinite(obsoleteBy) && obsoleteBy >= 0 && playerHasTech(techMasks, obsoleteBy, playerID)) return false;
+  return true;
+}
+
+function cityHasActiveYieldBuilding(city, buildings, buildingIndex, techMasks, playerID, governmentIndex) {
+  if (!city || !Array.isArray(city.buildingRecords)) return false;
+  const idx = Number(buildingIndex);
+  if (!Number.isFinite(idx) || idx < 0) return false;
+  const record = city.buildingRecords.find((item) => (
+    Number(item && item.buildingIndex) === idx && Number(item && item.originalOwner) >= 0
+  ));
+  if (!record) return false;
+  return isBuildingActiveForCityYield(buildings && buildings[idx], techMasks, playerID, governmentIndex);
+}
+
+function makeCityCommerceMultipliers(city, buildings, techMasks, playerID, governmentIndex) {
+  let scienceMultiplier = 2;
+  let luxuryMultiplier = 2;
+  let taxMultiplier = 2;
+  let doubleResearchWonders = 0;
+  for (const record of city && city.buildingRecords || []) {
+    if (Number(record && record.originalOwner) < 0) continue;
+    const buildingIndex = Number(record && record.buildingIndex);
+    const building = buildings[buildingIndex];
+    if (!isBuildingActiveForCityYield(building, techMasks, playerID, governmentIndex)) continue;
+    const improvementFlags = (Number(building && building.improvements) || 0) >>> 0;
+    if ((improvementFlags & 0x4) !== 0) scienceMultiplier += 1;
+    if ((improvementFlags & 0x8) !== 0) luxuryMultiplier += 1;
+    if ((improvementFlags & 0x10) !== 0) taxMultiplier += 1;
+    if ((((Number(building && building.wonderCharacteristics) || 0) >>> 0) & (1 << 4)) !== 0) {
+      doubleResearchWonders += 1;
+    }
+  }
+  scienceMultiplier += doubleResearchWonders * 2;
+  return { scienceMultiplier, luxuryMultiplier, taxMultiplier };
+}
+
+function makeCityProductionMultiplier(city, buildings, techMasks, playerID, governmentIndex) {
+  let ordinaryQuarterSteps = 4;
+  let replacementQuarterSteps = 0;
+  for (const record of city && city.buildingRecords || []) {
+    if (Number(record && record.originalOwner) < 0) continue;
+    const buildingIndex = Number(record && record.buildingIndex);
+    const building = buildings[buildingIndex];
+    if (!isBuildingActiveForCityYield(building, techMasks, playerID, governmentIndex)) continue;
+    const productionBonus = Number(building && building.production) || 0;
+    if (!productionBonus) continue;
+    const improvementFlags = (Number(building && building.improvements) || 0) >>> 0;
+    if ((improvementFlags & 0x2000) !== 0) {
+      const reqImprovement = Number(building && building.reqImprovement);
+      if (cityHasActiveYieldBuilding(city, buildings, reqImprovement, techMasks, playerID, governmentIndex)) {
+        replacementQuarterSteps = Math.max(replacementQuarterSteps, productionBonus);
+      }
+    } else {
+      ordinaryQuarterSteps += productionBonus;
+    }
+  }
+  return ordinaryQuarterSteps + replacementQuarterSteps;
+}
+
+function applyCiv3ProductionMultiplier(unwastedProduction, productionMultiplier) {
+  const production = Math.max(0, Math.round(Number(unwastedProduction) || 0));
+  const multiplier = Math.max(0, Math.round(Number(productionMultiplier) || 4));
+  return civ3IntDiv(production * multiplier, 4);
+}
+
+function inferUnmultipliedProduction(savedProduction, productionMultiplier) {
+  const target = Math.max(0, Math.round(Number(savedProduction) || 0));
+  const multiplier = Math.max(0, Math.round(Number(productionMultiplier) || 4));
+  const searchLimit = Math.max(256, target * 4 + 64);
+  let best = { value: target, score: Number.POSITIVE_INFINITY };
+  for (let candidate = 0; candidate <= searchLimit; candidate += 1) {
+    const simulated = applyCiv3ProductionMultiplier(candidate, multiplier);
+    const score = Math.abs(simulated - target);
+    if (score < best.score) {
+      best = { value: candidate, score };
+      if (score === 0) break;
+    }
+  }
+  return best.value;
+}
+
+function inferCityProductionSimulation(row, city, context) {
+  const { buildings, techMasks, playerID, governmentIndex } = context || {};
+  const productionMultiplier = makeCityProductionMultiplier(city, buildings || [], techMasks, playerID, governmentIndex);
+  const savedProduction = Math.max(0, Number(row && row.production) || 0);
+  const waste = Math.max(0, Number(row && row.waste) || 0);
+  const unmultipliedProduction = inferUnmultipliedProduction(savedProduction, productionMultiplier);
+  return {
+    source: 'saved-output-inferred',
+    c3xStatus: 'not-modeled',
+    rawProduction: unmultipliedProduction + waste,
+    unmultipliedProduction,
+    productionMultiplier,
+    waste,
+  };
+}
+
+function inferCityCommerceSimulation(row, city, context) {
+  const {
+    buildings, techMasks, playerID, governmentIndex, scienceRate, luxuryRate,
+  } = context || {};
+  const multipliers = makeCityCommerceMultipliers(city, buildings || [], techMasks, playerID, governmentIndex);
+  const savedScience = Math.max(0, Number(row && row.baseScience) || 0);
+  const savedLuxury = Math.max(0, Number(row && row.baseLuxury) || 0);
+  const savedTaxes = Math.max(0, Number(row && row.baseTaxes) || 0);
+  const savedCash = Math.max(savedScience + savedLuxury + savedTaxes, Number(city && city.cashIncome) || 0);
+  const savedCorruption = Math.max(0, Number(row && row.corruption) || 0);
+  const searchLimit = Math.max(256, savedCash + savedCorruption + 512);
+  const exactMatches = [];
+  let best = {
+    rawCommerce: Math.max(0, savedScience + savedLuxury + savedTaxes),
+    wealthIncome: 0,
+    score: Number.POSITIVE_INFINITY,
+  };
+  for (let rawCommerce = 0; rawCommerce <= searchLimit; rawCommerce += 1) {
+    const rawChannels = allocateCiv3RawCommerce(rawCommerce, scienceRate, luxuryRate);
+    const multipliedWithoutWealth = applyCiv3CommerceMultipliers(rawChannels, { ...multipliers, wealthIncome: 0 });
+    const wealthIncome = savedTaxes - multipliedWithoutWealth.taxes;
+    const negativeWealthPenalty = wealthIncome < 0 ? Math.abs(wealthIncome) * 10000 : 0;
+    const simulatedTaxes = multipliedWithoutWealth.taxes + Math.max(0, wealthIncome);
+    const cash = multipliedWithoutWealth.science + multipliedWithoutWealth.luxury + simulatedTaxes;
+    const exactChannelMatch = wealthIncome >= 0
+      && multipliedWithoutWealth.science === savedScience
+      && multipliedWithoutWealth.luxury === savedLuxury
+      && simulatedTaxes === savedTaxes;
+    const score = Math.abs(multipliedWithoutWealth.science - savedScience) * 100000
+      + Math.abs(multipliedWithoutWealth.luxury - savedLuxury) * 100000
+      + Math.abs(simulatedTaxes - savedTaxes) * 100000
+      + Math.abs(cash - savedCash) * 1000
+      + negativeWealthPenalty
+      + Math.max(0, wealthIncome);
+    if (exactChannelMatch) exactMatches.push({ rawCommerce, wealthIncome: Math.max(0, wealthIncome) });
+    if (score < best.score) {
+      best = { rawCommerce, wealthIncome: Math.max(0, wealthIncome), score };
+    }
+  }
+  if (exactMatches.length > 0) {
+    best = exactMatches[Math.floor((exactMatches.length - 1) / 2)];
+  }
+  return {
+    source: 'saved-output-inferred',
+    c3xStatus: 'not-modeled',
+    inferenceAmbiguity: exactMatches.length,
+    rawCommerce: best.rawCommerce,
+    grossCommerce: best.rawCommerce + savedCorruption,
+    corruption: savedCorruption,
+    scienceMultiplier: multipliers.scienceMultiplier,
+    luxuryMultiplier: multipliers.luxuryMultiplier,
+    taxMultiplier: multipliers.taxMultiplier,
+    wealthIncome: best.wealthIncome,
+  };
+}
+
+function scaleCommerceSimulationForGovernmentPreview(row, uncorruptedCommerce, corruption) {
+  const simulation = row && row.commerceSimulation;
+  if (!simulation) return null;
+  const currentUncorrupted = Math.max(0, Number(row.baseScience) + Number(row.baseLuxury) + Number(row.baseTaxes));
+  const currentRawCommerce = Math.max(0, Number(simulation.rawCommerce) || 0);
+  const rawCommerce = currentUncorrupted > 0
+    ? Math.max(0, Math.round(currentRawCommerce * Math.max(0, Number(uncorruptedCommerce) || 0) / currentUncorrupted))
+    : Math.max(0, Number(uncorruptedCommerce) || 0);
+  const nextCorruption = Math.max(0, Math.round(Number(corruption) || 0));
+  return {
+    ...simulation,
+    source: 'government-preview-estimated',
+    rawCommerce,
+    grossCommerce: rawCommerce + nextCorruption,
+    corruption: nextCorruption,
+  };
+}
+
+function scaleProductionSimulationForGovernmentPreview(row, rawProduction, waste) {
+  const simulation = row && row.productionSimulation;
+  if (!simulation) return null;
+  const nextRawProduction = Math.max(0, Math.round(Number(rawProduction) || 0));
+  const nextWaste = clampInt(waste, 0, nextRawProduction);
+  return {
+    ...simulation,
+    source: 'government-preview-estimated',
+    rawProduction: nextRawProduction,
+    waste: nextWaste,
+    unmultipliedProduction: Math.max(0, nextRawProduction - nextWaste),
+  };
+}
+
 function governmentCorruptionWeight(government) {
   const level = Number(government && government.corruption);
   if (level === 0) return 0.55; // Minimal
@@ -1717,24 +2229,54 @@ function scaleCityCommerceChannels(row, uncorruptedCommerce) {
   return { baseScience, baseLuxury, baseTaxes };
 }
 
-function estimateCityGovernmentPreview(row, currentGovernment, previewGovernment) {
+function estimateCityGovernmentPreview(row, currentGovernment, previewGovernment, context) {
+  const currentGovernmentIndex = Number(context && context.currentGovernmentIndex);
+  const previewGovernmentIndex = Number(context && context.previewGovernmentIndex);
+  if (Number.isFinite(currentGovernmentIndex) && currentGovernmentIndex === previewGovernmentIndex) {
+    return { ...row, estimated: false };
+  }
   const currentCorruptionWeight = governmentCorruptionWeight(currentGovernment);
   const previewCorruptionWeight = governmentCorruptionWeight(previewGovernment);
-  const corruptionScale = currentCorruptionWeight > 0 ? previewCorruptionWeight / currentCorruptionWeight : 1;
+  const fallbackCorruptionScale = currentCorruptionWeight > 0 ? previewCorruptionWeight / currentCorruptionWeight : 1;
   const tilePenaltyMultiplier = governmentTilePenaltyMultiplier(currentGovernment, previewGovernment);
   const savedGrossCommerce = Math.max(0, Number(row.baseScience) + Number(row.baseLuxury) + Number(row.baseTaxes) + Number(row.corruption));
   const commerceBonusDelta = estimateGovernmentCommerceBonusDelta(row, currentGovernment, previewGovernment);
   const grossCommerce = Math.max(0, Math.round((savedGrossCommerce + commerceBonusDelta) * tilePenaltyMultiplier));
-  const corruption = clampInt(Number(row.corruption) * corruptionScale, 0, grossCommerce);
-  const uncorruptedCommerce = Math.max(0, grossCommerce - corruption);
-  const channels = scaleCityCommerceChannels(row, uncorruptedCommerce);
-  const science = channels.baseScience + (Number(row.addedScience) || 0);
-  const luxury = channels.baseLuxury + (Number(row.addedLuxury) || 0);
-  const taxes = channels.baseTaxes + (Number(row.addedTaxes) || 0);
-  const savedGrossProduction = Math.max(0, Number(row.production) + Number(row.waste));
-  const grossProduction = Math.max(0, Math.round(savedGrossProduction * tilePenaltyMultiplier));
-  const waste = clampInt(Number(row.waste) * corruptionScale, 0, grossProduction);
-  const production = Math.max(0, grossProduction - waste);
+  const city = context && context.cityById && context.cityById.get(Number(row.id));
+  const previewPlayerID = Number.isFinite(Number(row.ownerPlayerID)) ? Number(row.ownerPlayerID) : Number(city && city.owner);
+  const corruption = city
+    ? clampInt(computeCorruptedYield(city, grossCommerce, false, context, previewGovernmentIndex), 0, grossCommerce)
+    : clampInt(Number(row.corruption) * fallbackCorruptionScale, 0, grossCommerce);
+  const rawCommerce = Math.max(0, grossCommerce - corruption);
+  const previewMultipliers = city
+    ? makeCityCommerceMultipliers(city, context.buildings || [], context.techMasks, previewPlayerID, previewGovernmentIndex)
+    : row.commerceSimulation || {};
+  const rawChannels = allocateCiv3RawCommerce(rawCommerce, context && context.scienceRate, context && context.luxuryRate);
+  const multipliedChannels = applyCiv3CommerceMultipliers(rawChannels, {
+    ...previewMultipliers,
+    wealthIncome: row.commerceSimulation && row.commerceSimulation.wealthIncome,
+  });
+  const baseScience = multipliedChannels.science;
+  const baseLuxury = multipliedChannels.luxury;
+  const baseTaxes = multipliedChannels.taxes;
+  const science = baseScience + (Number(row.addedScience) || 0);
+  const luxury = baseLuxury + (Number(row.addedLuxury) || 0);
+  const taxes = baseTaxes + (Number(row.addedTaxes) || 0);
+  const productionSimulation = row.productionSimulation || null;
+  const savedRawProduction = productionSimulation && Number.isFinite(Number(productionSimulation.rawProduction))
+    ? Math.max(0, Number(productionSimulation.rawProduction) || 0)
+    : Math.max(0, Number(row.production) + Number(row.waste));
+  const grossProduction = Math.max(0, Math.round(savedRawProduction * tilePenaltyMultiplier));
+  const waste = city
+    ? clampInt(computeCorruptedYield(city, grossProduction, true, context, previewGovernmentIndex), 0, grossProduction)
+    : clampInt(Number(row.waste) * fallbackCorruptionScale, 0, grossProduction);
+  const unmultipliedProduction = Math.max(0, grossProduction - waste);
+  const productionMultiplier = city
+    ? makeCityProductionMultiplier(city, context.buildings || [], context.techMasks, previewPlayerID, previewGovernmentIndex)
+    : productionSimulation && productionSimulation.productionMultiplier;
+  const production = productionMultiplier
+    ? applyCiv3ProductionMultiplier(unmultipliedProduction, productionMultiplier)
+    : unmultipliedProduction;
   return {
     id: row.id,
     name: row.name,
@@ -1744,14 +2286,25 @@ function estimateCityGovernmentPreview(row, currentGovernment, previewGovernment
     science,
     luxury,
     taxes,
-    baseScience: channels.baseScience,
-    baseLuxury: channels.baseLuxury,
-    baseTaxes: channels.baseTaxes,
+    baseScience,
+    baseLuxury,
+    baseTaxes,
     addedScience: row.addedScience,
     addedLuxury: row.addedLuxury,
     addedTaxes: row.addedTaxes,
+    commerceSimulation: {
+      ...(scaleCommerceSimulationForGovernmentPreview(row, rawCommerce, corruption) || {}),
+      rawCommerce,
+      grossCommerce,
+      corruption,
+      ...previewMultipliers,
+    },
+    productionSimulation: {
+      ...(scaleProductionSimulationForGovernmentPreview(row, grossProduction, waste) || {}),
+      productionMultiplier: productionMultiplier || (productionSimulation && productionSimulation.productionMultiplier) || 4,
+    },
     corruption,
-    corruptionPercent: percentage(corruption, uncorruptedCommerce + corruption),
+    corruptionPercent: percentage(corruption, rawCommerce + corruption),
     maintenance: row.maintenance,
     netGold: taxes - row.maintenance,
     estimated: true,
@@ -1762,15 +2315,32 @@ function makeEconomyReport(context) {
   const {
     buf, report, human, humanDetails, humanVisible, governments, buildings, unitTypes,
     ruleRecord, techs, techMasks, players, detailsByPlayer, races, humanTradeTail, tradeRows, ruleSignatures,
-    allPlayersMode, colorSlotsByPlayer,
+    allPlayersMode, colorSlotsByPlayer, difficulties, worldSizes, citizenTypes,
   } = context;
   const governmentIndex = Number(humanDetails && humanDetails.government);
   const government = governments[governmentIndex] || {};
+  const scienceRate = Math.max(0, readLeadInt32(buf, human, 396, 0)) * 10;
+  const luxuryRate = Math.max(0, readLeadInt32(buf, human, 392, 0)) * 10;
   const humanCities = (report.cities && report.cities.records || []).filter((city) => Number(city.owner) === Number(human.playerID));
   const activePlayerIDs = new Set(activePlayers(players || [], report && report.game).map((player) => Number(player.playerID)));
   const cityRowRecords = (report.cities && report.cities.records || [])
     .filter((city) => allPlayersMode ? activePlayerIDs.has(Number(city.owner)) : Number(city.owner) === Number(human.playerID));
   const playerById = new Map((players || []).map((player) => [Number(player.playerID), player]));
+  const corruptedYieldContext = makeCorruptedYieldContext({
+    report,
+    human,
+    players,
+    detailsByPlayer,
+    governments,
+    difficulties,
+    worldSizes,
+    races,
+    buildings,
+    citizenTypes,
+    techMasks,
+    scienceRate,
+    luxuryRate,
+  });
   const buildingIndexByKey = new Map(buildings.map((building, index) => [canonicalKey(building && building.name), index]));
   const marketplaceIndex = buildingIndexByKey.get('marketplace');
   const buildingOptions = buildings
@@ -1840,6 +2410,28 @@ function makeEconomyReport(context) {
     const luxury = baseLuxury + addedLuxury;
     const taxes = baseTaxes + addedTaxes;
     const maintenance = Math.max(0, Number(city.maintenanceGPT) || 0);
+    const commerceSimulation = inferCityCommerceSimulation({
+      baseScience,
+      baseLuxury,
+      baseTaxes,
+      corruption,
+    }, city, {
+      buildings,
+      techMasks,
+      playerID: owner.ownerPlayerID,
+      governmentIndex: Number(owner.details && owner.details.government),
+      scienceRate,
+      luxuryRate,
+    });
+    const productionSimulation = inferCityProductionSimulation({
+      production,
+      waste: productionLoss,
+    }, city, {
+      buildings,
+      techMasks,
+      playerID: owner.ownerPlayerID,
+      governmentIndex: Number(owner.details && owner.details.government),
+    });
     const buildingStatuses = buildingOptions.map((option) => makeCityBuildingStatus({
       city,
       building: buildings[Number(option.buildingIndex)],
@@ -1871,6 +2463,8 @@ function makeEconomyReport(context) {
       addedScience,
       addedLuxury,
       addedTaxes,
+      commerceSimulation,
+      productionSimulation,
       corruption,
       corruptionPercent: percentage(corruption, cashIncome + corruption),
       maintenance,
@@ -1903,8 +2497,6 @@ function makeEconomyReport(context) {
   const income = fromCities + fromTaxmen + incomingGpt + interest;
   const expenses = science + entertainment + corruption + maintenance + unitCosts + outgoingGpt;
   const netGain = income - expenses;
-  const scienceRate = Math.max(0, readLeadInt32(buf, human, 396, 0)) * 10;
-  const luxuryRate = Math.max(0, readLeadInt32(buf, human, 392, 0)) * 10;
   const goldenAgeEnd = readLeadInt32(buf, human, 32, -1);
   const governmentOptions = governments.map((option, index) => {
     const name = recordName(governments, index, 'GOVT', '');
@@ -1932,7 +2524,11 @@ function makeEconomyReport(context) {
     const previewGovernment = governments[Number(option.governmentIndex)] || {};
     const previewUnitSupport = computeGovernmentUnitSupport({ government: previewGovernment, humanCities, report, human, unitTypes, ruleRecord });
     const previewUnitCosts = previewUnitSupport.supportedUnits * previewUnitSupport.costPerUnit;
-    const previewCityRows = cityRows.map((row) => estimateCityGovernmentPreview(row, government, previewGovernment));
+    const previewCityRows = cityRows.map((row) => estimateCityGovernmentPreview(row, government, previewGovernment, {
+      ...corruptedYieldContext,
+      currentGovernmentIndex: governmentIndex,
+      previewGovernmentIndex: Number(option.governmentIndex),
+    }));
     const previewFromCities = previewCityRows.reduce((sum, row) => sum + row.baseTaxes + row.baseScience + row.baseLuxury + row.corruption, 0);
     const previewScience = previewCityRows.reduce((sum, row) => sum + row.baseScience, 0);
     const previewEntertainment = previewCityRows.reduce((sum, row) => sum + row.baseLuxury, 0);
@@ -3751,6 +4347,7 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
   const techs = section(parsed, 'TECH').records;
   const resources = section(parsed, 'GOOD').records;
   const buildings = section(parsed, 'BLDG').records;
+  const citizenTypes = section(parsed, 'CTZN').records;
   const unitTypes = section(parsed, 'PRTO').records;
   const terrainRecords = section(parsed, 'TERR').records;
   const experienceLevels = section(parsed, 'EXPR').records;
@@ -4169,6 +4766,9 @@ function inspectCivAdvisorSaveFile(filePath, options = {}) {
     humanDetails,
     humanVisible,
     governments,
+    difficulties,
+    worldSizes,
+    citizenTypes,
     buildings,
     unitTypes,
     ruleRecord,
@@ -4401,6 +5001,7 @@ module.exports = {
     collectDistrictOpportunityWarnings,
     collectForeignUnitWarnings,
     collectUnconnectedResourceWarnings,
+    computeCorruptedYield,
     makeAlertsReport,
     normalizeDistrictAlertContext,
     tileMatchesDistrictBuildability,
