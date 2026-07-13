@@ -59,6 +59,182 @@ test('base field renderers do not mutate rows during initial render', () => {
   );
 });
 
+test('R28 unit counter and visibility base fields use structured renderers', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function parseUnitCounterGroupItems\(value\)/,
+    'unit_groups should have a quote-aware structured parser'
+  );
+  assert.match(
+    text,
+    /if \(row\.key === 'unit_groups'\)/,
+    'unit_groups should render with a dedicated structured editor'
+  );
+  assert.match(
+    text,
+    /if \(row\.key === 'counter_rules'\)/,
+    'counter_rules should render with a dedicated structured editor'
+  );
+  assert.match(
+    text,
+    /const C3X_VISIBILITY_ARRAY_KEYS = Object\.freeze\(\{[\s\S]*?terrain_visibility_see_height: 'integer'[\s\S]*?terrain_visibility_flat_bonus: 'boolean'[\s\S]*?\}\);/,
+    'fixed terrain visibility arrays should keep their dedicated per-field array renderer'
+  );
+  assert.doesNotMatch(
+    text,
+    /C3X_VISIBILITY_MATRIX_KEYS/,
+    'terrain visibility fields should not be intercepted into a grouped matrix'
+  );
+  assert.doesNotMatch(
+    text,
+    /buildTerrainVisibilityMatrix/,
+    'terrain visibility fields should render as separate Base rows'
+  );
+  assert.doesNotMatch(
+    text,
+    /kind: 'C3X Field Group'[\s\S]*?Terrain Visibility/,
+    'global search should not replace individual terrain visibility fields with a grouped result'
+  );
+  assert.match(
+    text,
+    /function navigateToBaseField\(rawKey, options = \{\}\)[\s\S]*?state\.activeTab = 'base';[\s\S]*?state\.baseFilter = filterValue;[\s\S]*?focusRenderedBaseRowByKey\(key\);/,
+    'global search should navigate to Base fields through a shared focus helper'
+  );
+  assert.match(
+    text,
+    /kind: 'C3X Field',[\s\S]*?title: `\$\{tabTitle\}: \$\{friendlyName\}`,[\s\S]*?search: `\$\{tabTitle\} c3x base field setting \$\{friendlyName\} \$\{rawKey\} \$\{docs\} \$\{rowValue\} \$\{releaseLabel\}`,[\s\S]*?navigateToBaseField\(rawKey\);/,
+    'global search should keep indexing individual Base fields'
+  );
+  assert.match(
+    text,
+    /row\.append\(kind, title, subtitle\);/,
+    'global search result labels should be rendered as text nodes instead of HTML strings'
+  );
+  assert.match(
+    text,
+    /let renderedTab = null;[\s\S]*?try \{[\s\S]*?renderedTab = renderBaseTab\(tab\);[\s\S]*?\} catch \(err\) \{[\s\S]*?Could not render/,
+    'active tab rendering should not clear the content pane before a successful render'
+  );
+  assert.match(
+    text,
+    /makeTerrainOptionPreviewIcon\(col\.previewKey \|\| col\.key\)/,
+    'fixed terrain visibility arrays should include terrain thumbnail previews'
+  );
+  assert.match(
+    text,
+    /\{ key: 'hills', previewKey: 'hill', label: 'HILLS' \}/,
+    'fixed terrain visibility thumbnails should map C3X hills to the terrain preview source'
+  );
+  assert.match(
+    text,
+    /state\.baseRowElementsByKey\.set\(rowKeyLower, r\);[\s\S]*?const searchText = `\$\{rawKey\} \$\{friendlyName\} \$\{docs\} \$\{releaseSearch\}`\.toLowerCase\(\);[\s\S]*?rowElements\.push\(\{ key: rowKeyLower, searchText, el: r, group: groupInfo\.group \}\);/,
+    'each terrain visibility key should remain searchable as its own Base row'
+  );
+  assert.match(
+    text,
+    /const visibilityByEl = new Map\(\);[\s\S]*?visibilityByEl\.set\(entry\.el, !!\(visibilityByEl\.get\(entry\.el\) \|\| matches\)\);[\s\S]*?rowEl\.style\.display = visible \? '' : 'none';/,
+    'base search should keep using row visibility aggregation for lazy-mounted rows'
+  );
+  assert.match(
+    text,
+    /if \(visible && needle && rowEl && typeof rowEl\._ensureBaseInputMounted === 'function'\) \{[\s\S]*?rowEl\._ensureBaseInputMounted\(\);/,
+    'base search should mount matching lazy rows so search results are visible'
+  );
+  assert.match(
+    text,
+    /const searchText = `\$\{rawKey\} \$\{friendlyName\} \$\{docs\} \$\{releaseSearch\}`\.toLowerCase\(\);/,
+    'base search should continue indexing each terrain visibility row by its specific key and help text'
+  );
+  assert.match(
+    text,
+    /if \(row\.key === 'unit_visibility_rules'\)/,
+    'unit_visibility_rules should render with a dedicated structured editor'
+  );
+  assert.match(
+    text,
+    /targetLabel\.textContent = 'Applies To'/,
+    'unit_visibility_rules should label its target picker'
+  );
+  assert.match(
+    text,
+    /modeLabel\.textContent = 'Fortified Bonus Mode'/,
+    'unit_visibility_rules should label the fortification mode selector'
+  );
+  assert.doesNotMatch(
+    text,
+    /items\.length === 0\) items = \[\{ targets: \['Sea'\]/,
+    'empty unit_visibility_rules should not synthesize the default Sea rule'
+  );
+  assert.match(
+    text,
+    /remountBaseInputByKey\('counter_rules'\)/,
+    'counter_rules should refresh when unit_groups changes so group labels are immediately available'
+  );
+  assert.match(
+    text,
+    /searchPlaceholder: 'Friendly unit or group\.\.\.',[\s\S]*?noneLabel: 'Any \(\*\)',[\s\S]*?includeNone: false/,
+    'counter_rules attacker picker should not render both the none row and wildcard Any row'
+  );
+  assert.match(
+    text,
+    /createDefaultItem: \(\) => \(\{ attacker: '\*', defender: '\*'[\s\S]*?searchPlaceholder: 'Enemy unit or group\.\.\.',[\s\S]*?noneLabel: 'Any \(\*\)',[\s\S]*?includeNone: false/,
+    'counter_rules defender picker should default to the wildcard Any row'
+  );
+  assert.match(
+    text,
+    /makeSectionTitle\('Match'\)[\s\S]*?makeLabeledControl\('Friendly unit\/group', attacker\)[\s\S]*?makeLabeledControl\('Enemy unit\/group', defender\)/,
+    'counter_rules should render the unit match as a friendly-vs-enemy pair'
+  );
+  assert.match(
+    text,
+    /vs\.className = 'c3x-counter-vs';[\s\S]*?vs\.textContent = 'vs\.';/,
+    'counter_rules should show a visible vs. separator between friendly and enemy match pickers'
+  );
+  assert.match(
+    text,
+    /\['Friendly modifiers', 'Friendly', \[\['selfAtk', 'Attack %'\], \['selfDef', 'Defense %'\], \['selfBombard', 'Bombard %'\]\]\]/,
+    'counter_rules should group self effects under user-facing friendly modifiers'
+  );
+  assert.doesNotMatch(
+    text,
+    /input\.placeholder = 'unchanged'/,
+    'counter_rules modifier inputs should not show an unchanged placeholder'
+  );
+  assert.match(
+    text,
+    /function makeCounterRuleTerrainPicker\(currentValue, onSelect\)[\s\S]*?makeTerrainOptionPreviewIcon/,
+    'counter_rules terrain condition should use a thumbnail-backed structured picker'
+  );
+  assert.match(
+    text,
+    /function makeCounterRuleDistrictPicker\(currentValue, onSelect\)[\s\S]*?loadDistrictRepresentativePreview/,
+    'counter_rules district condition should use a thumbnail-backed structured picker'
+  );
+  assert.match(
+    text,
+    /const C3X_COUNTER_EXPERIENCE_OPTIONS = Object\.freeze\(\[[\s\S]*?\{ value: 'conscript', label: 'Conscript' \}[\s\S]*?\{ value: 'regular', label: 'Regular' \}[\s\S]*?\{ value: 'veteran', label: 'Veteran' \}[\s\S]*?\{ value: 'elite', label: 'Elite' \}/,
+    'counter_rules experience conditions should expose English aliases'
+  );
+  assert.match(
+    text,
+    /function makeCounterRuleExperienceSelect\(value, onSelect\)[\s\S]*?document\.createElement\('select'\)/,
+    'counter_rules experience conditions should use simple no-art dropdowns'
+  );
+  assert.match(
+    text,
+    /const terrain = makeCounterRuleTerrainPicker\(item\.terrain[\s\S]*?const district = makeCounterRuleDistrictPicker\(item\.district[\s\S]*?const selfExp = makeCounterRuleExperienceSelect\(item\.selfExp[\s\S]*?const enemyExp = makeCounterRuleExperienceSelect\(item\.enemyExp/,
+    'counter_rules optional conditions should use structured controls instead of raw text inputs'
+  );
+  assert.match(
+    text,
+    /makeSectionTitle\('Optional conditions'\)[\s\S]*?makeLabeledControl\('Only on terrain', terrain\)[\s\S]*?makeLabeledControl\('Enemy experience', enemyExp\)/,
+    'counter_rules should label optional terrain, district, and experience conditions'
+  );
+});
+
 test('Rules Citizens hides dangling BIQ Civilopedia entry field', () => {
   const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
   const text = fs.readFileSync(rendererPath, 'utf8');
@@ -560,6 +736,7 @@ test('C3X source-backed enum readers match renderer and manifest options', () =>
     unit_cycle_search_criteria: ['standard', 'similar-near-start', 'similar-near-destination'],
     work_area_limit: ['none', 'cultural', 'cultural-min-2', 'cultural-or-adjacent'],
     day_night_cycle_mode: ['off', 'timer', 'user-time', 'every-turn', 'specified'],
+    pinned_season_for_seasonal_cycle: ['summer', 'fall', 'winter', 'spring'],
     override_no_ai_patrol: ['none', 'one', 'zero'],
     override_barbarian_activity_level_for_scenario_maps: ['none', 'No Barbarians', 'Sedentary', 'Roaming', 'Restless', 'Raging', 'Random'],
     distribution_hub_yield_division_mode: ['flat', 'scale-by-city-count'],

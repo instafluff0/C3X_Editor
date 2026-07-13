@@ -2010,6 +2010,10 @@ test('auditLoadedBundle reports base unknown keys and invalid base values', () =
         rows: [
           { key: 'day_night_cycle_mode', value: 'every_turn' },
           { key: 'enable_districts', value: 'maybe' },
+          { key: 'terrain_visibility_bonus', value: '[1, 2]' },
+          { key: 'terrain_visibility_flat_bonus', value: '[false, false, false, false, false, false, false, false, false, false, false, true, true, maybe]' },
+          { key: 'counter_rules', value: '[Warrior against Spearman]' },
+          { key: 'unit_visibility_rules', value: '[Sea: when-fortified]' },
           { key: 'mystery_setting', value: '123' }
         ]
       },
@@ -2028,6 +2032,10 @@ test('auditLoadedBundle reports base unknown keys and invalid base values', () =
   const result = auditLoadedBundle(bundle);
   assert.ok(result.tabs.base.general.some((entry) => /day_night_cycle_mode.+unknown value "every_turn"/i.test(entry.message)));
   assert.ok(result.tabs.base.general.some((entry) => /enable_districts.+invalid boolean value "maybe"/i.test(entry.message)));
+  assert.ok(result.tabs.base.general.some((entry) => /terrain_visibility_bonus.+invalid fixed integer array/i.test(entry.message)));
+  assert.ok(result.tabs.base.general.some((entry) => /terrain_visibility_flat_bonus.+invalid fixed boolean array/i.test(entry.message)));
+  assert.ok(result.tabs.base.general.some((entry) => /counter_rules.+malformed counter rule syntax/i.test(entry.message)));
+  assert.ok(result.tabs.base.general.some((entry) => /unit_visibility_rules.+malformed unit visibility rule syntax/i.test(entry.message)));
   assert.ok(result.tabs.base.general.some((entry) => /Unknown C3X key "mystery_setting"/.test(entry.message)));
 });
 
@@ -2048,8 +2056,11 @@ test('auditLoadedBundle reports C3X base references that do not match loaded rul
           { key: 'resource_perfume', value: '["Films": 20, "Missing Resource": 1]' },
           { key: 'government_perfume', value: '["Democracy": 1, "Missing Government": 2]' },
           { key: 'work_area_improvements', value: '["Aqueduct": 3, "Missing Building": 2]' },
+          { key: 'unit_groups', value: '["Fast Units": "Warrior" "Ghost Counter Unit"]' },
+          { key: 'counter_rules', value: '["Fast Units" vs "Ghost Combatant" self-atk 125 terrain moon district "Ghost District"]' },
           { key: 'unit_limit_groups', value: '["Infantry Units": "Warrior" "Archer" "Missing Group Unit"]' },
           { key: 'unit_limits', value: '["Settler": 1 per-city, "Infantry Units": 4, "Missing Unit": 1]' },
+          { key: 'unit_visibility_rules', value: '[Sea: 2 when-fortified-same-continent, "Ghost Spotter": 1 + 2 times-bonus]' },
           { key: 'can_bombard_only_sea_tiles', value: '["Battleship" "Missing Boat"]' },
           { key: 'great_wall_auto_build_wonder_name', value: '"Hollywood"' }
         ]
@@ -2075,7 +2086,7 @@ test('auditLoadedBundle reports C3X base references that do not match loaded rul
           { name: 'Battleship' }
         ]
       },
-      districts: { model: { sections: [] } },
+      districts: { model: { sections: [makeSection({ name: 'Campus' })] } },
       wonders: { model: { sections: [] } },
       naturalWonders: { model: { sections: [] } }
     }
@@ -2090,9 +2101,16 @@ test('auditLoadedBundle reports C3X base references that do not match loaded rul
   assert.ok(messages.some((msg) => /resource_perfume.+Missing Resource/.test(msg)));
   assert.ok(messages.some((msg) => /government_perfume.+Missing Government/.test(msg)));
   assert.ok(messages.some((msg) => /work_area_improvements.+Missing Building/.test(msg)));
+  assert.ok(messages.some((msg) => /unit_groups.+Ghost Counter Unit/.test(msg)));
+  assert.ok(messages.some((msg) => /counter_rules.+Ghost Combatant/.test(msg)));
+  assert.ok(messages.some((msg) => /counter_rules.+moon/.test(msg)));
+  assert.ok(messages.some((msg) => /counter_rules.+Ghost District/.test(msg)));
+  assert.equal(messages.some((msg) => /counter_rules.+Fast Units/.test(msg)), false);
   assert.ok(messages.some((msg) => /unit_limit_groups.+Missing Group Unit/.test(msg)));
   assert.ok(messages.some((msg) => /unit_limits.+Missing Unit/.test(msg)));
   assert.equal(messages.some((msg) => /unit_limits.+Infantry Units/.test(msg)), false);
+  assert.ok(messages.some((msg) => /unit_visibility_rules.+Ghost Spotter/.test(msg)));
+  assert.equal(messages.some((msg) => /unit_visibility_rules.+Sea/.test(msg)), false);
   assert.ok(messages.some((msg) => /can_bombard_only_sea_tiles.+Missing Boat/.test(msg)));
   assert.ok(messages.some((msg) => /great_wall_auto_build_wonder_name.+Hollywood/.test(msg)));
   assert.equal(messages.some((msg) => /buildings_generating_resources.+Films/.test(msg)), false);

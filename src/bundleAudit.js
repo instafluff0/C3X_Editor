@@ -222,6 +222,25 @@ const DISTRICT_ADJACENT_SQUARE_TOKENS = [
   'city'
 ];
 
+const COUNTER_RULE_TERRAIN_TOKENS = [
+  ...DISTRICT_BUILDABLE_SQUARE_TOKENS,
+  'forest', 'forests',
+  'jungle', 'jungles',
+  'marsh', 'marshes'
+];
+
+const C3X_COUNTER_EFFECT_TOKENS = [
+  'self-atk',
+  'self-def',
+  'enemy-atk',
+  'enemy-def',
+  'self-bombard',
+  'enemy-bombard'
+];
+
+const C3X_VISIBILITY_ARRAY_LENGTH = 14;
+const C3X_UNIT_VISIBILITY_CLASSES = ['land', 'sea', 'air'];
+
 const NATURAL_WONDER_ADJACENT_TOKENS = [
   'any',
   'river',
@@ -1271,6 +1290,140 @@ function parseUnitLimitGroupItems(value) {
   });
 }
 
+function parseUnitCounterGroupItems(value) {
+  return parseDelimitedStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { name: normalizeConfigToken(item), units: [] };
+    return {
+      name: normalizeConfigToken(item.slice(0, i)),
+      units: parseBracketedOptionTokens(item.slice(i + 1))
+    };
+  });
+}
+
+function tokenizeCounterRuleEntry(entry) {
+  return tokenizeWhitespaceListPreservingQuotes(entry)
+    .map((token) => normalizeConfigToken(token))
+    .filter(Boolean);
+}
+
+function isCounterRuleOptionToken(token) {
+  return token === 'in-city'
+    || token === 'ignore-defensive-bonuses'
+    || token === 'terrain'
+    || token === 'district'
+    || token === 'self-exp'
+    || token === 'enemy-exp'
+    || C3X_COUNTER_EFFECT_TOKENS.includes(token);
+}
+
+function parseCounterRuleItems(value) {
+  return parseDelimitedStructuredEntries(value).map((entry) => {
+    const tokens = tokenizeCounterRuleEntry(entry);
+    const rule = {
+      raw: entry,
+      attacker: tokens[0] || '',
+      defender: tokens[2] || '',
+      validSyntax: tokens.length >= 3 && tokens[1] === 'vs',
+      terrain: '',
+      district: '',
+      selfExp: [],
+      enemyExp: [],
+      effects: []
+    };
+    if (!rule.validSyntax) return rule;
+    let i = 3;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (C3X_COUNTER_EFFECT_TOKENS.includes(token)) {
+        const valueToken = tokens[i + 1] || '';
+        if (!isIntegerToken(valueToken)) rule.validSyntax = false;
+        rule.effects.push({ token, value: valueToken });
+        i += 2;
+        continue;
+      }
+      if (token === 'in-city' || token === 'ignore-defensive-bonuses') {
+        i += 1;
+        continue;
+      }
+      if (token === 'terrain') {
+        rule.terrain = tokens[i + 1] || '';
+        if (!rule.terrain) rule.validSyntax = false;
+        i += 2;
+        continue;
+      }
+      if (token === 'district') {
+        rule.district = tokens[i + 1] || '';
+        if (!rule.district) rule.validSyntax = false;
+        i += 2;
+        continue;
+      }
+      if (token === 'self-exp' || token === 'enemy-exp') {
+        const values = [];
+        i += 1;
+        while (i < tokens.length && !isCounterRuleOptionToken(tokens[i])) {
+          values.push(tokens[i]);
+          i += 1;
+        }
+        if (values.length <= 0) rule.validSyntax = false;
+        if (token === 'self-exp') rule.selfExp = values;
+        else rule.enemyExp = values;
+        continue;
+      }
+      rule.validSyntax = false;
+      break;
+    }
+    return rule;
+  });
+}
+
+function parseFixedVisibilityArray(value, kind) {
+  const tokens = parseBracketedOptionTokens(value);
+  if (tokens.length !== C3X_VISIBILITY_ARRAY_LENGTH) {
+    return { ok: false, values: tokens, error: `expected ${C3X_VISIBILITY_ARRAY_LENGTH} entries` };
+  }
+  if (kind === 'boolean') {
+    const invalid = tokens.filter((token) => !isConfigBoolToken(token));
+    return { ok: invalid.length === 0, values: tokens, error: invalid.length > 0 ? `invalid boolean entries: ${invalid.join(', ')}` : '' };
+  }
+  const invalid = tokens.filter((token) => !isIntegerToken(token));
+  return { ok: invalid.length === 0, values: tokens, error: invalid.length > 0 ? `invalid integer entries: ${invalid.join(', ')}` : '' };
+}
+
+function parseUnitVisibilityRuleItems(value) {
+  return parseDelimitedStructuredEntries(value).map((entry) => {
+    const i = entry.indexOf(':');
+    const rule = { raw: entry, targets: [], validSyntax: i >= 0, invalidModifier: '', numericValues: [] };
+    if (i < 0) return rule;
+    rule.targets = parseBracketedOptionTokens(entry.slice(0, i));
+    if (rule.targets.length <= 0) rule.validSyntax = false;
+    const tokens = tokenizeWhitespaceListPreservingQuotes(entry.slice(i + 1))
+      .map((token) => normalizeConfigToken(token))
+      .filter((token) => token && token !== '+');
+    if (tokens.length <= 0) rule.validSyntax = false;
+    for (let idx = 0; idx < tokens.length; idx += 1) {
+      const num = tokens[idx];
+      if (!isIntegerToken(num)) {
+        rule.validSyntax = false;
+        rule.invalidModifier = num;
+        break;
+      }
+      rule.numericValues.push(num);
+      const modifier = tokens[idx + 1] || '';
+      if (!modifier) continue;
+      if (isIntegerToken(modifier)) continue;
+      if (modifier === 'times-bonus' || modifier === 'when-fortified' || modifier === 'when-fortified-same-continent') {
+        idx += 1;
+        continue;
+      }
+      rule.validSyntax = false;
+      rule.invalidModifier = modifier;
+      break;
+    }
+    return rule;
+  });
+}
+
 function parseBuildingPrereqItems(value) {
   return parseDelimitedStructuredEntries(value).map((item) => {
     const i = item.indexOf(':');
@@ -1342,6 +1495,46 @@ function lintBaseConfig(bundle, result) {
       addGeneralIssue(result, 'base', `C3X key "${key}" has invalid integer value "${value}".`, 'base-invalid-integer');
       return;
     }
+    if (meta.family === 'fixed_int_array' || meta.family === 'fixed_bool_array') {
+      const parsed = parseFixedVisibilityArray(value, meta.family === 'fixed_bool_array' ? 'boolean' : 'integer');
+      if (value && !parsed.ok) {
+        addGeneralIssue(result, 'base', `C3X key "${key}" has invalid fixed ${meta.family === 'fixed_bool_array' ? 'boolean' : 'integer'} array: ${parsed.error}.`, 'base-invalid-fixed-array');
+      }
+      return;
+    }
+    if (meta.family === 'unit_counter_groups') {
+      if (!hasBalancedQuotes(value)) {
+        addGeneralIssue(result, 'base', `C3X key "${key}" has malformed quoted list syntax.`, 'base-malformed-list');
+        return;
+      }
+      const malformed = parseDelimitedStructuredEntries(value).filter((entry) => entry && entry.indexOf(':') < 0);
+      if (malformed.length > 0) {
+        addGeneralIssue(result, 'base', `C3X key "${key}" has malformed unit counter group syntax.`, 'base-malformed-unit-counter-groups');
+      }
+      return;
+    }
+    if (meta.family === 'counter_rules') {
+      if (!hasBalancedQuotes(value)) {
+        addGeneralIssue(result, 'base', `C3X key "${key}" has malformed quoted list syntax.`, 'base-malformed-list');
+        return;
+      }
+      const malformed = parseCounterRuleItems(value).filter((rule) => !rule.validSyntax);
+      if (malformed.length > 0) {
+        addGeneralIssue(result, 'base', `C3X key "${key}" has malformed counter rule syntax.`, 'base-malformed-counter-rules');
+      }
+      return;
+    }
+    if (meta.family === 'unit_visibility_rules') {
+      if (!hasBalancedQuotes(value)) {
+        addGeneralIssue(result, 'base', `C3X key "${key}" has malformed quoted list syntax.`, 'base-malformed-list');
+        return;
+      }
+      const malformed = parseUnitVisibilityRuleItems(value).filter((rule) => !rule.validSyntax);
+      if (malformed.length > 0) {
+        addGeneralIssue(result, 'base', `C3X key "${key}" has malformed unit visibility rule syntax.`, 'base-malformed-unit-visibility-rules');
+      }
+      return;
+    }
     if (Array.isArray(meta.options) && meta.options.length > 0) {
       if (meta.type === 'string-list' || meta.family === 'bitfield_list') {
         if (!hasBalancedQuotes(value)) {
@@ -1370,6 +1563,7 @@ function buildBaseReferenceContext(bundle) {
     const kind = String(entry && entry.improvementKind || '').trim().toLowerCase();
     return kind === 'wonder' || kind === 'small_wonder';
   });
+  const districtSections = (((((bundle || {}).tabs || {}).districts || {}).model || {}).sections) || [];
   return {
     civilizations: getReferenceSetFromBundle(bundle, 'civilizations'),
     technologies: getReferenceSetFromBundle(bundle, 'technologies'),
@@ -1377,7 +1571,10 @@ function buildBaseReferenceContext(bundle) {
     governments: getReferenceSetFromBundle(bundle, 'governments'),
     improvements: getReferenceSetFromBundle(bundle, 'improvements'),
     improvementWonders,
-    units: getReferenceSetFromBundle(bundle, 'units')
+    units: getReferenceSetFromBundle(bundle, 'units'),
+    districts: toNormalizedLookupSet(Array.isArray(districtSections)
+      ? districtSections.map((section) => getFieldValue(section, 'name'))
+      : [])
   };
 }
 
@@ -1446,6 +1643,31 @@ function collectValidUnitLimitGroupLabels(bundle, unitSet) {
   return labels;
 }
 
+function collectValidUnitCounterGroupLabels(bundle, unitSet) {
+  const groups = parseUnitCounterGroupItems(getBaseRowValue(bundle, 'unit_groups'));
+  const hasUnitSet = unitSet instanceof Set && unitSet.size > 0;
+  const labels = new Set();
+  groups.forEach((group) => {
+    const label = normalizeConfigToken(group && group.name);
+    if (!label) return;
+    const members = Array.isArray(group && group.units) ? group.units : [];
+    const hasValidMember = !hasUnitSet || members.some((unit) => {
+      const lookup = normalizeReferenceLookup(unit);
+      return lookup && unitSet.has(lookup);
+    });
+    if (hasValidMember) labels.add(normalizeReferenceLookup(label));
+  });
+  return labels;
+}
+
+function isKnownCounterMatchToken(value, unitSet, groupLabels) {
+  const display = normalizeConfigToken(value);
+  const lookup = normalizeReferenceLookup(display);
+  if (!lookup || lookup === '*') return true;
+  if (groupLabels instanceof Set && groupLabels.has(lookup)) return true;
+  return referenceKnownInAny(display, [unitSet]);
+}
+
 function auditBaseReferenceCompatibility(bundle, result) {
   const rows = (((bundle || {}).tabs || {}).base || {}).rows;
   const list = Array.isArray(rows) ? rows : [];
@@ -1502,6 +1724,47 @@ function auditBaseReferenceCompatibility(bundle, result) {
     if (key === 'unit_limit_groups') {
       const groups = parseUnitLimitGroupItems(value);
       addBaseReferenceIssue(result, key, 'unit name', collectInvalidReferences(groups.flatMap((item) => item.units || []), context.units));
+      return;
+    }
+
+    if (key === 'unit_groups') {
+      const groups = parseUnitCounterGroupItems(value);
+      addBaseReferenceIssue(result, key, 'unit name', collectInvalidReferences(groups.flatMap((item) => item.units || []), context.units));
+      return;
+    }
+
+    if (key === 'counter_rules') {
+      const groupLabels = collectValidUnitCounterGroupLabels(bundle, context.units);
+      const invalidCombatants = [];
+      const invalidTerrain = [];
+      const invalidDistricts = [];
+      parseCounterRuleItems(value).forEach((rule) => {
+        if (!rule.validSyntax) return;
+        [rule.attacker, rule.defender].forEach((name) => {
+          if (!isKnownCounterMatchToken(name, context.units, groupLabels)) invalidCombatants.push(name);
+        });
+        if (rule.terrain && !COUNTER_RULE_TERRAIN_TOKENS.includes(String(rule.terrain || '').trim().toLowerCase())) {
+          invalidTerrain.push(rule.terrain);
+        }
+        if (rule.district && !referenceKnownInAny(rule.district, [context.districts])) invalidDistricts.push(rule.district);
+      });
+      addBaseReferenceIssue(result, key, 'unit name or unit counter group', collectUniqueValues(invalidCombatants));
+      addBaseReferenceIssue(result, key, 'terrain token', collectUniqueValues(invalidTerrain));
+      addBaseReferenceIssue(result, key, 'district name', collectUniqueValues(invalidDistricts));
+      return;
+    }
+
+    if (key === 'unit_visibility_rules') {
+      const invalidTargets = [];
+      parseUnitVisibilityRuleItems(value).forEach((rule) => {
+        if (!rule.validSyntax) return;
+        (Array.isArray(rule.targets) ? rule.targets : []).forEach((target) => {
+          const lookup = normalizeReferenceLookup(target);
+          if (!lookup || C3X_UNIT_VISIBILITY_CLASSES.includes(lookup)) return;
+          if (!referenceKnownInAny(target, [context.units])) invalidTargets.push(target);
+        });
+      });
+      addBaseReferenceIssue(result, key, 'unit name', collectUniqueValues(invalidTargets));
       return;
     }
 

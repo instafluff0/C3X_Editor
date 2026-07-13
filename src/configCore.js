@@ -57,7 +57,23 @@ const C3X_BASE_UI_DEFAULTS = Object.freeze({
   unit_limit_groups: '[]',
   radar_tower_detection_distance: '0',
   outpost_detection_distance: '0',
-  steal_plans_duration: '1'
+  steal_plans_duration: '1',
+  enable_pollution_from_free_improvements: 'false',
+  enable_unit_counters: 'false',
+  unit_groups: '[]',
+  counter_rules: '[]',
+  prefer_less_expensive_defenders: 'false',
+  enable_alternate_view_distance_logic: 'false',
+  terrain_visibility_euclidean: 'false',
+  base_visibility_range: '1',
+  terrain_visibility_see_height: '[1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1]',
+  terrain_visibility_seen_height: '[0, 0, 0, 0, 0, 1, 2, 1, 1, 0, 2, 0, 0, 0]',
+  terrain_visibility_bonus: '[0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0]',
+  terrain_visibility_flat_bonus: '[false, false, false, false, false, false, false, false, false, false, false, true, true, true]',
+  terrain_visibility_bonus_can_stack: 'false',
+  terrain_visibility_flat_bonus_limit: '1',
+  terrain_visibility_flat_bonus_can_stack: 'false',
+  unit_visibility_rules: '[Sea: 2 when-fortified-same-continent]'
 });
 let bundledC3xBaseDefaultsTextCache = null;
 

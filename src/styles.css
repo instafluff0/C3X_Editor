@@ -14405,6 +14405,217 @@ button.unit-ini-delete-btn:disabled {
   border-radius: 6px;
 }
 
+.c3x-visibility-array-table-wrap {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid rgba(73, 69, 98, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.c3x-visibility-array-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.c3x-visibility-array-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.c3x-visibility-array-thumb.terrain-option-chip-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: 5px;
+}
+
+.c3x-visibility-array-thumb.terrain-option-chip-thumb .entry-thumb-canvas {
+  width: 28px;
+  height: 28px;
+}
+
+.c3x-visibility-array-label {
+  color: #4c5577;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.c3x-visibility-array-table th,
+.c3x-visibility-array-table td {
+  min-width: 76px;
+  border-right: 1px solid rgba(73, 69, 98, 0.1);
+  text-align: center;
+}
+
+.c3x-visibility-array-table th:last-child,
+.c3x-visibility-array-table td:last-child {
+  border-right: 0;
+}
+
+.c3x-visibility-array-table th {
+  padding: 7px 6px 6px;
+  background: rgba(242, 246, 255, 0.72);
+  border-bottom: 1px solid rgba(73, 69, 98, 0.12);
+  vertical-align: middle;
+}
+
+.c3x-visibility-array-table td {
+  padding: 7px 6px;
+  vertical-align: middle;
+}
+
+.c3x-visibility-array-table input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 4px 6px;
+  text-align: center;
+  font-size: 0.86rem;
+}
+
+.c3x-visibility-array-toggle {
+  justify-content: center;
+  min-height: 34px;
+}
+
+.c3x-counter-rule-card {
+  gap: 12px;
+}
+
+.c3x-counter-match,
+.c3x-counter-effect-group,
+.c3x-counter-conditions {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.c3x-counter-section-title {
+  color: #4c5577;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.c3x-counter-match-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto minmax(190px, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.c3x-counter-vs {
+  align-self: center;
+  padding-top: 18px;
+  color: #4c5577;
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.c3x-counter-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.c3x-counter-field .field-label,
+.c3x-unit-visibility-rule-card .field-label {
+  margin-bottom: 0;
+  color: #4c5577;
+  font-size: 0.68rem;
+  line-height: 1.15;
+}
+
+.c3x-counter-field .tech-picker,
+.c3x-counter-field input,
+.c3x-counter-field select,
+.c3x-counter-field .structured-list {
+  min-width: 0;
+}
+
+.c3x-counter-remove {
+  min-height: 38px;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.c3x-counter-effects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.c3x-counter-effect-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(82px, 1fr));
+  gap: 6px;
+}
+
+.c3x-counter-conditions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 6px;
+}
+
+.c3x-counter-condition-toggles {
+  margin-top: 2px;
+}
+
+.c3x-unit-visibility-rule-card {
+  gap: 10px;
+}
+
+.c3x-unit-visibility-target-field,
+.c3x-unit-visibility-mode-field {
+  display: grid;
+  gap: 4px;
+}
+
+.c3x-unit-visibility-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+}
+
+.c3x-unit-visibility-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.c3x-unit-visibility-rule-card input[type="number"] {
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .c3x-counter-match-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .c3x-counter-vs {
+    justify-self: center;
+    padding-top: 0;
+  }
+
+  .c3x-counter-effects {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .civ-era-alias-legacy-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

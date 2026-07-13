@@ -120,6 +120,11 @@ test('buildBaseModel includes R28 UI defaults missing from installed default con
   assert.equal(byKey.get('outpost_detection_distance').value, '0');
   assert.equal(byKey.get('steal_plans_duration').value, '1');
   assert.equal(byKey.get('unit_limit_groups').value, '[]');
+  assert.equal(byKey.get('enable_unit_counters').value, 'false');
+  assert.equal(byKey.get('unit_groups').value, '[]');
+  assert.equal(byKey.get('counter_rules').value, '[]');
+  assert.equal(byKey.get('base_visibility_range').value, '1');
+  assert.equal(byKey.get('unit_visibility_rules').value, '[Sea: 2 when-fortified-same-continent]');
   assert.equal(model.defaultMap.radar_tower_detection_distance, '0');
   assert.ok(model.commentsByKey.radar_tower_detection_distance.some((line) => /radar towers and outposts/i.test(line)));
 });
@@ -204,6 +209,22 @@ test('loadBundle uses bundled C3X base docs when installed default config is inc
 
   assert.equal(row.value, '1');
   assert.match(bundle.tabs.base.fieldDocs.steal_plans_duration, /Steal Plans/i);
+  assert.match(bundle.tabs.base.fieldDocs.enable_unit_counters, /defender selection/i);
+  assert.match(bundle.tabs.base.fieldDocs.counter_rules, /self-atk/i);
+  assert.match(bundle.tabs.base.fieldDocs.terrain_visibility_see_height, /Height a unit is considered/i);
+  assert.doesNotMatch(bundle.tabs.base.fieldDocs.terrain_visibility_see_height, /Entries are ordered as/i);
+  assert.match(bundle.tabs.base.fieldDocs.terrain_visibility_seen_height, /occludes tiles beyond/i);
+  assert.match(bundle.tabs.base.fieldDocs.unit_visibility_rules, /last matching rule is used/i);
+  const baseKeys = bundle.tabs.base.rows.map((candidate) => candidate.key);
+  assert.ok(
+    baseKeys.indexOf('terrain_visibility_flat_bonus') >= 0,
+    'terrain_visibility_flat_bonus should load from bundled defaults'
+  );
+  assert.equal(
+    baseKeys.indexOf('terrain_visibility_bonus_can_stack'),
+    baseKeys.indexOf('terrain_visibility_flat_bonus') + 1,
+    'terrain_visibility_bonus_can_stack should appear directly after terrain_visibility_flat_bonus'
+  );
 });
 
 test('sectioned config parsing round-trips marker blocks', () => {

@@ -129,6 +129,7 @@ test('C3X base manifest string families stay explicit and audited', () => {
     building_prereqs_for_units: 'building_prereq_list',
     buildings_generating_resources: 'building_resource_list',
     can_bombard_only_sea_tiles: 'quoted_reference_list',
+    counter_rules: 'counter_rules',
     civ_aliases_by_era: 'civ_aliases_by_era',
     day_night_cycle_mode: 'segmented_enum',
     distribution_hub_yield_division_mode: 'segmented_enum',
@@ -145,7 +146,7 @@ test('C3X base manifest string families stay explicit and audited', () => {
     limit_defensive_retreat_on_water_to_types: 'quoted_reference_list',
     override_barbarian_activity_level_for_scenario_maps: 'segmented_enum',
     override_no_ai_patrol: 'segmented_enum',
-    pinned_season_for_seasonal_cycle: 'plain_string',
+    pinned_season_for_seasonal_cycle: 'segmented_enum',
     production_perfume: 'name_amount_list',
     ptw_like_artillery_targeting: 'quoted_reference_list',
     resource_perfume: 'name_amount_list',
@@ -156,9 +157,15 @@ test('C3X base manifest string families stay explicit and audited', () => {
     special_helicopter_rules: 'bitfield_list',
     special_zone_of_control_rules: 'bitfield_list',
     technology_perfume: 'name_amount_list',
+    terrain_visibility_bonus: 'fixed_int_array',
+    terrain_visibility_flat_bonus: 'fixed_bool_array',
+    terrain_visibility_see_height: 'fixed_int_array',
+    terrain_visibility_seen_height: 'fixed_int_array',
     unit_cycle_search_criteria: 'segmented_enum',
+    unit_groups: 'unit_counter_groups',
     unit_limit_groups: 'unit_limit_groups',
     unit_limits: 'unit_limits',
+    unit_visibility_rules: 'unit_visibility_rules',
     work_area_improvements: 'name_amount_list',
     work_area_limit: 'segmented_enum'
   };
@@ -183,12 +190,15 @@ test('C3X base manifest enum, bitfield, and reference metadata stays source-back
   assert.deepEqual(C3X_BASE_MANIFEST.land_transport_rules.options, ['load-onto-boat', 'join-army', 'no-defense-from-inside', 'no-escape']);
   assert.deepEqual(C3X_BASE_MANIFEST.special_helicopter_rules.options, ['allow-on-carriers', 'passenger-airdrop', 'no-defense-from-inside', 'no-escape']);
   assert.deepEqual(C3X_BASE_MANIFEST.enabled_seasons.options, ['summer', 'fall', 'winter', 'spring']);
+  assert.deepEqual(C3X_BASE_MANIFEST.pinned_season_for_seasonal_cycle.options, ['summer', 'fall', 'winter', 'spring']);
   assert.deepEqual(C3X_BASE_MANIFEST.show_tile_destruct_animation_after.options, ['bombard', 'bomb', 'pillage']);
   assert.deepEqual(C3X_BASE_MANIFEST.override_no_ai_patrol.options, ['none', 'one', 'zero']);
   assert.deepEqual(C3X_BASE_MANIFEST.override_barbarian_activity_level_for_scenario_maps.options, ['none', 'No Barbarians', 'Sedentary', 'Roaming', 'Restless', 'Raging', 'Random']);
 
   assert.equal(C3X_BASE_MANIFEST.show_tile_destruct_animation_after.release, 'R28');
   assert.equal(C3X_BASE_MANIFEST.show_tile_destruction_animation_for_turns.release, 'R28');
+  assert.equal(C3X_BASE_MANIFEST.enable_unit_counters.release, 'R28');
+  assert.equal(C3X_BASE_MANIFEST.unit_visibility_rules.release, 'R28');
   assert.equal(C3X_BASE_MANIFEST.can_bombard_only_sea_tiles.referenceTab, 'units');
   assert.equal(C3X_BASE_MANIFEST.exclude_types_from_units_per_tile_limit.referenceTab, 'units');
   assert.equal(C3X_BASE_MANIFEST.limit_defensive_retreat_on_water_to_types.referenceTab, 'units');
@@ -213,8 +223,13 @@ test('C3X base manifest assigns every key to an explicit audit tier', () => {
     civ_aliases_by_era: 'special-syntax-codec',
     leader_aliases_by_era: 'special-syntax-codec',
     name_amount_list: 'special-syntax-codec',
+    counter_rules: 'special-syntax-codec',
+    fixed_bool_array: 'special-syntax-codec',
+    fixed_int_array: 'special-syntax-codec',
+    unit_counter_groups: 'special-syntax-codec',
     unit_limit_groups: 'special-syntax-codec',
-    unit_limits: 'special-syntax-codec'
+    unit_limits: 'special-syntax-codec',
+    unit_visibility_rules: 'special-syntax-codec'
   };
 
   const missing = Object.entries(C3X_BASE_MANIFEST)

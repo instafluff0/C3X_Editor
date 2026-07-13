@@ -854,6 +854,64 @@ function normalizeTooltipDelay(value) {
 const DIRECTION_OPTIONS = ['northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north'];
 const ANIMATION_TYPE_OPTIONS = ['terrain', 'resource', 'pcx', 'destruct-initial', 'destruct-after', 'coastal-wave'];
 const TERRAIN_OPTIONS = ['desert', 'plains', 'grassland', 'jungle', 'tundra', 'floodplain', 'marsh', 'hill', 'mountain', 'forest', 'volcano', 'snow-forest', 'snow-mountain', 'snow-volcano', 'coast', 'sea', 'ocean'];
+const C3X_VISIBILITY_TERRAIN_COLUMNS = Object.freeze([
+  { key: 'desert', label: 'DESRT' },
+  { key: 'plains', label: 'PLAIN' },
+  { key: 'grassland', label: 'GRSLD' },
+  { key: 'tundra', label: 'TNDRA' },
+  { key: 'floodplain', label: 'FLDPL' },
+  { key: 'hills', previewKey: 'hill', label: 'HILLS' },
+  { key: 'mountains', previewKey: 'mountain', label: 'MNTNS' },
+  { key: 'forest', label: 'FORST' },
+  { key: 'jungle', label: 'JUNGL' },
+  { key: 'marsh', label: 'MARSH' },
+  { key: 'volcano', label: 'VLCNO' },
+  { key: 'coast', label: 'COAST' },
+  { key: 'sea', label: 'SEA' },
+  { key: 'ocean', label: 'OCEAN' }
+]);
+const C3X_VISIBILITY_ARRAY_KEYS = Object.freeze({
+  terrain_visibility_see_height: 'integer',
+  terrain_visibility_seen_height: 'integer',
+  terrain_visibility_bonus: 'integer',
+  terrain_visibility_flat_bonus: 'boolean'
+});
+const C3X_COUNTER_EFFECT_FIELDS = Object.freeze([
+  { key: 'selfAtk', token: 'self-atk', label: 'Self Atk' },
+  { key: 'selfDef', token: 'self-def', label: 'Self Def' },
+  { key: 'enemyAtk', token: 'enemy-atk', label: 'Enemy Atk' },
+  { key: 'enemyDef', token: 'enemy-def', label: 'Enemy Def' },
+  { key: 'selfBombard', token: 'self-bombard', label: 'Self Bombard' },
+  { key: 'enemyBombard', token: 'enemy-bombard', label: 'Enemy Bombard' }
+]);
+const C3X_COUNTER_TERRAIN_OPTIONS = Object.freeze([
+  { value: 'desert', label: 'Desert' },
+  { value: 'plains', label: 'Plains' },
+  { value: 'grassland', label: 'Grassland' },
+  { value: 'tundra', label: 'Tundra' },
+  { value: 'floodplain', label: 'Floodplain' },
+  { value: 'hill', label: 'Hills' },
+  { value: 'mountain', label: 'Mountains' },
+  { value: 'forest', label: 'Forest' },
+  { value: 'jungle', label: 'Jungle' },
+  { value: 'marsh', label: 'Marsh' },
+  { value: 'volcano', label: 'Volcano' },
+  { value: 'coast', label: 'Coast' },
+  { value: 'sea', label: 'Sea' },
+  { value: 'ocean', label: 'Ocean' },
+  { value: 'river', label: 'River' },
+  { value: 'lake', label: 'Lake', previewKey: 'coast' },
+  { value: 'snow-forest', label: 'Snow Forest', previewKey: 'forest' },
+  { value: 'snow-mountain', label: 'Snow Mountain', previewKey: 'mountain' },
+  { value: 'snow-volcano', label: 'Snow Volcano', previewKey: 'volcano' }
+]);
+const C3X_COUNTER_EXPERIENCE_OPTIONS = Object.freeze([
+  { value: 'conscript', label: 'Conscript' },
+  { value: 'regular', label: 'Regular' },
+  { value: 'veteran', label: 'Veteran' },
+  { value: 'elite', label: 'Elite' }
+]);
+const C3X_UNIT_VISIBILITY_CLASSES = Object.freeze(['Land', 'Sea', 'Air']);
 const TAB_ICONS = {
   units: 'icon-unit',
   technologies: 'icon-tech',
@@ -974,6 +1032,7 @@ const BASE_ENUM_OPTIONS = {
   unit_cycle_search_criteria: ['standard', 'similar-near-start', 'similar-near-destination'],
   day_night_cycle_mode: ['off', 'timer', 'user-time', 'every-turn', 'specified'],
   seasonal_cycle_mode: ['off', 'timer', 'user-season', 'every-turn', 'on-day-night-hour', 'specified'],
+  pinned_season_for_seasonal_cycle: ['summer', 'fall', 'winter', 'spring'],
   override_no_ai_patrol: ['none', 'one', 'zero'],
   override_barbarian_activity_level_for_scenario_maps: ['none', 'No Barbarians', 'Sedentary', 'Roaming', 'Restless', 'Raging', 'Random']
 };
@@ -1017,6 +1076,9 @@ const BASE_STRUCTURED_LIST_FIELDS = new Set([
   'resource_perfume',
   'government_perfume',
   'unit_limit_groups',
+  'unit_groups',
+  'counter_rules',
+  'unit_visibility_rules',
   'building_prereqs_for_units',
   'buildings_generating_resources',
   'ai_multi_start_extra_palaces'
@@ -7989,6 +8051,47 @@ function navigateWithHistory(mutateState, renderOptions = { preserveTabScroll: t
   }
 }
 
+function focusRenderedBaseRowByKey(rawKey) {
+  const key = String(rawKey || '').trim().toLowerCase();
+  if (!key || !state.baseRowElementsByKey) return false;
+  const rowEl = state.baseRowElementsByKey.get(key);
+  if (!rowEl) return false;
+  if (typeof rowEl._ensureBaseInputMounted === 'function') {
+    rowEl._ensureBaseInputMounted();
+  }
+  window.requestAnimationFrame(() => {
+    const scroller = el.tabContent;
+    const scrollerRect = scroller ? scroller.getBoundingClientRect() : null;
+    const rowRect = rowEl.getBoundingClientRect();
+    if (scroller && scrollerRect) {
+      const currentTop = scroller.scrollTop || 0;
+      const targetTop = Math.max(0, currentTop + (rowRect.top - scrollerRect.top) - Math.max(24, (scrollerRect.height * 0.35)));
+      scroller.scrollTo({ top: targetTop, behavior: 'smooth' });
+    } else {
+      rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    rowEl.classList.add('nav-jump-highlight');
+    window.clearTimeout(rowEl._fieldFocusPulseTimer);
+    rowEl._fieldFocusPulseTimer = window.setTimeout(() => {
+      rowEl.classList.remove('nav-jump-highlight');
+    }, 1500);
+  });
+  return true;
+}
+
+function navigateToBaseField(rawKey, options = {}) {
+  const key = String(rawKey || '').trim();
+  if (!key) return;
+  const filterValue = String(options.filterValue == null ? key : options.filterValue);
+  navigateWithHistory(() => {
+    state.activeTab = 'base';
+    state.baseFilter = filterValue;
+  }, { preserveTabScroll: false });
+  window.requestAnimationFrame(() => {
+    focusRenderedBaseRowByKey(key);
+  });
+}
+
 function normalizeSearchText(value) {
   return String(value || '')
     .toLowerCase()
@@ -8252,10 +8355,7 @@ function collectGlobalSearchItems() {
           subtitle: rawKey,
           search: `${tabTitle} c3x base field setting ${friendlyName} ${rawKey} ${docs} ${rowValue} ${releaseLabel}`,
           action: () => {
-            navigateWithHistory(() => {
-              state.activeTab = tabKey;
-              state.baseFilter = rawKey;
-            }, { preserveTabScroll: false });
+            navigateToBaseField(rawKey);
           }
         });
       });
@@ -8381,11 +8481,16 @@ function renderGlobalSearchResults() {
     row.type = 'button';
     row.className = 'global-search-row';
     if (idx === activeIndex) row.classList.add('active');
-    row.innerHTML = `
-      <span class="global-search-row-kind">${result.kind || 'Result'}</span>
-      <span class="global-search-row-title">${result.title || ''}</span>
-      <span class="global-search-row-sub">${result.subtitle || ''}</span>
-    `;
+    const kind = document.createElement('span');
+    kind.className = 'global-search-row-kind';
+    kind.textContent = result.kind || 'Result';
+    const title = document.createElement('span');
+    title.className = 'global-search-row-title';
+    title.textContent = result.title || '';
+    const subtitle = document.createElement('span');
+    subtitle.className = 'global-search-row-sub';
+    subtitle.textContent = result.subtitle || '';
+    row.append(kind, title, subtitle);
     row.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -9203,6 +9308,344 @@ function getUnitLimitGroupOptions() {
     .sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
 }
 
+function parseUnitCounterGroupItems(value) {
+  return parseDelimitedStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { name: normalizeConfigToken(item), units: [] };
+    return {
+      name: normalizeConfigToken(item.slice(0, i)),
+      units: parseBracketedOptionTokens(item.slice(i + 1))
+    };
+  });
+}
+
+function serializeUnitCounterGroupItems(items) {
+  const entries = (Array.isArray(items) ? items : [])
+    .map((it) => ({
+      name: String(it && it.name || '').trim(),
+      units: (Array.isArray(it && it.units) ? it.units : [])
+        .map((unit) => String(unit || '').trim())
+        .filter(Boolean)
+    }))
+    .filter((it) => it.name && it.units.length > 0)
+    .map((it) => `${quoteConfigToken(it.name)}: ${it.units.map((unit) => quoteConfigToken(unit)).join(' ')}`);
+  return serializeStructuredEntries(entries);
+}
+
+function getUnitCounterGroupOptions() {
+  return parseUnitCounterGroupItems(getBaseRowValueForRenderer('unit_groups'))
+    .map((item) => normalizeConfigToken(item && item.name))
+    .filter(Boolean)
+    .map((name) => ({
+      value: name,
+      label: name,
+      displayLabel: `${name} (group)`,
+      entry: null,
+      group: 'unit-counter-group'
+    }))
+    .sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+}
+
+function quoteCounterMatchToken(value) {
+  const normalized = normalizeConfigToken(value);
+  if (normalized === '*') return '"*"';
+  return quoteConfigToken(normalized);
+}
+
+function makeCounterMatchOptions(currentValue = '') {
+  const current = normalizeConfigToken(currentValue);
+  const groupOpts = getUnitCounterGroupOptions();
+  const unitOpts = getNamedReferenceOptionsForTab('units');
+  const options = [
+    { value: '*', label: 'Any (*)', displayLabel: 'Any (*)', entry: null, group: 'special' },
+    ...(groupOpts.length > 0 ? [{ separator: true, label: 'Counter Groups' }] : []),
+    ...groupOpts,
+    ...(unitOpts.length > 0 ? [{ separator: true, label: 'Units' }] : []),
+    ...unitOpts
+  ];
+  if (current && !options.some((opt) => !opt.separator && normalizeConfigToken(opt.value) === current)) {
+    options.unshift({ value: current, label: current, entry: null });
+  }
+  return options;
+}
+
+function isCounterRuleOptionToken(token) {
+  const t = String(token || '').trim();
+  return [
+    'in-city',
+    'ignore-defensive-bonuses',
+    'terrain',
+    'district',
+    'self-exp',
+    'enemy-exp',
+    ...C3X_COUNTER_EFFECT_FIELDS.map((field) => field.token)
+  ].includes(t);
+}
+
+function parseCounterRules(value) {
+  return parseDelimitedStructuredEntries(value).map((entry) => {
+    const tokens = tokenizeWhitespacePreservingQuotes(entry).map((token) => normalizeConfigToken(token)).filter(Boolean);
+    const rule = {
+      attacker: tokens[0] || '',
+      defender: tokens[2] || '',
+      onlyInCity: false,
+      ignoreDefensiveBonuses: false,
+      terrain: '',
+      district: '',
+      selfExp: '',
+      enemyExp: '',
+      selfAtk: '',
+      selfDef: '',
+      enemyAtk: '',
+      enemyDef: '',
+      selfBombard: '',
+      enemyBombard: ''
+    };
+    if (tokens.length < 3 || tokens[1] !== 'vs') {
+      rule.raw = entry;
+      return rule;
+    }
+    let i = 3;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      const effect = C3X_COUNTER_EFFECT_FIELDS.find((field) => field.token === token);
+      if (effect) {
+        rule[effect.key] = tokens[i + 1] || '';
+        i += 2;
+        continue;
+      }
+      if (token === 'in-city') {
+        rule.onlyInCity = true;
+        i += 1;
+        continue;
+      }
+      if (token === 'ignore-defensive-bonuses') {
+        rule.ignoreDefensiveBonuses = true;
+        i += 1;
+        continue;
+      }
+      if (token === 'terrain') {
+        rule.terrain = tokens[i + 1] || '';
+        i += 2;
+        continue;
+      }
+      if (token === 'district') {
+        rule.district = tokens[i + 1] || '';
+        i += 2;
+        continue;
+      }
+      if (token === 'self-exp' || token === 'enemy-exp') {
+        const values = [];
+        i += 1;
+        while (i < tokens.length && !isCounterRuleOptionToken(tokens[i])) {
+          values.push(tokens[i]);
+          i += 1;
+        }
+        rule[token === 'self-exp' ? 'selfExp' : 'enemyExp'] = values.join(' ');
+        continue;
+      }
+      rule.raw = entry;
+      break;
+    }
+    return rule;
+  });
+}
+
+function serializeCounterRules(items) {
+  const entries = (Array.isArray(items) ? items : [])
+    .map((rule) => {
+      if (rule && rule.raw && (!rule.attacker || !rule.defender)) return String(rule.raw || '').trim();
+      const attacker = normalizeConfigToken(rule && rule.attacker);
+      const defender = normalizeConfigToken(rule && rule.defender);
+      if (!attacker || !defender) return '';
+      const parts = [quoteCounterMatchToken(attacker), 'vs', quoteCounterMatchToken(defender)];
+      C3X_COUNTER_EFFECT_FIELDS.forEach((field) => {
+        const value = String(rule && rule[field.key] || '').trim();
+        if (value) parts.push(field.token, value);
+      });
+      if (rule && rule.onlyInCity) parts.push('in-city');
+      if (rule && rule.ignoreDefensiveBonuses) parts.push('ignore-defensive-bonuses');
+      const terrain = normalizeConfigToken(rule && rule.terrain);
+      if (terrain) parts.push('terrain', quoteConfigToken(terrain));
+      const district = normalizeConfigToken(rule && rule.district);
+      if (district) parts.push('district', quoteConfigToken(district));
+      const selfExp = tokenizeWhitespacePreservingQuotes(rule && rule.selfExp).map((token) => normalizeConfigToken(token)).filter(Boolean);
+      if (selfExp.length > 0) parts.push('self-exp', ...selfExp.map((token) => quoteConfigToken(token)));
+      const enemyExp = tokenizeWhitespacePreservingQuotes(rule && rule.enemyExp).map((token) => normalizeConfigToken(token)).filter(Boolean);
+      if (enemyExp.length > 0) parts.push('enemy-exp', ...enemyExp.map((token) => quoteConfigToken(token)));
+      return parts.join(' ');
+    })
+    .filter(Boolean);
+  return serializeStructuredEntries(entries);
+}
+
+function parseFixedVisibilityArray(value, kind) {
+  const tokens = parseBracketedOptionTokens(value);
+  const defaults = C3X_VISIBILITY_TERRAIN_COLUMNS.map(() => (kind === 'boolean' ? 'false' : '0'));
+  const values = defaults.map((fallback, idx) => {
+    const token = String(tokens[idx] == null ? fallback : tokens[idx]).trim();
+    if (kind === 'boolean') return /^(true|1)$/i.test(token) ? 'true' : 'false';
+    return token;
+  });
+  return values;
+}
+
+function serializeFixedVisibilityArray(values, kind) {
+  const normalized = C3X_VISIBILITY_TERRAIN_COLUMNS.map((_, idx) => {
+    const raw = String(Array.isArray(values) && values[idx] != null ? values[idx] : '').trim();
+    if (kind === 'boolean') return /^(true|1)$/i.test(raw) ? 'true' : 'false';
+    return raw || '0';
+  });
+  return `[${normalized.join(', ')}]`;
+}
+
+function parseUnitVisibilityRules(value) {
+  return parseDelimitedStructuredEntries(value).map((entry) => {
+    const i = entry.indexOf(':');
+    if (i < 0) return { targets: [normalizeConfigToken(entry)], baseVisibility: '', terrainBonusMultiplier: '', fortificationBonus: '', fortificationMode: 'when-fortified' };
+    const targetText = entry.slice(0, i).trim();
+    const rhs = entry.slice(i + 1).trim();
+    const targets = parseBracketedOptionTokens(targetText);
+    const rule = {
+      targets: targets.length > 0 ? targets : [normalizeConfigToken(targetText)].filter(Boolean),
+      baseVisibility: '',
+      terrainBonusMultiplier: '',
+      fortificationBonus: '',
+      fortificationMode: 'when-fortified'
+    };
+    const tokens = tokenizeWhitespacePreservingQuotes(rhs)
+      .map((token) => normalizeConfigToken(token))
+      .filter((token) => token && token !== '+');
+    for (let idx = 0; idx < tokens.length; idx += 1) {
+      const num = tokens[idx];
+      const modifier = tokens[idx + 1] || '';
+      if (modifier === 'times-bonus') {
+        rule.terrainBonusMultiplier = num;
+        idx += 1;
+      } else if (modifier === 'when-fortified' || modifier === 'when-fortified-same-continent') {
+        rule.fortificationBonus = num;
+        rule.fortificationMode = modifier;
+        idx += 1;
+      } else {
+        rule.baseVisibility = num;
+      }
+    }
+    return rule;
+  });
+}
+
+function serializeUnitVisibilityRules(items) {
+  const entries = (Array.isArray(items) ? items : [])
+    .map((rule) => {
+      const targets = (Array.isArray(rule && rule.targets) ? rule.targets : [])
+        .map((target) => normalizeConfigToken(target))
+        .filter(Boolean);
+      if (targets.length === 0) return '';
+      const targetText = targets.map((target) => quoteConfigToken(target)).join(' ');
+      const parts = [];
+      const base = String(rule && rule.baseVisibility || '').trim();
+      if (base) parts.push(base);
+      const multiplier = String(rule && rule.terrainBonusMultiplier || '').trim();
+      if (multiplier) parts.push(`${multiplier} times-bonus`);
+      const fort = String(rule && rule.fortificationBonus || '').trim();
+      if (fort) {
+        const mode = String(rule && rule.fortificationMode || '').trim() === 'when-fortified-same-continent'
+          ? 'when-fortified-same-continent'
+          : 'when-fortified';
+        parts.push(`${fort} ${mode}`);
+      }
+      return `${targetText}: ${parts.length > 0 ? parts.join(' + ') : '1'}`;
+    })
+    .filter(Boolean);
+  return serializeStructuredEntries(entries);
+}
+
+function getCounterRuleDistrictOptions() {
+  const sections = state.bundle && state.bundle.tabs && state.bundle.tabs.districts && state.bundle.tabs.districts.model && Array.isArray(state.bundle.tabs.districts.model.sections)
+    ? state.bundle.tabs.districts.model.sections
+    : [];
+  return sections.map((section, index) => {
+    const internalName = normalizeConfigToken(getFieldValue(section, 'name'));
+    if (!internalName) return null;
+    const display = getDistrictSectionDisplay(section, index);
+    return {
+      value: internalName,
+      label: display.secondary ? `${display.primary} (${display.secondary})` : display.primary,
+      displayLabel: display.primary || internalName,
+      entry: { section, index }
+    };
+  }).filter(Boolean);
+}
+
+function makeCounterRuleTerrainPicker(currentValue, onSelect) {
+  const current = normalizeConfigToken(currentValue);
+  return createReferencePicker({
+    options: C3X_COUNTER_TERRAIN_OPTIONS.map((opt) => ({
+      value: opt.value,
+      label: opt.label,
+      displayLabel: opt.label,
+      previewKey: opt.previewKey || opt.value
+    })),
+    targetTabKey: '',
+    currentValue: current || '-1',
+    searchPlaceholder: 'Search terrain...',
+    noneLabel: 'Any terrain',
+    renderOptionThumb: ({ holder, option }) => {
+      if (!holder || !option) return false;
+      holder.innerHTML = '';
+      const preview = makeTerrainOptionPreviewIcon(String(option.previewKey || option.value || ''));
+      if (preview) holder.appendChild(preview);
+      return true;
+    },
+    onSelect
+  });
+}
+
+function makeCounterRuleDistrictPicker(currentValue, onSelect) {
+  const current = normalizeConfigToken(currentValue);
+  return createReferencePicker({
+    options: getCounterRuleDistrictOptions(),
+    targetTabKey: '',
+    currentValue: current || '-1',
+    searchPlaceholder: 'Search districts...',
+    noneLabel: 'Any district',
+    thumbClassName: 'district-entry-thumb',
+    renderOptionThumb: ({ holder, option }) => {
+      if (!holder || !option || !option.entry || !option.entry.section) return false;
+      loadDistrictRepresentativePreview(option.entry.section, holder, 14);
+      return true;
+    },
+    onSelect
+  });
+}
+
+function makeCounterRuleExperienceSelect(value, onSelect) {
+  const normalized = String(value || '').trim();
+  const select = document.createElement('select');
+  select.className = 'c3x-counter-experience-select';
+  const options = [
+    { value: '', label: 'Any experience' },
+    ...C3X_COUNTER_EXPERIENCE_OPTIONS
+  ];
+  const normalizedKnown = normalizeConfigToken(normalized);
+  if (normalizedKnown && !options.some((opt) => normalizeConfigToken(opt.value) === normalizedKnown)) {
+    options.push({ value: normalized, label: normalized });
+  }
+  options.forEach((opt) => {
+    const option = document.createElement('option');
+    option.value = String(opt.value || '');
+    option.textContent = opt.label;
+    select.appendChild(option);
+  });
+  select.value = normalized;
+  if (select.value !== normalized) select.value = normalizedKnown;
+  if (select.value !== normalized && select.value !== normalizedKnown) select.value = '';
+  select.addEventListener('change', () => {
+    if (onSelect) onSelect(select.value);
+  });
+  return select;
+}
+
 function parseBuildingPrereqItems(value) {
   return parseDelimitedStructuredEntries(value).map((item) => {
     const i = item.indexOf(':');
@@ -9622,12 +10065,14 @@ function makeNamedListTokenEditor(config) {
     }
     const value = normalizeConfigToken(opt.value);
     if (!value) return;
-    pickerOptions.push({
+    const specialOption = {
       value,
-      label: String(opt.label || value),
+      label: String(opt.displayLabel || opt.label || value),
       displayLabel: String(opt.displayLabel || opt.label || value),
       special: true
-    });
+    };
+    optionByValue.set(value, specialOption);
+    pickerOptions.push(specialOption);
   });
   pickerOptions.push(...normalizedOptions);
 
@@ -9678,8 +10123,8 @@ function makeNamedListTokenEditor(config) {
     options: pickerOptions,
     targetTabKey: tabKey,
     currentValue: '-1',
-    searchPlaceholder: `Add ${toFriendlyKey(tabKey).replace(/s$/, '')}...`,
-    noneLabel: 'Add item...',
+    searchPlaceholder: String(cfg.searchPlaceholder || `Add ${toFriendlyKey(tabKey).replace(/s$/, '')}...`),
+    noneLabel: String(cfg.noneLabel || 'Add item...'),
     resetAfterSelect: true,
     readOnly,
     onSelect: (next) => {
@@ -10010,6 +10455,380 @@ function makeInputForBaseRow(row, onChange, options = {}) {
     wrap.appendChild(addBtn);
     return { wrap, addBtn, api };
   };
+
+  if (row.key === 'unit_groups') {
+    let items = parseUnitCounterGroupItems(row.value);
+    if (items.length === 0) items = [{ name: '', units: [] }];
+    const editor = buildIncrementalStructuredListEditor({
+      items,
+      createDefaultItem: () => ({ name: '', units: [] }),
+      addLabel: 'Add Group',
+      lazyItemMount: true,
+      eagerItemCount: 6,
+      itemPlaceholderMinHeight: 106,
+      buildItemNode: (item, api) => {
+        const line = document.createElement('div');
+        line.className = 'structured-card';
+        const groupInput = document.createElement('input');
+        groupInput.placeholder = 'Group name';
+        groupInput.value = String(item.name || '');
+        wireBaseGroupedUndo(groupInput, () => serializeUnitCounterGroupItems(api.items));
+        groupInput.addEventListener('input', () => {
+          item.name = groupInput.value;
+          onChange(serializeUnitCounterGroupItems(api.items), { captureUndo: false });
+        });
+        line.appendChild(groupInput);
+
+        const members = makeNamedListTokenEditor({
+          tabKey: 'units',
+          values: Array.isArray(item.units) ? item.units : [],
+          options: getNamedReferenceOptionsForTab('units'),
+          onValuesChange: (values) => {
+            item.units = values;
+            onChange(serializeUnitCounterGroupItems(api.items));
+          }
+        });
+        line.appendChild(members);
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          api.removeItem(item);
+          onChange(serializeUnitCounterGroupItems(api.items));
+        });
+        line.appendChild(del);
+        return line;
+      }
+    });
+    return editor.wrap;
+  }
+
+  if (row.key === 'counter_rules') {
+    let items = parseCounterRules(row.value);
+    items.forEach((item) => {
+      if (item && !item.raw && !normalizeConfigToken(item.defender)) item.defender = '*';
+    });
+    if (items.length === 0) items = [{ attacker: '*', defender: '*', onlyInCity: false, ignoreDefensiveBonuses: false }];
+    const editor = buildIncrementalStructuredListEditor({
+      items,
+      createDefaultItem: () => ({ attacker: '*', defender: '*', onlyInCity: false, ignoreDefensiveBonuses: false }),
+      addLabel: 'Add Rule',
+      lazyItemMount: true,
+      eagerItemCount: 4,
+      itemPlaceholderMinHeight: 248,
+      buildItemNode: (item, api) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card c3x-counter-rule-card';
+        const makeLabeledControl = (labelText, control, className = '') => {
+          const wrap = document.createElement('div');
+          wrap.className = `c3x-counter-field${className ? ` ${className}` : ''}`;
+          const label = document.createElement('span');
+          label.className = 'field-label';
+          label.textContent = labelText;
+          wrap.appendChild(label);
+          wrap.appendChild(control);
+          return wrap;
+        };
+        const makeSectionTitle = (text) => {
+          const title = document.createElement('div');
+          title.className = 'c3x-counter-section-title';
+          title.textContent = text;
+          return title;
+        };
+        const makeEffectInput = (key, labelText, ariaPrefix) => {
+          const input = document.createElement('input');
+          input.type = 'number';
+          input.setAttribute('aria-label', `${ariaPrefix} ${labelText}`);
+          input.value = String(item[key] || '');
+          wireBaseGroupedUndo(input, () => serializeCounterRules(api.items));
+          input.addEventListener('input', () => {
+            item[key] = input.value;
+            onChange(serializeCounterRules(api.items), { captureUndo: false });
+          });
+          return makeLabeledControl(labelText, input);
+        };
+
+        const matchRow = document.createElement('div');
+        matchRow.className = 'c3x-counter-match';
+        matchRow.appendChild(makeSectionTitle('Match'));
+        const matchGrid = document.createElement('div');
+        matchGrid.className = 'c3x-counter-match-grid';
+        const attacker = createReferencePicker({
+          options: makeCounterMatchOptions(item.attacker || '*'),
+          targetTabKey: 'units',
+          currentValue: item.attacker || '*',
+          searchPlaceholder: 'Friendly unit or group...',
+          noneLabel: 'Any (*)',
+          includeNone: false,
+          onSelect: (next) => {
+            item.attacker = normalizeConfigToken(next) || '*';
+            onChange(serializeCounterRules(api.items));
+          }
+        });
+        matchGrid.appendChild(makeLabeledControl('Friendly unit/group', attacker));
+        const vs = document.createElement('div');
+        vs.className = 'c3x-counter-vs';
+        vs.textContent = 'vs.';
+        matchGrid.appendChild(vs);
+        const defender = createReferencePicker({
+          options: makeCounterMatchOptions(item.defender || '*'),
+          targetTabKey: 'units',
+          currentValue: item.defender || '*',
+          searchPlaceholder: 'Enemy unit or group...',
+          noneLabel: 'Any (*)',
+          includeNone: false,
+          onSelect: (next) => {
+            item.defender = normalizeConfigToken(next) || '*';
+            onChange(serializeCounterRules(api.items));
+          }
+        });
+        matchGrid.appendChild(makeLabeledControl('Enemy unit/group', defender));
+        matchRow.appendChild(matchGrid);
+        block.appendChild(matchRow);
+
+        const effects = document.createElement('div');
+        effects.className = 'c3x-counter-effects';
+        [
+          ['Friendly modifiers', 'Friendly', [['selfAtk', 'Attack %'], ['selfDef', 'Defense %'], ['selfBombard', 'Bombard %']]],
+          ['Enemy modifiers', 'Enemy', [['enemyAtk', 'Attack %'], ['enemyDef', 'Defense %'], ['enemyBombard', 'Bombard %']]]
+        ].forEach(([titleText, ariaPrefix, fields]) => {
+          const group = document.createElement('div');
+          group.className = 'c3x-counter-effect-group';
+          group.appendChild(makeSectionTitle(titleText));
+          const grid = document.createElement('div');
+          grid.className = 'c3x-counter-effect-grid';
+          fields.forEach(([key, labelText]) => {
+            grid.appendChild(makeEffectInput(key, labelText, ariaPrefix));
+          });
+          group.appendChild(grid);
+          effects.appendChild(group);
+        });
+        block.appendChild(effects);
+
+        const conditions = document.createElement('div');
+        conditions.className = 'c3x-counter-conditions';
+        conditions.appendChild(makeSectionTitle('Optional conditions'));
+        const conditionGrid = document.createElement('div');
+        conditionGrid.className = 'c3x-counter-conditions-grid';
+        const terrain = makeCounterRuleTerrainPicker(item.terrain, (next) => {
+          const normalized = normalizeConfigToken(next);
+          item.terrain = normalized === '-1' ? '' : normalized;
+          onChange(serializeCounterRules(api.items));
+        });
+        conditionGrid.appendChild(makeLabeledControl('Only on terrain', terrain));
+        const district = makeCounterRuleDistrictPicker(item.district, (next) => {
+          const normalized = normalizeConfigToken(next);
+          item.district = normalized === '-1' ? '' : normalized;
+          onChange(serializeCounterRules(api.items));
+        });
+        conditionGrid.appendChild(makeLabeledControl('Only in district', district));
+        const selfExp = makeCounterRuleExperienceSelect(item.selfExp, (next) => {
+          item.selfExp = normalizeConfigToken(next);
+          onChange(serializeCounterRules(api.items));
+        });
+        conditionGrid.appendChild(makeLabeledControl('Friendly experience', selfExp));
+        const enemyExp = makeCounterRuleExperienceSelect(item.enemyExp, (next) => {
+          item.enemyExp = normalizeConfigToken(next);
+          onChange(serializeCounterRules(api.items));
+        });
+        conditionGrid.appendChild(makeLabeledControl('Enemy experience', enemyExp));
+        conditions.appendChild(conditionGrid);
+
+        const toggles = document.createElement('div');
+        toggles.className = 'segmented-multi-list c3x-counter-condition-toggles';
+        [
+          ['onlyInCity', 'In City'],
+          ['ignoreDefensiveBonuses', 'Ignore Defensive Bonuses']
+        ].forEach(([key, label]) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'segmented-multi-btn';
+          btn.classList.toggle('active', !!item[key]);
+          btn.textContent = label;
+          btn.addEventListener('click', () => {
+            item[key] = !item[key];
+            btn.classList.toggle('active', !!item[key]);
+            onChange(serializeCounterRules(api.items));
+          });
+          toggles.appendChild(btn);
+        });
+        conditions.appendChild(toggles);
+        block.appendChild(conditions);
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'c3x-counter-remove';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          api.removeItem(item);
+          onChange(serializeCounterRules(api.items));
+        });
+        block.appendChild(del);
+        return block;
+      }
+    });
+    return editor.wrap;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(C3X_VISIBILITY_ARRAY_KEYS, row.key)) {
+    const kind = C3X_VISIBILITY_ARRAY_KEYS[row.key];
+    const values = parseFixedVisibilityArray(row.value, kind);
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'c3x-visibility-array-table-wrap';
+    const table = document.createElement('table');
+    table.className = 'c3x-visibility-array-table';
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    const tbody = document.createElement('tbody');
+    const valueRow = document.createElement('tr');
+    C3X_VISIBILITY_TERRAIN_COLUMNS.forEach((col, idx) => {
+      const th = document.createElement('th');
+      th.scope = 'col';
+      th.title = col.key;
+      const head = document.createElement('span');
+      head.className = 'c3x-visibility-array-head';
+      const thumb = makeTerrainOptionPreviewIcon(col.previewKey || col.key);
+      thumb.classList.add('c3x-visibility-array-thumb');
+      thumb.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.className = 'c3x-visibility-array-label';
+      label.textContent = col.label;
+      head.appendChild(thumb);
+      head.appendChild(label);
+      th.appendChild(head);
+      headRow.appendChild(th);
+
+      const td = document.createElement('td');
+      if (kind === 'boolean') {
+        const boolWrap = document.createElement('label');
+        boolWrap.className = 'bool-toggle compact c3x-visibility-array-toggle';
+        boolWrap.title = col.key;
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = /^(true|1)$/i.test(values[idx]);
+        checkbox.setAttribute('aria-label', `${toFriendlyKey(row.key)} ${col.key}`);
+        wireBaseGroupedUndo(checkbox, () => serializeFixedVisibilityArray(values, kind), { commitOnChange: true });
+        checkbox.addEventListener('change', () => {
+          values[idx] = checkbox.checked ? 'true' : 'false';
+          onChange(serializeFixedVisibilityArray(values, kind));
+        });
+        boolWrap.appendChild(checkbox);
+        td.appendChild(boolWrap);
+      } else {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.value = values[idx];
+        input.setAttribute('aria-label', `${toFriendlyKey(row.key)} ${col.key}`);
+        input.title = col.key;
+        wireBaseGroupedUndo(input, () => serializeFixedVisibilityArray(values, kind));
+        input.addEventListener('input', () => {
+          values[idx] = input.value;
+          onChange(serializeFixedVisibilityArray(values, kind), { captureUndo: false });
+        });
+        td.appendChild(input);
+      }
+      valueRow.appendChild(td);
+    });
+    thead.appendChild(headRow);
+    tbody.appendChild(valueRow);
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    return tableWrap;
+  }
+
+  if (row.key === 'unit_visibility_rules') {
+    let items = parseUnitVisibilityRules(row.value);
+    if (items.length === 0) items = [{ targets: [], baseVisibility: '', terrainBonusMultiplier: '', fortificationBonus: '', fortificationMode: 'when-fortified' }];
+    const classOptions = C3X_UNIT_VISIBILITY_CLASSES.map((name) => ({ value: name, label: name, displayLabel: `${name} class` }));
+    const editor = buildIncrementalStructuredListEditor({
+      items,
+      createDefaultItem: () => ({ targets: [], baseVisibility: '', terrainBonusMultiplier: '', fortificationBonus: '', fortificationMode: 'when-fortified' }),
+      addLabel: 'Add Rule',
+      lazyItemMount: true,
+      eagerItemCount: 5,
+      itemPlaceholderMinHeight: 150,
+      buildItemNode: (item, api) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card c3x-unit-visibility-rule-card';
+        const targetWrap = document.createElement('div');
+        targetWrap.className = 'c3x-unit-visibility-target-field';
+        const targetLabel = document.createElement('div');
+        targetLabel.className = 'field-label';
+        targetLabel.textContent = 'Applies To';
+        targetWrap.appendChild(targetLabel);
+        const targetEditor = makeNamedListTokenEditor({
+          tabKey: 'units',
+          values: Array.isArray(item.targets) ? item.targets : [],
+          options: getNamedReferenceOptionsForTab('units'),
+          searchPlaceholder: 'Add class or unit...',
+          noneLabel: 'Add class or unit...',
+          specialOptions: [
+            ...classOptions,
+            { separator: true, label: 'Units' }
+          ],
+          onValuesChange: (values) => {
+            item.targets = values;
+            onChange(serializeUnitVisibilityRules(api.items));
+          }
+        });
+        targetWrap.appendChild(targetEditor);
+        block.appendChild(targetWrap);
+
+        const rowWrap = document.createElement('div');
+        rowWrap.className = 'c3x-unit-visibility-metrics';
+        [
+          ['baseVisibility', 'Base Visibility'],
+          ['terrainBonusMultiplier', 'Height Bonus Multiplier'],
+          ['fortificationBonus', 'Fortified Bonus']
+        ].forEach(([key, labelText]) => {
+          const field = document.createElement('label');
+          field.className = 'c3x-unit-visibility-metric';
+          const label = document.createElement('span');
+          label.className = 'field-label';
+          label.textContent = labelText;
+          field.appendChild(label);
+          const input = document.createElement('input');
+          input.type = 'number';
+          input.placeholder = labelText;
+          input.setAttribute('aria-label', labelText);
+          input.value = String(item[key] || '');
+          wireBaseGroupedUndo(input, () => serializeUnitVisibilityRules(api.items));
+          input.addEventListener('input', () => {
+            item[key] = input.value;
+            onChange(serializeUnitVisibilityRules(api.items), { captureUndo: false });
+          });
+          field.appendChild(input);
+          rowWrap.appendChild(field);
+        });
+        block.appendChild(rowWrap);
+
+        const modeWrap = document.createElement('div');
+        modeWrap.className = 'c3x-unit-visibility-mode-field';
+        const modeLabel = document.createElement('div');
+        modeLabel.className = 'field-label';
+        modeLabel.textContent = 'Fortified Bonus Mode';
+        modeWrap.appendChild(modeLabel);
+        const mode = makeSegmentedChoiceControl(['when-fortified', 'when-fortified-same-continent'], item.fortificationMode || 'when-fortified', (next) => {
+          item.fortificationMode = next;
+          onChange(serializeUnitVisibilityRules(api.items));
+        });
+        modeWrap.appendChild(mode);
+        block.appendChild(modeWrap);
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          api.removeItem(item);
+          onChange(serializeUnitVisibilityRules(api.items));
+        });
+        block.appendChild(del);
+        return block;
+      }
+    });
+    return editor.wrap;
+  }
 
   if (row.key === 'unit_limit_groups') {
     let items = parseUnitLimitGroupItems(row.value);
@@ -11314,6 +12133,9 @@ function renderBaseTab(tab) {
         if (String(row && row.key || '').trim() === 'unit_limit_groups') {
           remountBaseInputByKey('unit_limits');
         }
+        if (String(row && row.key || '').trim() === 'unit_groups') {
+          remountBaseInputByKey('counter_rules');
+        }
       }, {
         undoKey: `BASE:${String(row && row.key || '').trim()}`
       });
@@ -11374,9 +12196,17 @@ function renderBaseTab(tab) {
   const applyFilter = () => {
     const needle = filterInput.value.trim().toLowerCase();
     state.baseFilter = filterInput.value;
+    const visibilityByEl = new Map();
     rowElements.forEach((entry) => {
       const hay = String(entry.searchText || entry.key || '');
-      entry.el.style.display = !needle || hay.includes(needle) ? '' : 'none';
+      const matches = !needle || hay.includes(needle);
+      visibilityByEl.set(entry.el, !!(visibilityByEl.get(entry.el) || matches));
+    });
+    visibilityByEl.forEach((visible, rowEl) => {
+      rowEl.style.display = visible ? '' : 'none';
+      if (visible && needle && rowEl && typeof rowEl._ensureBaseInputMounted === 'function') {
+        rowEl._ensureBaseInputMounted();
+      }
     });
     groups.forEach((g) => {
       const hasVisible = Array.from(g.rowsWrap.children).some((child) => child.style.display !== 'none');
@@ -70140,7 +70970,6 @@ function renderActiveTab(options = {}) {
   }
   state.isRendering = true;
   hideRichTooltip();
-  el.tabContent.innerHTML = '';
   if (state.activeTab === 'players' && state.bundle.tabs.scenarioSettings) {
     state.activeTab = 'scenarioSettings';
   }
@@ -70162,21 +70991,30 @@ function renderActiveTab(options = {}) {
     closeCivColorPaletteModal();
   }
 
-  if (tab.type === 'reference') {
-    el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
-  } else if (tab.type === 'map') {
-    el.tabContent.appendChild(renderMapTab(tab));
-  } else if (tab.type === 'biqStructure') {
-    el.tabContent.appendChild(renderBiqTab(tab));
-  } else if (tab.type === 'biq') {
-    el.tabContent.appendChild(renderBiqTab(tab));
-  } else if (state.activeTab === 'base') {
-    el.tabContent.appendChild(renderBaseTab(tab));
-  } else if (state.activeTab === 'music' || tab.type === 'music') {
-    el.tabContent.appendChild(renderMusicTab(tab));
-  } else {
-    el.tabContent.appendChild(renderSectionTab(tab, state.activeTab));
+  let renderedTab = null;
+  try {
+    if (tab.type === 'reference') {
+      renderedTab = renderReferenceTab(tab, state.activeTab);
+    } else if (tab.type === 'map') {
+      renderedTab = renderMapTab(tab);
+    } else if (tab.type === 'biqStructure') {
+      renderedTab = renderBiqTab(tab);
+    } else if (tab.type === 'biq') {
+      renderedTab = renderBiqTab(tab);
+    } else if (state.activeTab === 'base') {
+      renderedTab = renderBaseTab(tab);
+    } else if (state.activeTab === 'music' || tab.type === 'music') {
+      renderedTab = renderMusicTab(tab);
+    } else {
+      renderedTab = renderSectionTab(tab, state.activeTab);
+    }
+  } catch (err) {
+    state.isRendering = false;
+    console.error('[renderer] Failed to render active tab', err);
+    setStatus(`Could not render ${String(tab.title || state.activeTab || 'tab')}: ${err && err.message ? err.message : 'unknown error'}`, true);
+    return;
   }
+  el.tabContent.replaceChildren(renderedTab);
   state.isRendering = false;
   updateSaveButtonLabel();
   window.requestAnimationFrame(() => {

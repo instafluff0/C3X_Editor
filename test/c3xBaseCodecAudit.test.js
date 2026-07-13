@@ -38,6 +38,7 @@ test('C3X base string families serialize and reload with explicit audited syntax
     building_prereqs_for_units: '["Barracks": "Warrior" "Archer"]',
     buildings_generating_resources: '["Temple": local yields "Incense"]',
     can_bombard_only_sea_tiles: '["Submarine" "Torpedo Bomber"]',
+    counter_rules: '["*" vs Spearman self-atk 125 in-city, Catapult vs Spearman self-bombard 150 terrain grassland]',
     civ_aliases_by_era: '["America": "Roman Republic" "Roman Empire" "Modern America" "Future America"]',
     day_night_cycle_mode: 'specified',
     distribution_hub_yield_division_mode: 'scale-by-city-count',
@@ -65,9 +66,15 @@ test('C3X base string families serialize and reload with explicit audited syntax
     special_helicopter_rules: '[allow-on-carriers no-escape]',
     special_zone_of_control_rules: '[amphibious not-from-inside]',
     technology_perfume: '["Alphabet": 12]',
+    terrain_visibility_bonus: '[0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0]',
+    terrain_visibility_flat_bonus: '[false, false, false, false, false, false, false, false, false, false, false, true, true, true]',
+    terrain_visibility_see_height: '[1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1]',
+    terrain_visibility_seen_height: '[0, 0, 0, 0, 0, 1, 2, 1, 1, 0, 2, 0, 0, 0]',
     unit_cycle_search_criteria: 'similar-near-destination',
+    unit_groups: '[Subs: Submarine "Nuclear Submarine", AntiAir: Flak "Mobile SAM"]',
     unit_limit_groups: '["Infantry Units": "Warrior" "Archer", Tanks: Tank Panzer]',
     unit_limits: '["Settler": 1 per-city]',
+    unit_visibility_rules: '[Sea: 2 when-fortified-same-continent, Scout: 1 + 2 times-bonus]',
     work_area_improvements: '["Aqueduct": 3]',
     work_area_limit: 'cultural-or-adjacent'
   };
